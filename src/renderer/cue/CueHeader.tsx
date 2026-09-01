@@ -29,7 +29,10 @@ export function CueHeader({ cue, character, characters, onCharacter }: Props) {
       <select
         aria-label="Character"
         value={cue.characterId}
-        onChange={(e) => onCharacter(e.target.value)}
+        onChange={(e) => {
+          e.currentTarget.blur()
+          onCharacter(e.target.value)
+        }}
         style={character ? { color: character.color } : undefined}
       >
         <option value="">Unassigned</option>

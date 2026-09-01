@@ -44,6 +44,7 @@ export const projectFileSchema = z
     pronunciationRules: z.string(),
     exportTemplate: z.string(),
     terms: z.array(z.unknown()).optional(),
+    alienMigrated: z.literal(true).optional(),
   })
   .passthrough()
 
@@ -158,9 +159,9 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   characterId.extend({ type: z.literal('character.rename'), name: characterName }),
   characterId.extend({
     type: z.literal('character.setProvider'),
-    voiceId: z.string().max(200),
-    ttsModel: modelId,
-    stsModel: modelId,
+    voiceId: z.string().max(200).optional(),
+    ttsModel: modelId.optional(),
+    stsModel: modelId.optional(),
   }),
   characterId.extend({ type: z.literal('character.delete'), reassignTo: z.string().max(200) }),
   z.object({ type: z.literal('rules.set'), text: z.string().max(100_000) }),

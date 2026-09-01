@@ -72,7 +72,7 @@ describe('template validation — fixture', () => {
     expect(misc.character).toBe('')
     expect(misc.missingAudio).toBe(false)
     expect(v.warnings.filter((w) => w.row === 6).map((w) => w.reason)).toEqual([
-      'character is empty — cue stays unassigned',
+      'character is empty',
     ])
   })
 
@@ -131,7 +131,7 @@ describe('template validation — fatal vs warning matrix', () => {
   it('a non-numeric durationHint is a warning, not fatal', async () => {
     const v = await validateTemplate(await makeTemplate({ index: rows('A,ADA,S,,,X,,soon,') }))
     expect(v.fatalErrors).toEqual([])
-    expect(v.warnings.map((w) => w.reason)).toEqual(['durationHint "soon" is not a number — ignored'])
+    expect(v.warnings.map((w) => w.reason)).toEqual(['durationHint "soon" is not a number'])
   })
 
   it('an empty index.csv is fatal', async () => {
@@ -169,7 +169,7 @@ describe('template validation — fatal vs warning matrix', () => {
     const v = await validateTemplate(await makeTemplate({ index: rows('A,ADA,S,,,X,,,'), terms: null }))
     expect(v.fatalErrors).toEqual([])
     expect(v.terms).toBeUndefined()
-    expect(v.warnings.map((w) => w.reason)).toEqual(['terms.csv is missing — no glossary imported'])
+    expect(v.warnings.map((w) => w.reason)).toEqual(['terms.csv is missing'])
   })
 
   it('accepts a BOM and quoted commas through the shared CSV parser', async () => {

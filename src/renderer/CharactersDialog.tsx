@@ -11,25 +11,75 @@ import { api } from './api'
 import { transport } from './audio/transport'
 import { fromSlider, knobText, KNOBS, toSlider } from './cue/voice'
 
-const MODELS = [ELEVENLABS_TTS_MODEL, ELEVENLABS_STS_MODEL]
+const TTS_MODELS = [ELEVENLABS_TTS_MODEL]
+const STS_MODELS = [ELEVENLABS_STS_MODEL]
 
-const modelOptions = (current: string): string[] =>
-  MODELS.includes(current) ? MODELS : [current, ...MODELS]
+const modelOptions = (known: string[], current: string): string[] =>
+  known.includes(current) ? known : [current, ...known]
+
+interface ProviderPatch {
+  voiceId?: string
+  ttsModel?: string
+  stsModel?: string
+}
+
+function DraftField({
+  label,
+  value,
+  placeholder,
+  onCommit,
+}: {
+  label: string
+  value: string
+  placeholder?: string
+  onCommit: (next: string) => void
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  return (
+    <input
+      type="text"
+      aria-label={label}
+      placeholder={placeholder}
+      value={draft ?? value}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        const next = draft
+        setDraft(null)
+        if (next !== null && next.trim() !== value) onCommit(next)
+      }}
+      onKeyDown={(e) => {
+        if (e.code === 'Enter' || e.code === 'NumpadEnter') e.currentTarget.blur()
+      }}
+    />
+  )
+}
 
 interface Props {
   characters: Character[]
   cues: Cue[]
   onVoiceSettings: (characterId: string, settings: VoiceSettings) => void
+  onProvider: (characterId: string, patch: ProviderPatch) => void
+  onFlushVoice: () => Promise<unknown>
+  onCancelVoice: (characterId: string) => void
   dispatch: (command: ProjectCommand) => Promise<void>
   onStatus: (kind: 'ok' | 'err' | 'info', text: string) => void
   onClose: () => void
 }
 
-export function CharactersDialog({ characters, cues, onVoiceSettings, dispatch, onStatus, onClose }: Props) {
-  const [draft, setDraft] = useState<Record<string, string>>({})
+export function CharactersDialog({
+  characters,
+  cues,
+  onVoiceSettings,
+  onProvider,
+  onFlushVoice,
+  onCancelVoice,
+  dispatch,
+  onStatus,
+  onClose,
+}: Props) {
   const [newName, setNewName] = useState('')
   const [del, setDel] = useState<{ id: string; to: string } | null>(null)
-  const [testing, setTesting] = useState('')
+  const [testing, setTesting] = useState<ReadonlySet<string>>(new Set())
   const testUrl = useRef<string | null>(null)
 
   useEffect(
@@ -52,46 +102,16 @@ export function CharactersDialog({ characters, cues, onVoiceSettings, dispatch, 
     )
   }
 
-  const clearDraft = (key: string): void =>
-    setDraft((d) => {
-      const { [key]: _drop, ...rest } = d
-      return rest
-    })
-
-  const commitName = (character: Character): void => {
-    const key = 'n:' + character.id
-    const value = draft[key]
-    clearDraft(key)
-    if (value === undefined || value.trim() === character.name) return
-    run({ type: 'character.rename', characterId: character.id, name: value })
+  const remove = (characterId: string, reassignTo: string, done?: () => void): void => {
+    onCancelVoice(characterId)
+    run({ type: 'character.delete', characterId, reassignTo }, done)
   }
-
-  const commitVoiceId = (character: Character): void => {
-    const key = 'v:' + character.id
-    const value = draft[key]
-    clearDraft(key)
-    if (value === undefined || value.trim() === character.provider.voiceId) return
-    run({
-      type: 'character.setProvider',
-      characterId: character.id,
-      voiceId: value,
-      ttsModel: character.provider.ttsModel,
-      stsModel: character.provider.stsModel,
-    })
-  }
-
-  const setModel = (character: Character, patch: { ttsModel?: string; stsModel?: string }): void =>
-    run({
-      type: 'character.setProvider',
-      characterId: character.id,
-      voiceId: character.provider.voiceId,
-      ttsModel: patch.ttsModel ?? character.provider.ttsModel,
-      stsModel: patch.stsModel ?? character.provider.stsModel,
-    })
 
   const test = async (character: Character): Promise<void> => {
-    setTesting(character.id)
+    if (testing.has(character.id)) return
+    setTesting((s) => new Set(s).add(character.id))
     try {
+      await onFlushVoice()
       const bytes = await api['provider:testVoice'](character.id)
       const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }))
       if (testUrl.current) URL.revokeObjectURL(testUrl.current)
@@ -100,7 +120,11 @@ export function CharactersDialog({ characters, cues, onVoiceSettings, dispatch, 
     } catch (e) {
       onStatus('err', String(e))
     } finally {
-      setTesting('')
+      setTesting((s) => {
+        const next = new Set(s)
+        next.delete(character.id)
+        return next
+      })
     }
   }
 
@@ -125,31 +149,22 @@ export function CharactersDialog({ characters, cues, onVoiceSettings, dispatch, 
             {characters.map((character) => {
               const count = counts.get(character.id) ?? 0
               const others = characters.filter((c) => c.id !== character.id)
+              const busy = testing.has(character.id)
               const v = character.voiceSettings
               return (
                 <div className="coll" key={character.id}>
                   <div className="row">
                     <span className="char-dot" style={{ background: character.color }} />
-                    <input
-                      type="text"
-                      aria-label="Name"
-                      value={draft['n:' + character.id] ?? character.name}
-                      onChange={(e) => setDraft((d) => ({ ...d, ['n:' + character.id]: e.target.value }))}
-                      onBlur={() => commitName(character)}
-                      onKeyDown={(e) => {
-                        if (e.code === 'Enter' || e.code === 'NumpadEnter') e.currentTarget.blur()
-                      }}
+                    <DraftField
+                      label="Name"
+                      value={character.name}
+                      onCommit={(name) => run({ type: 'character.rename', characterId: character.id, name })}
                     />
-                    <input
-                      type="text"
-                      aria-label="Voice ID"
+                    <DraftField
+                      label="Voice ID"
+                      value={character.provider.voiceId}
                       placeholder="voice id"
-                      value={draft['v:' + character.id] ?? character.provider.voiceId}
-                      onChange={(e) => setDraft((d) => ({ ...d, ['v:' + character.id]: e.target.value }))}
-                      onBlur={() => commitVoiceId(character)}
-                      onKeyDown={(e) => {
-                        if (e.code === 'Enter' || e.code === 'NumpadEnter') e.currentTarget.blur()
-                      }}
+                      onCommit={(voiceId) => onProvider(character.id, { voiceId })}
                     />
                     <span className="dim">{count} cues</span>
                   </div>
@@ -158,9 +173,9 @@ export function CharactersDialog({ characters, cues, onVoiceSettings, dispatch, 
                     <select
                       aria-label="TTS model"
                       value={character.provider.ttsModel}
-                      onChange={(e) => setModel(character, { ttsModel: e.target.value })}
+                      onChange={(e) => onProvider(character.id, { ttsModel: e.target.value })}
                     >
-                      {modelOptions(character.provider.ttsModel).map((m) => (
+                      {modelOptions(TTS_MODELS, character.provider.ttsModel).map((m) => (
                         <option key={m} value={m}>
                           {m}
                         </option>
@@ -169,9 +184,9 @@ export function CharactersDialog({ characters, cues, onVoiceSettings, dispatch, 
                     <select
                       aria-label="STS model"
                       value={character.provider.stsModel}
-                      onChange={(e) => setModel(character, { stsModel: e.target.value })}
+                      onChange={(e) => onProvider(character.id, { stsModel: e.target.value })}
                     >
-                      {modelOptions(character.provider.stsModel).map((m) => (
+                      {modelOptions(STS_MODELS, character.provider.stsModel).map((m) => (
                         <option key={m} value={m}>
                           {m}
                         </option>
@@ -181,10 +196,10 @@ export function CharactersDialog({ characters, cues, onVoiceSettings, dispatch, 
                     <button
                       className="btn ghost"
                       onClick={() => void test(character)}
-                      disabled={testing === character.id || !character.provider.voiceId}
+                      disabled={busy || !character.provider.voiceId}
                       title={character.provider.voiceId ? 'Test' : 'No voice configured'}
                     >
-                      {testing === character.id ? <span className="spin" /> : '▶'} Test
+                      {busy ? <span className="spin" /> : '▶'} Test
                     </button>
                     <button
                       className="btn danger"
@@ -193,9 +208,7 @@ export function CharactersDialog({ characters, cues, onVoiceSettings, dispatch, 
                           setDel({ id: character.id, to: '' })
                           return
                         }
-                        if (confirm(`Delete ${character.name}?`)) {
-                          run({ type: 'character.delete', characterId: character.id, reassignTo: '' })
-                        }
+                        if (confirm(`Delete ${character.name}?`)) remove(character.id, '')
                       }}
                     >
                       Delete
@@ -238,14 +251,7 @@ export function CharactersDialog({ characters, cues, onVoiceSettings, dispatch, 
                           </option>
                         ))}
                       </select>
-                      <button
-                        className="btn danger"
-                        onClick={() =>
-                          run({ type: 'character.delete', characterId: character.id, reassignTo: del.to }, () =>
-                            setDel(null)
-                          )
-                        }
-                      >
+                      <button className="btn danger" onClick={() => remove(character.id, del.to, () => setDel(null))}>
                         Confirm delete
                       </button>
                       <button className="btn ghost" onClick={() => setDel(null)}>

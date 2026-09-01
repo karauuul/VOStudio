@@ -85,7 +85,8 @@ async function loadUi(dir: string, legacy: UiSessionState | undefined): Promise<
 }
 
 export function defaultProjectsRoot(): string {
-  return process.env['VOSTUDIO_PROJECTS_ROOT'] ?? path.join(app.getPath('documents'), 'VOStudio')
+  const root = process.env['VOSTUDIO_PROJECTS_ROOT']
+  return root && path.isAbsolute(root) ? root : path.join(app.getPath('documents'), 'VOStudio')
 }
 
 export async function createProject(name: string, base: Omit<Project, 'id' | 'schemaVersion' | 'createdAt'>): Promise<Project> {

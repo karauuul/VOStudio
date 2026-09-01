@@ -35,3 +35,15 @@ export function needsAlienMigration(
   if (project.characters.some((c) => c.id === ALIEN.id)) return false
   return project.cues.some((c) => c.fields['EventName'])
 }
+
+export function applyAlienMigration(project: Project): boolean {
+  if (project.alienMigrated || !project.csvBinding) return false
+  if (needsAlienMigration(project)) {
+    project.characters.push(structuredClone(ALIEN))
+    for (const cue of project.cues) {
+      cue.characterId = characterForEvent(cue.fields['EventName'] ?? '')
+    }
+  }
+  project.alienMigrated = true
+  return true
+}

@@ -1,7 +1,7 @@
 import { approveCue, changeCompOutput, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval } from './approval'
 import { compProblem, normalizeComp } from './comp'
 import {
-  CHARACTER_COLORS,
+  characterColor,
   DEFAULT_VOICE_SETTINGS,
   ELEVENLABS_STS_MODEL,
   ELEVENLABS_TTS_MODEL,
@@ -26,13 +26,14 @@ export type ProjectCommand =
   | { type: 'character.setVoiceSettings'; characterId: string; settings: VoiceSettings }
   | { type: 'character.create'; id: string; name: string }
   | { type: 'character.rename'; characterId: string; name: string }
-  | { type: 'character.setProvider'; characterId: string; voiceId: string; ttsModel: string; stsModel: string }
+  | { type: 'character.setProvider'; characterId: string; voiceId?: string; ttsModel?: string; stsModel?: string }
   | { type: 'character.delete'; characterId: string; reassignTo: string }
   | { type: 'rules.set'; text: string }
 
 export interface ChangeSet {
   cues?: Cue[]
   characters?: Project['characters']
+  charactersReplace?: boolean
   pronunciationRules?: string
 }
 
@@ -51,7 +52,24 @@ const characterById = (project: Project, id: string): Character => {
   return character
 }
 
-const characterList = (project: Project): ChangeSet => ({ characters: structuredClone(project.characters) })
+const characterList = (project: Project): ChangeSet => ({
+  characters: structuredClone(project.characters),
+  charactersReplace: true,
+})
+
+const characterOnly = (character: Character): ChangeSet => ({ characters: [structuredClone(character)] })
+
+function invalidateCharacterCues(project: Project, characterId: string): Cue[] {
+  const moved: Cue[] = []
+  for (const cue of project.cues) {
+    if (cue.characterId !== characterId) continue
+    const next = invalidateVoicedOutput(cue)
+    if (next === cue) continue
+    Object.assign(cue, next)
+    moved.push(structuredClone(cue))
+  }
+  return moved
+}
 
 function uniqueName(project: Project, name: string, exceptId?: string): string {
   const trimmed = name.trim()
@@ -65,15 +83,16 @@ function uniqueName(project: Project, name: string, exceptId?: string): string {
 
 export function applyProjectCommand(project: Project, command: ProjectCommand): ChangeSet {
   if (command.type === 'character.setVoiceSettings') {
-    characterById(project, command.characterId).voiceSettings = structuredClone(command.settings)
-    return characterList(project)
+    const character = characterById(project, command.characterId)
+    character.voiceSettings = structuredClone(command.settings)
+    return characterOnly(character)
   }
   if (command.type === 'character.create') {
     if (project.characters.some((item) => item.id === command.id)) throw new Error('Character id is already used')
     project.characters.push({
       id: command.id,
       name: uniqueName(project, command.name),
-      color: CHARACTER_COLORS[project.characters.length % CHARACTER_COLORS.length],
+      color: characterColor(project.characters.length),
       provider: {
         providerId: 'elevenlabs',
         voiceId: '',
@@ -87,17 +106,19 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
   if (command.type === 'character.rename') {
     const character = characterById(project, command.characterId)
     character.name = uniqueName(project, command.name, character.id)
-    return characterList(project)
+    return characterOnly(character)
   }
   if (command.type === 'character.setProvider') {
     const character = characterById(project, command.characterId)
-    character.provider = {
-      ...character.provider,
-      voiceId: command.voiceId.trim(),
-      ttsModel: command.ttsModel,
-      stsModel: command.stsModel,
-    }
-    return characterList(project)
+    const provider = { ...character.provider }
+    if (command.voiceId !== undefined) provider.voiceId = command.voiceId.trim()
+    if (command.ttsModel !== undefined) provider.ttsModel = command.ttsModel
+    if (command.stsModel !== undefined) provider.stsModel = command.stsModel
+    const voiceChanged = provider.voiceId !== character.provider.voiceId
+    character.provider = provider
+    const changes = characterOnly(character)
+    if (!voiceChanged) return changes
+    return { ...changes, cues: invalidateCharacterCues(project, character.id) }
   }
   if (command.type === 'character.delete') {
     const character = characterById(project, command.characterId)
@@ -192,7 +213,13 @@ export function applyChangeSet(project: Project, changes: ChangeSet): Project {
     const replacements = new Map(changes.cues.map((cue) => [cue.id, cue]))
     next = { ...next, cues: next.cues.map((cue) => replacements.get(cue.id) ?? cue) }
   }
-  if (changes.characters) next = { ...next, characters: changes.characters }
+  if (changes.characters) {
+    if (changes.charactersReplace) next = { ...next, characters: changes.characters }
+    else {
+      const replacements = new Map(changes.characters.map((character) => [character.id, character]))
+      next = { ...next, characters: next.characters.map((character) => replacements.get(character.id) ?? character) }
+    }
+  }
   if (changes.pronunciationRules !== undefined) next = { ...next, pronunciationRules: changes.pronunciationRules }
   return next
 }
