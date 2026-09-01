@@ -81,13 +81,15 @@ export function CharactersDialog({
   const [del, setDel] = useState<{ id: string; to: string } | null>(null)
   const [testing, setTesting] = useState<ReadonlySet<string>>(new Set())
   const testUrl = useRef<string | null>(null)
+  const mounted = useRef(true)
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
       if (testUrl.current) URL.revokeObjectURL(testUrl.current)
-    },
-    []
-  )
+    }
+  }, [])
 
   const counts = useMemo(() => {
     const map = new Map<string, number>()
@@ -114,6 +116,10 @@ export function CharactersDialog({
       await onFlushVoice()
       const bytes = await api['provider:testVoice'](character.id)
       const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }))
+      if (!mounted.current) {
+        URL.revokeObjectURL(url)
+        return
+      }
       if (testUrl.current) URL.revokeObjectURL(testUrl.current)
       testUrl.current = url
       void transport.playClip({ id: 'test:' + character.id, url }, 0)
