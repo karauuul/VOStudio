@@ -1,0 +1,23 @@
+appId: com.karauuul.vostudio
+productName: VO Studio
+directories:
+  output: release
+publish:
+  provider: github
+  owner: karauuul
+  repo: VOStudio
+files:
+  - '!src/**'
+  - '!tests/**'
+  - '!release/**'
+  - '!**/*.{md,map,log}'
+  - '!electron.vite.config.ts'
+  - '!tsconfig.json'
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+win:
+  target: nsis
+  signAndEditExecutable: false
+nsis:
+  oneClick: true
+  perMachine: false
