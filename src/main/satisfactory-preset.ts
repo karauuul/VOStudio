@@ -44,6 +44,7 @@ export function applyAlienMigration(project: Project): boolean {
       cue.characterId = characterForEvent(cue.fields['EventName'] ?? '')
     }
   }
+  if (!project.characters.some((c) => c.id === ALIEN.id)) return false
   project.alienMigrated = true
   return true
 }

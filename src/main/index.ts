@@ -199,12 +199,21 @@ async function migrateCharacters(project: Project): Promise<void> {
   if (applyAlienMigration(project)) await store.saveProject(project)
 }
 
-function reloadCueForGeneration(cueId: string, characterId: string, voiceId: string): Cue {
+async function writeGuardedTake(
+  cueId: string,
+  characterId: string,
+  voiceId: string,
+  fileName: string,
+  bytes: Buffer
+): Promise<{ cue: Cue; abs: string }> {
+  const abs = await store.writeTakeFile(cueId, fileName, bytes)
   const project = requireProject()
-  if (!cueVoiceUnchanged(project, cueId, characterId, voiceId)) {
+  const cue = project.cues.find((c) => c.id === cueId)
+  if (!cue || !cueVoiceUnchanged(project, cueId, characterId, voiceId)) {
+    await fs.rm(abs, { force: true }).catch(() => undefined)
     throw new Error('Discarded: cue reassigned during generation')
   }
-  return project.cues.find((c) => c.id === cueId)!
+  return { cue, abs }
 }
 
 async function consumeSuggestionsFile(
@@ -460,9 +469,8 @@ function registerHandlers(): void {
       model: character.provider.ttsModel,
       settings: parsed.voiceSettings,
     })
-    const target = reloadCueForGeneration(parsed.cueId, character.id, voiceId)
     const fileName = `t_${stamp()}_tts.mp3`
-    const abs = await store.writeTakeFile(target.id, fileName, audio)
+    const { cue: target, abs } = await writeGuardedTake(parsed.cueId, character.id, voiceId, fileName, audio)
     const take: Take = {
       id: randomUUID(),
       kind: 'tts',
@@ -515,9 +523,8 @@ function registerHandlers(): void {
       settings: parsed.voiceSettings,
     })
 
-    const target = reloadCueForGeneration(parsed.cueId, character.id, voiceId)
     const fileName = `t_${stamp()}_sts.mp3`
-    const abs = await store.writeTakeFile(target.id, fileName, mp3)
+    const { cue: target, abs } = await writeGuardedTake(parsed.cueId, character.id, voiceId, fileName, mp3)
     const take: Take = {
       id: randomUUID(),
       kind: 'sts',

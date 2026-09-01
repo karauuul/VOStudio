@@ -136,6 +136,24 @@ describe('applyAlienMigration', () => {
     expect(JSON.stringify(p)).toBe(before)
     expect(p.alienMigrated).toBeUndefined()
   })
+
+  it('does not stamp or save an unrelated csv project', () => {
+    const other = { ...structuredClone(ada), id: 'narrator', name: 'Narrator' }
+    const p = legacyProject({ characters: [other] })
+    const before = JSON.stringify(p)
+    expect(applyAlienMigration(p)).toBe(false)
+    expect(JSON.stringify(p)).toBe(before)
+    expect(p.alienMigrated).toBeUndefined()
+  })
+
+  it('does not stamp a csv project with ada but no event names', () => {
+    const p = legacyProject()
+    for (const cue of p.cues) cue.fields = {}
+    const before = JSON.stringify(p)
+    expect(applyAlienMigration(p)).toBe(false)
+    expect(JSON.stringify(p)).toBe(before)
+    expect(p.alienMigrated).toBeUndefined()
+  })
 })
 
 describe('alienMigrated serialization', () => {
