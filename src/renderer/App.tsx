@@ -31,6 +31,7 @@ import { Inspector } from './cue/Inspector'
 import type { CompApi } from './cue/WaveLanes'
 import { TransportBar } from './cue/TransportBar'
 import { BatchExportDialog } from './BatchExportDialog'
+import { CharactersDialog } from './CharactersDialog'
 import { ProjectHome } from './ProjectHome'
 import { useKeyboard, type KeyboardHandlers } from './keyboard'
 import type { WaveformHandle } from './Waveform'
@@ -167,6 +168,8 @@ function Chip({
 
 export default function App() {
   const [project, setProject] = useState<Project | null>(null)
+  const projectRef = useRef<Project | null>(null)
+  projectRef.current = project
   const revisionRef = useRef(0)
   const [activeCueId, setActiveCueId] = useState<string | undefined>(undefined)
   const [filter, setFilter] = useState(DEFAULT_FILTER)
@@ -178,6 +181,7 @@ export default function App() {
   const [status, setStatus] = useState<Status>(null)
   const [bulk, setBulk] = useState(false)
   const [showExport, setShowExport] = useState(false)
+  const [showCharacters, setShowCharacters] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [sideW, setSideW] = useState(() => storedWidth(SIDE))
@@ -310,9 +314,14 @@ export default function App() {
     [sideW, rightW]
   )
 
+  const liveCharacterFilter =
+    characterFilter !== ALL_CHARACTERS && project && !project.characters.some((c) => c.id === characterFilter)
+      ? ALL_CHARACTERS
+      : characterFilter
+
   const visible = useMemo(
-    () => (project ? filterCues(project.cues, filter, search, characterFilter) : []),
-    [project, filter, search, characterFilter]
+    () => (project ? filterCues(project.cues, filter, search, liveCharacterFilter) : []),
+    [project, filter, search, liveCharacterFilter]
   )
   const activeCue = useMemo(
     () => project?.cues.find((c) => c.id === activeCueId),
@@ -386,6 +395,15 @@ export default function App() {
     if (!p) return Promise.resolve()
     pendingVoice.current = null
     return p.fn()
+  }, [])
+
+  const cancelCharacterVoice = useCallback((characterId: string) => {
+    if (pendingVoice.current?.key !== `char:${characterId}`) return
+    pendingVoice.current = null
+    if (voiceTimer.current) {
+      clearTimeout(voiceTimer.current)
+      voiceTimer.current = null
+    }
   }, [])
 
   const debounceVoice = useCallback(
@@ -536,26 +554,57 @@ export default function App() {
   }, [activeCue, mutateCue, debounceVoice, pushStatus, dispatch])
 
   const onCharacterVoice = useCallback(
-    (settings: VoiceSettings) => {
-      const ch = activeCharacter
-      if (!ch) return
+    (characterId: string, settings: VoiceSettings) => {
       setProject((p) =>
         p
           ? {
               ...p,
               characters: p.characters.map((c) =>
-                c.id === ch.id ? { ...c, voiceSettings: settings } : c
+                c.id === characterId ? { ...c, voiceSettings: settings } : c
               ),
             }
           : p
       )
-      debounceVoice(`char:${ch.id}`, () =>
-        dispatch({ type: 'character.setVoiceSettings', characterId: ch.id, settings }).catch((e: unknown) =>
+      debounceVoice(`char:${characterId}`, () =>
+        dispatch({ type: 'character.setVoiceSettings', characterId, settings }).catch((e: unknown) =>
           pushStatus('err', String(e))
         )
       )
     },
-    [activeCharacter, debounceVoice, pushStatus, dispatch]
+    [debounceVoice, pushStatus, dispatch]
+  )
+
+  const onCharacterProvider = useCallback(
+    (characterId: string, patch: { voiceId?: string; ttsModel?: string; stsModel?: string }) => {
+      setProject((p) =>
+        p
+          ? {
+              ...p,
+              characters: p.characters.map((c) =>
+                c.id === characterId ? { ...c, provider: { ...c.provider, ...patch } } : c
+              ),
+            }
+          : p
+      )
+      void dispatch({ type: 'character.setProvider', characterId, ...patch }).catch((e: unknown) =>
+        pushStatus('err', String(e))
+      )
+    },
+    [dispatch, pushStatus]
+  )
+
+  const onCueCharacter = useCallback(
+    (characterId: string) => {
+      const cue = activeCue
+      if (!cue || cue.characterId === characterId) return
+      if (characterFilter !== ALL_CHARACTERS && characterFilter !== characterId) {
+        setCharacterFilter(ALL_CHARACTERS)
+      }
+      void dispatch({ type: 'cue.setCharacter', cueId: cue.id, characterId }).catch((e: unknown) =>
+        pushStatus('err', String(e))
+      )
+    },
+    [activeCue, characterFilter, dispatch, pushStatus]
   )
 
   const onTakeAdded = useCallback(
@@ -586,19 +635,22 @@ export default function App() {
     if (isCueBusyNow(cue.id)) return
     const cueId = cue.id
     const text = cue.text
-    const voiceSettings = resolveVoiceSettings(activeCharacter, cue)
     void flushText()
     submitJob({
       kind: 'tts',
       cueId,
       run: async () => {
+        const current = projectRef.current
+        const liveCue = current?.cues.find((c) => c.id === cueId)
+        const liveCharacter = current?.characters.find((c) => c.id === liveCue?.characterId)
+        const voiceSettings = resolveVoiceSettings(liveCharacter, liveCue)
         pushStatus('info', 'Generating TTS…')
         const take = await api['provider:tts']({ cueId, text, voiceSettings })
         pushStatus('ok', `Take ready (${take.kind})`)
       },
       onError: (e) => pushStatus('err', String(e)),
     })
-  }, [activeCue, activeCharacter, flushText, pushStatus, submitJob])
+  }, [activeCue, flushText, pushStatus, submitJob])
 
   const goHome = useCallback(async () => {
     try {
@@ -717,7 +769,7 @@ export default function App() {
       onRejectSuggestion,
     ]
   )
-  useKeyboard(handlers, !!project && !showExport && !menuOpen)
+  useKeyboard(handlers, !!project && !showExport && !showCharacters && !menuOpen)
 
   if (!project) {
     return (
@@ -813,6 +865,16 @@ export default function App() {
                   role="menuitem"
                   onClick={() => {
                     setMenuOpen(false)
+                    setShowCharacters(true)
+                  }}
+                >
+                  Characters
+                </button>
+                <button
+                  className="menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false)
                     void flushText()
                     setShowExport(true)
                   }}
@@ -889,7 +951,7 @@ export default function App() {
             filter={filter}
             search={search}
             characters={project.characters}
-            characterFilter={characterFilter}
+            characterFilter={liveCharacterFilter}
             onFilter={setFilter}
             onSearch={setSearch}
             onCharacterFilter={setCharacterFilter}
@@ -905,6 +967,8 @@ export default function App() {
             <CueEditor
               cue={activeCue}
               character={activeCharacter}
+              characters={project.characters}
+              onCharacter={onCueCharacter}
               shownTake={shownTake}
               selectedTakeId={selectedTakeId}
               onSelectTake={setSelectedTakeId}
@@ -961,6 +1025,20 @@ export default function App() {
       {status && <Toast status={status} onClose={closeStatus} />}
 
       {showExport && <BatchExportDialog onClose={() => setShowExport(false)} />}
+
+      {showCharacters && (
+        <CharactersDialog
+          characters={project.characters}
+          cues={project.cues}
+          onVoiceSettings={onCharacterVoice}
+          onProvider={onCharacterProvider}
+          onFlushVoice={flushVoice}
+          onCancelVoice={cancelCharacterVoice}
+          dispatch={dispatch}
+          onStatus={pushStatus}
+          onClose={() => setShowCharacters(false)}
+        />
+      )}
     </div>
   )
 }

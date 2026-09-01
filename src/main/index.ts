@@ -14,9 +14,12 @@ import { parseCsv } from '@shared/csv'
 import { applyRules } from '@shared/pronunciation'
 import { changeTakeOutput } from '@shared/approval'
 import {
+  cueVoiceUnchanged,
   emptyEdits,
+  singleFlight,
   liveTakes,
   MAX_STS_SECONDS,
+  type Cue,
   type Take,
   type UiSessionState,
 } from '@shared/domain'
@@ -27,7 +30,7 @@ import * as migration from './migration'
 import { GENERATED_DIR } from './migration'
 import { syncCsv } from './csv-sync'
 import { copyJob, encodeJob, planBatchExport, planCueExport } from './export'
-import { ALIEN, characterForEvent, needsAlienMigration } from './satisfactory-preset'
+import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
 import { setupImportedProject, setupOpenedProject } from './project-import'
@@ -90,6 +93,9 @@ const stsSchema = z.object({
   voiceSettings: voiceSettingsSchema,
   fragment: z.boolean().optional(),
 })
+
+const TEST_VOICE_TEXT = 'Voice test, one two three.'
+const testVoiceInFlight = new Set<string>()
 
 const MAX_RECORDING_BYTES = 100 * 1024 * 1024
 
@@ -190,12 +196,24 @@ async function autoAdopt(): Promise<void> {
 }
 
 async function migrateCharacters(project: Project): Promise<void> {
-  if (!needsAlienMigration(project)) return
-  project.characters.push(ALIEN)
-  for (const cue of project.cues) {
-    cue.characterId = characterForEvent(cue.fields['EventName'] ?? '')
+  if (applyAlienMigration(project)) await store.saveProject(project)
+}
+
+async function writeGuardedTake(
+  cueId: string,
+  characterId: string,
+  voiceId: string,
+  fileName: string,
+  bytes: Buffer
+): Promise<{ cue: Cue; abs: string }> {
+  const abs = await store.writeTakeFile(cueId, fileName, bytes)
+  const project = requireProject()
+  const cue = project.cues.find((c) => c.id === cueId)
+  if (!cue || !cueVoiceUnchanged(project, cueId, characterId, voiceId)) {
+    await fs.rm(abs, { force: true }).catch(() => undefined)
+    throw new Error('Discarded: cue reassigned during generation')
   }
-  await store.saveProject(project)
+  return { cue, abs }
 }
 
 async function consumeSuggestionsFile(
@@ -443,30 +461,31 @@ function registerHandlers(): void {
     if (!character.provider.voiceId) {
       throw new Error(`No voice configured for character "${character.name}"`)
     }
+    const voiceId = character.provider.voiceId
     const processed = applyRules(parsed.text, project.pronunciationRules)
     const audio = await eleven.tts({
       text: processed,
-      voiceId: character.provider.voiceId,
+      voiceId,
       model: character.provider.ttsModel,
       settings: parsed.voiceSettings,
     })
     const fileName = `t_${stamp()}_tts.mp3`
-    const abs = await store.writeTakeFile(cue.id, fileName, audio)
+    const { cue: target, abs } = await writeGuardedTake(parsed.cueId, character.id, voiceId, fileName, audio)
     const take: Take = {
       id: randomUUID(),
       kind: 'tts',
       createdAt: new Date().toISOString(),
-      file: { fileId: `${cue.id}/${fileName}`, relPath: abs, format: 'mp3' },
+      file: { fileId: `${target.id}/${fileName}`, relPath: abs, format: 'mp3' },
       duration: 0,
       meta: { text: processed, voiceSettings: parsed.voiceSettings, provider: 'elevenlabs' },
       edits: emptyEdits(),
       ...(parsed.fragment ? { fragment: true as const } : {}),
     }
-    cue.takes.push(take)
+    target.takes.push(take)
     if (!parsed.fragment) {
-      Object.assign(cue, changeTakeOutput(cue, take.id))
+      Object.assign(target, changeTakeOutput(target, take.id))
     }
-    await publishCue(cue)
+    await publishCue(target)
     pushUsage()
     return take
   })
@@ -495,24 +514,25 @@ function registerHandlers(): void {
 
     const audio = await fs.readFile(source.file.relPath)
     const model = character.provider.stsModel
+    const voiceId = character.provider.voiceId
     const mp3 = await eleven.sts({
       audio,
       filename: path.basename(source.file.relPath),
-      voiceId: character.provider.voiceId,
+      voiceId,
       model,
       settings: parsed.voiceSettings,
     })
 
     const fileName = `t_${stamp()}_sts.mp3`
-    const abs = await store.writeTakeFile(cue.id, fileName, mp3)
+    const { cue: target, abs } = await writeGuardedTake(parsed.cueId, character.id, voiceId, fileName, mp3)
     const take: Take = {
       id: randomUUID(),
       kind: 'sts',
       createdAt: new Date().toISOString(),
-      file: { fileId: `${cue.id}/${fileName}`, relPath: abs, format: 'mp3' },
+      file: { fileId: `${target.id}/${fileName}`, relPath: abs, format: 'mp3' },
       duration: source.duration,
       meta: {
-        text: cue.text,
+        text: target.text,
         voiceSettings: parsed.voiceSettings,
         sourceTakeId: source.id,
         provider: 'elevenlabs',
@@ -521,13 +541,33 @@ function registerHandlers(): void {
       edits: emptyEdits(),
       ...(parsed.fragment ? { fragment: true as const } : {}),
     }
-    cue.takes.push(take)
-    if (!parsed.fragment && cue.status !== 'approved') {
-      Object.assign(cue, changeTakeOutput(cue, take.id))
+    target.takes.push(take)
+    if (!parsed.fragment && target.status !== 'approved') {
+      Object.assign(target, changeTakeOutput(target, take.id))
     }
-    await publishCue(cue)
+    await publishCue(target)
     pushUsage()
     return take
+  })
+
+  typedHandle('provider:testVoice', async (characterId: string) => {
+    const id = z.string().min(1).max(200).parse(characterId)
+    const project = requireProject()
+    const character = project.characters.find((c) => c.id === id)
+    if (!character) throw new Error('Character not found')
+    if (!character.provider.voiceId) {
+      throw new Error(`No voice configured for character "${character.name}"`)
+    }
+    return singleFlight(testVoiceInFlight, id, `Voice test already running for "${character.name}"`, async () => {
+      const audio = await eleven.tts({
+        text: TEST_VOICE_TEXT,
+        voiceId: character.provider.voiceId,
+        model: character.provider.ttsModel,
+        settings: character.voiceSettings,
+      })
+      pushUsage()
+      return audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer
+    })
   })
 
   typedHandle('provider:usage', () => eleven.usage())

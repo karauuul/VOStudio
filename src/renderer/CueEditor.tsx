@@ -32,6 +32,8 @@ import { WaveLanes, type ClipSelection, type CompApi } from './cue/WaveLanes'
 interface Props {
   cue: Cue
   character?: Character
+  characters: Character[]
+  onCharacter: (characterId: string) => void
   shownTake?: Take
   selectedTakeId?: string
   onSelectTake: (takeId: string) => void
@@ -62,6 +64,8 @@ interface Props {
 export function CueEditor({
   cue,
   character,
+  characters,
+  onCharacter,
   shownTake,
   selectedTakeId,
   onSelectTake,
@@ -161,7 +165,7 @@ export function CueEditor({
 
   return (
     <div className="editor">
-      <CueHeader cue={cue} character={character} />
+      <CueHeader cue={cue} character={character} characters={characters} onCharacter={onCharacter} />
 
       <WaveLanes
         cue={cue}

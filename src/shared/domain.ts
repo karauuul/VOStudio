@@ -235,7 +235,34 @@ export interface Project {
   csvBinding?: CsvBinding
   exportTemplate: string
   terms?: Term[]
+  alienMigrated?: true
   ui: UiSessionState
+}
+
+export function sanitizeAlienMigrated(value: unknown): true | undefined {
+  return value === true ? true : undefined
+}
+
+export function singleFlight<T>(
+  keys: Set<string>,
+  key: string,
+  busyMessage: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  if (keys.has(key)) return Promise.reject(new Error(busyMessage))
+  keys.add(key)
+  return fn().finally(() => keys.delete(key))
+}
+
+export function cueVoiceUnchanged(
+  project: Pick<Project, 'cues' | 'characters'>,
+  cueId: string,
+  characterId: string,
+  voiceId: string
+): boolean {
+  const cue = project.cues.find((c) => c.id === cueId)
+  if (!cue || cue.characterId !== characterId) return false
+  return project.characters.find((c) => c.id === characterId)?.provider.voiceId === voiceId
 }
 
 export interface UsageInfo {
@@ -263,6 +290,11 @@ export function hasVoicedTake(cue: Cue): boolean {
 
 export const ELEVENLABS_TTS_MODEL = 'eleven_multilingual_v2'
 export const ELEVENLABS_STS_MODEL = 'eleven_multilingual_sts_v2'
+
+export const CHARACTER_COLORS = ['#4fc3f7', '#b58cf0', '#e6a23c', '#46c98c', '#f06292', '#7986cb']
+
+export const characterColor = (index: number): string =>
+  CHARACTER_COLORS[((index % CHARACTER_COLORS.length) + CHARACTER_COLORS.length) % CHARACTER_COLORS.length]
 
 export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   stability: 0.45,

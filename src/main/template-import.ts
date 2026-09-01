@@ -3,6 +3,7 @@ import path from 'path'
 import { randomUUID } from 'crypto'
 import { parseCsv } from '@shared/csv'
 import {
+  CHARACTER_COLORS,
   DEFAULT_VOICE_SETTINGS,
   ELEVENLABS_STS_MODEL,
   ELEVENLABS_TTS_MODEL,
@@ -24,7 +25,6 @@ const REF_FORMATS: Record<string, AudioRef['format']> = {
   '.mp3': 'mp3',
   '.ogg': 'ogg',
 }
-const CHARACTER_COLORS = ['#4fc3f7', '#b58cf0', '#e6a23c', '#46c98c', '#f06292', '#7986cb']
 const PREVIEW_ROWS = 10
 const COPY_CONCURRENCY = 8
 
@@ -117,20 +117,20 @@ async function readMeta(dir: string, fatal: TemplateIssue[]): Promise<TemplateMe
 async function readTerms(dir: string, warnings: TemplateIssue[]): Promise<Term[] | undefined> {
   const raw = await readText(path.join(dir, 'terms.csv'))
   if (raw === null) {
-    warnings.push({ row: null, reason: 'terms.csv is missing — no glossary imported' })
+    warnings.push({ row: null, reason: 'terms.csv is missing' })
     return undefined
   }
   let csv
   try {
     csv = parseCsv(raw)
   } catch (error) {
-    warnings.push({ row: null, reason: `terms.csv is malformed — no glossary imported (${String(error)})` })
+    warnings.push({ row: null, reason: `terms.csv is malformed (${String(error)})` })
     return undefined
   }
   const termI = csv.headers.indexOf('term')
   const translationI = csv.headers.indexOf('translation')
   if (termI < 0 || translationI < 0) {
-    warnings.push({ row: null, reason: 'terms.csv has no term/translation columns — no glossary imported' })
+    warnings.push({ row: null, reason: 'terms.csv has no term/translation columns' })
     return undefined
   }
   const noteI = csv.headers.indexOf('note')
@@ -220,13 +220,13 @@ export async function validateTemplate(dir: string): Promise<TemplateValidation>
     } else seenExportNames.set(exportName.toLowerCase(), row)
 
     if (!sourceText.trim()) fatalErrors.push({ row, reason: 'sourceText is empty' })
-    if (!character) warnings.push({ row, reason: 'character is empty — cue stays unassigned' })
+    if (!character) warnings.push({ row, reason: 'character is empty' })
 
     if (status !== '' && status !== 'excluded') {
       fatalErrors.push({ row, reason: `status "${status}" is not allowed (empty or "excluded")` })
     }
     if (durationHint && !Number.isFinite(Number(durationHint))) {
-      warnings.push({ row, reason: `durationHint "${durationHint}" is not a number — ignored` })
+      warnings.push({ row, reason: `durationHint "${durationHint}" is not a number` })
     }
 
     let refRel = ''

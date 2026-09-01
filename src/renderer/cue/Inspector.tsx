@@ -20,7 +20,7 @@ interface Props {
   onSetFinal: () => void
   onDelete: () => void
   character?: Character
-  onCharacterVoice: (settings: VoiceSettings) => void
+  onCharacterVoice: (characterId: string, settings: VoiceSettings) => void
   rules: string
   onRulesSaved: (text: string) => void
 }
@@ -151,7 +151,7 @@ function VoiceTab({
   onChange,
 }: {
   character?: Character
-  onChange: (s: VoiceSettings) => void
+  onChange: (characterId: string, s: VoiceSettings) => void
 }) {
   if (!character) return <div className="insp-empty">No character for this cue</div>
 
@@ -172,7 +172,7 @@ function VoiceTab({
             min={k.min}
             max={k.max}
             value={toSlider(v[k.key])}
-            onChange={(e) => onChange({ ...v, [k.key]: fromSlider(Number(e.target.value)) })}
+            onChange={(e) => onChange(character.id, { ...v, [k.key]: fromSlider(Number(e.target.value)) })}
           />
           <span className="knob-v">{knobText(k, v[k.key])}</span>
         </label>
@@ -182,7 +182,7 @@ function VoiceTab({
         <input
           type="checkbox"
           checked={v.boost}
-          onChange={(e) => onChange({ ...v, boost: e.target.checked })}
+          onChange={(e) => onChange(character.id, { ...v, boost: e.target.checked })}
         />
         Speaker boost
       </label>

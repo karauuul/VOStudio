@@ -1,6 +1,17 @@
-import { approveCue, changeCompOutput, changeCueText, changeTakeOutput, removeApproval } from './approval'
+import { approveCue, changeCompOutput, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval } from './approval'
 import { compProblem, normalizeComp } from './comp'
-import { hasVoicedTake, type Cue, type CueComp, type Project, type VoiceSettings } from './domain'
+import {
+  characterColor,
+  DEFAULT_VOICE_SETTINGS,
+  ELEVENLABS_STS_MODEL,
+  ELEVENLABS_TTS_MODEL,
+  hasVoicedTake,
+  type Character,
+  type Cue,
+  type CueComp,
+  type Project,
+  type VoiceSettings,
+} from './domain'
 
 export type ProjectCommand =
   | { type: 'cue.saveText'; cueId: string; text: string }
@@ -11,12 +22,18 @@ export type ProjectCommand =
   | { type: 'cue.rejectSuggestion'; cueId: string }
   | { type: 'cue.setVoiceOverride'; cueId: string; override: Partial<VoiceSettings> | null }
   | { type: 'cue.deleteTake'; cueId: string; takeId: string; deletedAt?: string }
+  | { type: 'cue.setCharacter'; cueId: string; characterId: string }
   | { type: 'character.setVoiceSettings'; characterId: string; settings: VoiceSettings }
+  | { type: 'character.create'; id: string; name: string }
+  | { type: 'character.rename'; characterId: string; name: string }
+  | { type: 'character.setProvider'; characterId: string; voiceId?: string; ttsModel?: string; stsModel?: string }
+  | { type: 'character.delete'; characterId: string; reassignTo: string }
   | { type: 'rules.set'; text: string }
 
 export interface ChangeSet {
   cues?: Cue[]
   characters?: Project['characters']
+  charactersReplace?: boolean
   pronunciationRules?: string
 }
 
@@ -29,12 +46,95 @@ const cueById = (project: Project, id: string): Cue => {
   return cue
 }
 
+const characterById = (project: Project, id: string): Character => {
+  const character = project.characters.find((item) => item.id === id)
+  if (!character) throw new Error('Character not found')
+  return character
+}
+
+const characterList = (project: Project): ChangeSet => ({
+  characters: structuredClone(project.characters),
+  charactersReplace: true,
+})
+
+const characterOnly = (character: Character): ChangeSet => ({ characters: [structuredClone(character)] })
+
+function invalidateCharacterCues(project: Project, characterId: string): Cue[] {
+  const moved: Cue[] = []
+  for (const cue of project.cues) {
+    if (cue.characterId !== characterId) continue
+    const next = invalidateVoicedOutput(cue)
+    if (next === cue) continue
+    Object.assign(cue, next)
+    moved.push(structuredClone(cue))
+  }
+  return moved
+}
+
+function uniqueName(project: Project, name: string, exceptId?: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) throw new Error('Character name cannot be empty')
+  const clash = project.characters.some(
+    (item) => item.id !== exceptId && item.name.trim().toLowerCase() === trimmed.toLowerCase()
+  )
+  if (clash) throw new Error(`Character "${trimmed}" already exists`)
+  return trimmed
+}
+
 export function applyProjectCommand(project: Project, command: ProjectCommand): ChangeSet {
   if (command.type === 'character.setVoiceSettings') {
-    const character = project.characters.find((item) => item.id === command.characterId)
-    if (!character) throw new Error('Character not found')
+    const character = characterById(project, command.characterId)
     character.voiceSettings = structuredClone(command.settings)
-    return { characters: [structuredClone(character)] }
+    return characterOnly(character)
+  }
+  if (command.type === 'character.create') {
+    if (project.characters.some((item) => item.id === command.id)) throw new Error('Character id is already used')
+    project.characters.push({
+      id: command.id,
+      name: uniqueName(project, command.name),
+      color: characterColor(project.characters.length),
+      provider: {
+        providerId: 'elevenlabs',
+        voiceId: '',
+        ttsModel: ELEVENLABS_TTS_MODEL,
+        stsModel: ELEVENLABS_STS_MODEL,
+      },
+      voiceSettings: { ...DEFAULT_VOICE_SETTINGS },
+    })
+    return characterList(project)
+  }
+  if (command.type === 'character.rename') {
+    const character = characterById(project, command.characterId)
+    character.name = uniqueName(project, command.name, character.id)
+    return characterOnly(character)
+  }
+  if (command.type === 'character.setProvider') {
+    const character = characterById(project, command.characterId)
+    const provider = { ...character.provider }
+    if (command.voiceId !== undefined) provider.voiceId = command.voiceId.trim()
+    if (command.ttsModel !== undefined) provider.ttsModel = command.ttsModel
+    if (command.stsModel !== undefined) provider.stsModel = command.stsModel
+    const voiceChanged = provider.voiceId !== character.provider.voiceId
+    character.provider = provider
+    const changes = characterOnly(character)
+    if (!voiceChanged) return changes
+    return { ...changes, cues: invalidateCharacterCues(project, character.id) }
+  }
+  if (command.type === 'character.delete') {
+    const character = characterById(project, command.characterId)
+    if (command.reassignTo) {
+      if (command.reassignTo === character.id) throw new Error('Cannot reassign cues to the character being deleted')
+      characterById(project, command.reassignTo)
+    }
+    const moved: Cue[] = []
+    for (const cue of project.cues) {
+      if (cue.characterId !== character.id) continue
+      cue.characterId = command.reassignTo
+      Object.assign(cue, invalidateVoicedOutput(cue))
+      moved.push(structuredClone(cue))
+    }
+    project.characters = project.characters.filter((item) => item.id !== character.id)
+    return { ...characterList(project), cues: moved }
   }
   if (command.type === 'rules.set') {
     project.pronunciationRules = command.text
@@ -96,6 +196,13 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
       if (cue.status === 'generated' && !hasVoicedTake(cue)) cue.status = cue.text.trim() ? 'translated' : 'empty'
       break
     }
+    case 'cue.setCharacter': {
+      if (command.characterId) characterById(project, command.characterId)
+      if (cue.characterId === command.characterId) break
+      cue.characterId = command.characterId
+      Object.assign(cue, invalidateVoicedOutput(cue))
+      break
+    }
   }
   return { cues: [structuredClone(cue)] }
 }
@@ -107,8 +214,11 @@ export function applyChangeSet(project: Project, changes: ChangeSet): Project {
     next = { ...next, cues: next.cues.map((cue) => replacements.get(cue.id) ?? cue) }
   }
   if (changes.characters) {
-    const replacements = new Map(changes.characters.map((character) => [character.id, character]))
-    next = { ...next, characters: next.characters.map((character) => replacements.get(character.id) ?? character) }
+    if (changes.charactersReplace) next = { ...next, characters: changes.characters }
+    else {
+      const replacements = new Map(changes.characters.map((character) => [character.id, character]))
+      next = { ...next, characters: next.characters.map((character) => replacements.get(character.id) ?? character) }
+    }
   }
   if (changes.pronunciationRules !== undefined) next = { ...next, pronunciationRules: changes.pronunciationRules }
   return next

@@ -111,6 +111,14 @@ export function approveCue(cue: Cue, approvedAt = new Date().toISOString()): Cue
   }
 }
 
+export function invalidateVoicedOutput(cue: Cue): Cue {
+  if (!hasValidVoicedOutput(cue)) return cue
+  const next = materializeOutput(cue)
+  if (!next.output) return next
+  const bumped: Cue = { ...next, output: { ...next.output, revision: nextOutputRevision(next) } }
+  return { ...bumped, status: nonApprovedStatus(bumped) }
+}
+
 export function removeApproval(cue: Cue): Cue {
   const { approval: _approval, ...next } = cue
   return { ...next, status: nonApprovedStatus(next) }

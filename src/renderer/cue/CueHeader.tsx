@@ -1,7 +1,14 @@
 import type { Character, Cue } from '@shared/domain'
 import { approvalState } from '@shared/approval'
 
-export function CueHeader({ cue, character }: { cue: Cue; character?: Character }) {
+interface Props {
+  cue: Cue
+  character?: Character
+  characters: Character[]
+  onCharacter: (characterId: string) => void
+}
+
+export function CueHeader({ cue, character, characters, onCharacter }: Props) {
   const review = approvalState(cue)
   const label = cue.status === 'excluded'
     ? 'Excluded'
@@ -18,12 +25,24 @@ export function CueHeader({ cue, character }: { cue: Cue; character?: Character 
         {cue.fields['EventName'] || cue.key}
       </span>
       <span className="ed-wem">WemId {cue.key}</span>
-      {character && (
-        <span className="badge char" style={{ color: character.color, borderColor: character.color }}>
-          <span className="char-dot" style={{ background: character.color }} />
-          {character.name}
-        </span>
-      )}
+      {character && <span className="char-dot" style={{ background: character.color }} />}
+      <select
+        aria-label="Character"
+        value={cue.characterId}
+        onChange={(e) => {
+          e.currentTarget.blur()
+          onCharacter(e.target.value)
+        }}
+        style={character ? { color: character.color } : undefined}
+      >
+        <option value="">Unassigned</option>
+        {cue.characterId && !character && <option value={cue.characterId}>{cue.characterId}</option>}
+        {characters.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
       <span className="sp" />
       <span className={'badge st-' + review}>{label}</span>
     </div>

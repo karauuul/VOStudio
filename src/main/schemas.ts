@@ -44,6 +44,7 @@ export const projectFileSchema = z
     pronunciationRules: z.string(),
     exportTemplate: z.string(),
     terms: z.array(z.unknown()).optional(),
+    alienMigrated: z.literal(true).optional(),
   })
   .passthrough()
 
@@ -139,6 +140,9 @@ const voiceSettingsSchema = z.object({
   style: finite.min(0).max(1), speed: finite.min(0.7).max(1.2), boost: z.boolean(),
 })
 const cueId = z.object({ cueId: z.string().min(1).max(200) })
+const characterId = z.object({ characterId: z.string().min(1).max(200) })
+const characterName = z.string().min(1).max(120)
+const modelId = z.string().min(1).max(120)
 
 export const projectCommandSchema = z.discriminatedUnion('type', [
   cueId.extend({ type: z.literal('cue.saveText'), text: z.string().max(5000) }),
@@ -149,6 +153,16 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   cueId.extend({ type: z.literal('cue.rejectSuggestion') }),
   cueId.extend({ type: z.literal('cue.setVoiceOverride'), override: voiceSettingsSchema.partial().nullable() }),
   cueId.extend({ type: z.literal('cue.deleteTake'), takeId: z.string().min(1).max(200), deletedAt: z.string().min(1).optional() }),
-  z.object({ type: z.literal('character.setVoiceSettings'), characterId: z.string().min(1).max(200), settings: voiceSettingsSchema }),
+  cueId.extend({ type: z.literal('cue.setCharacter'), characterId: z.string().max(200) }),
+  characterId.extend({ type: z.literal('character.setVoiceSettings'), settings: voiceSettingsSchema }),
+  z.object({ type: z.literal('character.create'), id: z.string().min(1).max(200), name: characterName }),
+  characterId.extend({ type: z.literal('character.rename'), name: characterName }),
+  characterId.extend({
+    type: z.literal('character.setProvider'),
+    voiceId: z.string().max(200).optional(),
+    ttsModel: modelId.optional(),
+    stsModel: modelId.optional(),
+  }),
+  characterId.extend({ type: z.literal('character.delete'), reassignTo: z.string().max(200) }),
   z.object({ type: z.literal('rules.set'), text: z.string().max(100_000) }),
 ])

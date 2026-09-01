@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import { applyChangeSet, applyProjectCommand, type ProjectCommand } from '../src/shared/project-commands'
 import { SerialProjectRepository } from '../src/main/project-repository'
-import { emptyEdits, type Project } from '../src/shared/domain'
+import {
+  cueVoiceUnchanged,
+  DEFAULT_VOICE_SETTINGS,
+  ELEVENLABS_STS_MODEL,
+  ELEVENLABS_TTS_MODEL,
+  emptyEdits,
+  singleFlight,
+  type Project,
+} from '../src/shared/domain'
 import { projectCommandSchema } from '../src/main/schemas'
 import { approvalState } from '../src/shared/approval'
 import { setupImportedProject, setupOpenedProject } from '../src/main/project-import'
@@ -42,6 +50,254 @@ describe('project commands', () => {
     const change = applyProjectCommand(p, { type: 'cue.approve', cueId: 'c', approved: false })
     expect(change.cues?.[0]).not.toHaveProperty('approval')
     expect(approvalState(p.cues[0])).not.toBe('approved')
+  })
+})
+
+describe('character commands', () => {
+  const second = (p: Project): void => {
+    applyProjectCommand(p, { type: 'character.create', id: 'ch2', name: ' Bo ' })
+  }
+
+  it('validates the new command boundary without stripping data', () => {
+    const commands: ProjectCommand[] = [
+      { type: 'character.create', id: 'ch2', name: 'Bo' },
+      { type: 'character.rename', characterId: 'ch', name: 'Ada Prime' },
+      { type: 'character.setProvider', characterId: 'ch', voiceId: 'v2', ttsModel: 'm', stsModel: 's' },
+      { type: 'character.delete', characterId: 'ch', reassignTo: '' },
+      { type: 'cue.setCharacter', cueId: 'c', characterId: '' },
+    ]
+    for (const command of commands) expect(projectCommandSchema.parse(command)).toEqual(command)
+    expect(() => projectCommandSchema.parse({ type: 'character.create', id: '', name: 'Bo' })).toThrow()
+    expect(() => projectCommandSchema.parse({ type: 'character.rename', characterId: 'ch', name: '' })).toThrow()
+  })
+
+  it('creates a character with a trimmed unique name and provider defaults', () => {
+    const p = project()
+    const change = applyProjectCommand(p, { type: 'character.create', id: 'ch2', name: '  Bo  ' })
+    expect(p.characters.map((c) => c.id)).toEqual(['ch', 'ch2'])
+    expect(p.characters[1]).toMatchObject({
+      id: 'ch2',
+      name: 'Bo',
+      provider: { providerId: 'elevenlabs', voiceId: '', ttsModel: ELEVENLABS_TTS_MODEL, stsModel: ELEVENLABS_STS_MODEL },
+      voiceSettings: DEFAULT_VOICE_SETTINGS,
+    })
+    expect(applyChangeSet(project(), change)).toEqual(p)
+  })
+
+  it('rejects an empty, duplicate or id-colliding character', () => {
+    const p = project()
+    expect(() => applyProjectCommand(p, { type: 'character.create', id: 'ch2', name: '   ' })).toThrow()
+    expect(() => applyProjectCommand(p, { type: 'character.create', id: 'ch2', name: ' ada ' })).toThrow('already exists')
+    expect(() => applyProjectCommand(p, { type: 'character.create', id: 'ch', name: 'Bo' })).toThrow('already used')
+    expect(p.characters).toHaveLength(1)
+  })
+
+  it('renames without touching the id and keeps names unique', () => {
+    const p = project()
+    second(p)
+    applyProjectCommand(p, { type: 'character.rename', characterId: 'ch', name: '  Ada Prime ' })
+    expect(p.characters[0]).toMatchObject({ id: 'ch', name: 'Ada Prime' })
+    expect(p.cues[0].characterId).toBe('ch')
+    expect(() => applyProjectCommand(p, { type: 'character.rename', characterId: 'ch2', name: 'ada prime' })).toThrow()
+    expect(() => applyProjectCommand(p, { type: 'character.rename', characterId: 'nope', name: 'X' })).toThrow('Character not found')
+  })
+
+  it('patches one provider field at a time', () => {
+    const p = project()
+    applyProjectCommand(p, { type: 'character.setProvider', characterId: 'ch', voiceId: '  v2 ' })
+    expect(p.characters[0].provider).toEqual({ providerId: 'elevenlabs', voiceId: 'v2', ttsModel: 'm', stsModel: 's' })
+    applyProjectCommand(p, { type: 'character.setProvider', characterId: 'ch', ttsModel: ELEVENLABS_TTS_MODEL })
+    expect(p.characters[0].provider).toEqual({
+      providerId: 'elevenlabs',
+      voiceId: 'v2',
+      ttsModel: ELEVENLABS_TTS_MODEL,
+      stsModel: 's',
+    })
+    applyProjectCommand(p, { type: 'character.setProvider', characterId: 'ch', stsModel: ELEVENLABS_STS_MODEL })
+    expect(p.characters[0].provider.stsModel).toBe(ELEVENLABS_STS_MODEL)
+    expect(p.characters[0].provider.voiceId).toBe('v2')
+  })
+
+  it('invalidates approval when the voice id changes but not on a model change', () => {
+    const p = project()
+    applyProjectCommand(p, { type: 'cue.approve', cueId: 'c', approved: true, approvedAt: 'then' })
+    const modelChange = applyProjectCommand(p, {
+      type: 'character.setProvider',
+      characterId: 'ch',
+      ttsModel: ELEVENLABS_TTS_MODEL,
+    })
+    expect(modelChange.cues).toBeUndefined()
+    expect(approvalState(p.cues[0])).toBe('approved')
+
+    const before = p.cues[0].output?.revision ?? 0
+    const voiceChange = applyProjectCommand(p, { type: 'character.setProvider', characterId: 'ch', voiceId: 'v9' })
+    expect(voiceChange.cues?.map((c) => c.id)).toEqual(['c'])
+    expect(p.cues[0].output?.revision).toBe(before + 1)
+    expect(approvalState(p.cues[0])).toBe('stale')
+  })
+
+  it('does not invalidate unvoiced cues of a character whose voice id changed', () => {
+    const p = project()
+    p.cues[0].takes = []
+    delete p.cues[0].finalTakeId
+    p.cues[0].status = 'translated'
+    const change = applyProjectCommand(p, { type: 'character.setProvider', characterId: 'ch', voiceId: 'v9' })
+    expect(change.cues).toEqual([])
+    expect(p.cues[0].output).toBeUndefined()
+  })
+
+  it('merges a partial character change without dropping the others', () => {
+    const p = project()
+    applyProjectCommand(p, { type: 'character.create', id: 'ch2', name: 'Bo' })
+    const renderer = structuredClone(p)
+    const change = applyProjectCommand(p, { type: 'character.rename', characterId: 'ch', name: 'Ada Prime' })
+    expect(change.charactersReplace).toBeUndefined()
+    expect(change.characters).toHaveLength(1)
+    expect(applyChangeSet(renderer, change).characters.map((c) => c.name)).toEqual(['Ada Prime', 'Bo'])
+  })
+
+  it('replaces the whole list only when membership changes', () => {
+    const p = project()
+    const created = applyProjectCommand(p, { type: 'character.create', id: 'ch2', name: 'Bo' })
+    expect(created.charactersReplace).toBe(true)
+    const deleted = applyProjectCommand(p, { type: 'character.delete', characterId: 'ch2', reassignTo: '' })
+    expect(deleted.charactersReplace).toBe(true)
+    expect(applyChangeSet(structuredClone(p), deleted).characters.map((c) => c.id)).toEqual(['ch'])
+  })
+
+  it('keeps voice settings a partial change too', () => {
+    const p = project()
+    applyProjectCommand(p, { type: 'character.create', id: 'ch2', name: 'Bo' })
+    const renderer = structuredClone(p)
+    const change = applyProjectCommand(p, {
+      type: 'character.setVoiceSettings',
+      characterId: 'ch',
+      settings: { ...DEFAULT_VOICE_SETTINGS, stability: 0.9 },
+    })
+    expect(change.charactersReplace).toBeUndefined()
+    expect(applyChangeSet(renderer, change).characters.map((c) => c.voiceSettings.stability)).toEqual([
+      0.9,
+      DEFAULT_VOICE_SETTINGS.stability,
+    ])
+  })
+
+  it('deletes a character and unassigns its cues', () => {
+    const p = project()
+    const change = applyProjectCommand(p, { type: 'character.delete', characterId: 'ch', reassignTo: '' })
+    expect(p.characters).toEqual([])
+    expect(p.cues[0].characterId).toBe('')
+    expect(applyChangeSet(project(), change)).toEqual(p)
+  })
+
+  it('deletes a character and reassigns its cues, leaving no orphan characterId', () => {
+    const p = project()
+    second(p)
+    const change = applyProjectCommand(p, { type: 'character.delete', characterId: 'ch', reassignTo: 'ch2' })
+    expect(p.characters.map((c) => c.id)).toEqual(['ch2'])
+    expect(p.cues[0].characterId).toBe('ch2')
+    expect(p.cues.every((c) => !c.characterId || p.characters.some((ch) => ch.id === c.characterId))).toBe(true)
+    expect(applyChangeSet(project(), change).characters.map((c) => c.id)).toEqual(['ch2'])
+  })
+
+  it('rejects a delete that would reassign to a missing or deleted character', () => {
+    const p = project()
+    expect(() => applyProjectCommand(p, { type: 'character.delete', characterId: 'ch', reassignTo: 'ch' })).toThrow()
+    expect(() => applyProjectCommand(p, { type: 'character.delete', characterId: 'ch', reassignTo: 'nope' })).toThrow()
+    expect(p.characters).toHaveLength(1)
+    expect(p.cues[0].characterId).toBe('ch')
+  })
+
+  it('invalidates approval of voiced cues moved by a delete', () => {
+    const p = project()
+    second(p)
+    applyProjectCommand(p, { type: 'cue.approve', cueId: 'c', approved: true, approvedAt: 'then' })
+    expect(approvalState(p.cues[0])).toBe('approved')
+    applyProjectCommand(p, { type: 'character.delete', characterId: 'ch', reassignTo: 'ch2' })
+    expect(approvalState(p.cues[0])).toBe('stale')
+    expect(p.cues[0].status).toBe('generated')
+  })
+})
+
+describe('cue character assignment', () => {
+  it('assigns a cue to another character and invalidates its approval', () => {
+    const p = project()
+    applyProjectCommand(p, { type: 'character.create', id: 'ch2', name: 'Bo' })
+    applyProjectCommand(p, { type: 'cue.approve', cueId: 'c', approved: true, approvedAt: 'then' })
+    const before = p.cues[0].output?.revision ?? 0
+    const change = applyProjectCommand(p, { type: 'cue.setCharacter', cueId: 'c', characterId: 'ch2' })
+    expect(change.cues?.[0].characterId).toBe('ch2')
+    expect(p.cues[0].output?.revision).toBe(before + 1)
+    expect(approvalState(p.cues[0])).toBe('stale')
+  })
+
+  it('allows unassigning and rejects an unknown character', () => {
+    const p = project()
+    applyProjectCommand(p, { type: 'cue.setCharacter', cueId: 'c', characterId: '' })
+    expect(p.cues[0].characterId).toBe('')
+    expect(() => applyProjectCommand(p, { type: 'cue.setCharacter', cueId: 'c', characterId: 'nope' })).toThrow('Character not found')
+    expect(p.cues[0].characterId).toBe('')
+  })
+
+  it('does not invalidate when the character does not change', () => {
+    const p = project()
+    applyProjectCommand(p, { type: 'cue.approve', cueId: 'c', approved: true, approvedAt: 'then' })
+    const before = p.cues[0].output?.revision
+    applyProjectCommand(p, { type: 'cue.setCharacter', cueId: 'c', characterId: 'ch' })
+    expect(p.cues[0].output?.revision).toBe(before)
+    expect(approvalState(p.cues[0])).toBe('approved')
+  })
+
+  it('does not create an output for an unvoiced cue', () => {
+    const p = project()
+    p.cues[0].takes = []
+    delete p.cues[0].finalTakeId
+    p.cues[0].status = 'translated'
+    applyProjectCommand(p, { type: 'cue.setCharacter', cueId: 'c', characterId: '' })
+    expect(p.cues[0].output).toBeUndefined()
+    expect(p.cues[0].status).toBe('translated')
+  })
+})
+
+describe('generation guards', () => {
+  it('accepts a generation whose cue and voice are unchanged', () => {
+    const p = project()
+    expect(cueVoiceUnchanged(p, 'c', 'ch', 'v')).toBe(true)
+  })
+
+  it('rejects a generation whose cue was reassigned, unassigned or deleted', () => {
+    const p = project()
+    applyProjectCommand(p, { type: 'character.create', id: 'ch2', name: 'Bo' })
+    applyProjectCommand(p, { type: 'cue.setCharacter', cueId: 'c', characterId: 'ch2' })
+    expect(cueVoiceUnchanged(p, 'c', 'ch', 'v')).toBe(false)
+    applyProjectCommand(p, { type: 'cue.setCharacter', cueId: 'c', characterId: '' })
+    expect(cueVoiceUnchanged(p, 'c', 'ch', 'v')).toBe(false)
+    expect(cueVoiceUnchanged(p, 'missing', 'ch', 'v')).toBe(false)
+  })
+
+  it('rejects a generation whose character voice changed mid-flight', () => {
+    const p = project()
+    applyProjectCommand(p, { type: 'character.setProvider', characterId: 'ch', voiceId: 'v9' })
+    expect(cueVoiceUnchanged(p, 'c', 'ch', 'v')).toBe(false)
+    expect(cueVoiceUnchanged(p, 'c', 'ch', 'v9')).toBe(true)
+  })
+
+  it('rejects a second in-flight run for the same key and releases it afterwards', async () => {
+    const keys = new Set<string>()
+    let release!: () => void
+    const running = new Promise<void>((resolve) => { release = resolve })
+    const first = singleFlight(keys, 'ch', 'busy', () => running.then(() => 'done'))
+    await expect(singleFlight(keys, 'ch', 'busy', async () => 'second')).rejects.toThrow('busy')
+    await expect(singleFlight(keys, 'other', 'busy', async () => 'other')).resolves.toBe('other')
+    release()
+    await expect(first).resolves.toBe('done')
+    await expect(singleFlight(keys, 'ch', 'busy', async () => 'again')).resolves.toBe('again')
+  })
+
+  it('releases the key when the run fails', async () => {
+    const keys = new Set<string>()
+    await expect(singleFlight(keys, 'ch', 'busy', async () => { throw new Error('network') })).rejects.toThrow('network')
+    expect(keys.size).toBe(0)
+    await expect(singleFlight(keys, 'ch', 'busy', async () => 'ok')).resolves.toBe('ok')
   })
 })
 
