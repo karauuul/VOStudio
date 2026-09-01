@@ -204,6 +204,7 @@ export interface IpcApi {
 
   'provider:tts': (req: TtsRequest) => Promise<Take>
   'provider:sts': (req: StsRequest) => Promise<Take>
+  'provider:testVoice': (characterId: string) => Promise<ArrayBuffer>
   'provider:usage': () => Promise<UsageInfo | null>
   'provider:setApiKey': (key: string) => Promise<void>
   'provider:hasApiKey': () => Promise<boolean>

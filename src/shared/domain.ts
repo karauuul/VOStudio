@@ -264,6 +264,8 @@ export function hasVoicedTake(cue: Cue): boolean {
 export const ELEVENLABS_TTS_MODEL = 'eleven_multilingual_v2'
 export const ELEVENLABS_STS_MODEL = 'eleven_multilingual_sts_v2'
 
+export const CHARACTER_COLORS = ['#4fc3f7', '#b58cf0', '#e6a23c', '#46c98c', '#f06292', '#7986cb']
+
 export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   stability: 0.45,
   similarity: 0.51,

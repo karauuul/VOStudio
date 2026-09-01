@@ -31,6 +31,7 @@ import { Inspector } from './cue/Inspector'
 import type { CompApi } from './cue/WaveLanes'
 import { TransportBar } from './cue/TransportBar'
 import { BatchExportDialog } from './BatchExportDialog'
+import { CharactersDialog } from './CharactersDialog'
 import { ProjectHome } from './ProjectHome'
 import { useKeyboard, type KeyboardHandlers } from './keyboard'
 import type { WaveformHandle } from './Waveform'
@@ -178,6 +179,7 @@ export default function App() {
   const [status, setStatus] = useState<Status>(null)
   const [bulk, setBulk] = useState(false)
   const [showExport, setShowExport] = useState(false)
+  const [showCharacters, setShowCharacters] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [sideW, setSideW] = useState(() => storedWidth(SIDE))
@@ -322,6 +324,11 @@ export default function App() {
     () => project?.characters.find((c) => c.id === activeCue?.characterId),
     [project, activeCue]
   )
+  useEffect(() => {
+    if (characterFilter === ALL_CHARACTERS) return
+    if (project && !project.characters.some((c) => c.id === characterFilter)) setCharacterFilter(ALL_CHARACTERS)
+  }, [project?.characters, characterFilter])
+
   const activeIndex = useMemo(
     () => visible.findIndex((c) => c.id === activeCueId),
     [visible, activeCueId]
@@ -536,26 +543,35 @@ export default function App() {
   }, [activeCue, mutateCue, debounceVoice, pushStatus, dispatch])
 
   const onCharacterVoice = useCallback(
-    (settings: VoiceSettings) => {
-      const ch = activeCharacter
-      if (!ch) return
+    (characterId: string, settings: VoiceSettings) => {
       setProject((p) =>
         p
           ? {
               ...p,
               characters: p.characters.map((c) =>
-                c.id === ch.id ? { ...c, voiceSettings: settings } : c
+                c.id === characterId ? { ...c, voiceSettings: settings } : c
               ),
             }
           : p
       )
-      debounceVoice(`char:${ch.id}`, () =>
-        dispatch({ type: 'character.setVoiceSettings', characterId: ch.id, settings }).catch((e: unknown) =>
+      debounceVoice(`char:${characterId}`, () =>
+        dispatch({ type: 'character.setVoiceSettings', characterId, settings }).catch((e: unknown) =>
           pushStatus('err', String(e))
         )
       )
     },
-    [activeCharacter, debounceVoice, pushStatus, dispatch]
+    [debounceVoice, pushStatus, dispatch]
+  )
+
+  const onCueCharacter = useCallback(
+    (characterId: string) => {
+      const cue = activeCue
+      if (!cue || cue.characterId === characterId) return
+      void dispatch({ type: 'cue.setCharacter', cueId: cue.id, characterId }).catch((e: unknown) =>
+        pushStatus('err', String(e))
+      )
+    },
+    [activeCue, dispatch, pushStatus]
   )
 
   const onTakeAdded = useCallback(
@@ -717,7 +733,7 @@ export default function App() {
       onRejectSuggestion,
     ]
   )
-  useKeyboard(handlers, !!project && !showExport && !menuOpen)
+  useKeyboard(handlers, !!project && !showExport && !showCharacters && !menuOpen)
 
   if (!project) {
     return (
@@ -808,6 +824,16 @@ export default function App() {
                     Sync CSV
                   </button>
                 )}
+                <button
+                  className="menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setShowCharacters(true)
+                  }}
+                >
+                  Characters
+                </button>
                 <button
                   className="menu-item"
                   role="menuitem"
@@ -905,6 +931,8 @@ export default function App() {
             <CueEditor
               cue={activeCue}
               character={activeCharacter}
+              characters={project.characters}
+              onCharacter={onCueCharacter}
               shownTake={shownTake}
               selectedTakeId={selectedTakeId}
               onSelectTake={setSelectedTakeId}
@@ -961,6 +989,17 @@ export default function App() {
       {status && <Toast status={status} onClose={closeStatus} />}
 
       {showExport && <BatchExportDialog onClose={() => setShowExport(false)} />}
+
+      {showCharacters && (
+        <CharactersDialog
+          characters={project.characters}
+          cues={project.cues}
+          onVoiceSettings={onCharacterVoice}
+          dispatch={dispatch}
+          onStatus={pushStatus}
+          onClose={() => setShowCharacters(false)}
+        />
+      )}
     </div>
   )
 }

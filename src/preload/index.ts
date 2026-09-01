@@ -24,6 +24,7 @@ const channelMap: Record<IpcChannel, true> = {
 
   'provider:tts': true,
   'provider:sts': true,
+  'provider:testVoice': true,
   'provider:usage': true,
   'provider:setApiKey': true,
   'provider:hasApiKey': true,

@@ -3,6 +3,7 @@ import path from 'path'
 import { randomUUID } from 'crypto'
 import { parseCsv } from '@shared/csv'
 import {
+  CHARACTER_COLORS,
   DEFAULT_VOICE_SETTINGS,
   ELEVENLABS_STS_MODEL,
   ELEVENLABS_TTS_MODEL,
@@ -24,7 +25,6 @@ const REF_FORMATS: Record<string, AudioRef['format']> = {
   '.mp3': 'mp3',
   '.ogg': 'ogg',
 }
-const CHARACTER_COLORS = ['#4fc3f7', '#b58cf0', '#e6a23c', '#46c98c', '#f06292', '#7986cb']
 const PREVIEW_ROWS = 10
 const COPY_CONCURRENCY = 8
 

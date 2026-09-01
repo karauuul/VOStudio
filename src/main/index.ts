@@ -91,6 +91,8 @@ const stsSchema = z.object({
   fragment: z.boolean().optional(),
 })
 
+const TEST_VOICE_TEXT = 'Voice test, one two three.'
+
 const MAX_RECORDING_BYTES = 100 * 1024 * 1024
 
 const recordingSchema = z.object({
@@ -528,6 +530,24 @@ function registerHandlers(): void {
     await publishCue(cue)
     pushUsage()
     return take
+  })
+
+  typedHandle('provider:testVoice', async (characterId: string) => {
+    const id = z.string().min(1).max(200).parse(characterId)
+    const project = requireProject()
+    const character = project.characters.find((c) => c.id === id)
+    if (!character) throw new Error('Character not found')
+    if (!character.provider.voiceId) {
+      throw new Error(`No voice configured for character "${character.name}"`)
+    }
+    const audio = await eleven.tts({
+      text: TEST_VOICE_TEXT,
+      voiceId: character.provider.voiceId,
+      model: character.provider.ttsModel,
+      settings: character.voiceSettings,
+    })
+    pushUsage()
+    return audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer
   })
 
   typedHandle('provider:usage', () => eleven.usage())

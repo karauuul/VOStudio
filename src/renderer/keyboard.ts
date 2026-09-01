@@ -27,7 +27,7 @@ export interface KeyboardHandlers {
 function isTextField(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false
   const tag = el.tagName
-  return tag === 'TEXTAREA' || tag === 'INPUT' || el.isContentEditable
+  return tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT' || el.isContentEditable
 }
 
 function digitKey(e: KeyboardEvent): number | null {
