@@ -61,12 +61,15 @@ export function ProjectHome({
       if (result) setPreview(result)
     })
 
-  const importTemplate = (dir: string): void =>
+  const importTemplate = (current: TemplatePreview): void =>
     run(async () => {
-      const snapshot = await api['project:importTemplate'](dir)
+      const result = await api['project:importTemplate'](current.dir)
+      const known = new Set(current.warnings.map((w) => `${w.row}:${w.reason}`))
+      const fresh = result.warnings.filter((w) => !known.has(`${w.row}:${w.reason}`))
       setPreview(null)
-      onOpen(snapshot)
-      onStatus('ok', `Imported ${snapshot.project.cues.length} cues`)
+      onOpen(result.snapshot)
+      onStatus('ok', `Imported ${result.snapshot.project.cues.length} cues`)
+      if (fresh.length > 0) onStatus('info', `${fresh.length} new warnings since preview: ${fresh[0].reason}`)
     })
 
   const remove = (project: ProjectSummary, e: ReactMouseEvent): void => {
@@ -160,7 +163,7 @@ export function ProjectHome({
           preview={preview}
           busy={busy}
           onCancel={() => setPreview(null)}
-          onCreate={() => importTemplate(preview.dir)}
+          onCreate={() => importTemplate(preview)}
         />
       )}
     </div>

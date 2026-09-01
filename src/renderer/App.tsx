@@ -795,17 +795,19 @@ export default function App() {
                 >
                   Home
                 </button>
-                <button
-                  className="menu-item"
-                  role="menuitem"
-                  disabled={bulk}
-                  onClick={() => {
-                    setMenuOpen(false)
-                    void syncCsv()
-                  }}
-                >
-                  Sync CSV
-                </button>
+                {project.csvBinding && (
+                  <button
+                    className="menu-item"
+                    role="menuitem"
+                    disabled={bulk}
+                    onClick={() => {
+                      setMenuOpen(false)
+                      void syncCsv()
+                    }}
+                  >
+                    Sync CSV
+                  </button>
+                )}
                 <button
                   className="menu-item"
                   role="menuitem"

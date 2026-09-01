@@ -91,16 +91,22 @@ export function planBatch(project: Project, scope: 'approved' | 'all-final'): Pl
   return out
 }
 
-export function findCollisions(planned: PlannedTake[]): NameCollision[] {
+const nameKey = (name: string): string => name.toLowerCase()
+
+function groupByName(planned: PlannedTake[]): Map<string, PlannedTake[]> {
   const byName = new Map<string, PlannedTake[]>()
   for (const p of planned) {
-    const list = byName.get(p.name)
+    const list = byName.get(nameKey(p.name))
     if (list) list.push(p)
-    else byName.set(p.name, [p])
+    else byName.set(nameKey(p.name), [p])
   }
+  return byName
+}
+
+export function findCollisions(planned: PlannedTake[]): NameCollision[] {
   const collisions: NameCollision[] = []
-  for (const [name, list] of byName) {
-    if (list.length > 1) collisions.push({ name, cueKeys: list.map((p) => p.cue.key) })
+  for (const list of groupByName(planned).values()) {
+    if (list.length > 1) collisions.push({ name: list[0].name, cueKeys: list.map((p) => p.cue.key) })
   }
   return collisions
 }
@@ -115,17 +121,13 @@ export function resolvePlan(
   planned: PlannedTake[],
   strategy: Record<string, CollisionStrategy | undefined> = {}
 ): ResolvedPlan {
+  const byKey = new Map(Object.entries(strategy).map(([name, s]) => [nameKey(name), s]))
   const collisions = findCollisions(planned)
-  const uncovered = collisions.filter((c) => !strategy[c.name])
+  const uncovered = collisions.filter((c) => !byKey.get(nameKey(c.name)))
   if (uncovered.length > 0) return { jobs: [], skipped: 0, uncovered }
 
-  const collided = new Set(collisions.map((c) => c.name))
-  const groups = new Map<string, PlannedTake[]>()
-  for (const p of planned) {
-    const list = groups.get(p.name)
-    if (list) list.push(p)
-    else groups.set(p.name, [p])
-  }
+  const collided = new Set(collisions.map((c) => nameKey(c.name)))
+  const groups = groupByName(planned)
 
   const jobs: PlannedTake[] = []
   let skipped = 0
@@ -134,7 +136,7 @@ export function resolvePlan(
       jobs.push(...list)
       continue
     }
-    const s = strategy[name]
+    const s = byKey.get(name)
     if (s === 'skip') {
       skipped += list.length
     } else if (s === 'reuse') {

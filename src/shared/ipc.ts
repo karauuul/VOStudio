@@ -158,6 +158,11 @@ export interface TemplatePreview {
   fatalErrors: TemplateIssue[]
 }
 
+export interface TemplateImportResult {
+  snapshot: ProjectSnapshot
+  warnings: TemplateIssue[]
+}
+
 export interface SuggestionsLoadResult {
   loaded: number
   skipped: number
@@ -176,7 +181,7 @@ export interface IpcApi {
   'project:delete': (dir: string) => Promise<void>
   'project:close': () => Promise<void>
   'project:pickTemplate': () => Promise<TemplatePreview | null>
-  'project:importTemplate': (dir: string) => Promise<ProjectSnapshot>
+  'project:importTemplate': (dir: string) => Promise<TemplateImportResult>
   'project:command': (command: ProjectCommand) => Promise<CommandResult>
   'ui:save': (ui: UiSessionState) => Promise<void>
 

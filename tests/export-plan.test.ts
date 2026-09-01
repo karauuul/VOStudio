@@ -236,6 +236,23 @@ describe('collisions and strategies', () => {
     expect(r.skipped).toBe(1)
   })
 
+  it('names differing only in case collide — the filesystem would overwrite one', () => {
+    const upper = cue('400', { fields: { EventName: 'SAME' } })
+    const mixed = planBatch(project([a, upper, c]), 'approved')
+    const coll = findCollisions(mixed)
+    expect(coll).toHaveLength(1)
+    expect(coll[0].cueKeys).toEqual(['100', '400'])
+  })
+
+  it('a case-differing strategy key still resolves its collision', () => {
+    const upper = cue('400', { fields: { EventName: 'SAME' } })
+    const mixed = planBatch(project([a, upper, c]), 'approved')
+    const r = resolvePlan(mixed, { 'same.MP3': 'skip' })
+    expect(r.uncovered).toHaveLength(0)
+    expect(r.jobs.map((j) => j.name)).toEqual(['Unique.mp3'])
+    expect(r.skipped).toBe(2)
+  })
+
   it('a plan without collisions passes straight through', () => {
     const only = planBatch(project([c]), 'approved')
     const r = resolvePlan(only)

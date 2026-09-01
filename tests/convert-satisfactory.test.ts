@@ -70,6 +70,7 @@ describe('convert-satisfactory', () => {
       'status',
       'durationHint',
       'note',
+      'EventName',
     ])
     expect(index.rows).toHaveLength(result.cues)
 
@@ -82,6 +83,7 @@ describe('convert-satisfactory', () => {
     expect(converted['refAudio']).toBe(`${source['EventName']}__${source['WemId']}.wav`)
     expect(converted['durationHint']).toBe(source['AudioDuration'])
     expect(converted['character']).toBe(characterFromEventName(source['EventName']))
+    expect(converted['EventName']).toBe(source['EventName'])
 
     const statuses = new Set(index.rows.map((r) => r[index.headers.indexOf('status')]))
     expect([...statuses].sort()).toEqual(['', 'excluded'])
@@ -103,6 +105,18 @@ describe('convert-satisfactory', () => {
     expect(index.size).toBe(3)
     expect(index.get(withAudio[0]['WemId'])).toBe(`${withAudio[0]['EventName']}__${withAudio[0]['WemId']}.wav`)
     expect(await buildReferenceIndex(path.join(H.root, 'nope'))).toEqual(new Map())
+  })
+
+  it('rejects an --out folder without the template suffix', async () => {
+    await expect(
+      convert({ csv: MASTER_CSV, audio: AUDIO_DIR, out: path.join(H.root, 'plain-folder') })
+    ).rejects.toThrow('.vostudio-src')
+    await expect(
+      convert({ csv: MASTER_CSV, audio: AUDIO_DIR, out: path.join(H.root, 'Xvostudio-src') })
+    ).rejects.toThrow('.vostudio-src')
+    await expect(
+      convert({ csv: MASTER_CSV, audio: AUDIO_DIR, out: path.join(H.root, '.vostudio-src') })
+    ).rejects.toThrow('.vostudio-src')
   })
 
   it('produces a template the app validator accepts', async () => {

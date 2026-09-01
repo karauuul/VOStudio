@@ -261,6 +261,9 @@ export function hasVoicedTake(cue: Cue): boolean {
   return liveTakes(cue).some((t) => t.kind !== 'recording')
 }
 
+export const ELEVENLABS_TTS_MODEL = 'eleven_multilingual_v2'
+export const ELEVENLABS_STS_MODEL = 'eleven_multilingual_sts_v2'
+
 export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   stability: 0.45,
   similarity: 0.51,

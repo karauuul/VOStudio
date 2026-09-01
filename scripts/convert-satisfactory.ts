@@ -14,6 +14,7 @@ export const INDEX_HEADER = [
   'status',
   'durationHint',
   'note',
+  'EventName',
 ]
 const TERMS_HEADER = ['term', 'translation', 'note']
 
@@ -70,7 +71,11 @@ const csvLine = (cells: string[]): string => cells.map(serializeCell).join(',')
 
 export async function convert(options: ConvertOptions): Promise<ConvertResult> {
   const outDir = path.resolve(options.out)
-  const name = path.basename(outDir).replace(new RegExp(`${TEMPLATE_SUFFIX}$`, 'i'), '')
+  const folder = path.basename(outDir)
+  if (!folder.toLowerCase().endsWith(TEMPLATE_SUFFIX)) {
+    throw new Error(`--out must end with a folder named <name>${TEMPLATE_SUFFIX}`)
+  }
+  const name = folder.slice(0, -TEMPLATE_SUFFIX.length)
   if (!name) throw new Error(`--out must end with a folder named <name>${TEMPLATE_SUFFIX}`)
 
   const csv = parseCsv(await fs.readFile(path.resolve(options.csv), 'utf-8'))
@@ -119,6 +124,7 @@ export async function convert(options: ConvertOptions): Promise<ConvertResult> {
         cell(COLUMNS.status) === EXCLUDED_STATUS ? 'excluded' : '',
         cell(COLUMNS.duration),
         cell(COLUMNS.note),
+        eventName,
       ])
     )
   }

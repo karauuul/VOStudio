@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { promises as fs, type Dirent } from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
-import type { Project, UiSessionState } from '@shared/domain'
+import { sanitizeTerms, type Project, type UiSessionState } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
 import { PROJECT_SUFFIX, summarizeProject, type ProjectStats, type ProjectSummary } from '@shared/project-summary'
 import { projectFileSchema } from './schemas'
@@ -52,8 +52,9 @@ export function getProject(): Project | null {
   return current
 }
 
-export function adoptProject(project: Project): void {
+export function adoptProject(project: Project, dir?: string): void {
   current = project
+  if (dir !== undefined) projectDir = dir
 }
 
 export function getProjectDir(): string | null {
@@ -180,6 +181,11 @@ export async function openProjectDir(dir: string): Promise<Project> {
   const raw = await fs.readFile(path.join(dir, 'project.json'), 'utf-8')
   const p = JSON.parse(raw) as Project
   projectFileSchema.parse(p)
+  if (Array.isArray(p.terms)) {
+    const terms = sanitizeTerms(p.terms)
+    if (terms) p.terms = terms
+    else delete p.terms
+  }
   ui = await loadUi(dir, p.ui)
   p.ui = ui
   current = p

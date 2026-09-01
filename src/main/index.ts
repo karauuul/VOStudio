@@ -27,7 +27,7 @@ import * as migration from './migration'
 import { GENERATED_DIR } from './migration'
 import { syncCsv } from './csv-sync'
 import { copyJob, encodeJob, planBatchExport, planCueExport } from './export'
-import { ADA_ID, ALIEN, characterForEvent } from './satisfactory-preset'
+import { ALIEN, characterForEvent, needsAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
 import { setupImportedProject, setupOpenedProject } from './project-import'
@@ -37,12 +37,10 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'vostudio', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
 ])
 
+const REFERENCE_DIR_ENV = process.env['VOSTUDIO_REFERENCE_DIR']
+
 function isAllowedPath(abs: string): boolean {
-  const roots = [
-    store.getProjectDir(),
-    store.getProject()?.media.referenceDir,
-    GENERATED_DIR,
-  ].filter(Boolean) as string[]
+  const roots = [store.getProjectDir(), REFERENCE_DIR_ENV, GENERATED_DIR].filter(Boolean) as string[]
   const norm = path.resolve(abs)
   return roots.some((r) => norm.toLowerCase().startsWith(path.resolve(r).toLowerCase() + path.sep))
 }
@@ -148,6 +146,8 @@ function abandonProject(): void {
   store.closeProject()
 }
 
+const pickedTemplates = new Set<string>()
+
 let lifecycle: Promise<unknown> = Promise.resolve()
 function serialLifecycle<T>(fn: () => Promise<T>): Promise<T> {
   const run = lifecycle.then(fn, fn)
@@ -190,9 +190,7 @@ async function autoAdopt(): Promise<void> {
 }
 
 async function migrateCharacters(project: Project): Promise<void> {
-  if (!project.characters.some((c) => c.id === ADA_ID)) return
-  if (!project.cues.some((c) => c.fields['EventName'])) return
-  if (project.characters.some((c) => c.id === ALIEN.id)) return
+  if (!needsAlienMigration(project)) return
   project.characters.push(ALIEN)
   for (const cue of project.cues) {
     cue.characterId = characterForEvent(cue.fields['EventName'] ?? '')
@@ -324,20 +322,24 @@ function registerHandlers(): void {
     const win = BrowserWindow.getFocusedWindow()
     const picked = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
     if (picked.canceled || picked.filePaths.length === 0) return null
+    pickedTemplates.add(picked.filePaths[0])
     return toPreview(await validateTemplate(picked.filePaths[0]))
   })
 
   typedHandle('project:importTemplate', (dir: string) =>
     serialLifecycle(async () => {
       const target = templateDirSchema.parse(dir)
-      return setupImportedProject({
-        stageImport: () => validateTemplate(target),
+      if (!pickedTemplates.has(target)) throw new Error('Template folder was not picked in this session')
+      const fresh = await validateTemplate(target)
+      const snapshot = await setupImportedProject({
+        stageImport: () => Promise.resolve(fresh),
         detachCurrent: detachCurrentRepository,
         importProject: createProjectFromTemplate,
         currentProject: store.getProject,
         resetRepository,
         finishImport: async () => undefined,
       })
+      return { snapshot, warnings: fresh.warnings }
     })
   )
 
@@ -436,8 +438,8 @@ function registerHandlers(): void {
     const project = requireProject()
     const cue = project.cues.find((c) => c.id === parsed.cueId)
     if (!cue) throw new Error('Cue not found')
-    const character = project.characters.find((c) => c.id === cue.characterId) ?? project.characters[0]
-    if (!character) throw new Error('Character not found')
+    const character = project.characters.find((c) => c.id === cue.characterId)
+    if (!character) throw new Error('Cue has no character assigned')
     if (!character.provider.voiceId) {
       throw new Error(`No voice configured for character "${character.name}"`)
     }
@@ -485,9 +487,8 @@ function registerHandlers(): void {
       )
     }
 
-    const character =
-      project.characters.find((c) => c.id === cue.characterId) ?? project.characters[0]
-    if (!character) throw new Error('Character not found')
+    const character = project.characters.find((c) => c.id === cue.characterId)
+    if (!character) throw new Error('Cue has no character assigned')
     if (!character.provider.voiceId) {
       throw new Error(`No voice configured for character "${character.name}"`)
     }

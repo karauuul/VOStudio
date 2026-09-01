@@ -1,6 +1,7 @@
 import { mkdirSync, promises as fs } from 'fs'
 import path from 'path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
+import { serializeCell } from '../src/shared/csv'
 import { sanitizeTerms, type Project } from '../src/shared/domain'
 import { exportName } from '../src/shared/export-plan'
 
@@ -12,9 +13,8 @@ vi.mock('electron', () => ({ app: { getPath: () => H.root } }))
 
 mkdirSync(H.root, { recursive: true })
 
-const { buildProjectBase, createProjectFromTemplate, toPreview, validateTemplate } = await import(
-  '../src/main/template-import'
-)
+const { buildProjectBase, createProjectFromTemplate, relUnderAudio, toPreview, validateTemplate } =
+  await import('../src/main/template-import')
 
 const FIXTURE = path.join(__dirname, 'fixtures', 'sample.vostudio-src')
 
@@ -181,6 +181,129 @@ describe('template validation — fatal vs warning matrix', () => {
   })
 })
 
+describe('exportName safety', () => {
+  it('rejects path separators, traversal and reserved characters', async () => {
+    const bad = ['a/b', 'a\\b', '..', 'a:b', 'a<b', 'a>b', 'a"b', 'a|b', 'a?b', 'a*b', 'name.']
+    for (const name of bad) {
+      const reasons = await fatalReasons(rows(`A,ADA,S,,,${serializeCell(name)},,,`))
+      expect(reasons, name).toEqual([`exportName "${name}" is not a safe file name`])
+    }
+  })
+
+  it('accepts ordinary export names', async () => {
+    expect(await fatalReasons(rows('A,ADA,S,,,VO_ADA__123.take,,,'))).toEqual([])
+  })
+
+  it('treats exportName uniqueness case-insensitively', async () => {
+    const reasons = await fatalReasons(rows('A,ADA,S,,,Line_01,,,', 'B,ADA,S,,,LINE_01,,,'))
+    expect(reasons).toEqual(['duplicate exportName "LINE_01" (first seen in row 2)'])
+  })
+
+  it('keeps cueId uniqueness case-sensitive', async () => {
+    expect(await fatalReasons(rows('a,ADA,S,,,X1,,,', 'A,ADA,S,,,X2,,,'))).toEqual([])
+  })
+
+  it('stores the trimmed exportName in the cue fields', async () => {
+    const v = await validateTemplate(await makeTemplate({ index: rows('A,ADA,S,,,"  Padded  ",,,') }))
+    expect(v.fatalErrors).toEqual([])
+    expect(v.rows[0].exportName).toBe('Padded')
+    expect(v.rows[0].fields['exportName']).toBe('Padded')
+    const base = buildProjectBase(v, '/refs')
+    expect(base.cues[0].fields['exportName']).toBe('Padded')
+  })
+})
+
+describe('malformed CSV', () => {
+  it('rejects an unterminated quoted field in index.csv', async () => {
+    const reasons = await fatalReasons(HEADER + '\nA,ADA,"never closed,,,X,,,\n')
+    expect(reasons).toHaveLength(1)
+    expect(reasons[0]).toContain('index.csv is malformed')
+    expect(reasons[0]).toContain('unterminated quoted field')
+  })
+
+  it('rejects a row whose cell count differs from the header', async () => {
+    expect(await fatalReasons(rows('A,ADA,S,,,X,,'))).toEqual([
+      'row has 8 cells, header has 9',
+    ])
+    expect(await fatalReasons(rows('A,ADA,S,,,X,,,,extra'))).toEqual([
+      'row has 10 cells, header has 9',
+    ])
+  })
+
+  it('degrades a malformed terms.csv to a warning', async () => {
+    const v = await validateTemplate(
+      await makeTemplate({ index: rows('A,ADA,S,,,X,,,'), terms: 'term,translation\n"open,x\n' })
+    )
+    expect(v.fatalErrors).toEqual([])
+    expect(v.terms).toBeUndefined()
+    expect(v.warnings[0].reason).toContain('terms.csv is malformed')
+  })
+})
+
+describe('refAudio resolution', () => {
+  it('normalizes a path that re-enters audio/ from above', async () => {
+    expect(relUnderAudio('/tpl/audio', '../audio/vo/x.wav')).toBe('vo/x.wav')
+    expect(relUnderAudio('/tpl/audio', 'vo/../vo/x.wav')).toBe('vo/x.wav')
+    expect(relUnderAudio('/tpl/audio', 'vo\\x.wav')).toBe('vo/x.wav')
+    expect(relUnderAudio('/tpl/audio', '../secret.wav')).toBeNull()
+    expect(relUnderAudio('/tpl/audio', '.')).toBeNull()
+    expect(relUnderAudio('/tpl/audio', '')).toBeNull()
+  })
+
+  it('resolves a re-entering refAudio against the copied reference root', async () => {
+    const dir = await makeTemplate({ index: rows('A,ADA,S,,../audio/vo/a.wav,X,,,') })
+    await fs.mkdir(path.join(dir, 'audio', 'vo'), { recursive: true })
+    await fs.writeFile(path.join(dir, 'audio', 'vo', 'a.wav'), 'RIFFstub')
+    const v = await validateTemplate(dir)
+    expect(v.fatalErrors).toEqual([])
+    expect(v.rows[0].refRel).toBe('vo/a.wav')
+    const base = buildProjectBase(v, path.join('/refs'))
+    expect(base.cues[0].referenceAudio?.relPath).toBe(path.join('/refs', 'vo/a.wav'))
+  })
+
+  it('warns once when audio/ is missing entirely', async () => {
+    const dir = path.join(H.root, `noaudio-${seq++}`)
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(path.join(dir, 'project-meta.json'), META)
+    await fs.writeFile(path.join(dir, 'terms.csv'), 'term,translation,note\n')
+    await fs.writeFile(path.join(dir, 'index.csv'), rows('A,ADA,S,,vo/a.wav,X,,,'))
+    const v = await validateTemplate(dir)
+    expect(v.fatalErrors).toEqual([])
+    expect(v.warnings.filter((w) => w.reason === 'audio/ directory is missing')).toHaveLength(1)
+    expect(v.rows[0].missingAudio).toBe(true)
+  })
+
+  it('rejects a refAudio that resolves through a directory link out of audio/', async () => {
+    const dir = await makeTemplate({ index: rows('A,ADA,S,,vo/a.wav,X,,,') })
+    const outside = path.join(H.root, `outside-${seq++}`)
+    await fs.mkdir(outside, { recursive: true })
+    await fs.writeFile(path.join(outside, 'a.wav'), 'RIFFstub')
+    try {
+      await fs.symlink(outside, path.join(dir, 'audio', 'vo'), 'junction')
+    } catch {
+      return
+    }
+    const v = await validateTemplate(dir)
+    expect(v.fatalErrors.map((e) => e.reason)).toEqual([
+      'refAudio "vo/a.wav" resolves through a link outside audio/',
+    ])
+  })
+
+  it('accepts a link that stays inside audio/', async () => {
+    const dir = await makeTemplate({ index: rows('A,ADA,S,,link/a.wav,X,,,') })
+    await fs.mkdir(path.join(dir, 'audio', 'real'), { recursive: true })
+    await fs.writeFile(path.join(dir, 'audio', 'real', 'a.wav'), 'RIFFstub')
+    try {
+      await fs.symlink(path.join(dir, 'audio', 'real'), path.join(dir, 'audio', 'link'), 'junction')
+    } catch {
+      return
+    }
+    const v = await validateTemplate(dir)
+    expect(v.fatalErrors).toEqual([])
+    expect(v.rows[0].missingAudio).toBe(false)
+  })
+})
+
 describe('CSV row → cue mapping', () => {
   it('maps every spec column onto the cue model', async () => {
     const base = buildProjectBase(await validateTemplate(FIXTURE), '/refs')
@@ -284,10 +407,30 @@ describe('createProjectFromTemplate', () => {
     }
   })
 
-  it('refuses to overwrite an existing project folder', async () => {
-    await expect(createProjectFromTemplate(await validateTemplate(FIXTURE))).rejects.toThrow(
-      'Project "Sample Template" already exists'
-    )
+  it('reports an existing project folder as fatal at validation', async () => {
+    const v = await validateTemplate(FIXTURE)
+    expect(v.fatalErrors.map((e) => e.reason)).toContain('Project "Sample Template" already exists')
+    expect(toPreview(v).fatalErrors.length).toBeGreaterThan(0)
+    await expect(createProjectFromTemplate(v)).rejects.toThrow('import blocked')
+  })
+
+  it('sanitizes terms on open and leaves a project without them byte-identical', async () => {
+    const store = await import('../src/main/project-store')
+    const dir = path.join(H.root, 'VOStudio', 'Sample Template.vostudio')
+    const file = path.join(dir, 'project.json')
+    const raw = JSON.parse(await fs.readFile(file, 'utf-8')) as Record<string, unknown>
+    raw['terms'] = [{ term: ' Ferrofluid ', translation: 'ферофлюїд' }, { term: '', translation: 'x' }]
+    await fs.writeFile(file, JSON.stringify(raw, null, 2))
+    expect((await store.openProjectDir(dir)).terms).toEqual([
+      { term: 'Ferrofluid', translation: 'ферофлюїд' },
+    ])
+
+    delete raw['terms']
+    const byteIdentical = JSON.stringify(raw, null, 2)
+    await fs.writeFile(file, byteIdentical)
+    const reopened = await store.openProjectDir(dir)
+    expect('terms' in reopened).toBe(false)
+    expect(await fs.readFile(file, 'utf-8')).toBe(byteIdentical)
   })
 
   it('refuses a template with fatal errors', async () => {

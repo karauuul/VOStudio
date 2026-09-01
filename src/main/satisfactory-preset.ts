@@ -1,4 +1,10 @@
-import type { Character } from '@shared/domain'
+import {
+  DEFAULT_VOICE_SETTINGS,
+  ELEVENLABS_STS_MODEL,
+  ELEVENLABS_TTS_MODEL,
+  type Character,
+  type Project,
+} from '@shared/domain'
 
 export const ADA_ID = 'ada'
 
@@ -9,14 +15,23 @@ export const ALIEN: Character = {
   provider: {
     providerId: 'elevenlabs',
     voiceId: '',
-    ttsModel: 'eleven_multilingual_v2',
-    stsModel: 'eleven_multilingual_sts_v2',
+    ttsModel: ELEVENLABS_TTS_MODEL,
+    stsModel: ELEVENLABS_STS_MODEL,
   },
-  voiceSettings: { stability: 0.45, similarity: 0.51, style: 0, speed: 1.0, boost: true },
+  voiceSettings: { ...DEFAULT_VOICE_SETTINGS },
 }
 
 export function characterForEvent(eventName: string): string {
   if (eventName.includes('ADA')) return ADA_ID
   if (/Alien|SamOre|Whisper/i.test(eventName)) return ALIEN.id
   return ADA_ID
+}
+
+export function needsAlienMigration(
+  project: Pick<Project, 'csvBinding' | 'characters' | 'cues'>
+): boolean {
+  if (!project.csvBinding) return false
+  if (!project.characters.some((c) => c.id === ADA_ID)) return false
+  if (project.characters.some((c) => c.id === ALIEN.id)) return false
+  return project.cues.some((c) => c.fields['EventName'])
 }
