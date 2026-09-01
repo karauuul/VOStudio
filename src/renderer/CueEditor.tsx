@@ -110,8 +110,12 @@ export function CueEditor({
 
   const voice = useMemo(() => resolveVoiceSettings(character, cue), [character, cue])
 
-  const noVoice = !!character && !character.provider.voiceId
-  const noVoiceReason = noVoice ? `No voice configured for character "${character.name}"` : ''
+  const noVoice = !character || !character.provider.voiceId
+  const noVoiceReason = !character
+    ? 'Cue has no character assigned'
+    : noVoice
+      ? `No voice configured for character "${character.name}"`
+      : ''
 
   const fragment = useFragment({
     cue,

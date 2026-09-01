@@ -1,0 +1,6 @@
+cueId,character,sourceText,translation,refAudio,exportName,status,durationHint,note
+VO_ADA_001,ADA,"Welcome back, pioneer.","З поверненням, піонере.",vo/ada_001.wav,VO_ADA_001,,2.4,
+VO_ADA_002,ADA,"One, two, three - calibration complete.",,vo/ada_002.wav,VO_ADA_002,,3.1,needs a warmer read
+VO_ALIEN_003,Alien,Play for us. Play for us.,Грайте для нас.,vo/alien_003.mp3,VO_ALIEN_003,,1.9,
+VO_ADA_004,ADA,"Warning, hostile fauna detected nearby.",,vo/ada_004.ogg,VO_ADA_004,,4.2,
+VO_MISC_005,,Silent placeholder line.,,,VO_MISC_005,excluded,0.8,

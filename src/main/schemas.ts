@@ -43,8 +43,18 @@ export const projectFileSchema = z
     sessions: z.array(z.unknown()),
     pronunciationRules: z.string(),
     exportTemplate: z.string(),
+    terms: z.array(z.unknown()).optional(),
   })
   .passthrough()
+
+export const templateMetaSchema = z.object({
+  formatVersion: z.literal(1),
+  name: z.string().min(1).max(200),
+  sourceLang: z.string().min(1).max(20),
+  targetLang: z.string().min(1).max(20),
+})
+
+export const templateDirSchema = z.string().min(1).max(4096)
 
 const reverbSchema = z.object({
   mix: finite.min(MIX_MIN).max(MIX_MAX),

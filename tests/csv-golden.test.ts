@@ -68,3 +68,14 @@ describe('master_vo_table.csv golden round-trip', () => {
     expect(serializeCsv(parsed)).toBe(raw)
   })
 })
+
+describe('malformed CSV', () => {
+  it('throws when the file ends inside a quoted field', () => {
+    expect(() => parseCsv('a,b\r\n1,"never closed\r\n')).toThrow('unterminated quoted field')
+    expect(() => parseCsv('a,b\r\n1,"x""y\r\n')).toThrow('unterminated quoted field')
+  })
+
+  it('accepts a quoted field that closes at EOF without a newline', () => {
+    expect(parseCsv('a,b\r\n1,"closed"').rows[0]).toEqual(['1', 'closed'])
+  })
+})

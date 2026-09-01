@@ -124,6 +124,45 @@ export interface ExportPlan {
   outDir: string
 }
 
+export interface TemplateMeta {
+  formatVersion: number
+  name: string
+  sourceLang: string
+  targetLang: string
+}
+
+export interface TemplateIssue {
+  row: number | null
+  reason: string
+}
+
+export interface TemplatePreviewRow {
+  cueId: string
+  character: string
+  sourceText: string
+  translation: string
+  refAudio: string
+  exportName: string
+  status: string
+  missingAudio: boolean
+}
+
+export interface TemplatePreview {
+  dir: string
+  meta: TemplateMeta | null
+  firstRows: TemplatePreviewRow[]
+  totalCues: number
+  characters: string[]
+  terms: number
+  warnings: TemplateIssue[]
+  fatalErrors: TemplateIssue[]
+}
+
+export interface TemplateImportResult {
+  snapshot: ProjectSnapshot
+  warnings: TemplateIssue[]
+}
+
 export interface SuggestionsLoadResult {
   loaded: number
   skipped: number
@@ -141,7 +180,8 @@ export interface IpcApi {
   'project:create': (name: string) => Promise<ProjectSnapshot>
   'project:delete': (dir: string) => Promise<void>
   'project:close': () => Promise<void>
-  'project:importSatisfactory': () => Promise<ProjectSnapshot>
+  'project:pickTemplate': () => Promise<TemplatePreview | null>
+  'project:importTemplate': (dir: string) => Promise<TemplateImportResult>
   'project:command': (command: ProjectCommand) => Promise<CommandResult>
   'ui:save': (ui: UiSessionState) => Promise<void>
 

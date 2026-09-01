@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import type { TemplatePreview } from '@shared/ipc'
 import type { ProjectSnapshot } from '@shared/project-commands'
 import type { ProjectSummary } from '@shared/project-summary'
 import { api } from './api'
+import { TemplatePreviewDialog } from './TemplatePreviewDialog'
 
 type Status = (kind: 'ok' | 'err' | 'info', text: string) => void
 
@@ -13,6 +15,7 @@ export function ProjectHome({
   onStatus: Status
 }) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
+  const [preview, setPreview] = useState<TemplatePreview | null>(null)
   const [name, setName] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
@@ -50,6 +53,23 @@ export function ProjectHome({
       const trimmed = (name ?? '').trim()
       if (!trimmed) return
       onOpen(await api['project:create'](trimmed))
+    })
+
+  const pickTemplate = (): void =>
+    run(async () => {
+      const result = await api['project:pickTemplate']()
+      if (result) setPreview(result)
+    })
+
+  const importTemplate = (current: TemplatePreview): void =>
+    run(async () => {
+      const result = await api['project:importTemplate'](current.dir)
+      const known = new Set(current.warnings.map((w) => `${w.row}:${w.reason}`))
+      const fresh = result.warnings.filter((w) => !known.has(`${w.row}:${w.reason}`))
+      setPreview(null)
+      onOpen(result.snapshot)
+      onStatus('ok', `Imported ${result.snapshot.project.cues.length} cues`)
+      if (fresh.length > 0) onStatus('info', `${fresh.length} new warnings since preview: ${fresh[0].reason}`)
     })
 
   const remove = (project: ProjectSummary, e: ReactMouseEvent): void => {
@@ -93,21 +113,8 @@ export function ProjectHome({
               </button>
             </>
           )}
-          <button
-            className="btn ghost"
-            disabled={busy}
-            onClick={() => {
-              if (busyRef.current || !window.confirm('Import Satisfactory project?')) return
-              run(async () => {
-                onStatus('info', 'Importing master_vo_table.csv…')
-                const snapshot = await api['project:importSatisfactory']()
-                const adopted = snapshot.project.cues.filter((c) => c.takes.length > 0).length
-                onOpen(snapshot)
-                onStatus('ok', `Imported ${snapshot.project.cues.length} cues · existing audio adopted: ${adopted}`)
-              })
-            }}
-          >
-            Import Satisfactory
+          <button className="btn ghost" disabled={busy} onClick={pickTemplate}>
+            Import template
           </button>
         </div>
       </div>
@@ -150,6 +157,15 @@ export function ProjectHome({
           </div>
         ))}
       </div>
+
+      {preview && (
+        <TemplatePreviewDialog
+          preview={preview}
+          busy={busy}
+          onCancel={() => setPreview(null)}
+          onCreate={() => importTemplate(preview)}
+        />
+      )}
     </div>
   )
 }

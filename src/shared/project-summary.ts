@@ -44,13 +44,17 @@ export function summarizeProject(raw: unknown): ProjectStats | null {
 
 const FORBIDDEN = new Set(Array.from('<>:"|?*/'))
 
-export function isValidProjectName(name: string): boolean {
-  if (name.length === 0 || name.length > 80) return false
+export function isSafeFileName(name: string): boolean {
+  if (name.length === 0 || name.length > 200) return false
   for (const ch of name) {
     if (FORBIDDEN.has(ch) || ch === '\\' || ch.charCodeAt(0) < 32) return false
   }
   if (/[. ]$/.test(name)) return false
   return !/^\.+$/.test(name)
+}
+
+export function isValidProjectName(name: string): boolean {
+  return name.length <= 80 && isSafeFileName(name)
 }
 
 export const PROJECT_SUFFIX = '.vostudio'

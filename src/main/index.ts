@@ -1,10 +1,10 @@
-import { app, BrowserWindow, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, protocol, session, shell } from 'electron'
 import path from 'path'
 import { promises as fs } from 'fs'
 import { randomUUID } from 'crypto'
 import { z } from 'zod'
 import { typedHandle } from './typed-ipc'
-import { projectCommandSchema, projectDirSchema, projectNameSchema } from './schemas'
+import { projectCommandSchema, projectDirSchema, projectNameSchema, templateDirSchema } from './schemas'
 import { emit } from './emit'
 import * as store from './project-store'
 import * as eleven from './providers/elevenlabs'
@@ -22,12 +22,12 @@ import {
 } from '@shared/domain'
 import type { Project } from '@shared/domain'
 import type { AppSettings, TakeDurationUpdate } from '@shared/ipc'
-import { importSatisfactory, stageSatisfactoryImport } from './satisfactory-import'
+import { createProjectFromTemplate, toPreview, validateTemplate } from './template-import'
 import * as migration from './migration'
 import { GENERATED_DIR } from './migration'
 import { syncCsv } from './csv-sync'
 import { copyJob, encodeJob, planBatchExport, planCueExport } from './export'
-import { SATISFACTORY_CSV, REFERENCE_DIR, ALIEN, characterForEvent } from './satisfactory-preset'
+import { ALIEN, characterForEvent, needsAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
 import { setupImportedProject, setupOpenedProject } from './project-import'
@@ -37,8 +37,10 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'vostudio', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
 ])
 
+const REFERENCE_DIR_ENV = process.env['VOSTUDIO_REFERENCE_DIR']
+
 function isAllowedPath(abs: string): boolean {
-  const roots = [store.getProjectDir(), REFERENCE_DIR, GENERATED_DIR].filter(Boolean) as string[]
+  const roots = [store.getProjectDir(), REFERENCE_DIR_ENV, GENERATED_DIR].filter(Boolean) as string[]
   const norm = path.resolve(abs)
   return roots.some((r) => norm.toLowerCase().startsWith(path.resolve(r).toLowerCase() + path.sep))
 }
@@ -144,6 +146,8 @@ function abandonProject(): void {
   store.closeProject()
 }
 
+const pickedTemplates = new Set<string>()
+
 let lifecycle: Promise<unknown> = Promise.resolve()
 function serialLifecycle<T>(fn: () => Promise<T>): Promise<T> {
   const run = lifecycle.then(fn, fn)
@@ -186,8 +190,7 @@ async function autoAdopt(): Promise<void> {
 }
 
 async function migrateCharacters(project: Project): Promise<void> {
-  if (!project.cues.some((c) => c.fields['EventName'])) return
-  if (project.characters.some((c) => c.id === ALIEN.id)) return
+  if (!needsAlienMigration(project)) return
   project.characters.push(ALIEN)
   for (const cue of project.cues) {
     cue.characterId = characterForEvent(cue.fields['EventName'] ?? '')
@@ -311,21 +314,32 @@ function registerHandlers(): void {
     })
   )
 
-  typedHandle('project:importSatisfactory', () =>
+  typedHandle('project:pickTemplate', async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: 'Import project template',
+      properties: ['openDirectory'],
+    }
+    const win = BrowserWindow.getFocusedWindow()
+    const picked = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    if (picked.canceled || picked.filePaths.length === 0) return null
+    pickedTemplates.add(picked.filePaths[0])
+    return toPreview(await validateTemplate(picked.filePaths[0]))
+  })
+
+  typedHandle('project:importTemplate', (dir: string) =>
     serialLifecycle(async () => {
-      const dir = path.join(store.defaultProjectsRoot(), `satisfactory${PROJECT_SUFFIX}`)
-      if (await dirExists(dir)) throw new Error('Project "satisfactory" already exists')
-      return setupImportedProject({
-        stageImport: stageSatisfactoryImport,
+      const target = templateDirSchema.parse(dir)
+      if (!pickedTemplates.has(target)) throw new Error('Template folder was not picked in this session')
+      const fresh = await validateTemplate(target)
+      const snapshot = await setupImportedProject({
+        stageImport: () => Promise.resolve(fresh),
         detachCurrent: detachCurrentRepository,
-        importProject: importSatisfactory,
+        importProject: createProjectFromTemplate,
         currentProject: store.getProject,
         resetRepository,
-        finishImport: async (repository) => {
-          await autoAdopt()
-          await consumeSuggestionsFile(false, repository)
-        },
+        finishImport: async () => undefined,
       })
+      return { snapshot, warnings: fresh.warnings }
     })
   )
 
@@ -424,8 +438,8 @@ function registerHandlers(): void {
     const project = requireProject()
     const cue = project.cues.find((c) => c.id === parsed.cueId)
     if (!cue) throw new Error('Cue not found')
-    const character = project.characters.find((c) => c.id === cue.characterId) ?? project.characters[0]
-    if (!character) throw new Error('Character not found')
+    const character = project.characters.find((c) => c.id === cue.characterId)
+    if (!character) throw new Error('Cue has no character assigned')
     if (!character.provider.voiceId) {
       throw new Error(`No voice configured for character "${character.name}"`)
     }
@@ -473,9 +487,8 @@ function registerHandlers(): void {
       )
     }
 
-    const character =
-      project.characters.find((c) => c.id === cue.characterId) ?? project.characters[0]
-    if (!character) throw new Error('Character not found')
+    const character = project.characters.find((c) => c.id === cue.characterId)
+    if (!character) throw new Error('Cue has no character assigned')
     if (!character.provider.voiceId) {
       throw new Error(`No voice configured for character "${character.name}"`)
     }
@@ -531,7 +544,8 @@ function registerHandlers(): void {
   })
 
   typedHandle('csv:preview', async (p: string) => {
-    const src = p || store.getProject()?.csvBinding?.csvPath || SATISFACTORY_CSV
+    const src = p || store.getProject()?.csvBinding?.csvPath
+    if (!src) throw new Error('No CSV path given and the project has no CSV binding')
     const raw = await fs.readFile(src, 'utf-8')
     const csv = parseCsv(raw)
     return { headers: csv.headers, rows: csv.rows.slice(0, 5) }

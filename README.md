@@ -16,6 +16,12 @@ npm run build      # electron-vite production build
 npm run package    # build + electron-builder → release/win-unpacked
 ```
 
+Example converter — turns a game export into a canonical project template, outside the app:
+
+```
+node scripts/convert-satisfactory.ts --csv <master_vo_table.csv> --audio <original_audio dir> --out <name.vostudio-src>
+```
+
 ## Layout
 
 - `src/main/` — Electron main process: project store (`project-store.ts`, atomic writes, autosave), IPC handlers and zod validation (`index.ts`, `schemas.ts`), export encoding (`export.ts`), provider adapters (`providers/elevenlabs.ts`), API keys via `safeStorage` (`secrets.ts`).

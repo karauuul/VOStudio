@@ -59,7 +59,15 @@ Validation rules:
 ## Import behavior
 
 1. The structure and the validation rules above are checked. Errors are reported as a list of row + reason.
-2. Fatal errors block the import: duplicate `cueId`, duplicate `exportName`, malformed CSV.
+2. Fatal errors block the import:
+   - `project-meta.json` missing, not valid JSON, failing the schema, or naming a project that already exists
+   - `index.csv` missing, malformed (unterminated quoted field), missing a required column, or containing no data rows
+   - a row whose cell count differs from the header
+   - empty `cueId`, empty `exportName`, empty `sourceText`
+   - duplicate `cueId`; duplicate `exportName` (compared case-insensitively)
+   - `exportName` that is not a safe file name (path separators, `..`, `<>:"|?*`, control characters, trailing dot or space)
+   - `status` other than empty or `excluded`
+   - `refAudio` outside `audio/`, in an unsupported format, or resolving through a link outside `audio/`
 3. A `refAudio` that does not resolve is not fatal; the cue is imported and flagged as missing audio.
 4. The first rows are shown as a preview before the project is created.
 5. Re-importing `index.csv` into an existing project matches rows on `cueId`: unknown `cueId` is added, changed `sourceText` and `translation` are updated, takes, comps and approvals are left untouched.

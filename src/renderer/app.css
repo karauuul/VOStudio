@@ -1921,6 +1921,73 @@ kbd {
   color: var(--warn);
   border-color: rgba(230, 162, 60, 0.35);
 }
+.pb.err {
+  color: var(--err);
+  border-color: rgba(229, 101, 95, 0.35);
+}
+
+.tpl-modal {
+  width: min(1040px, 94vw);
+}
+.tpl-chars {
+  margin-top: 8px;
+}
+.tpl-scroll {
+  margin-top: 16px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+.tpl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font: 12px var(--sans);
+}
+.tpl-table th {
+  text-align: left;
+  padding: 8px 12px;
+  color: var(--tx3);
+  font: 500 11px var(--mono);
+  background: var(--raise);
+  white-space: nowrap;
+}
+.tpl-table td {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--tx2);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tpl-table tr.off td {
+  color: var(--tx3);
+  text-decoration: line-through;
+}
+.tpl-issues {
+  list-style: none;
+  margin-top: 16px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+.tpl-issues li {
+  display: flex;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.tpl-issues li:last-child {
+  border-bottom: none;
+}
+.tpl-issues.err li .mono {
+  color: var(--err);
+}
+.tpl-issues.warn li .mono {
+  color: var(--warn);
+}
 .home-time {
   color: var(--tx3);
   font: 11px var(--mono);
