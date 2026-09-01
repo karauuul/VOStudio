@@ -5,7 +5,7 @@ export type { ClipEffects, DelayEffect, ReverbEffect } from './effects'
 export interface AudioRef {
   fileId: string
   relPath: string
-  format: 'wav' | 'mp3'
+  format: 'wav' | 'mp3' | 'ogg'
   sampleRate?: number
   channels?: number
 }
@@ -198,6 +198,27 @@ export interface UiSessionState {
   scrollIndex?: number
 }
 
+export interface Term {
+  term: string
+  translation: string
+  note?: string
+}
+
+export function sanitizeTerms(rows: unknown): Term[] | undefined {
+  if (!Array.isArray(rows)) return undefined
+  const out: Term[] = []
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as Partial<Term>
+    const term = typeof row.term === 'string' ? row.term.trim() : ''
+    const translation = typeof row.translation === 'string' ? row.translation.trim() : ''
+    if (!term || !translation) continue
+    const note = typeof row.note === 'string' ? row.note.trim() : ''
+    out.push(note ? { term, translation, note } : { term, translation })
+  }
+  return out.length > 0 ? out : undefined
+}
+
 export interface Project {
   id: string
   schemaVersion: number
@@ -213,6 +234,7 @@ export interface Project {
   pronunciationRules: string
   csvBinding?: CsvBinding
   exportTemplate: string
+  terms?: Term[]
   ui: UiSessionState
 }
 

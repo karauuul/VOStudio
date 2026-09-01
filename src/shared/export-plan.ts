@@ -51,6 +51,7 @@ export function exportName(project: Project, cue: Cue, take: Take): string {
   const ext = take.file.format
   return project.exportTemplate
     .replace(/\{EventName\}/g, cue.fields['EventName'] ?? cue.key)
+    .replace(/\{exportName\}/g, cue.fields['exportName'] || cue.key)
     .replace(/\{WemId\}/g, cue.key)
     .replace(/\{Key\}/g, cue.key)
     .replace(/\{ext\}/g, ext)
