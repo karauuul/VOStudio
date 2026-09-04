@@ -75,12 +75,12 @@ Validation rules:
 ## Export package
 
 ```
-<name>-export/
+<name>.vostudio/export/
   audio/<exportName>.<ext>
   index.updated.csv
   report.json
 ```
 
-- `audio/<exportName>.<ext>` — rendered files; extension is set by the Export Profile.
-- `index.updated.csv` — `index.csv` with current `translation` and `status`.
-- `report.json` — per cue: `exported` or `failed` with a reason.
+- `audio/<exportName>.<ext>` — rendered files; extension follows the take format.
+- `index.updated.csv` — `index.csv` in the original column order with current `translation` and `status` (`approved`, `excluded` or empty); `translation` and `status` columns are appended when the original header lacks them. Written only for projects created from a template.
+- `report.json` — `{ formatVersion, project, createdAt, scope, exported[], failed[], skipped[] }`; `exported` entries carry `cueId`, `exportName`, `file`, `bytes`, `sha256`; `failed` entries carry a `reason`; `skipped` entries list cues dropped by a collision strategy.

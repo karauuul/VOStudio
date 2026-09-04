@@ -5,6 +5,7 @@ import type {
   ExportJob,
   ExportPlan,
   ExportResult,
+  ExportSummary,
 } from '@shared/ipc'
 import { api, audioUrl } from '../api'
 import type { ResolvedComp } from '../audio/comp-source'
@@ -52,19 +53,33 @@ export async function runPlan(
   onProgress?: (p: ExportProgress) => void
 ): Promise<BatchExportResult> {
   const failed: BatchExportFailure[] = []
-  let written = 0
+  const summary: ExportSummary = { exported: [], failed: [] }
   for (let i = 0; i < plan.jobs.length; i++) {
     const job = plan.jobs[i]
     onProgress?.({ done: i, total: plan.jobs.length, current: job.name })
     try {
-      await runJob(job)
-      written++
+      const result = await runJob(job)
+      summary.exported.push({
+        cueKey: job.cueKey,
+        name: job.name,
+        bytes: result.bytes,
+        sha256: result.parityHash,
+      })
     } catch (e) {
       failed.push({ cueKey: job.cueKey, name: job.name, error: message(e) })
+      summary.failed.push({ cueKey: job.cueKey, name: job.name, reason: message(e) })
     }
   }
   onProgress?.({ done: plan.jobs.length, total: plan.jobs.length, current: '' })
-  return { written, skipped: plan.skipped, failed, collisions: [], outDir: plan.outDir }
+  const paths = await api['export:finish'](plan.outDir, summary)
+  return {
+    written: summary.exported.length,
+    skipped: plan.skipped,
+    failed,
+    collisions: [],
+    outDir: plan.outDir,
+    ...paths,
+  }
 }
 
 export async function exportBatch(

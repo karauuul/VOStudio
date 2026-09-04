@@ -111,9 +111,15 @@ export function findCollisions(planned: PlannedTake[]): NameCollision[] {
   return collisions
 }
 
+export interface SkippedCue {
+  cueId: string
+  reason: 'collision:skip' | 'collision:reuse'
+}
+
 export interface ResolvedPlan {
   jobs: PlannedTake[]
   skipped: number
+  skippedCues: SkippedCue[]
   uncovered: NameCollision[]
 }
 
@@ -124,13 +130,13 @@ export function resolvePlan(
   const byKey = new Map(Object.entries(strategy).map(([name, s]) => [nameKey(name), s]))
   const collisions = findCollisions(planned)
   const uncovered = collisions.filter((c) => !byKey.get(nameKey(c.name)))
-  if (uncovered.length > 0) return { jobs: [], skipped: 0, uncovered }
+  if (uncovered.length > 0) return { jobs: [], skipped: 0, skippedCues: [], uncovered }
 
   const collided = new Set(collisions.map((c) => nameKey(c.name)))
   const groups = groupByName(planned)
 
   const jobs: PlannedTake[] = []
-  let skipped = 0
+  const skippedCues: SkippedCue[] = []
   for (const [name, list] of groups) {
     if (!collided.has(name)) {
       jobs.push(...list)
@@ -138,13 +144,13 @@ export function resolvePlan(
     }
     const s = byKey.get(name)
     if (s === 'skip') {
-      skipped += list.length
+      for (const p of list) skippedCues.push({ cueId: p.cue.key, reason: 'collision:skip' })
     } else if (s === 'reuse') {
       jobs.push(list[list.length - 1])
-      skipped += list.length - 1
+      for (const p of list.slice(0, -1)) skippedCues.push({ cueId: p.cue.key, reason: 'collision:reuse' })
     } else {
       for (const p of list) jobs.push({ ...p, name: withWemIdSuffix(p.name, p.cue.key) })
     }
   }
-  return { jobs, skipped, uncovered: [] }
+  return { jobs, skipped: skippedCues.length, skippedCues, uncovered: [] }
 }

@@ -133,7 +133,8 @@ export function BatchExportDialog({ onClose }: Props) {
               Written {result.written}, skipped {result.skipped} → {result.outDir}
             </div>
           )}
-          {}
+          {result?.indexPath && <div className="dim mono">index.updated.csv → {result.indexPath}</div>}
+          {result?.reportPath && <div className="dim mono">report.json → {result.reportPath}</div>}
           {result && result.failed.length > 0 && (
             <>
               <div className="sec-h">
