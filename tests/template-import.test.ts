@@ -113,6 +113,11 @@ describe('template validation — fatal vs warning matrix', () => {
     expect(reasons).toEqual(['index.csv has duplicate column names: note'])
   })
 
+  it('a reserved column name is fatal', async () => {
+    const reasons = await fatalReasons('cueId,character,sourceText,refAudio,exportName,__proto__\nA,ADA,S,,X,v\n')
+    expect(reasons).toEqual(['index.csv has reserved column names: __proto__'])
+  })
+
   it('a cueId or exportName longer than 200 characters is fatal', async () => {
     const long = 'x'.repeat(201)
     const reasons = await fatalReasons(rows(`${long},ADA,S,,,${long},,,`))

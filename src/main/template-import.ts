@@ -183,6 +183,11 @@ export async function validateTemplate(dir: string): Promise<TemplateValidation>
     fatalErrors.push({ row: 1, reason: `index.csv has duplicate column names: ${duplicateColumns.join(', ')}` })
     return { dir, meta, rows, terms, characters, warnings, fatalErrors }
   }
+  const reservedColumns = csv.headers.filter((h) => h in Object.prototype)
+  if (reservedColumns.length > 0) {
+    fatalErrors.push({ row: 1, reason: `index.csv has reserved column names: ${reservedColumns.join(', ')}` })
+    return { dir, meta, rows, terms, characters, warnings, fatalErrors }
+  }
 
   if (audioRoot === null) warnings.push({ row: null, reason: 'audio/ directory is missing' })
 

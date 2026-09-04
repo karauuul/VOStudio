@@ -43,7 +43,7 @@ let planned = new Map<string, ExportJob>()
 
 interface BatchPlan {
   token: string
-  projectId: string
+  project: Project
   outDir: string
   scope: BatchExportRequest['scope']
   skippedCues: SkippedCue[]
@@ -127,7 +127,13 @@ export async function planBatchExport(req: BatchExportRequest): Promise<ExportPl
   const audioDir = path.join(outDir, 'audio')
   const jobs = toJobs(resolved.jobs, audioDir)
   await fs.rm(audioDir, { recursive: true, force: true })
-  batchPlan = { token, projectId: project.id, outDir, scope: req.scope, skippedCues: resolved.skippedCues }
+  batchPlan = {
+    token,
+    project: structuredClone(project),
+    outDir,
+    scope: req.scope,
+    skippedCues: resolved.skippedCues,
+  }
   return publish(token, jobs, resolved.skipped, outDir, [])
 }
 
@@ -192,10 +198,13 @@ export async function encodeJob(outPath: string, wav: unknown): Promise<ExportRe
 }
 
 export async function finishExport(token: string, summary: ExportSummary): Promise<DeliverPaths> {
-  const { project } = ctx()
   if (!batchPlan || token !== batchPlan.token) throw new Error('This batch export plan is no longer current')
-  if (project.id !== batchPlan.projectId) throw new Error('The exported project is no longer open')
-  const outDir = batchPlan.outDir
+  if (ctx().project.id !== batchPlan.project.id) throw new Error('The exported project is no longer open')
+  const { project, outDir } = batchPlan
+  for (const f of summary.failed) {
+    const outPath = path.join(outDir, 'audio', f.name)
+    if (planned.has(outPath)) await fs.rm(outPath, { force: true })
+  }
   const byKey = new Map(project.cues.map((c) => [c.key, c]))
   const nameOf = (cueKey: string): string => {
     const cue = byKey.get(cueKey)
