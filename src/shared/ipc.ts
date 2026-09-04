@@ -175,6 +175,27 @@ export interface TemplateImportResult {
   warnings: TemplateIssue[]
 }
 
+export interface ReimportDiff {
+  added: number
+  updated: number
+  untouched: number
+  orphaned: number
+  updatedSample: { cueId: string; sourceChanged: boolean; translationChanged: boolean }[]
+}
+
+export interface ReimportPreview {
+  preview: TemplatePreview
+  diff: ReimportDiff
+}
+
+export interface ReimportResult {
+  added: number
+  updated: number
+  untouched: number
+  orphaned: number
+  warnings: TemplateIssue[]
+}
+
 export interface SuggestionsLoadResult {
   loaded: number
   skipped: number
@@ -194,6 +215,8 @@ export interface IpcApi {
   'project:close': () => Promise<void>
   'project:pickTemplate': () => Promise<TemplatePreview | null>
   'project:importTemplate': (dir: string) => Promise<TemplateImportResult>
+  'project:previewReimport': (dir: string) => Promise<ReimportPreview>
+  'project:applyReimport': (dir: string) => Promise<ReimportResult>
   'project:command': (command: ProjectCommand) => Promise<CommandResult>
   'ui:save': (ui: UiSessionState) => Promise<void>
 

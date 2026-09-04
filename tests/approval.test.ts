@@ -3,6 +3,7 @@ import { compSchema, cueApprovalSchema, cueOutputSchema, cueRevisionFieldsSchema
 import {
   approveCue,
   approvalState,
+  changeCueSourceText,
   changeCueText,
   changeCompOutput,
   changeTakeOutput,
@@ -58,6 +59,16 @@ describe('revision-bound approval', () => {
     const next = changeCueText(approvedTakeCue(), 'Changed')
     expect(approvalState(next)).toBe('stale')
     expect(next.approval).toBeDefined()
+  })
+
+  it('invalidates current approval when the source text changes', () => {
+    const before = approvedTakeCue()
+    const next = changeCueSourceText(before, 'Changed source')
+    expect(next.sourceText).toBe('Changed source')
+    expect(next.text).toBe(before.text)
+    expect(next.textRevision).toBe((before.textRevision ?? 0) + 1)
+    expect(approvalState(next)).toBe('stale')
+    expect(changeCueSourceText(before, before.sourceText)).toBe(before)
   })
 
   it('invalidates current approval when the final take changes', () => {
