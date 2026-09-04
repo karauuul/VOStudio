@@ -461,19 +461,32 @@ export default function App() {
   )
 
   const onApprove = useCallback(
-    (approved: boolean) => {
+    (approved: boolean): Promise<boolean> => {
       const cue = activeCue
-      if (!cue) return
+      if (!cue) return Promise.resolve(false)
       if (approved && !hasValidVoicedOutput(cue)) {
         pushStatus('err', 'Approval requires a valid voiced output')
-        return
+        return Promise.resolve(false)
       }
-      void flushText()
+      return flushText()
         .then(() => dispatch({ type: 'cue.approve', cueId: cue.id, approved }))
-        .catch((e: unknown) => pushStatus('err', String(e)))
+        .then(
+          () => true,
+          (e: unknown) => {
+            pushStatus('err', String(e))
+            return false
+          }
+        )
     },
     [activeCue, pushStatus, flushText, dispatch]
   )
+
+  const onApproveNext = useCallback(() => {
+    const targetId = visible[activeIndex + 1]?.id
+    void onApprove(true).then((ok) => {
+      if (ok && targetId !== undefined) selectCue(targetId)
+    })
+  }, [visible, activeIndex, onApprove, selectCue])
 
   const onSetFinal = useCallback(
     (takeId: string) => {
@@ -728,7 +741,8 @@ export default function App() {
       next: () => move(1),
       prev: () => move(-1),
       generate: () => generate(),
-      approveToggle: () => onApprove(activeCue ? approvalState(activeCue) !== 'approved' : false),
+      approveToggle: () => void onApprove(activeCue ? approvalState(activeCue) !== 'approved' : false),
+      approveNext: onApproveNext,
       playOriginal: () => origRef.current?.toggle(),
       playFinal: () => takeRef.current?.toggle(),
       abCompare: () => abRef.current?.(),
@@ -759,6 +773,7 @@ export default function App() {
       move,
       generate,
       onApprove,
+      onApproveNext,
       activeCue,
       activeTakes,
       shownTake,
@@ -946,7 +961,7 @@ export default function App() {
         <div style={{ width: sideW, flex: `0 0 ${sideW}px`, display: 'flex', minHeight: 0 }}>
           <CueList
             cues={visible}
-            total={project.cues.length}
+            allCues={project.cues}
             activeCueId={activeCueId}
             filter={filter}
             search={search}
@@ -975,6 +990,7 @@ export default function App() {
               onText={onText}
               onGenerate={generate}
               onApprove={onApprove}
+              onApproveNext={onApproveNext}
               onAcceptSuggestion={onAcceptSuggestion}
               onRejectSuggestion={onRejectSuggestion}
               onVoiceChange={onVoiceChange}

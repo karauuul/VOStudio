@@ -5,6 +5,7 @@ export interface KeyboardHandlers {
   prev: () => void
   generate: () => void
   approveToggle: () => void
+  approveNext: () => void
   playOriginal: () => void
   playFinal: () => void
   abCompare: () => void
@@ -124,7 +125,8 @@ export function useKeyboard(handlers: KeyboardHandlers, enabled: boolean): void 
           return
         case 'KeyA':
           e.preventDefault()
-          handlers.approveToggle()
+          if (e.shiftKey) handlers.approveNext()
+          else handlers.approveToggle()
           return
         case 'KeyO':
           e.preventDefault()

@@ -441,7 +441,7 @@ kbd {
 .seg button {
   flex: 1 1 auto;
   height: 24px;
-  padding: 0 10px;
+  padding: 0 6px;
   border: none;
   border-radius: 4px;
   background: transparent;
@@ -457,6 +457,15 @@ kbd {
   background: var(--ac);
   color: var(--on-ac);
   font-weight: 600;
+}
+.seg-n {
+  margin-left: 4px;
+  font: 400 10px var(--mono);
+  color: var(--tx3);
+}
+.seg button.on .seg-n {
+  color: inherit;
+  opacity: 0.75;
 }
 .side-count {
   padding: 8px 16px;
