@@ -229,8 +229,11 @@ export async function finishExport(token: string, summary: ExportSummary): Promi
   if (index !== null) await fs.writeFile(path.join(stagingDir, 'index.updated.csv'), index)
   const report = buildReport(project.name, batchPlan.scope, deliver)
   await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
-  await fs.rm(outDir, { recursive: true, force: true })
+  const previousDir = outDir + '.previous'
+  await fs.rm(previousDir, { recursive: true, force: true })
+  await fs.rename(outDir, previousDir).catch(() => undefined)
   await fs.rename(stagingDir, outDir)
+  await fs.rm(previousDir, { recursive: true, force: true })
   const reportPath = path.join(outDir, 'report.json')
   return { ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }), reportPath }
 }
