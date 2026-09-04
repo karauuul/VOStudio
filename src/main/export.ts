@@ -231,8 +231,13 @@ export async function finishExport(token: string, summary: ExportSummary): Promi
   await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
   const previousDir = outDir + '.previous'
   await fs.rm(previousDir, { recursive: true, force: true })
-  await fs.rename(outDir, previousDir).catch(() => undefined)
-  await fs.rename(stagingDir, outDir)
+  const hadPrevious = await fs.rename(outDir, previousDir).then(() => true, () => false)
+  try {
+    await fs.rename(stagingDir, outDir)
+  } catch (error) {
+    if (hadPrevious) await fs.rename(previousDir, outDir).catch(() => undefined)
+    throw error
+  }
   await fs.rm(previousDir, { recursive: true, force: true })
   const reportPath = path.join(outDir, 'report.json')
   return { ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }), reportPath }
