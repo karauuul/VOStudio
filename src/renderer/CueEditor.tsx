@@ -12,6 +12,7 @@ import {
   type Cue,
   type CueComp,
   type Take,
+  type Term,
   type VoiceSettings,
 } from '@shared/domain'
 import { approvalState, hasValidVoicedOutput } from '@shared/approval'
@@ -23,7 +24,7 @@ import { CueHeader } from './cue/CueHeader'
 import { GenerateBar } from './cue/GenerateBar'
 import { RecordBar } from './cue/RecordBar'
 import { TakesStrip } from './cue/TakesStrip'
-import { TextBlock } from './cue/TextBlock'
+import { TextBlock, type CopyKind } from './cue/TextBlock'
 import { useFragment } from './cue/useFragment'
 import { useVoiceToVoice } from './cue/useVoiceToVoice'
 import { useWire } from './cue/useWire'
@@ -38,6 +39,8 @@ interface Props {
   selectedTakeId?: string
   onSelectTake: (takeId: string) => void
   onText: (text: string) => void
+  onCopy: (kind: CopyKind) => void
+  terms: Term[]
   onGenerate: () => void
   onApprove: (approved: boolean) => void
   onApproveNext: () => void
@@ -71,6 +74,8 @@ export function CueEditor({
   selectedTakeId,
   onSelectTake,
   onText,
+  onCopy,
+  terms,
   onGenerate,
   onApprove,
   onApproveNext,
@@ -184,8 +189,10 @@ export function CueEditor({
 
       <TextBlock
         cue={cue}
+        terms={terms}
         textRef={textRef}
         onText={onText}
+        onCopy={onCopy}
         onAcceptSuggestion={onAcceptSuggestion}
         onRejectSuggestion={onRejectSuggestion}
         preview={preview}

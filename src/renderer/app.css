@@ -1003,6 +1003,12 @@ kbd {
   flex-direction: column;
   gap: 6px;
 }
+.copy-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .eng {
   flex: 0 0 auto;
   max-height: 44px;
@@ -1039,6 +1045,26 @@ kbd {
   font: 10px var(--mono);
   color: var(--tx3);
   pointer-events: none;
+}
+mark.term {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: rgba(230, 162, 60, 0.18);
+  color: inherit;
+}
+.term-chips {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.term-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--raise);
+  color: var(--tx2);
+  font: 11px/1.5 var(--sans);
 }
 .sugg {
   flex: 0 0 auto;
