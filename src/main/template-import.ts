@@ -172,6 +172,11 @@ export async function validateTemplate(dir: string): Promise<TemplateValidation>
     fatalErrors.push({ row: 1, reason: `index.csv is missing columns: ${missingColumns.join(', ')}` })
     return { dir, meta, rows, terms, characters, warnings, fatalErrors }
   }
+  const numericColumns = csv.headers.filter((h) => /^\d+$/.test(h))
+  if (numericColumns.length > 0) {
+    fatalErrors.push({ row: 1, reason: `index.csv has numeric column names: ${numericColumns.join(', ')}` })
+    return { dir, meta, rows, terms, characters, warnings, fatalErrors }
+  }
 
   if (audioRoot === null) warnings.push({ row: null, reason: 'audio/ directory is missing' })
 

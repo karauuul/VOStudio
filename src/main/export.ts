@@ -108,15 +108,17 @@ export function planCueExport(cueId: string): ExportPlan {
   return publish(toJobs([{ cue, take, name: exportName(project, cue, take) }], outDir), 0, outDir, [])
 }
 
-export function planBatchExport(req: BatchExportRequest): ExportPlan {
+export async function planBatchExport(req: BatchExportRequest): Promise<ExportPlan> {
   const { project, dir } = ctx()
   const outDir = req.outDir || path.join(dir, 'export')
   const items = planBatch(project, req.scope)
   const resolved = resolvePlan(items, req.collisionStrategy ?? {})
   batchPlan = null
   if (resolved.uncovered.length > 0) return publish([], 0, outDir, findCollisions(items))
+  const audioDir = path.join(outDir, 'audio')
+  await fs.rm(audioDir, { recursive: true, force: true })
   batchPlan = { outDir, scope: req.scope, skippedCues: resolved.skippedCues }
-  return publish(toJobs(resolved.jobs, path.join(outDir, 'audio')), resolved.skipped, outDir, [])
+  return publish(toJobs(resolved.jobs, audioDir), resolved.skipped, outDir, [])
 }
 
 function jobFor(outPath: string): ExportJob {

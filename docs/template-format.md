@@ -43,6 +43,7 @@ UTF-8. First row is the header. One cue per row.
 
 Validation rules:
 
+- Column names are not purely numeric.
 - `cueId` is unique within the file.
 - `exportName` is unique within the file.
 - Every non-empty `refAudio` resolves to an existing file under `audio/`.
