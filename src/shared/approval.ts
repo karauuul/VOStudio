@@ -60,10 +60,21 @@ function nonApprovedStatus(cue: Cue): Cue['status'] {
   return cue.text.trim() ? 'translated' : 'empty'
 }
 
-export function changeCueText(cue: Cue, text: string): Cue {
-  if (cue.text === text) return cue
-  const next = { ...cue, text, textRevision: Math.min(MAX_REVISION, sanitizeRevision(cue.textRevision) + 1) }
+function bumpTextRevision(cue: Cue, patch: Partial<Cue>): Cue {
+  const next = {
+    ...cue,
+    ...patch,
+    textRevision: Math.min(MAX_REVISION, sanitizeRevision(cue.textRevision) + 1),
+  }
   return { ...next, status: nonApprovedStatus(next) }
+}
+
+export function changeCueText(cue: Cue, text: string): Cue {
+  return cue.text === text ? cue : bumpTextRevision(cue, { text })
+}
+
+export function changeCueSourceText(cue: Cue, sourceText: string): Cue {
+  return cue.sourceText === sourceText ? cue : bumpTextRevision(cue, { sourceText })
 }
 
 export function changeTakeOutput(cue: Cue, takeId: string): Cue {

@@ -71,7 +71,14 @@ Validation rules:
    - `refAudio` outside `audio/`, in an unsupported format, or resolving through a link outside `audio/`
 3. A `refAudio` that does not resolve is not fatal; the cue is imported and flagged as missing audio.
 4. The first rows are shown as a preview before the project is created.
-5. Re-importing `index.csv` into an existing project matches rows on `cueId`: unknown `cueId` is added, changed `sourceText` and `translation` are updated, takes, comps and approvals are left untouched.
+5. Re-importing `index.csv` into an existing project matches rows on `cueId` (= `cue.key`). `project-meta.json` must name the open project. Takes, comps, approvals, voice overrides and notes are never touched.
+   - unknown `cueId` — a new cue, with its reference audio copied and its character created if new
+   - changed `sourceText` — written to the cue; any approval goes stale
+   - changed `translation` — written to the cue when its translation is empty, otherwise offered as a suggestion; an empty column never clears a local translation
+   - `status` `excluded` — applied only to a cue with no takes; empty `status` never changes local status
+   - file columns are merged into `cue.fields`; project-only columns survive
+   - a project cue missing from the file is reported as orphaned and kept
+   - `terms.csv` is ignored on re-import
 
 ## Export package
 

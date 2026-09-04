@@ -211,7 +211,13 @@ export function applyChangeSet(project: Project, changes: ChangeSet): Project {
   let next = project
   if (changes.cues) {
     const replacements = new Map(changes.cues.map((cue) => [cue.id, cue]))
-    next = { ...next, cues: next.cues.map((cue) => replacements.get(cue.id) ?? cue) }
+    const known = new Set(next.cues.map((cue) => cue.id))
+    next = {
+      ...next,
+      cues: next.cues
+        .map((cue) => replacements.get(cue.id) ?? cue)
+        .concat(changes.cues.filter((cue) => !known.has(cue.id))),
+    }
   }
   if (changes.characters) {
     if (changes.charactersReplace) next = { ...next, characters: changes.characters }

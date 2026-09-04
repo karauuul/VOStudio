@@ -1,8 +1,10 @@
-import type { TemplateIssue, TemplatePreview } from '@shared/ipc'
+import type { ReimportDiff, TemplateIssue, TemplatePreview } from '@shared/ipc'
 
 interface Props {
   preview: TemplatePreview
   busy: boolean
+  diff?: ReimportDiff
+  confirmLabel?: string
   onCancel: () => void
   onCreate: () => void
 }
@@ -21,7 +23,7 @@ function IssueList({ issues, tone }: { issues: TemplateIssue[]; tone: 'err' | 'w
   )
 }
 
-export function TemplatePreviewDialog({ preview, busy, onCancel, onCreate }: Props) {
+export function TemplatePreviewDialog({ preview, busy, diff, confirmLabel, onCancel, onCreate }: Props) {
   const blocked = preview.fatalErrors.length > 0
 
   return (
@@ -48,6 +50,22 @@ export function TemplatePreviewDialog({ preview, busy, onCancel, onCreate }: Pro
             {preview.warnings.length > 0 && <span className="pb warn">{preview.warnings.length} warnings</span>}
             {blocked && <span className="pb err">{preview.fatalErrors.length} errors</span>}
           </div>
+
+          {diff && (
+            <div className="home-badges">
+              <span className="pb ok">Added {diff.added}</span>
+              <span className="pb">Updated {diff.updated}</span>
+              <span className="pb">Untouched {diff.untouched}</span>
+              <span className={diff.orphaned > 0 ? 'pb warn' : 'pb'}>Orphaned {diff.orphaned}</span>
+              {diff.updatedSample.map((s) => (
+                <span key={s.cueId} className="pb mono">
+                  {s.cueId}
+                  {s.sourceChanged ? ' src' : ''}
+                  {s.translationChanged ? ' tr' : ''}
+                </span>
+              ))}
+            </div>
+          )}
 
           {preview.characters.length > 0 && (
             <div className="home-badges tpl-chars">
@@ -97,7 +115,7 @@ export function TemplatePreviewDialog({ preview, busy, onCancel, onCreate }: Pro
             Cancel
           </button>
           <button className="btn primary" onClick={onCreate} disabled={busy || blocked}>
-            Create
+            {confirmLabel ?? 'Create'}
           </button>
         </div>
       </div>

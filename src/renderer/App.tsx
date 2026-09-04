@@ -33,6 +33,7 @@ import { TransportBar } from './cue/TransportBar'
 import { BatchExportDialog } from './BatchExportDialog'
 import { CharactersDialog } from './CharactersDialog'
 import { ProjectHome } from './ProjectHome'
+import { useTemplateReimport } from './TemplateReimport'
 import { useKeyboard, type KeyboardHandlers } from './keyboard'
 import type { WaveformHandle } from './Waveform'
 import { approvalState, hasValidVoicedOutput } from '@shared/approval'
@@ -225,6 +226,7 @@ export default function App() {
     setStatus({ id: ++statusSeq.current, kind, text })
   }, [])
   const closeStatus = useCallback(() => setStatus(null), [])
+  const reimport = useTemplateReimport(pushStatus)
 
   const load = useCallback((snapshot: ProjectSnapshot | null) => {
     const p = snapshot?.project ?? null
@@ -815,7 +817,7 @@ export default function App() {
       onCopy,
     ]
   )
-  useKeyboard(handlers, !!project && !showExport && !showCharacters && !menuOpen)
+  useKeyboard(handlers, !!project && !showExport && !showCharacters && !menuOpen && !reimport.open)
 
   if (!project) {
     return (
@@ -906,6 +908,17 @@ export default function App() {
                     Sync CSV
                   </button>
                 )}
+                <button
+                  className="menu-item"
+                  role="menuitem"
+                  disabled={bulk || busyCount > 0}
+                  onClick={() => {
+                    setMenuOpen(false)
+                    reimport.start()
+                  }}
+                >
+                  Re-import template…
+                </button>
                 <button
                   className="menu-item"
                   role="menuitem"
@@ -1074,6 +1087,8 @@ export default function App() {
       {status && <Toast status={status} onClose={closeStatus} />}
 
       {showExport && <BatchExportDialog onClose={() => setShowExport(false)} />}
+
+      {reimport.dialog}
 
       {showCharacters && (
         <CharactersDialog

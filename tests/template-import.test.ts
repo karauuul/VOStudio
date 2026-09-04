@@ -13,8 +13,14 @@ vi.mock('electron', () => ({ app: { getPath: () => H.root } }))
 
 mkdirSync(H.root, { recursive: true })
 
-const { buildProjectBase, createProjectFromTemplate, relUnderAudio, toPreview, validateTemplate } =
-  await import('../src/main/template-import')
+const {
+  buildProjectBase,
+  createProjectFromTemplate,
+  reimportTemplate,
+  relUnderAudio,
+  toPreview,
+  validateTemplate,
+} = await import('../src/main/template-import')
 
 const FIXTURE = path.join(__dirname, 'fixtures', 'sample.vostudio-src')
 
@@ -452,6 +458,48 @@ describe('createProjectFromTemplate', () => {
     const reopened = await store.openProjectDir(dir)
     expect('terms' in reopened).toBe(false)
     expect(await fs.readFile(file, 'utf-8')).toBe(byteIdentical)
+  })
+
+  it('reuses a character matched by name and creates only the genuinely new one', async () => {
+    const dir = await makeTemplate({ index: rows('1,ADA,S,,,X1,,,', '2,ADA,S2,,,X2,,,', '3,Alien,S3,,,X3,,,') })
+    const base = buildProjectBase(await validateTemplate(dir), '/refs')
+    const project = { ...base, id: 'p', schemaVersion: 1, createdAt: '' } as Project
+    project.name = 'Tmp Template'
+    project.characters = [{ ...project.characters[0], id: 'ada', name: 'ADA' }]
+    project.cues = [{ ...project.cues[0], characterId: 'ada' }]
+
+    const { result, changes } = await reimportTemplate(await validateTemplate(dir, true), project, dir)
+    expect(result).toMatchObject({ added: 2, updated: 0, untouched: 1, orphaned: 0 })
+    expect(project.characters.map((c) => c.id)).toEqual(['ada', 'Alien'])
+    expect(project.cues.map((c) => c.characterId)).toEqual(['ada', 'ada', 'Alien'])
+    expect(changes.charactersReplace).toBe(true)
+  })
+
+  it('never overwrites reference audio an existing cue already uses', async () => {
+    const dir = await makeTemplate({ index: rows('1,ADA,S,,shared.wav,X1,,,', '2,ADA,S2,,shared.wav,X2,,,') })
+    await fs.writeFile(path.join(dir, 'audio', 'shared.wav'), 'new')
+    const referenceRoot = path.join(dir, 'audio', 'reference')
+    await fs.mkdir(referenceRoot, { recursive: true })
+    await fs.writeFile(path.join(referenceRoot, 'shared.wav'), 'old')
+    const base = buildProjectBase(await validateTemplate(dir), referenceRoot)
+    const project = { ...base, id: 'p', schemaVersion: 1, createdAt: '', name: 'Tmp Template' } as Project
+    project.cues = [project.cues[0]]
+
+    const { result } = await reimportTemplate(await validateTemplate(dir, true), project, dir)
+    expect(result).toMatchObject({ added: 1 })
+    expect(result.warnings.map((w) => w.reason)).toContain(
+      'Reference audio "shared.wav" already exists with different content; the project file was kept'
+    )
+    expect(await fs.readFile(path.join(referenceRoot, 'shared.wav'), 'utf-8')).toBe('old')
+  })
+
+  it('blocks a re-import whose meta names another project', async () => {
+    const dir = await makeTemplate({ index: rows('1,ADA,S,,,X1,,,') })
+    const base = buildProjectBase(await validateTemplate(dir), '/refs')
+    const project = { ...base, id: 'p', schemaVersion: 1, createdAt: '', name: 'Other' } as Project
+    await expect(reimportTemplate(await validateTemplate(dir, true), project, dir)).rejects.toThrow(
+      'the open project is "Other"'
+    )
   })
 
   it('refuses a template with fatal errors', async () => {

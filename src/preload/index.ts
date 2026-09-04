@@ -9,6 +9,8 @@ const channelMap: Record<IpcChannel, true> = {
   'project:close': true,
   'project:pickTemplate': true,
   'project:importTemplate': true,
+  'project:previewReimport': true,
+  'project:applyReimport': true,
   'project:command': true,
   'ui:save': true,
 

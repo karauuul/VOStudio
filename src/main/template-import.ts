@@ -14,7 +14,9 @@ import {
   type Project,
   type Term,
 } from '@shared/domain'
-import type { TemplateIssue, TemplateMeta, TemplatePreview } from '@shared/ipc'
+import type { ReimportDiff, ReimportResult, TemplateIssue, TemplateMeta, TemplatePreview } from '@shared/ipc'
+import type { ChangeSet } from '@shared/project-commands'
+import { applyTemplateDiff, diffTemplate, type TemplateDiff } from '@shared/template-reimport'
 import { isSafeFileName, PROJECT_SUFFIX } from '@shared/project-summary'
 import { projectNameSchema, templateMetaSchema } from './schemas'
 import * as store from './project-store'
@@ -84,7 +86,11 @@ export function relUnderAudio(audioDir: string, refAudio: string): string | null
   return rel === '' ? null : rel
 }
 
-async function readMeta(dir: string, fatal: TemplateIssue[]): Promise<TemplateMeta | null> {
+async function readMeta(
+  dir: string,
+  fatal: TemplateIssue[],
+  skipExistingCheck: boolean
+): Promise<TemplateMeta | null> {
   const raw = await readText(path.join(dir, 'project-meta.json'))
   if (raw === null) {
     fatal.push({ row: null, reason: 'project-meta.json is missing' })
@@ -109,7 +115,7 @@ async function readMeta(dir: string, fatal: TemplateIssue[]): Promise<TemplateMe
     fatal.push({ row: null, reason: `project-meta.json: name "${result.data.name}" is not a valid folder name` })
     return null
   }
-  if (await exists(projectDirFor(name.data))) {
+  if (!skipExistingCheck && (await exists(projectDirFor(name.data)))) {
     fatal.push({ row: null, reason: `Project "${name.data}" already exists` })
   }
   return { ...result.data, name: name.data }
@@ -144,10 +150,10 @@ async function readTerms(dir: string, warnings: TemplateIssue[]): Promise<Term[]
   )
 }
 
-export async function validateTemplate(dir: string): Promise<TemplateValidation> {
+export async function validateTemplate(dir: string, skipExistingCheck = false): Promise<TemplateValidation> {
   const warnings: TemplateIssue[] = []
   const fatalErrors: TemplateIssue[] = []
-  const meta = await readMeta(dir, fatalErrors)
+  const meta = await readMeta(dir, fatalErrors, skipExistingCheck)
   const terms = await readTerms(dir, warnings)
   const audioDir = path.join(dir, 'audio')
   const audioRoot = await realpath(audioDir)
@@ -322,11 +328,11 @@ export function toPreview(validation: TemplateValidation): TemplatePreview {
   }
 }
 
-function buildCharacters(names: string[]): Character[] {
+function buildCharacters(names: string[], offset = 0): Character[] {
   return names.map((name, index) => ({
     id: name,
     name,
-    color: CHARACTER_COLORS[index % CHARACTER_COLORS.length],
+    color: CHARACTER_COLORS[(index + offset) % CHARACTER_COLORS.length],
     provider: {
       providerId: 'elevenlabs' as const,
       voiceId: '',
@@ -382,15 +388,29 @@ export function buildProjectBase(
   return base
 }
 
-async function copyReferenceAudio(validation: TemplateValidation, referenceRoot: string): Promise<void> {
+async function copyReferenceAudio(
+  validation: TemplateValidation,
+  referenceRoot: string,
+  rows: TemplateRow[] = validation.rows,
+  overwrite = true
+): Promise<string[]> {
   const audioDir = path.join(validation.dir, 'audio')
-  const wanted = [
+  const candidates = [
     ...new Set(
-      validation.rows
-        .filter((row) => row.refRel && row.refFormat && !row.missingAudio)
-        .map((row) => row.refRel)
+      rows.filter((row) => row.refRel && row.refFormat && !row.missingAudio).map((row) => row.refRel)
     ),
   ]
+  const wanted: string[] = []
+  const conflicts: string[] = []
+  for (const rel of candidates) {
+    const target = path.join(referenceRoot, rel)
+    if (overwrite || !(await exists(target))) {
+      wanted.push(rel)
+      continue
+    }
+    const [a, b] = await Promise.all([fs.readFile(path.join(audioDir, rel)), fs.readFile(target)])
+    if (!a.equals(b)) conflicts.push(rel)
+  }
   for (const dir of new Set(wanted.map((rel) => path.dirname(path.join(referenceRoot, rel))))) {
     await fs.mkdir(dir, { recursive: true })
   }
@@ -401,6 +421,7 @@ async function copyReferenceAudio(validation: TemplateValidation, referenceRoot:
         .map((rel) => fs.copyFile(path.join(audioDir, rel), path.join(referenceRoot, rel)))
     )
   }
+  return conflicts
 }
 
 function projectDirFor(name: string): string {
@@ -433,4 +454,97 @@ export async function createProjectFromTemplate(validation: TemplateValidation):
     throw error
   }
   return project
+}
+
+export function reimportBlockers(
+  validation: TemplateValidation,
+  project: Pick<Project, 'name'>
+): TemplateIssue[] {
+  const issues = [...validation.fatalErrors]
+  if (validation.meta && validation.meta.name !== project.name) {
+    issues.push({
+      row: null,
+      reason: `project-meta.json names "${validation.meta.name}"; the open project is "${project.name}"`,
+    })
+  }
+  return issues
+}
+
+function resolveCharacters(
+  project: Project,
+  rows: TemplateRow[]
+): { idFor: Map<string, string>; created: Character[] } {
+  const created: Character[] = []
+  const idFor = new Map<string, string>()
+  for (const row of rows) {
+    if (!row.character || idFor.has(row.character)) continue
+    const lower = row.character.trim().toLowerCase()
+    const match = [...project.characters, ...created].find(
+      (character) => character.id === row.character || character.name.trim().toLowerCase() === lower
+    )
+    if (match) {
+      idFor.set(row.character, match.id)
+      continue
+    }
+    created.push(...buildCharacters([row.character], project.characters.length + created.length))
+    idFor.set(row.character, row.character)
+  }
+  return { idFor, created }
+}
+
+export async function reimportTemplate(
+  validation: TemplateValidation,
+  project: Project,
+  projectDir: string
+): Promise<{ result: ReimportResult; changes: ChangeSet }> {
+  const blockers = reimportBlockers(validation, project)
+  if (blockers.length > 0) throw new Error(`Re-import blocked: ${blockers[0].reason}`)
+
+  const referenceRoot = path.join(projectDir, 'audio', 'reference')
+  const diff = diffTemplate(project, validation.rows)
+  const { idFor, created } = resolveCharacters(project, diff.added)
+  const addedCues = diff.added.map((row) => {
+    const cue = buildCue(row, referenceRoot)
+    cue.characterId = idFor.get(row.character) ?? ''
+    return cue
+  })
+
+  const conflicts = await copyReferenceAudio(validation, referenceRoot, diff.added, false)
+  const conflictWarnings: TemplateIssue[] = conflicts.map((rel) => ({
+    row: null,
+    reason: `Reference audio "${rel}" already exists with different content; the project file was kept`,
+  }))
+
+  const { changed, warnings } = applyTemplateDiff(project, diff, addedCues)
+  if (created.length > 0) project.characters.push(...created)
+
+  return {
+    result: {
+      added: diff.added.length,
+      updated: diff.updated.length,
+      untouched: diff.untouched.length,
+      orphaned: diff.orphaned.length,
+      warnings: [...validation.warnings, ...conflictWarnings, ...warnings],
+    },
+    changes: {
+      cues: structuredClone(changed),
+      ...(created.length > 0
+        ? { characters: structuredClone(project.characters), charactersReplace: true }
+        : {}),
+    },
+  }
+}
+
+export function summarizeDiff(diff: TemplateDiff<TemplateRow>): ReimportDiff {
+  return {
+    added: diff.added.length,
+    updated: diff.updated.length,
+    untouched: diff.untouched.length,
+    orphaned: diff.orphaned.length,
+    updatedSample: diff.updated.slice(0, PREVIEW_ROWS).map((entry) => ({
+      cueId: entry.row.cueId,
+      sourceChanged: entry.sourceChanged,
+      translationChanged: entry.translationChanged,
+    })),
+  }
 }

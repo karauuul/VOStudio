@@ -31,7 +31,15 @@ import {
 } from '@shared/domain'
 import type { Project } from '@shared/domain'
 import type { AppSettings, TakeDurationUpdate } from '@shared/ipc'
-import { createProjectFromTemplate, toPreview, validateTemplate } from './template-import'
+import {
+  createProjectFromTemplate,
+  reimportBlockers,
+  reimportTemplate,
+  summarizeDiff,
+  toPreview,
+  validateTemplate,
+} from './template-import'
+import { diffTemplate } from '@shared/template-reimport'
 import * as migration from './migration'
 import { GENERATED_DIR } from './migration'
 import { syncCsv } from './csv-sync'
@@ -158,6 +166,12 @@ function abandonProject(): void {
 }
 
 const pickedTemplates = new Set<string>()
+
+function pickedTemplateDir(dir: string): string {
+  const target = templateDirSchema.parse(dir)
+  if (!pickedTemplates.has(target)) throw new Error('Template folder was not picked in this session')
+  return target
+}
 
 let lifecycle: Promise<unknown> = Promise.resolve()
 function serialLifecycle<T>(fn: () => Promise<T>): Promise<T> {
@@ -351,9 +365,7 @@ function registerHandlers(): void {
 
   typedHandle('project:importTemplate', (dir: string) =>
     serialLifecycle(async () => {
-      const target = templateDirSchema.parse(dir)
-      if (!pickedTemplates.has(target)) throw new Error('Template folder was not picked in this session')
-      const fresh = await validateTemplate(target)
+      const fresh = await validateTemplate(pickedTemplateDir(dir))
       const snapshot = await setupImportedProject({
         stageImport: () => Promise.resolve(fresh),
         detachCurrent: detachCurrentRepository,
@@ -363,6 +375,29 @@ function registerHandlers(): void {
         finishImport: async () => undefined,
       })
       return { snapshot, warnings: fresh.warnings }
+    })
+  )
+
+  typedHandle('project:previewReimport', async (dir: string) => {
+    const target = pickedTemplateDir(dir)
+    const project = requireProject()
+    const validation = await validateTemplate(target, true)
+    return {
+      preview: { ...toPreview(validation), fatalErrors: reimportBlockers(validation, project) },
+      diff: summarizeDiff(diffTemplate(project, validation.rows)),
+    }
+  })
+
+  typedHandle('project:applyReimport', (dir: string) =>
+    serialLifecycle(async () => {
+      const target = pickedTemplateDir(dir)
+      const repository = projectRepository
+      const projectDir = store.getProjectDir()
+      if (!repository || !projectDir) throw new Error('No project is open')
+      const validation = await validateTemplate(target, true)
+      const { result, changes } = await reimportTemplate(validation, repository.projectForMain(), projectDir)
+      emit('project:changed', await repository.commit(changes))
+      return result
     })
   )
 
