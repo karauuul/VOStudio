@@ -475,6 +475,21 @@ describe('createProjectFromTemplate', () => {
     expect(changes.charactersReplace).toBe(true)
   })
 
+  it('never overwrites reference audio an existing cue already uses', async () => {
+    const dir = await makeTemplate({ index: rows('1,ADA,S,,shared.wav,X1,,,', '2,ADA,S2,,shared.wav,X2,,,') })
+    await fs.writeFile(path.join(dir, 'audio', 'shared.wav'), 'new')
+    const referenceRoot = path.join(dir, 'audio', 'reference')
+    await fs.mkdir(referenceRoot, { recursive: true })
+    await fs.writeFile(path.join(referenceRoot, 'shared.wav'), 'old')
+    const base = buildProjectBase(await validateTemplate(dir), referenceRoot)
+    const project = { ...base, id: 'p', schemaVersion: 1, createdAt: '', name: 'Tmp Template' } as Project
+    project.cues = [project.cues[0]]
+
+    const { result } = await reimportTemplate(await validateTemplate(dir, true), project, dir)
+    expect(result).toMatchObject({ added: 1 })
+    expect(await fs.readFile(path.join(referenceRoot, 'shared.wav'), 'utf-8')).toBe('old')
+  })
+
   it('blocks a re-import whose meta names another project', async () => {
     const dir = await makeTemplate({ index: rows('1,ADA,S,,,X1,,,') })
     const base = buildProjectBase(await validateTemplate(dir), '/refs')

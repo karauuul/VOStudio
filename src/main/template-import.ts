@@ -391,14 +391,19 @@ export function buildProjectBase(
 async function copyReferenceAudio(
   validation: TemplateValidation,
   referenceRoot: string,
-  rows: TemplateRow[] = validation.rows
+  rows: TemplateRow[] = validation.rows,
+  overwrite = true
 ): Promise<void> {
   const audioDir = path.join(validation.dir, 'audio')
-  const wanted = [
+  const candidates = [
     ...new Set(
       rows.filter((row) => row.refRel && row.refFormat && !row.missingAudio).map((row) => row.refRel)
     ),
   ]
+  const wanted: string[] = []
+  for (const rel of candidates) {
+    if (overwrite || !(await exists(path.join(referenceRoot, rel)))) wanted.push(rel)
+  }
   for (const dir of new Set(wanted.map((rel) => path.dirname(path.join(referenceRoot, rel))))) {
     await fs.mkdir(dir, { recursive: true })
   }
@@ -496,7 +501,7 @@ export async function reimportTemplate(
     return cue
   })
 
-  await copyReferenceAudio(validation, referenceRoot, diff.added)
+  await copyReferenceAudio(validation, referenceRoot, diff.added, false)
 
   const { changed, warnings } = applyTemplateDiff(project, diff, addedCues)
   if (created.length > 0) project.characters.push(...created)
