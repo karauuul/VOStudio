@@ -40,6 +40,7 @@ interface Props {
   onText: (text: string) => void
   onGenerate: () => void
   onApprove: (approved: boolean) => void
+  onApproveNext: () => void
   onAcceptSuggestion: () => void
   onRejectSuggestion: () => void
   onVoiceChange: (patch: Partial<VoiceSettings>) => void
@@ -72,6 +73,7 @@ export function CueEditor({
   onText,
   onGenerate,
   onApprove,
+  onApproveNext,
   onAcceptSuggestion,
   onRejectSuggestion,
   onVoiceChange,
@@ -196,6 +198,7 @@ export function CueEditor({
         onResetOverride={onVoiceReset}
         onGenerate={onGenerate}
         onApprove={onApprove}
+        onApproveNext={onApproveNext}
         approved={approvalState(cue) === 'approved'}
         approveDisabled={!hasValidVoicedOutput(cue)}
         generating={cueBusy}

@@ -10,6 +10,7 @@ export const PRIMARY_CHARACTER = 'ada'
 export const FILTERS: { id: string; label: string }[] = [
   { id: 'work', label: 'Active' },
   { id: 'notgen', label: 'Not voiced' },
+  { id: 'review', label: 'Review' },
   { id: 'gen', label: 'Voiced' },
   { id: 'appr', label: 'Approved' },
   { id: 'sugg', label: 'Suggestions' },
@@ -27,8 +28,10 @@ export function matchesFilter(cue: Cue, filter: string): boolean {
       return hasValidVoicedOutput(cue)
     case 'notgen':
       return !hasValidVoicedOutput(cue) && cue.status !== 'excluded'
+    case 'review':
+      return hasValidVoicedOutput(cue) && cue.status !== 'excluded' && approvalState(cue) !== 'approved'
     case 'appr':
-      return approvalState(cue) === 'approved'
+      return cue.status !== 'excluded' && approvalState(cue) === 'approved'
     case 'sugg':
       return cue.suggestedText !== undefined
     case 'excluded':
@@ -76,7 +79,7 @@ export function dotClass(cue: Cue): string {
 
 interface Props {
   cues: Cue[]
-  total: number
+  allCues: Cue[]
   activeCueId?: string
   filter: string
   search: string
@@ -91,7 +94,7 @@ interface Props {
 
 export function CueList({
   cues,
-  total,
+  allCues,
   activeCueId,
   filter,
   search,
@@ -105,6 +108,12 @@ export function CueList({
 }: Props) {
   const vRef = useRef<VirtuosoHandle>(null)
   const byId = useMemo(() => new Map(characters.map((c) => [c.id, c])), [characters])
+  const counts = useMemo(() => {
+    const inScope = allCues.filter((c) => matchesCharacter(c, characterFilter))
+    return Object.fromEntries(
+      FILTERS.map((f) => [f.id, inScope.filter((c) => matchesFilter(c, f.id)).length])
+    )
+  }, [allCues, characterFilter])
 
   useEffect(() => {
     if (scrollToIndex === undefined || scrollToIndex < 0) return
@@ -131,6 +140,7 @@ export function CueList({
               onClick={() => onFilter(f.id)}
             >
               {f.label}
+              <span className="seg-n">{counts[f.id]}</span>
             </button>
           ))}
         </div>
@@ -160,7 +170,7 @@ export function CueList({
       </div>
 
       <div className="side-count">
-        {cues.length} / {total}
+        {cues.length} / {allCues.length}
       </div>
 
       <Virtuoso

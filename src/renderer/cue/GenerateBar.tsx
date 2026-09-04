@@ -8,6 +8,7 @@ interface Props {
   onResetOverride: () => void
   onGenerate: () => void
   onApprove: (approved: boolean) => void
+  onApproveNext: () => void
   approved: boolean
   approveDisabled: boolean
   generating: boolean
@@ -22,6 +23,7 @@ export function GenerateBar({
   onResetOverride,
   onGenerate,
   onApprove,
+  onApproveNext,
   approved,
   approveDisabled,
   generating,
@@ -88,6 +90,14 @@ export function GenerateBar({
           title={approved ? 'Remove approval' : approveDisabled ? 'No voiced output' : 'Approve this cue'}
         >
           {approved ? '✓ Approved' : '✓ Approve'} <kbd>A</kbd>
+        </button>
+        <button
+          className="btn ghost"
+          onClick={onApproveNext}
+          disabled={approved || approveDisabled}
+          title={approved ? 'Already approved' : approveDisabled ? 'No voiced output' : undefined}
+        >
+          ✓ Approve &amp; Next <kbd>Shift+A</kbd>
         </button>
       </div>
     </div>
