@@ -47,8 +47,10 @@ export function diffTemplate<R extends ReimportRow>(
     matched.add(cue.key)
     const sourceChanged = row.sourceText !== cue.sourceText
     const translationChanged = row.translation.trim() !== '' && row.translation !== cue.text
-    if (sourceChanged || translationChanged) updated.push({ row, cue, sourceChanged, translationChanged })
-    else untouched.push(row)
+    const excluded = row.status === 'excluded' && cue.status !== 'excluded' && liveTakes(cue).length === 0
+    if (sourceChanged || translationChanged || excluded) {
+      updated.push({ row, cue, sourceChanged, translationChanged })
+    } else untouched.push(row)
   }
 
   return { added, updated, untouched, orphaned: project.cues.filter((cue) => !matched.has(cue.key)) }

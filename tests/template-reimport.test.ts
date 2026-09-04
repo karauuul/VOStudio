@@ -89,6 +89,16 @@ describe('diffTemplate', () => {
     expect(both.updated).toMatchObject([{ sourceChanged: true, translationChanged: true }])
   })
 
+  it('counts a new excluded status as an update only when the cue has no live takes', () => {
+    const withTakes = diffTemplate(project([cue()]), [row({ status: 'excluded' })])
+    expect(withTakes.updated).toEqual([])
+    expect(withTakes.untouched).toHaveLength(1)
+
+    const noTakes = diffTemplate(project([cue({ takes: [], finalTakeId: undefined })]), [row({ status: 'excluded' })])
+    expect(noTakes.updated).toHaveLength(1)
+    expect(noTakes.untouched).toEqual([])
+  })
+
   it('never treats an empty file translation as a change', () => {
     const diff = diffTemplate(project([cue()]), [row({ translation: '   ' })])
     expect(diff.updated).toEqual([])
