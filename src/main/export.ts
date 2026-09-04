@@ -42,6 +42,7 @@ function ctx(): { project: Project; dir: string } {
 let planned = new Map<string, ExportJob>()
 
 interface BatchPlan {
+  projectId: string
   outDir: string
   scope: BatchExportRequest['scope']
   skippedCues: SkippedCue[]
@@ -110,14 +111,14 @@ export function planCueExport(cueId: string): ExportPlan {
 
 export async function planBatchExport(req: BatchExportRequest): Promise<ExportPlan> {
   const { project, dir } = ctx()
-  const outDir = req.outDir || path.join(dir, 'export')
+  const outDir = path.join(dir, 'export')
   const items = planBatch(project, req.scope)
   const resolved = resolvePlan(items, req.collisionStrategy ?? {})
   batchPlan = null
   if (resolved.uncovered.length > 0) return publish([], 0, outDir, findCollisions(items))
   const audioDir = path.join(outDir, 'audio')
   await fs.rm(audioDir, { recursive: true, force: true })
-  batchPlan = { outDir, scope: req.scope, skippedCues: resolved.skippedCues }
+  batchPlan = { projectId: project.id, outDir, scope: req.scope, skippedCues: resolved.skippedCues }
   return publish(toJobs(resolved.jobs, audioDir), resolved.skipped, outDir, [])
 }
 
@@ -186,6 +187,7 @@ export async function finishExport(outDir: string, summary: ExportSummary): Prom
   if (!batchPlan || outDir !== batchPlan.outDir) {
     throw new Error(`"${outDir}" is not the folder of the current batch export plan`)
   }
+  if (project.id !== batchPlan.projectId) throw new Error('The exported project is no longer open')
   const byKey = new Map(project.cues.map((c) => [c.key, c]))
   const nameOf = (cueKey: string): string => {
     const cue = byKey.get(cueKey)

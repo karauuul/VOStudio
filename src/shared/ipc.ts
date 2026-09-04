@@ -76,7 +76,6 @@ export interface BatchExportCollision {
 export interface BatchExportRequest {
   scope: 'approved' | 'all-final'
   collisionStrategy?: Record<string, 'suffix-wemid' | 'skip' | 'reuse'>
-  outDir?: string
 }
 
 export interface BatchExportFailure {

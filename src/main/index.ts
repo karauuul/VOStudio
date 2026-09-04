@@ -129,7 +129,6 @@ function flushPersist(): Promise<void> {
 const batchExportSchema = z.object({
   scope: z.enum(['approved', 'all-final']),
   collisionStrategy: z.record(z.enum(['suffix-wemid', 'skip', 'reuse'])).optional(),
-  outDir: z.string().max(4096).optional(),
 })
 
 const settingsSchema = z.object({
