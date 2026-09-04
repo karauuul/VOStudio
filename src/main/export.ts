@@ -50,7 +50,7 @@ interface BatchPlan {
 }
 
 let batchPlan: BatchPlan | null = null
-const STAGING_DIR = 'audio.staging'
+const STAGING_DIR = 'staging'
 
 function compJobClips(cue: Cue): ExportCompClip[] | undefined {
   if (!usesCompOutput(cue)) return undefined
@@ -126,7 +126,7 @@ export async function planBatchExport(req: BatchExportRequest): Promise<ExportPl
   const token = randomUUID()
   if (resolved.uncovered.length > 0) return publish(token, [], 0, outDir, findCollisions(items))
   const stagingDir = path.join(outDir, STAGING_DIR)
-  const jobs = toJobs(resolved.jobs, stagingDir)
+  const jobs = toJobs(resolved.jobs, path.join(stagingDir, 'audio'))
   await fs.rm(stagingDir, { recursive: true, force: true })
   batchPlan = {
     token,
@@ -204,40 +204,35 @@ export async function finishExport(token: string, summary: ExportSummary): Promi
   const { project, outDir } = batchPlan
   const stagingDir = path.join(outDir, STAGING_DIR)
   for (const f of summary.failed) {
-    const outPath = path.join(stagingDir, f.name)
+    const outPath = path.join(stagingDir, 'audio', f.name)
     if (planned.has(outPath)) await fs.rm(outPath, { force: true })
-  }
-  const byKey = new Map(project.cues.map((c) => [c.key, c]))
-  const nameOf = (cueKey: string): string => {
-    const cue = byKey.get(cueKey)
-    return cue ? cue.fields['exportName'] || cue.key : cueKey
   }
   const deliver: DeliverSummary = {
     exported: summary.exported.map((e) => ({
       cueId: e.cueKey,
-      exportName: nameOf(e.cueKey),
+      exportName: path.parse(e.name).name,
       file: `audio/${e.name}`,
       bytes: e.bytes,
       sha256: e.sha256,
     })),
     failed: summary.failed.map((f) => ({
       cueId: f.cueKey,
-      exportName: nameOf(f.cueKey),
+      exportName: path.parse(f.name).name,
       file: `audio/${f.name}`,
       reason: f.reason,
     })),
     skipped: batchPlan.skippedCues,
   }
 
-  await fs.mkdir(stagingDir, { recursive: true })
-  const audioDir = path.join(outDir, 'audio')
-  await fs.rm(audioDir, { recursive: true, force: true })
-  await fs.rename(stagingDir, audioDir)
+  await fs.mkdir(path.join(stagingDir, 'audio'), { recursive: true })
   const index = buildUpdatedIndex(project)
-  const indexPath = path.join(outDir, 'index.updated.csv')
-  if (index !== null) await store.atomicWrite(indexPath, index)
-  const reportPath = path.join(outDir, 'report.json')
+  const entries = ['audio', 'report.json', ...(index === null ? [] : ['index.updated.csv'])]
+  if (index !== null) await fs.writeFile(path.join(stagingDir, 'index.updated.csv'), index)
   const report = buildReport(project.name, batchPlan.scope, deliver)
-  await store.atomicWrite(reportPath, JSON.stringify(report, null, 2))
-  return { ...(index === null ? {} : { indexPath }), reportPath }
+  await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
+  for (const entry of entries) await fs.rm(path.join(outDir, entry), { recursive: true, force: true })
+  for (const entry of entries) await fs.rename(path.join(stagingDir, entry), path.join(outDir, entry))
+  await fs.rm(stagingDir, { recursive: true, force: true })
+  const reportPath = path.join(outDir, 'report.json')
+  return { ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }), reportPath }
 }

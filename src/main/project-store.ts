@@ -42,7 +42,7 @@ export async function setSettings(settings: AppSettings): Promise<void> {
   await writeAppState({ settings })
 }
 
-export async function atomicWrite(file: string, data: string | Buffer): Promise<void> {
+async function atomicWrite(file: string, data: string | Buffer): Promise<void> {
   const tmp = file + '.tmp'
   await fs.writeFile(tmp, data)
   await fs.rename(tmp, file)
