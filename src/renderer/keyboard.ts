@@ -23,6 +23,9 @@ export interface KeyboardHandlers {
   toggleRecord: () => void
   escape: () => boolean
   focusText: () => void
+  copySource: () => void
+  copyTranslation: () => void
+  copyPrompt: () => void
 }
 
 function isTextField(el: EventTarget | null): boolean {
@@ -143,6 +146,18 @@ export function useKeyboard(handlers: KeyboardHandlers, enabled: boolean): void 
         case 'KeyN':
           e.preventDefault()
           handlers.rejectSuggestion()
+          return
+        case 'KeyS':
+          e.preventDefault()
+          handlers.copySource()
+          return
+        case 'KeyT':
+          e.preventDefault()
+          handlers.copyTranslation()
+          return
+        case 'KeyP':
+          e.preventDefault()
+          handlers.copyPrompt()
           return
         case 'Space':
           e.preventDefault()

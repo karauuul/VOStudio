@@ -37,6 +37,8 @@ import { useKeyboard, type KeyboardHandlers } from './keyboard'
 import type { WaveformHandle } from './Waveform'
 import { approvalState, hasValidVoicedOutput } from '@shared/approval'
 import { applyChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
+import { buildPrompt } from '@shared/prompt'
+import type { CopyKind } from './cue/TextBlock'
 
 type StatusKind = 'ok' | 'err' | 'info'
 type Status = { id: number; kind: StatusKind; text: string } | null
@@ -640,6 +642,24 @@ export default function App() {
       .catch((e: unknown) => pushStatus('err', String(e)))
   }, [activeCue, flushText, pushStatus, dispatch])
 
+  const onCopy = useCallback(
+    (kind: CopyKind) => {
+      const cue = activeCue
+      if (!cue || !project) return
+      const text =
+        kind === 'source'
+          ? cue.sourceText
+          : kind === 'translation'
+            ? cue.text
+            : buildPrompt(project, cue)
+      void navigator.clipboard.writeText(text).then(
+        () => pushStatus('ok', 'Copied'),
+        (e: unknown) => pushStatus('err', String(e))
+      )
+    },
+    [activeCue, project, pushStatus]
+  )
+
   const onRejectSuggestion = useCallback(() => {
     const cue = activeCue
     if (!cue || cue.suggestedText === undefined) return
@@ -775,6 +795,9 @@ export default function App() {
       toggleRecord: () => recRef.current?.(),
       escape: () => escRef.current?.() ?? false,
       focusText: () => focusTextRef.current?.(),
+      copySource: () => onCopy('source'),
+      copyTranslation: () => onCopy('translation'),
+      copyPrompt: () => onCopy('prompt'),
     }),
     [
       move,
@@ -789,6 +812,7 @@ export default function App() {
       onDeleteTake,
       onAcceptSuggestion,
       onRejectSuggestion,
+      onCopy,
     ]
   )
   useKeyboard(handlers, !!project && !showExport && !showCharacters && !menuOpen)
@@ -995,6 +1019,8 @@ export default function App() {
               selectedTakeId={selectedTakeId}
               onSelectTake={setSelectedTakeId}
               onText={onText}
+              onCopy={onCopy}
+              terms={project.terms ?? []}
               onGenerate={generate}
               onApprove={onApprove}
               onApproveNext={onApproveNext}
