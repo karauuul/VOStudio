@@ -50,7 +50,7 @@ interface BatchPlan {
 }
 
 let batchPlan: BatchPlan | null = null
-const STAGING_DIR = 'staging'
+const STAGING_DIR = 'export.staging'
 
 function compJobClips(cue: Cue): ExportCompClip[] | undefined {
   if (!usesCompOutput(cue)) return undefined
@@ -125,7 +125,7 @@ export async function planBatchExport(req: BatchExportRequest): Promise<ExportPl
   batchPlan = null
   const token = randomUUID()
   if (resolved.uncovered.length > 0) return publish(token, [], 0, outDir, findCollisions(items))
-  const stagingDir = path.join(outDir, STAGING_DIR)
+  const stagingDir = path.join(dir, STAGING_DIR)
   const jobs = toJobs(resolved.jobs, path.join(stagingDir, 'audio'))
   await fs.rm(stagingDir, { recursive: true, force: true })
   batchPlan = {
@@ -202,7 +202,7 @@ export async function finishExport(token: string, summary: ExportSummary): Promi
   if (!batchPlan || token !== batchPlan.token) throw new Error('This batch export plan is no longer current')
   if (ctx().project.id !== batchPlan.project.id) throw new Error('The exported project is no longer open')
   const { project, outDir } = batchPlan
-  const stagingDir = path.join(outDir, STAGING_DIR)
+  const stagingDir = path.join(path.dirname(outDir), STAGING_DIR)
   for (const f of summary.failed) {
     const outPath = path.join(stagingDir, 'audio', f.name)
     if (planned.has(outPath)) await fs.rm(outPath, { force: true })
@@ -226,15 +226,11 @@ export async function finishExport(token: string, summary: ExportSummary): Promi
 
   await fs.mkdir(path.join(stagingDir, 'audio'), { recursive: true })
   const index = buildUpdatedIndex(project)
-  const staged = ['audio', 'report.json', ...(index === null ? [] : ['index.updated.csv'])]
   if (index !== null) await fs.writeFile(path.join(stagingDir, 'index.updated.csv'), index)
   const report = buildReport(project.name, batchPlan.scope, deliver)
   await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
-  for (const entry of ['audio', 'report.json', 'index.updated.csv']) {
-    await fs.rm(path.join(outDir, entry), { recursive: true, force: true })
-  }
-  for (const entry of staged) await fs.rename(path.join(stagingDir, entry), path.join(outDir, entry))
-  await fs.rm(stagingDir, { recursive: true, force: true })
+  await fs.rm(outDir, { recursive: true, force: true })
+  await fs.rename(stagingDir, outDir)
   const reportPath = path.join(outDir, 'report.json')
   return { ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }), reportPath }
 }
