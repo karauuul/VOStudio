@@ -129,6 +129,7 @@ export interface ExportJob {
 }
 
 export interface ExportPlan {
+  token: string
   jobs: ExportJob[]
   collisions: BatchExportCollision[]
   skipped: number
@@ -230,7 +231,7 @@ export interface IpcApi {
   'export:planBatch': (req: BatchExportRequest) => Promise<ExportPlan>
   'export:copy': (outPath: string) => Promise<ExportResult>
   'export:encode': (outPath: string, wav: ArrayBuffer) => Promise<ExportResult>
-  'export:finish': (outDir: string, summary: ExportSummary) => Promise<DeliverPaths>
+  'export:finish': (token: string, summary: ExportSummary) => Promise<DeliverPaths>
 
   'settings:get': () => Promise<AppSettings>
   'settings:set': (settings: AppSettings) => Promise<void>

@@ -59,11 +59,11 @@ export function BatchExportDialog({ onClose }: Props) {
   }
 
   return (
-    <div className="modal-bg" onClick={onClose}>
+    <div className="modal-bg" onClick={busy ? undefined : onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           Batch export
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
+          <button className="icon-btn" onClick={onClose} disabled={busy} aria-label="Close">
             ✕
           </button>
         </div>

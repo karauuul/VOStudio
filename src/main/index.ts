@@ -602,8 +602,8 @@ function registerHandlers(): void {
   typedHandle('export:planBatch', async (req) => planBatchExport(batchExportSchema.parse(req)))
   typedHandle('export:copy', (outPath: string) => copyJob(z.string().min(1).parse(outPath)))
   typedHandle('export:encode', (outPath, wav) => encodeJob(z.string().min(1).parse(outPath), wav))
-  typedHandle('export:finish', (outDir, summary) =>
-    finishExport(z.string().min(1).max(4096).parse(outDir), exportSummarySchema.parse(summary))
+  typedHandle('export:finish', (token, summary) =>
+    finishExport(z.string().uuid().parse(token), exportSummarySchema.parse(summary))
   )
 
   typedHandle('settings:get', () => store.getSettings())

@@ -42,6 +42,7 @@ function ctx(): { project: Project; dir: string } {
 let planned = new Map<string, ExportJob>()
 
 interface BatchPlan {
+  token: string
   projectId: string
   outDir: string
   scope: BatchExportRequest['scope']
@@ -93,9 +94,15 @@ function toJobs(items: PlannedTake[], outDir: string): ExportJob[] {
   })
 }
 
-function publish(jobs: ExportJob[], skipped: number, outDir: string, collisions: ExportPlan['collisions']): ExportPlan {
+function publish(
+  token: string,
+  jobs: ExportJob[],
+  skipped: number,
+  outDir: string,
+  collisions: ExportPlan['collisions']
+): ExportPlan {
   planned = new Map(jobs.map((j) => [j.outPath, j]))
-  return { jobs, skipped, outDir, collisions }
+  return { token, jobs, skipped, outDir, collisions }
 }
 
 export function planCueExport(cueId: string): ExportPlan {
@@ -106,7 +113,7 @@ export function planCueExport(cueId: string): ExportPlan {
   if (!take) throw new Error('No voiced output')
   const outDir = path.join(dir, 'exports')
   batchPlan = null
-  return publish(toJobs([{ cue, take, name: exportName(project, cue, take) }], outDir), 0, outDir, [])
+  return publish(randomUUID(), toJobs([{ cue, take, name: exportName(project, cue, take) }], outDir), 0, outDir, [])
 }
 
 export async function planBatchExport(req: BatchExportRequest): Promise<ExportPlan> {
@@ -115,11 +122,13 @@ export async function planBatchExport(req: BatchExportRequest): Promise<ExportPl
   const items = planBatch(project, req.scope)
   const resolved = resolvePlan(items, req.collisionStrategy ?? {})
   batchPlan = null
-  if (resolved.uncovered.length > 0) return publish([], 0, outDir, findCollisions(items))
+  const token = randomUUID()
+  if (resolved.uncovered.length > 0) return publish(token, [], 0, outDir, findCollisions(items))
   const audioDir = path.join(outDir, 'audio')
+  const jobs = toJobs(resolved.jobs, audioDir)
   await fs.rm(audioDir, { recursive: true, force: true })
-  batchPlan = { projectId: project.id, outDir, scope: req.scope, skippedCues: resolved.skippedCues }
-  return publish(toJobs(resolved.jobs, audioDir), resolved.skipped, outDir, [])
+  batchPlan = { token, projectId: project.id, outDir, scope: req.scope, skippedCues: resolved.skippedCues }
+  return publish(token, jobs, resolved.skipped, outDir, [])
 }
 
 function jobFor(outPath: string): ExportJob {
@@ -182,12 +191,11 @@ export async function encodeJob(outPath: string, wav: unknown): Promise<ExportRe
   return { outPath, bytes: out.length, parityHash: sha256(out) }
 }
 
-export async function finishExport(outDir: string, summary: ExportSummary): Promise<DeliverPaths> {
+export async function finishExport(token: string, summary: ExportSummary): Promise<DeliverPaths> {
   const { project } = ctx()
-  if (!batchPlan || outDir !== batchPlan.outDir) {
-    throw new Error(`"${outDir}" is not the folder of the current batch export plan`)
-  }
+  if (!batchPlan || token !== batchPlan.token) throw new Error('This batch export plan is no longer current')
   if (project.id !== batchPlan.projectId) throw new Error('The exported project is no longer open')
+  const outDir = batchPlan.outDir
   const byKey = new Map(project.cues.map((c) => [c.key, c]))
   const nameOf = (cueKey: string): string => {
     const cue = byKey.get(cueKey)

@@ -71,7 +71,7 @@ export async function runPlan(
     }
   }
   onProgress?.({ done: plan.jobs.length, total: plan.jobs.length, current: '' })
-  const paths = await api['export:finish'](plan.outDir, summary)
+  const paths = await api['export:finish'](plan.token, summary)
   return {
     written: summary.exported.length,
     skipped: plan.skipped,
