@@ -393,7 +393,7 @@ async function copyReferenceAudio(
   referenceRoot: string,
   rows: TemplateRow[] = validation.rows,
   overwrite = true
-): Promise<void> {
+): Promise<string[]> {
   const audioDir = path.join(validation.dir, 'audio')
   const candidates = [
     ...new Set(
@@ -401,8 +401,15 @@ async function copyReferenceAudio(
     ),
   ]
   const wanted: string[] = []
+  const conflicts: string[] = []
   for (const rel of candidates) {
-    if (overwrite || !(await exists(path.join(referenceRoot, rel)))) wanted.push(rel)
+    const target = path.join(referenceRoot, rel)
+    if (overwrite || !(await exists(target))) {
+      wanted.push(rel)
+      continue
+    }
+    const [a, b] = await Promise.all([fs.readFile(path.join(audioDir, rel)), fs.readFile(target)])
+    if (!a.equals(b)) conflicts.push(rel)
   }
   for (const dir of new Set(wanted.map((rel) => path.dirname(path.join(referenceRoot, rel))))) {
     await fs.mkdir(dir, { recursive: true })
@@ -414,6 +421,7 @@ async function copyReferenceAudio(
         .map((rel) => fs.copyFile(path.join(audioDir, rel), path.join(referenceRoot, rel)))
     )
   }
+  return conflicts
 }
 
 function projectDirFor(name: string): string {
@@ -501,7 +509,11 @@ export async function reimportTemplate(
     return cue
   })
 
-  await copyReferenceAudio(validation, referenceRoot, diff.added, false)
+  const conflicts = await copyReferenceAudio(validation, referenceRoot, diff.added, false)
+  const conflictWarnings: TemplateIssue[] = conflicts.map((rel) => ({
+    row: null,
+    reason: `Reference audio "${rel}" already exists with different content; the project file was kept`,
+  }))
 
   const { changed, warnings } = applyTemplateDiff(project, diff, addedCues)
   if (created.length > 0) project.characters.push(...created)
@@ -512,7 +524,7 @@ export async function reimportTemplate(
       updated: diff.updated.length,
       untouched: diff.untouched.length,
       orphaned: diff.orphaned.length,
-      warnings: [...validation.warnings, ...warnings],
+      warnings: [...validation.warnings, ...conflictWarnings, ...warnings],
     },
     changes: {
       cues: structuredClone(changed),

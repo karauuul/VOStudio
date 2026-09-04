@@ -487,6 +487,9 @@ describe('createProjectFromTemplate', () => {
 
     const { result } = await reimportTemplate(await validateTemplate(dir, true), project, dir)
     expect(result).toMatchObject({ added: 1 })
+    expect(result.warnings.map((w) => w.reason)).toContain(
+      'Reference audio "shared.wav" already exists with different content; the project file was kept'
+    )
     expect(await fs.readFile(path.join(referenceRoot, 'shared.wav'), 'utf-8')).toBe('old')
   })
 
