@@ -57,7 +57,7 @@ export const templateMetaSchema = z.object({
 
 export const templateDirSchema = z.string().min(1).max(4096)
 
-const exportedCue = z.object({ cueKey: z.string().min(1).max(200), name: z.string().min(1).max(400) })
+const exportedCue = z.object({ cueKey: z.string().min(1).max(4096), name: z.string().min(1).max(4096) })
 
 export const exportSummarySchema = z.object({
   exported: z

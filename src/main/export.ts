@@ -50,6 +50,7 @@ interface BatchPlan {
 }
 
 let batchPlan: BatchPlan | null = null
+const STAGING_DIR = 'audio.staging'
 
 function compJobClips(cue: Cue): ExportCompClip[] | undefined {
   if (!usesCompOutput(cue)) return undefined
@@ -124,9 +125,9 @@ export async function planBatchExport(req: BatchExportRequest): Promise<ExportPl
   batchPlan = null
   const token = randomUUID()
   if (resolved.uncovered.length > 0) return publish(token, [], 0, outDir, findCollisions(items))
-  const audioDir = path.join(outDir, 'audio')
-  const jobs = toJobs(resolved.jobs, audioDir)
-  await fs.rm(audioDir, { recursive: true, force: true })
+  const stagingDir = path.join(outDir, STAGING_DIR)
+  const jobs = toJobs(resolved.jobs, stagingDir)
+  await fs.rm(stagingDir, { recursive: true, force: true })
   batchPlan = {
     token,
     project: structuredClone(project),
@@ -201,8 +202,9 @@ export async function finishExport(token: string, summary: ExportSummary): Promi
   if (!batchPlan || token !== batchPlan.token) throw new Error('This batch export plan is no longer current')
   if (ctx().project.id !== batchPlan.project.id) throw new Error('The exported project is no longer open')
   const { project, outDir } = batchPlan
+  const stagingDir = path.join(outDir, STAGING_DIR)
   for (const f of summary.failed) {
-    const outPath = path.join(outDir, 'audio', f.name)
+    const outPath = path.join(stagingDir, f.name)
     if (planned.has(outPath)) await fs.rm(outPath, { force: true })
   }
   const byKey = new Map(project.cues.map((c) => [c.key, c]))
@@ -227,7 +229,10 @@ export async function finishExport(token: string, summary: ExportSummary): Promi
     skipped: batchPlan.skippedCues,
   }
 
-  await fs.mkdir(outDir, { recursive: true })
+  await fs.mkdir(stagingDir, { recursive: true })
+  const audioDir = path.join(outDir, 'audio')
+  await fs.rm(audioDir, { recursive: true, force: true })
+  await fs.rename(stagingDir, audioDir)
   const index = buildUpdatedIndex(project)
   const indexPath = path.join(outDir, 'index.updated.csv')
   if (index !== null) await store.atomicWrite(indexPath, index)
