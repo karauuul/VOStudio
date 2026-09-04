@@ -95,13 +95,7 @@ export function GenerateBar({
           className="btn ghost"
           onClick={onApproveNext}
           disabled={approved || approveDisabled}
-          title={
-            approved
-              ? 'Already approved'
-              : approveDisabled
-                ? 'No voiced output'
-                : 'Approve this cue and go to the next one'
-          }
+          title={approved ? 'Already approved' : approveDisabled ? 'No voiced output' : undefined}
         >
           ✓ Approve &amp; Next <kbd>Shift+A</kbd>
         </button>

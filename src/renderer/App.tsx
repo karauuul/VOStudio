@@ -428,10 +428,14 @@ export default function App() {
       textTimer.current = null
     }
     const p = pendingText.current
-    if (!p) return Promise.resolve()
+    if (!p) return Promise.resolve(true)
     pendingText.current = null
-    return dispatch({ type: 'cue.saveText', cueId: p.id, text: p.text }).catch((e: unknown) =>
-      pushStatus('err', String(e))
+    return dispatch({ type: 'cue.saveText', cueId: p.id, text: p.text }).then(
+      () => true,
+      (e: unknown) => {
+        pushStatus('err', String(e))
+        return false
+      }
     )
   }, [pushStatus, dispatch])
 
@@ -468,25 +472,28 @@ export default function App() {
         pushStatus('err', 'Approval requires a valid voiced output')
         return Promise.resolve(false)
       }
-      return flushText()
-        .then(() => dispatch({ type: 'cue.approve', cueId: cue.id, approved }))
-        .then(
+      return flushText().then((saved) => {
+        if (!saved) return false
+        return dispatch({ type: 'cue.approve', cueId: cue.id, approved }).then(
           () => true,
           (e: unknown) => {
             pushStatus('err', String(e))
             return false
           }
         )
+      })
     },
     [activeCue, pushStatus, flushText, dispatch]
   )
 
   const onApproveNext = useCallback(() => {
+    const cue = activeCue
+    if (!cue || approvalState(cue) === 'approved' || !hasValidVoicedOutput(cue)) return
     const targetId = visible[activeIndex + 1]?.id
     void onApprove(true).then((ok) => {
       if (ok && targetId !== undefined) selectCue(targetId)
     })
-  }, [visible, activeIndex, onApprove, selectCue])
+  }, [activeCue, visible, activeIndex, onApprove, selectCue])
 
   const onSetFinal = useCallback(
     (takeId: string) => {
