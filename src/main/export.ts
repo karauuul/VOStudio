@@ -226,12 +226,14 @@ export async function finishExport(token: string, summary: ExportSummary): Promi
 
   await fs.mkdir(path.join(stagingDir, 'audio'), { recursive: true })
   const index = buildUpdatedIndex(project)
-  const entries = ['audio', 'report.json', ...(index === null ? [] : ['index.updated.csv'])]
+  const staged = ['audio', 'report.json', ...(index === null ? [] : ['index.updated.csv'])]
   if (index !== null) await fs.writeFile(path.join(stagingDir, 'index.updated.csv'), index)
   const report = buildReport(project.name, batchPlan.scope, deliver)
   await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
-  for (const entry of entries) await fs.rm(path.join(outDir, entry), { recursive: true, force: true })
-  for (const entry of entries) await fs.rename(path.join(stagingDir, entry), path.join(outDir, entry))
+  for (const entry of ['audio', 'report.json', 'index.updated.csv']) {
+    await fs.rm(path.join(outDir, entry), { recursive: true, force: true })
+  }
+  for (const entry of staged) await fs.rename(path.join(stagingDir, entry), path.join(outDir, entry))
   await fs.rm(stagingDir, { recursive: true, force: true })
   const reportPath = path.join(outDir, 'report.json')
   return { ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }), reportPath }
