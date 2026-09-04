@@ -4,7 +4,13 @@ import { promises as fs } from 'fs'
 import { randomUUID } from 'crypto'
 import { z } from 'zod'
 import { typedHandle } from './typed-ipc'
-import { projectCommandSchema, projectDirSchema, projectNameSchema, templateDirSchema } from './schemas'
+import {
+  exportSummarySchema,
+  projectCommandSchema,
+  projectDirSchema,
+  projectNameSchema,
+  templateDirSchema,
+} from './schemas'
 import { emit } from './emit'
 import * as store from './project-store'
 import * as eleven from './providers/elevenlabs'
@@ -29,7 +35,7 @@ import { createProjectFromTemplate, toPreview, validateTemplate } from './templa
 import * as migration from './migration'
 import { GENERATED_DIR } from './migration'
 import { syncCsv } from './csv-sync'
-import { copyJob, encodeJob, planBatchExport, planCueExport } from './export'
+import { copyJob, encodeJob, finishExport, planBatchExport, planCueExport } from './export'
 import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
@@ -123,7 +129,6 @@ function flushPersist(): Promise<void> {
 const batchExportSchema = z.object({
   scope: z.enum(['approved', 'all-final']),
   collisionStrategy: z.record(z.enum(['suffix-wemid', 'skip', 'reuse'])).optional(),
-  outDir: z.string().max(4096).optional(),
 })
 
 const settingsSchema = z.object({
@@ -597,6 +602,9 @@ function registerHandlers(): void {
   typedHandle('export:planBatch', async (req) => planBatchExport(batchExportSchema.parse(req)))
   typedHandle('export:copy', (outPath: string) => copyJob(z.string().min(1).parse(outPath)))
   typedHandle('export:encode', (outPath, wav) => encodeJob(z.string().min(1).parse(outPath), wav))
+  typedHandle('export:finish', (token, summary) =>
+    finishExport(z.string().uuid().parse(token), exportSummarySchema.parse(summary))
+  )
 
   typedHandle('settings:get', () => store.getSettings())
   typedHandle('settings:set', async (s: AppSettings) => {

@@ -103,6 +103,27 @@ describe('template validation — fatal vs warning matrix', () => {
     expect(reasons).toEqual(['index.csv is missing columns: refAudio, exportName'])
   })
 
+  it('a numeric column name is fatal', async () => {
+    const reasons = await fatalReasons('cueId,character,sourceText,refAudio,exportName,0\nA,ADA,S,,X,v\n')
+    expect(reasons).toEqual(['index.csv has numeric column names: 0'])
+  })
+
+  it('a duplicate column name is fatal', async () => {
+    const reasons = await fatalReasons('cueId,character,sourceText,refAudio,exportName,note,note\nA,ADA,S,,X,a,b\n')
+    expect(reasons).toEqual(['index.csv has duplicate column names: note'])
+  })
+
+  it('a reserved column name is fatal', async () => {
+    const reasons = await fatalReasons('cueId,character,sourceText,refAudio,exportName,__proto__\nA,ADA,S,,X,v\n')
+    expect(reasons).toEqual(['index.csv has reserved column names: __proto__'])
+  })
+
+  it('a cueId or exportName longer than 200 characters is fatal', async () => {
+    const long = 'x'.repeat(201)
+    const reasons = await fatalReasons(rows(`${long},ADA,S,,,${long},,,`))
+    expect(reasons).toEqual(['cueId is longer than 200', 'exportName is longer than 200'])
+  })
+
   it('an empty cueId, exportName or sourceText is fatal', async () => {
     const reasons = await fatalReasons(rows(',ADA,,,,,,,'))
     expect(reasons).toEqual(['cueId is empty', 'exportName is empty', 'sourceText is empty'])

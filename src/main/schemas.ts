@@ -57,6 +57,20 @@ export const templateMetaSchema = z.object({
 
 export const templateDirSchema = z.string().min(1).max(4096)
 
+const exportedCue = z.object({ cueKey: z.string().min(1).max(4096), name: z.string().min(1).max(4096) })
+
+export const exportSummarySchema = z.object({
+  exported: z
+    .array(
+      exportedCue.extend({
+        bytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+        sha256: z.string().regex(/^[0-9a-f]{64}$/),
+      })
+    )
+    .max(100_000),
+  failed: z.array(exportedCue.extend({ reason: z.string().max(2000) })).max(100_000),
+})
+
 const reverbSchema = z.object({
   mix: finite.min(MIX_MIN).max(MIX_MAX),
   size: finite.min(REVERB_SIZE_MIN).max(REVERB_SIZE_MAX),

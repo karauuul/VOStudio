@@ -76,7 +76,6 @@ export interface BatchExportCollision {
 export interface BatchExportRequest {
   scope: 'approved' | 'all-final'
   collisionStrategy?: Record<string, 'suffix-wemid' | 'skip' | 'reuse'>
-  outDir?: string
 }
 
 export interface BatchExportFailure {
@@ -91,6 +90,18 @@ export interface BatchExportResult {
   failed: BatchExportFailure[]
   collisions: BatchExportCollision[]
   outDir: string
+  indexPath?: string
+  reportPath?: string
+}
+
+export interface ExportSummary {
+  exported: { cueKey: string; name: string; bytes: number; sha256: string }[]
+  failed: { cueKey: string; name: string; reason: string }[]
+}
+
+export interface DeliverPaths {
+  indexPath?: string
+  reportPath: string
 }
 
 export interface ExportCompClip {
@@ -118,6 +129,7 @@ export interface ExportJob {
 }
 
 export interface ExportPlan {
+  token: string
   jobs: ExportJob[]
   collisions: BatchExportCollision[]
   skipped: number
@@ -219,6 +231,7 @@ export interface IpcApi {
   'export:planBatch': (req: BatchExportRequest) => Promise<ExportPlan>
   'export:copy': (outPath: string) => Promise<ExportResult>
   'export:encode': (outPath: string, wav: ArrayBuffer) => Promise<ExportResult>
+  'export:finish': (token: string, summary: ExportSummary) => Promise<DeliverPaths>
 
   'settings:get': () => Promise<AppSettings>
   'settings:set': (settings: AppSettings) => Promise<void>

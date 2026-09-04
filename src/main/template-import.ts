@@ -20,6 +20,7 @@ import { projectNameSchema, templateMetaSchema } from './schemas'
 import * as store from './project-store'
 
 const REQUIRED_COLUMNS = ['cueId', 'character', 'sourceText', 'refAudio', 'exportName'] as const
+const MAX_ID_LENGTH = 200
 const REF_FORMATS: Record<string, AudioRef['format']> = {
   '.wav': 'wav',
   '.mp3': 'mp3',
@@ -172,6 +173,21 @@ export async function validateTemplate(dir: string): Promise<TemplateValidation>
     fatalErrors.push({ row: 1, reason: `index.csv is missing columns: ${missingColumns.join(', ')}` })
     return { dir, meta, rows, terms, characters, warnings, fatalErrors }
   }
+  const numericColumns = csv.headers.filter((h) => /^\d+$/.test(h))
+  if (numericColumns.length > 0) {
+    fatalErrors.push({ row: 1, reason: `index.csv has numeric column names: ${numericColumns.join(', ')}` })
+    return { dir, meta, rows, terms, characters, warnings, fatalErrors }
+  }
+  const duplicateColumns = csv.headers.filter((h, i) => csv.headers.indexOf(h) !== i)
+  if (duplicateColumns.length > 0) {
+    fatalErrors.push({ row: 1, reason: `index.csv has duplicate column names: ${duplicateColumns.join(', ')}` })
+    return { dir, meta, rows, terms, characters, warnings, fatalErrors }
+  }
+  const reservedColumns = csv.headers.filter((h) => h in Object.prototype)
+  if (reservedColumns.length > 0) {
+    fatalErrors.push({ row: 1, reason: `index.csv has reserved column names: ${reservedColumns.join(', ')}` })
+    return { dir, meta, rows, terms, characters, warnings, fatalErrors }
+  }
 
   if (audioRoot === null) warnings.push({ row: null, reason: 'audio/ directory is missing' })
 
@@ -205,12 +221,15 @@ export async function validateTemplate(dir: string): Promise<TemplateValidation>
     fields['exportName'] = exportName
 
     if (!cueId) fatalErrors.push({ row, reason: 'cueId is empty' })
+    else if (cueId.length > MAX_ID_LENGTH) fatalErrors.push({ row, reason: `cueId is longer than ${MAX_ID_LENGTH}` })
     else if (seenCueIds.has(cueId)) {
       fatalErrors.push({ row, reason: `duplicate cueId "${cueId}" (first seen in row ${seenCueIds.get(cueId)})` })
     } else seenCueIds.set(cueId, row)
 
     if (!exportName) fatalErrors.push({ row, reason: 'exportName is empty' })
-    else if (!isSafeFileName(exportName)) {
+    else if (exportName.length > MAX_ID_LENGTH) {
+      fatalErrors.push({ row, reason: `exportName is longer than ${MAX_ID_LENGTH}` })
+    } else if (!isSafeFileName(exportName)) {
       fatalErrors.push({ row, reason: `exportName "${exportName}" is not a safe file name` })
     } else if (seenExportNames.has(exportName.toLowerCase())) {
       fatalErrors.push({

@@ -39,6 +39,7 @@ const channelMap: Record<IpcChannel, true> = {
   'export:planBatch': true,
   'export:copy': true,
   'export:encode': true,
+  'export:finish': true,
 
   'settings:get': true,
   'settings:set': true,

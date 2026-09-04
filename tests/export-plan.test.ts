@@ -227,6 +227,10 @@ describe('collisions and strategies', () => {
     const r = resolvePlan(planned, { 'Same.mp3': 'skip' })
     expect(r.jobs.map((j) => j.name)).toEqual(['Unique.mp3'])
     expect(r.skipped).toBe(2)
+    expect(r.skippedCues).toEqual([
+      { cueId: '100', reason: 'collision:skip' },
+      { cueId: '200', reason: 'collision:skip' },
+    ])
   })
 
   it('reuse: the LAST one stays, the rest counts as skipped', () => {
@@ -234,6 +238,7 @@ describe('collisions and strategies', () => {
     expect(r.jobs).toHaveLength(2)
     expect(r.jobs.find((j) => j.name === 'Same.mp3')?.cue.key).toBe('200')
     expect(r.skipped).toBe(1)
+    expect(r.skippedCues).toEqual([{ cueId: '100', reason: 'collision:reuse' }])
   })
 
   it('names differing only in case collide — the filesystem would overwrite one', () => {

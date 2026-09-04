@@ -2,7 +2,15 @@ import { promises as fs } from 'fs'
 import os from 'os'
 import path from 'path'
 import { createHash, randomUUID } from 'crypto'
-import type { BatchExportRequest, ExportCompClip, ExportJob, ExportPlan, ExportResult } from '@shared/ipc'
+import type {
+  BatchExportRequest,
+  DeliverPaths,
+  ExportCompClip,
+  ExportJob,
+  ExportPlan,
+  ExportResult,
+  ExportSummary,
+} from '@shared/ipc'
 import {
   containerOf,
   exportName,
@@ -13,7 +21,9 @@ import {
   planBatch,
   resolvePlan,
   type PlannedTake,
+  type SkippedCue,
 } from '@shared/export-plan'
+import { buildReport, buildUpdatedIndex, type DeliverSummary } from '@shared/deliver'
 import { isEmptyComp } from '@shared/comp'
 import { usesCompOutput } from '@shared/approval'
 import type { Cue, Project } from '@shared/domain'
@@ -30,6 +40,17 @@ function ctx(): { project: Project; dir: string } {
 }
 
 let planned = new Map<string, ExportJob>()
+
+interface BatchPlan {
+  token: string
+  project: Project
+  outDir: string
+  scope: BatchExportRequest['scope']
+  skippedCues: SkippedCue[]
+}
+
+let batchPlan: BatchPlan | null = null
+const STAGING_DIR = 'export.staging'
 
 function compJobClips(cue: Cue): ExportCompClip[] | undefined {
   if (!usesCompOutput(cue)) return undefined
@@ -74,9 +95,15 @@ function toJobs(items: PlannedTake[], outDir: string): ExportJob[] {
   })
 }
 
-function publish(jobs: ExportJob[], skipped: number, outDir: string, collisions: ExportPlan['collisions']): ExportPlan {
+function publish(
+  token: string,
+  jobs: ExportJob[],
+  skipped: number,
+  outDir: string,
+  collisions: ExportPlan['collisions']
+): ExportPlan {
   planned = new Map(jobs.map((j) => [j.outPath, j]))
-  return { jobs, skipped, outDir, collisions }
+  return { token, jobs, skipped, outDir, collisions }
 }
 
 export function planCueExport(cueId: string): ExportPlan {
@@ -86,16 +113,29 @@ export function planCueExport(cueId: string): ExportPlan {
   const take = outputTakeOf(cue)
   if (!take) throw new Error('No voiced output')
   const outDir = path.join(dir, 'exports')
-  return publish(toJobs([{ cue, take, name: exportName(project, cue, take) }], outDir), 0, outDir, [])
+  batchPlan = null
+  return publish(randomUUID(), toJobs([{ cue, take, name: exportName(project, cue, take) }], outDir), 0, outDir, [])
 }
 
-export function planBatchExport(req: BatchExportRequest): ExportPlan {
+export async function planBatchExport(req: BatchExportRequest): Promise<ExportPlan> {
   const { project, dir } = ctx()
-  const outDir = req.outDir || path.join(dir, 'exports')
+  const outDir = path.join(dir, 'export')
   const items = planBatch(project, req.scope)
   const resolved = resolvePlan(items, req.collisionStrategy ?? {})
-  if (resolved.uncovered.length > 0) return publish([], 0, outDir, findCollisions(items))
-  return publish(toJobs(resolved.jobs, outDir), resolved.skipped, outDir, [])
+  batchPlan = null
+  const token = randomUUID()
+  if (resolved.uncovered.length > 0) return publish(token, [], 0, outDir, findCollisions(items))
+  const stagingDir = path.join(dir, STAGING_DIR)
+  const jobs = toJobs(resolved.jobs, path.join(stagingDir, 'audio'))
+  await fs.rm(stagingDir, { recursive: true, force: true })
+  batchPlan = {
+    token,
+    project: structuredClone(project),
+    outDir,
+    scope: req.scope,
+    skippedCues: resolved.skippedCues,
+  }
+  return publish(token, jobs, resolved.skipped, outDir, [])
 }
 
 function jobFor(outPath: string): ExportJob {
@@ -156,4 +196,49 @@ export async function encodeJob(outPath: string, wav: unknown): Promise<ExportRe
   }
   const out = await fs.readFile(outPath)
   return { outPath, bytes: out.length, parityHash: sha256(out) }
+}
+
+export async function finishExport(token: string, summary: ExportSummary): Promise<DeliverPaths> {
+  if (!batchPlan || token !== batchPlan.token) throw new Error('This batch export plan is no longer current')
+  if (ctx().project.id !== batchPlan.project.id) throw new Error('The exported project is no longer open')
+  const { project, outDir } = batchPlan
+  const stagingDir = path.join(path.dirname(outDir), STAGING_DIR)
+  for (const f of summary.failed) {
+    const outPath = path.join(stagingDir, 'audio', f.name)
+    if (planned.has(outPath)) await fs.rm(outPath, { force: true })
+  }
+  const deliver: DeliverSummary = {
+    exported: summary.exported.map((e) => ({
+      cueId: e.cueKey,
+      exportName: path.parse(e.name).name,
+      file: `audio/${e.name}`,
+      bytes: e.bytes,
+      sha256: e.sha256,
+    })),
+    failed: summary.failed.map((f) => ({
+      cueId: f.cueKey,
+      exportName: path.parse(f.name).name,
+      file: `audio/${f.name}`,
+      reason: f.reason,
+    })),
+    skipped: batchPlan.skippedCues,
+  }
+
+  await fs.mkdir(path.join(stagingDir, 'audio'), { recursive: true })
+  const index = buildUpdatedIndex(project)
+  if (index !== null) await fs.writeFile(path.join(stagingDir, 'index.updated.csv'), index)
+  const report = buildReport(project.name, batchPlan.scope, deliver)
+  await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
+  const previousDir = outDir + '.previous'
+  await fs.rm(previousDir, { recursive: true, force: true })
+  const hadPrevious = await fs.rename(outDir, previousDir).then(() => true, () => false)
+  try {
+    await fs.rename(stagingDir, outDir)
+  } catch (error) {
+    if (hadPrevious) await fs.rename(previousDir, outDir).catch(() => undefined)
+    throw error
+  }
+  await fs.rm(previousDir, { recursive: true, force: true })
+  const reportPath = path.join(outDir, 'report.json')
+  return { ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }), reportPath }
 }
