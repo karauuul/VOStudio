@@ -41,7 +41,7 @@ export function highlightRanges(
 export function buildPrompt(project: Pick<Project, 'terms' | 'characters'>, cue: Cue): string {
   const character = project.characters.find((c) => c.id === cue.characterId)
   const lines = [`Character: ${character?.name ?? 'Unassigned'}`, `Source: ${cue.sourceText}`]
-  if (cue.text) lines.push(`Translation: ${cue.text}`)
+  if (cue.text.trim()) lines.push(`Translation: ${cue.text}`)
   if (cue.referenceDuration !== undefined) {
     lines.push(`Duration: ${cue.referenceDuration.toFixed(1)}s`)
   }
@@ -52,6 +52,6 @@ export function buildPrompt(project: Pick<Project, 'terms' | 'characters'>, cue:
       lines.push(`- ${t.term} = ${t.translation}${t.note ? ` (${t.note})` : ''}`)
     }
   }
-  if (cue.notes) lines.push(`Notes: ${cue.notes}`)
+  if (cue.notes.trim()) lines.push(`Notes: ${cue.notes}`)
   return lines.join('\n')
 }
