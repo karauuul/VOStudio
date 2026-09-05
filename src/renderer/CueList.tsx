@@ -1,71 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, type RefObject } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import type { Character, Cue } from '@shared/domain'
 import { approvalState, hasValidVoicedOutput } from '@shared/approval'
+import { ALL_CHARACTERS, FILTERS, filterCounts } from '@shared/cue-filter'
 
-export const DEFAULT_FILTER = 'work'
-export const ALL_CHARACTERS = 'all'
 export const PRIMARY_CHARACTER = 'ada'
-
-export const FILTERS: { id: string; label: string }[] = [
-  { id: 'work', label: 'Active' },
-  { id: 'notgen', label: 'Not voiced' },
-  { id: 'review', label: 'Review' },
-  { id: 'gen', label: 'Voiced' },
-  { id: 'appr', label: 'Approved' },
-  { id: 'sugg', label: 'Suggestions' },
-  { id: 'excluded', label: 'Excluded' },
-  { id: 'all', label: 'All' },
-]
-
-export function matchesFilter(cue: Cue, filter: string): boolean {
-  switch (filter) {
-    case 'work':
-      return cue.status !== 'excluded'
-    case 'translated':
-      return cue.status === 'translated'
-    case 'gen':
-      return hasValidVoicedOutput(cue)
-    case 'notgen':
-      return !hasValidVoicedOutput(cue) && cue.status !== 'excluded'
-    case 'review':
-      return hasValidVoicedOutput(cue) && cue.status !== 'excluded' && approvalState(cue) !== 'approved'
-    case 'appr':
-      return cue.status !== 'excluded' && approvalState(cue) === 'approved'
-    case 'sugg':
-      return cue.suggestedText !== undefined
-    case 'excluded':
-      return cue.status === 'excluded'
-    default:
-      return true
-  }
-}
-
-export function matchesCharacter(cue: Cue, characterId: string): boolean {
-  return characterId === ALL_CHARACTERS || cue.characterId === characterId
-}
-
-export function matchesSearch(cue: Cue, search: string): boolean {
-  if (!search) return true
-  const q = search.toLowerCase()
-  return (
-    (cue.fields['EventName'] ?? '').toLowerCase().includes(q) ||
-    cue.text.toLowerCase().includes(q) ||
-    cue.sourceText.toLowerCase().includes(q) ||
-    cue.key.toLowerCase().includes(q)
-  )
-}
-
-export function filterCues(
-  cues: Cue[],
-  filter: string,
-  search: string,
-  characterId: string = ALL_CHARACTERS
-): Cue[] {
-  return cues.filter(
-    (c) => matchesFilter(c, filter) && matchesCharacter(c, characterId) && matchesSearch(c, search)
-  )
-}
 
 export function dotClass(cue: Cue): string {
   if (cue.status === 'excluded') return 'excluded'
@@ -90,6 +29,8 @@ interface Props {
   onCharacterFilter: (id: string) => void
   onSelect: (cueId: string) => void
   scrollToIndex?: number
+  searchRef?: RefObject<HTMLInputElement>
+  scope?: { label: string; onExit: () => void }
 }
 
 export function CueList({
@@ -105,15 +46,15 @@ export function CueList({
   onCharacterFilter,
   onSelect,
   scrollToIndex,
+  searchRef,
+  scope,
 }: Props) {
   const vRef = useRef<VirtuosoHandle>(null)
   const byId = useMemo(() => new Map(characters.map((c) => [c.id, c])), [characters])
-  const counts = useMemo(() => {
-    const inScope = allCues.filter((c) => matchesCharacter(c, characterFilter))
-    return Object.fromEntries(
-      FILTERS.map((f) => [f.id, inScope.filter((c) => matchesFilter(c, f.id)).length])
-    )
-  }, [allCues, characterFilter])
+  const counts = useMemo(
+    () => filterCounts(allCues, search, characterFilter),
+    [allCues, search, characterFilter]
+  )
 
   useEffect(() => {
     if (scrollToIndex === undefined || scrollToIndex < 0) return
@@ -122,10 +63,19 @@ export function CueList({
 
   return (
     <div className="sidebar">
+      {scope ? (
+        <div className="side-head scope-head">
+          <span className="scope-label">{scope.label}</span>
+          <button className="btn ghost" onClick={scope.onExit}>
+            Exit selection
+          </button>
+        </div>
+      ) : (
       <div className="side-head">
         <input
           type="search"
           className="search"
+          ref={searchRef}
           value={search}
           placeholder="Search — EventName, text, WemId"
           onChange={(e) => onSearch(e.target.value)}
@@ -168,6 +118,7 @@ export function CueList({
           </div>
         )}
       </div>
+      )}
 
       <div className="side-count">
         {cues.length} / {allCues.length}

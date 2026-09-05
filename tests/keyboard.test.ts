@@ -77,8 +77,65 @@ describe('repeat blocking', () => {
   })
 })
 
+describe('routes', () => {
+  it('switches routes and focuses search from every route scope', () => {
+    for (const scope of ['workspace', 'timeline', 'text', 'grid', 'gridText'] as Scope[]) {
+      expect(action({ code: 'Digit1', ctrlKey: true, scope })).toBe('routeWork')
+      expect(action({ code: 'Numpad2', ctrlKey: true, scope })).toBe('routeProject')
+      expect(action({ code: 'KeyF', ctrlKey: true, scope })).toBe('focusSearch')
+    }
+  })
+
+  it('keeps route keys out of a blocking decision and away from unmodified keys', () => {
+    expect(action({ code: 'Digit1', ctrlKey: true, scope: 'decision' })).toBeNull()
+    expect(action({ code: 'KeyF', ctrlKey: true, scope: 'decision' })).toBeNull()
+    expect(action({ code: 'Digit1' })).toBe('selectTake')
+    expect(action({ code: 'KeyF' })).toBe('makeFinal')
+    expect(action({ code: 'Digit3', ctrlKey: true })).toBeNull()
+  })
+})
+
+describe('project grid', () => {
+  it('owns arrows, Enter, Space and select all', () => {
+    expect(action({ code: 'ArrowDown', scope: 'grid' })).toBe('gridNext')
+    expect(action({ code: 'ArrowUp', scope: 'grid', repeat: true })).toBe('gridPrev')
+    expect(action({ code: 'Enter', scope: 'grid' })).toBe('gridOpen')
+    expect(action({ code: 'NumpadEnter', scope: 'grid' })).toBe('gridOpen')
+    expect(action({ code: 'Space', scope: 'grid' })).toBe('gridToggle')
+    expect(action({ code: 'KeyA', ctrlKey: true, scope: 'grid' })).toBe('gridSelectAll')
+  })
+
+  it('does not reach Work commands', () => {
+    for (const code of ['KeyA', 'KeyJ', 'KeyK', 'KeyF', 'KeyO', 'KeyB', 'KeyR', 'Digit1']) {
+      expect(action({ code, scope: 'grid' })).toBeNull()
+    }
+    expect(action({ code: 'KeyG', ctrlKey: true, scope: 'grid' })).toBeNull()
+    expect(action({ code: 'KeyA', shiftKey: true, scope: 'grid' })).toBeNull()
+  })
+
+  it('is not reachable from Work scopes', () => {
+    for (const code of ['ArrowDown', 'ArrowUp', 'Enter', 'Space']) {
+      expect(action({ code, scope: 'workspace' })).not.toBe(
+        action({ code, scope: 'grid' })
+      )
+    }
+    expect(action({ code: 'KeyA', ctrlKey: true, scope: 'workspace' })).toBeNull()
+    expect(action({ code: 'KeyA', ctrlKey: true, scope: 'timeline' })).toBeNull()
+  })
+
+  it('leaves text fields to the platform', () => {
+    expect(action({ code: 'KeyA', ctrlKey: true, scope: 'gridText' })).toBeNull()
+    expect(action({ code: 'KeyA', ctrlKey: true, scope: 'text' })).toBeNull()
+    expect(action({ code: 'KeyG', ctrlKey: true, scope: 'gridText' })).toBeNull()
+    for (const code of ['ArrowDown', 'Space', 'Enter']) {
+      expect(action({ code, scope: 'gridText' })).toBeNull()
+    }
+    expect(action({ code: 'Escape', scope: 'gridText' })).toBe('escape')
+  })
+})
+
 describe('scope precedence', () => {
-  const scopes: Scope[] = ['popover', 'decision', 'text', 'timeline', 'workspace']
+  const scopes: Scope[] = ['popover', 'decision', 'text', 'gridText', 'grid', 'timeline', 'workspace']
 
   it('a popover consumes every key', () => {
     for (const code of ['KeyA', 'Space', 'Escape', 'Delete', 'Digit1']) {

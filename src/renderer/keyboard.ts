@@ -1,8 +1,23 @@
 import { useEffect, useRef } from 'react'
 
-export type Scope = 'popover' | 'decision' | 'text' | 'timeline' | 'workspace'
+export type Scope =
+  | 'popover'
+  | 'decision'
+  | 'text'
+  | 'gridText'
+  | 'grid'
+  | 'timeline'
+  | 'workspace'
 
 export type KeyAction =
+  | 'routeWork'
+  | 'routeProject'
+  | 'focusSearch'
+  | 'gridNext'
+  | 'gridPrev'
+  | 'gridOpen'
+  | 'gridToggle'
+  | 'gridSelectAll'
   | 'next'
   | 'prev'
   | 'generate'
@@ -56,9 +71,23 @@ export interface KeyInput {
 const WORK: Scope[] = ['workspace', 'timeline']
 const TIMELINE: Scope[] = ['timeline']
 const TEXT: Scope[] = ['workspace', 'timeline', 'text']
+const GRID: Scope[] = ['grid']
+const ROUTES: Scope[] = ['workspace', 'timeline', 'text', 'grid', 'gridText']
 
 export const BINDINGS: Binding[] = [
-  { action: 'escape', codes: ['Escape'], scopes: ['workspace', 'timeline', 'text', 'decision'] },
+  {
+    action: 'escape',
+    codes: ['Escape'],
+    scopes: ['workspace', 'timeline', 'text', 'grid', 'gridText', 'decision'],
+  },
+  { action: 'routeWork', codes: ['Digit1', 'Numpad1'], mod: true, scopes: ROUTES },
+  { action: 'routeProject', codes: ['Digit2', 'Numpad2'], mod: true, scopes: ROUTES },
+  { action: 'focusSearch', codes: ['KeyF'], mod: true, scopes: ROUTES },
+  { action: 'gridNext', codes: ['ArrowDown'], scopes: GRID, repeat: true },
+  { action: 'gridPrev', codes: ['ArrowUp'], scopes: GRID, repeat: true },
+  { action: 'gridOpen', codes: ['Enter', 'NumpadEnter'], scopes: GRID },
+  { action: 'gridToggle', codes: ['Space'], scopes: GRID },
+  { action: 'gridSelectAll', codes: ['KeyA'], mod: true, scopes: GRID },
   { action: 'generate', codes: ['KeyG'], mod: true, scopes: TEXT },
   { action: 'promptFragment', codes: ['KeyG'], mod: true, shift: true, scopes: TIMELINE },
   { action: 'undo', codes: ['KeyZ'], mod: true, scopes: TIMELINE },
@@ -108,6 +137,14 @@ export function resolveKey(e: KeyInput): Binding | null {
 }
 
 export interface KeyboardHandlers {
+  routeWork: () => void
+  routeProject: () => void
+  focusSearch: () => void
+  gridNext: () => void
+  gridPrev: () => void
+  gridOpen: () => void
+  gridToggle: () => void
+  gridSelectAll: () => void
   next: () => void
   prev: () => void
   generate: () => void
@@ -141,6 +178,7 @@ export interface KeyboardHandlers {
 
 export interface KeyboardScopes {
   timeline: boolean
+  grid: boolean
   decision: () => boolean
 }
 
@@ -180,8 +218,9 @@ export function useKeyboard(
       const ctx = scopeRef.current
       let scope: Scope
       if (ctx.decision()) scope = 'decision'
-      else if (isEditor(el)) scope = 'text'
+      else if (isEditor(el)) scope = ctx.grid ? 'gridText' : 'text'
       else if (el?.closest(NATIVE) && NATIVE_CODES.includes(e.code)) return
+      else if (ctx.grid) scope = 'grid'
       else scope = ctx.timeline ? 'timeline' : 'workspace'
 
       const b = resolveKey({
@@ -199,7 +238,7 @@ export function useKeyboard(
 
       if (b.action === 'escape') {
         if (handlers.escape()) return
-        if (scope === 'text') el?.blur()
+        if (scope === 'text' || scope === 'gridText') el?.blur()
         else handlers.stopPlayback()
         return
       }

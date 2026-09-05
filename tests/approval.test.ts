@@ -12,7 +12,7 @@ import {
   usesCompOutput,
 } from '../src/shared/approval'
 import { emptyEdits, type Cue, type CueComp, type Take } from '../src/shared/domain'
-import { matchesFilter } from '../src/renderer/CueList'
+import { matchesFilter } from '../src/shared/cue-filter'
 
 const take = (id = 't1', kind: Take['kind'] = 'tts'): Take => ({
   id,

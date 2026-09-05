@@ -7,8 +7,24 @@ import {
   changeTakeOutput,
   type CueApprovalState,
 } from '../src/shared/approval'
-import { emptyEdits, type Cue, type CueComp, type CueStatus, type Take } from '../src/shared/domain'
-import { matchesFilter } from '../src/renderer/CueList'
+import {
+  emptyEdits,
+  type Character,
+  type Cue,
+  type CueComp,
+  type CueStatus,
+  type Take,
+} from '../src/shared/domain'
+import {
+  FILTERS,
+  filterCounts,
+  filterCues,
+  matchesFilter,
+  reviewGeneration,
+  reviewLabel,
+  deltaLabel,
+  outputDuration,
+} from '../src/shared/cue-filter'
 
 const APPROVED_AT = '2026-08-30T01:00:00.000Z'
 const PARTITION = ['notgen', 'review', 'appr', 'excluded']
@@ -116,5 +132,88 @@ describe('unknown filter ids from an old ui.json', () => {
     expect(matchesFilter(needsReview('generated'), 'translated')).toBe(false)
     expect(matchesFilter(needsReview('generated'), 'some-removed-filter')).toBe(true)
     expect(matchesFilter(unvoiced('excluded'), '')).toBe(true)
+  })
+})
+
+describe('presentation', () => {
+  it('names every shared filter', () => {
+    expect(FILTERS.map((f) => `${f.id}:${f.label}`)).toEqual([
+      'work:Working set',
+      'notgen:Needs output',
+      'review:Review',
+      'gen:Outputs',
+      'appr:Approved',
+      'sugg:Suggestions',
+      'excluded:Excluded',
+      'all:All',
+    ])
+  })
+
+  it.each([
+    ['approved', approvedCue('approved'), 'Approved'],
+    ['stale', staleCue('generated'), 'Stale approval'],
+    ['needs review', needsReview('generated'), 'Needs review'],
+    ['candidate without output', cue({ output: null }), 'Needs output'],
+    ['no audio', unvoiced('translated'), 'Needs voice'],
+    ['excluded', unvoiced('excluded'), 'Excluded'],
+  ])('labels a %s cue', (_name, c, expected) => {
+    expect(reviewLabel(c)).toBe(expected)
+  })
+})
+
+describe('counts', () => {
+  const rows = [
+    cue({ id: 'a', fields: { EventName: 'Intro_1' } }),
+    cue({ id: 'b', fields: { EventName: 'Intro_2' }, characterId: 'bob' }),
+    unvoiced('translated'),
+  ]
+
+  it('uses the same search and character scope as the results', () => {
+    for (const search of ['', 'intro']) {
+      for (const character of ['all', 'ada']) {
+        const counts = filterCounts(rows, search, character)
+        for (const f of FILTERS) {
+          expect(counts[f.id]).toBe(filterCues(rows, f.id, search, character).length)
+        }
+      }
+    }
+    expect(filterCounts(rows, 'intro', 'ada')['work']).toBe(1)
+    expect(filterCounts(rows, '', 'all')['work']).toBe(3)
+  })
+})
+
+describe('bulk generation review', () => {
+  const characters: Pick<Character, 'id' | 'provider'>[] = [
+    { id: 'ada', provider: { providerId: 'elevenlabs', voiceId: 'v1', ttsModel: '', stsModel: '' } },
+    { id: 'mute', provider: { providerId: 'elevenlabs', voiceId: '', ttsModel: '', stsModel: '' } },
+  ]
+
+  it('queues only eligible cues', () => {
+    const rows = [
+      cue({ id: 'ok' }),
+      cue({ id: 'busy' }),
+      cue({ id: 'empty', text: '   ' }),
+      cue({ id: 'novoice', characterId: 'mute' }),
+      cue({ id: 'skip', status: 'excluded' }),
+    ]
+    const review = reviewGeneration(rows, characters, (id) => id === 'busy')
+    expect(review.eligible.map((c) => c.id)).toEqual(['ok'])
+    expect([review.busy, review.missingText, review.missingVoice, review.excluded]).toEqual([
+      1, 1, 1, 1,
+    ])
+  })
+})
+
+describe('outputDuration and deltaLabel', () => {
+  it('treats an undecoded zero duration as unavailable', () => {
+    const c = cue({ referenceDuration: 2.4, takes: [{ ...take(), duration: 0 }], finalTakeId: 't1' })
+    expect(outputDuration(c)).toBeUndefined()
+    expect(deltaLabel(c)).toBe('n/a')
+  })
+
+  it('reports the signed delta against the reference', () => {
+    const c = cue({ referenceDuration: 2.4, takes: [{ ...take(), duration: 3.1 }], finalTakeId: 't1' })
+    expect(deltaLabel(c)).toBe('+0.70')
+    expect(deltaLabel(cue({ takes: [{ ...take(), duration: 3.1 }], finalTakeId: 't1' }))).toBe('n/a')
   })
 })

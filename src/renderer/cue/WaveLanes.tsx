@@ -292,6 +292,7 @@ export function WaveLanes({
     const el = bodyRef.current
     if (!el) return
     const ro = new ResizeObserver(() => {
+      if (el.clientWidth <= 0) return
       setWidth(el.clientWidth)
       requestDraw()
     })
