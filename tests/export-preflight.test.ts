@@ -140,6 +140,14 @@ describe('preflightPlan sources', () => {
     expect(preflightPlan(p, 'approved').sources.map((s) => s.inScope)).toEqual([true, false])
     expect(preflightPlan(p, 'all-final').sources.map((s) => s.inScope)).toEqual([true, true])
   })
+
+  it('takes collision-skipped sources out of scope', () => {
+    const p = project([cue('1', 'Same'), cue('2', 'Same')])
+    const skipped = preflightPlan(p, 'all-final', { 'Same.mp3': 'skip' })
+    expect(skipped.sources.map((s) => s.inScope)).toEqual([false, false])
+    const reused = preflightPlan(p, 'all-final', { 'Same.mp3': 'reuse' })
+    expect(reused.sources.map((s) => s.inScope)).toEqual([false, true])
+  })
 })
 
 describe('preflightPlan container validation', () => {

@@ -62,8 +62,8 @@ export function preflightPlan(
   const all = planBatch(project, 'all-final')
   const approved = all.filter((p) => approvalState(p.cue) === 'approved')
   const planned = scope === 'approved' ? approved : all
-  const scoped = new Set(planned.map((p) => p.cue.id))
   const resolved = resolvePlan(planned, strategy)
+  const scoped = new Set((resolved.uncovered.length > 0 ? planned : resolved.jobs).map((p) => p.cue.id))
   const names = (resolved.uncovered.length > 0 ? planned : resolved.jobs).map(named)
 
   let stale = 0

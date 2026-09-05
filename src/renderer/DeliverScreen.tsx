@@ -90,6 +90,7 @@ export function DeliverScreen({
   const chooseScope = useCallback((next: ExportScope) => {
     setConfirmAll(false)
     setScope(next)
+    setData(null)
     setStrategy({})
     setResult(null)
     setErr('')
@@ -206,7 +207,8 @@ export function DeliverScreen({
           </div>
           {confirmAll && (
             <div className="dlv-confirm">
-              <span>Include {data?.unapproved ?? 0} unapproved outputs?</span>
+              <span className="dim">Unapproved</span>
+              <span className="mono">{data?.unapproved ?? 0}</span>
               <button className="btn primary" onClick={() => chooseScope('all-final')}>
                 Include
               </button>
