@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import type { Character, Take, VoiceSettings } from '@shared/domain'
+import type { Character, CueComp, Take, VoiceSettings } from '@shared/domain'
+import { compDuration } from '@shared/comp'
 import { RulesPanel } from '../RulesPanel'
 import { fmt } from '../Waveform'
 import { stamp } from './shared'
@@ -14,7 +14,10 @@ const TABS: { id: InspectorTab; label: string }[] = [
 ]
 
 interface Props {
+  tab: InspectorTab
+  onTab: (tab: InspectorTab) => void
   take?: Take
+  comp?: CueComp
   isFinal: boolean
   canSetFinal: boolean
   onSetFinal: () => void
@@ -26,7 +29,10 @@ interface Props {
 }
 
 export function Inspector({
+  tab,
+  onTab,
   take,
+  comp,
   isFinal,
   canSetFinal,
   onSetFinal,
@@ -36,8 +42,6 @@ export function Inspector({
   rules,
   onRulesSaved,
 }: Props) {
-  const [tab, setTab] = useState<InspectorTab>('take')
-
   return (
     <div className="insp">
       <div className="insp-tabs">
@@ -45,7 +49,7 @@ export function Inspector({
           <button
             key={t.id}
             className={'insp-tab' + (tab === t.id ? ' on' : '')}
-            onClick={() => setTab(t.id)}
+            onClick={() => onTab(t.id)}
           >
             {t.label}
           </button>
@@ -56,6 +60,7 @@ export function Inspector({
         {tab === 'take' && (
           <TakeTab
             take={take}
+            comp={comp}
             isFinal={isFinal}
             canSetFinal={canSetFinal}
             onSetFinal={onSetFinal}
@@ -84,18 +89,35 @@ function Row({ label, value }: { label: string; value: string }) {
 
 function TakeTab({
   take,
+  comp,
   isFinal,
   canSetFinal,
   onSetFinal,
   onDelete,
 }: {
   take?: Take
+  comp?: CueComp
   isFinal: boolean
   canSetFinal: boolean
   onSetFinal: () => void
   onDelete: () => void
 }) {
-  if (!take) return <div className="insp-empty">No take selected</div>
+  if (!take) {
+    if (!comp) return <div className="insp-empty">No take selected</div>
+    return (
+      <div className="insp-pad">
+        <Row label="Source" value="Composition" />
+        <Row label="Clips" value={String(comp.clips.length)} />
+        <Row label="Duration" value={fmt(compDuration(comp))} />
+        <Row label="Final" value={isFinal ? 'yes' : 'no'} />
+        <div className="insp-actions">
+          <button className="btn ghost" onClick={onSetFinal} disabled={!canSetFinal}>
+            Set final <kbd>F</kbd>
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   const vs = take.meta.voiceSettings
 

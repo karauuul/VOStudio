@@ -20,6 +20,7 @@ export interface TtsRequest {
   text: string
   voiceSettings: VoiceSettings
   fragment?: boolean
+  selectOutput?: boolean
 }
 
 export interface StsRequest {
@@ -27,6 +28,7 @@ export interface StsRequest {
   sourceTakeId: string
   voiceSettings: VoiceSettings
   fragment?: boolean
+  selectOutput?: boolean
 }
 
 export interface AppSettings {

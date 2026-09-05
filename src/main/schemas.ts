@@ -153,6 +153,30 @@ const voiceSettingsSchema = z.object({
   stability: finite.min(0).max(1), similarity: finite.min(0).max(1),
   style: finite.min(0).max(1), speed: finite.min(0.7).max(1.2), boost: z.boolean(),
 })
+export const ttsSchema = z.object({
+  cueId: z.string().min(1),
+  text: z.string().min(1).max(5000),
+  voiceSettings: voiceSettingsSchema,
+  fragment: z.boolean().optional(),
+  selectOutput: z.boolean().optional(),
+})
+
+export const stsSchema = z.object({
+  cueId: z.string().min(1),
+  sourceTakeId: z.string().min(1),
+  voiceSettings: voiceSettingsSchema,
+  fragment: z.boolean().optional(),
+  selectOutput: z.boolean().optional(),
+})
+
+export function autoSelectsOutput(
+  req: { fragment?: boolean; selectOutput?: boolean },
+  approved: boolean
+): boolean {
+  if (req.fragment || req.selectOutput === false) return false
+  return !approved
+}
+
 const cueId = z.object({ cueId: z.string().min(1).max(200) })
 const characterId = z.object({ characterId: z.string().min(1).max(200) })
 const characterName = z.string().min(1).max(120)

@@ -4,14 +4,14 @@ export interface KeyboardHandlers {
   next: () => void
   prev: () => void
   generate: () => void
-  approveToggle: () => void
+  approve: () => void
   approveNext: () => void
   playOriginal: () => void
   playFinal: () => void
   abCompare: () => void
   selectTakeByIndex: (n: number) => void
   makeFinal: () => void
-  deleteTake: () => void
+  deleteClip: () => void
   splitClip: () => void
   healClip: () => void
   crossfadeClip: () => void
@@ -36,9 +36,7 @@ function isTextField(el: EventTarget | null): boolean {
 
 function digitKey(e: KeyboardEvent): number | null {
   const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code)
-  if (m) return Number(m[1])
-  if (e.key >= '1' && e.key <= '9') return Number(e.key)
-  return null
+  return m ? Number(m[1]) : null
 }
 
 export function useKeyboard(handlers: KeyboardHandlers, enabled: boolean): void {
@@ -62,7 +60,7 @@ export function useKeyboard(handlers: KeyboardHandlers, enabled: boolean): void 
         return
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return
-      if (e.key === 'Escape') {
+      if (e.code === 'Escape') {
         const consumed = handlers.escape()
         if (!consumed && e.target instanceof HTMLElement && isTextField(e.target)) {
           e.target.blur()
@@ -71,23 +69,23 @@ export function useKeyboard(handlers: KeyboardHandlers, enabled: boolean): void 
       }
       if (isTextField(e.target)) return
 
-      if (e.key === 'Enter') {
+      if (e.code === 'Enter' || e.code === 'NumpadEnter') {
         if (e.target instanceof HTMLElement && e.target.closest('button')) return
         e.preventDefault()
         handlers.auditionTake()
         return
       }
-      if (e.key === 'Delete') {
+      if (e.code === 'Delete') {
         e.preventDefault()
-        handlers.deleteTake()
+        handlers.deleteClip()
         return
       }
-      if (e.key === 'ArrowDown') {
+      if (e.code === 'ArrowDown') {
         e.preventDefault()
         handlers.next()
         return
       }
-      if (e.key === 'ArrowUp') {
+      if (e.code === 'ArrowUp') {
         e.preventDefault()
         handlers.prev()
         return
@@ -129,7 +127,7 @@ export function useKeyboard(handlers: KeyboardHandlers, enabled: boolean): void 
         case 'KeyA':
           e.preventDefault()
           if (e.shiftKey) handlers.approveNext()
-          else handlers.approveToggle()
+          else handlers.approve()
           return
         case 'KeyO':
           e.preventDefault()

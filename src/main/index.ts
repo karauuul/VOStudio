@@ -5,11 +5,14 @@ import { randomUUID } from 'crypto'
 import { z } from 'zod'
 import { typedHandle } from './typed-ipc'
 import {
+  autoSelectsOutput,
   exportSummarySchema,
   projectCommandSchema,
   projectDirSchema,
   projectNameSchema,
+  stsSchema,
   templateDirSchema,
+  ttsSchema,
 } from './schemas'
 import { emit } from './emit'
 import * as store from './project-store'
@@ -85,28 +88,6 @@ function createWindow(): void {
     void win.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
 }
-
-const voiceSettingsSchema = z.object({
-  stability: z.number().min(0).max(1),
-  similarity: z.number().min(0).max(1),
-  style: z.number().min(0).max(1),
-  speed: z.number().min(0.7).max(1.2),
-  boost: z.boolean(),
-})
-
-const ttsSchema = z.object({
-  cueId: z.string().min(1),
-  text: z.string().min(1).max(5000),
-  voiceSettings: voiceSettingsSchema,
-  fragment: z.boolean().optional(),
-})
-
-const stsSchema = z.object({
-  cueId: z.string().min(1),
-  sourceTakeId: z.string().min(1),
-  voiceSettings: voiceSettingsSchema,
-  fragment: z.boolean().optional(),
-})
 
 const TEST_VOICE_TEXT = 'Voice test, one two three.'
 const testVoiceInFlight = new Set<string>()
@@ -522,7 +503,7 @@ function registerHandlers(): void {
       ...(parsed.fragment ? { fragment: true as const } : {}),
     }
     target.takes.push(take)
-    if (!parsed.fragment) {
+    if (autoSelectsOutput(parsed, false)) {
       Object.assign(target, changeTakeOutput(target, take.id))
     }
     await publishCue(target)
@@ -582,7 +563,7 @@ function registerHandlers(): void {
       ...(parsed.fragment ? { fragment: true as const } : {}),
     }
     target.takes.push(take)
-    if (!parsed.fragment && target.status !== 'approved') {
+    if (autoSelectsOutput(parsed, target.status === 'approved')) {
       Object.assign(target, changeTakeOutput(target, take.id))
     }
     await publishCue(target)

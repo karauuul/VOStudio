@@ -14,6 +14,7 @@ interface Options {
   voice: VoiceSettings
   appSettings: AppSettings
   onTakeAdded: (cueId: string, take: Take) => void
+  onSubmit: (cueId: string) => void
   onStatus: (kind: 'ok' | 'err' | 'info', text: string) => void
   isActiveCue: (cueId: string) => boolean
   noVoiceReason: string
@@ -37,6 +38,7 @@ export function useVoiceToVoice({
   voice,
   appSettings,
   onTakeAdded,
+  onSubmit,
   onStatus,
   isActiveCue,
   noVoiceReason,
@@ -167,6 +169,7 @@ export function useVoiceToVoice({
             cueId,
             sourceTakeId,
             voiceSettings,
+            selectOutput: false,
             ...(isFragment ? { fragment: true } : {}),
           })
           onTakeAdded(cueId, take)
@@ -193,6 +196,7 @@ export function useVoiceToVoice({
     const clip = rec.clip
     if (!clip || converting) return
     const cueId = cue.id
+    onSubmit(cueId)
     const voiceSettings = voice
     const target = targetRef.current
     setSaving(true)
@@ -227,7 +231,7 @@ export function useVoiceToVoice({
         useJobsStore.getState().endSave()
       }
     })()
-  }, [rec, converting, cue.id, voice, onStatus, onTakeAdded, submitSts])
+  }, [rec, converting, cue.id, voice, onStatus, onSubmit, onTakeAdded, submitSts])
 
   const reconvert = useCallback(
     (take: Take) => {
@@ -236,12 +240,13 @@ export function useVoiceToVoice({
         onStatus('err', `Recording is ${take.duration.toFixed(1)}s — the STS limit is 5 min`)
         return
       }
+      onSubmit(cue.id)
       onStatus('info', `Converting again (≈${credits(take.duration)} credits)…`)
       submitSts(cue.id, take.id, voice, 'New take from the same recording', {
         mark: take.fragment,
       })
     },
-    [converting, cue.id, voice, onStatus, submitSts]
+    [converting, cue.id, voice, onStatus, onSubmit, submitSts]
   )
 
   const convertBlocked =
