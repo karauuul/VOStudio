@@ -532,11 +532,11 @@ export default function App() {
     (cueId: string, comp: CueComp | null) => {
       void dispatch({ type: 'cue.setComp', cueId, comp })
         .then(() => {
-          if (comp) selectSource({ kind: 'comp' })
+          if (comp && isActiveCue(cueId)) selectSource({ kind: 'comp' })
         })
         .catch((e: unknown) => pushStatus('err', String(e)))
     },
-    [dispatch, pushStatus, selectSource]
+    [dispatch, pushStatus, selectSource, isActiveCue]
   )
 
   const audition = useCallback((take: Take) => {

@@ -154,9 +154,10 @@ export function WaveLanes({
 
   const live = useMemo(() => liveTakes(cue), [cue.takes])
   const takeNumber = take ? live.findIndex((t) => t.id === take.id) + 1 : 0
-  const laneTag = editable ? 'COMP' : takeNumber > 0 ? `TAKE ${takeNumber}` : 'TAKE'
+  const isComp = preview.source.kind === 'comp'
+  const laneTag = isComp ? 'COMP' : takeNumber > 0 ? `TAKE ${takeNumber}` : 'TAKE'
 
-  const compClipId = editable ? clipId.comp(cue.id) : take ? clipId.take(take.id) : null
+  const compClipId = isComp ? clipId.comp(cue.id) : take ? clipId.take(take.id) : null
 
   const viewRef = useRef<TimelineView>({ pxPerSec: 100, scroll: 0 })
   const pendingRef = useRef<CueComp | null>(null)
@@ -838,8 +839,12 @@ export function WaveLanes({
       split: splitAtHead,
       heal: healSelected,
       crossfade: toggleCrossfade,
-      undo: () => editRef.current.undo(),
-      redo: () => editRef.current.redo(),
+      undo: () => {
+        if (editableRef.current) editRef.current.undo()
+      },
+      redo: () => {
+        if (editableRef.current) editRef.current.redo()
+      },
       selection,
       promptFragment,
       replaceSource,
