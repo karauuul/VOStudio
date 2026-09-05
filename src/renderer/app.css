@@ -863,13 +863,6 @@ kbd {
   min-width: 62px;
   color: var(--tx3);
 }
-.src-row-w {
-  padding: 0 4px;
-  border-radius: 3px;
-  background: rgba(230, 162, 60, 0.16);
-  color: var(--warn);
-  font: 9px var(--mono);
-}
 .src-row-d {
   margin-left: auto;
   font-variant-numeric: tabular-nums;

@@ -13,6 +13,7 @@ const TABS: { id: InspectorTab; label: string }[] = [
 ]
 
 interface Props {
+  cueId: string
   tab: InspectorTab
   onTab: (tab: InspectorTab) => void
   take?: Take
@@ -30,6 +31,7 @@ interface Props {
 }
 
 export function Inspector({
+  cueId,
   tab,
   onTab,
   take,
@@ -73,6 +75,7 @@ export function Inspector({
 
         {tab === 'voice' && (
           <VoicePanel
+            key={cueId}
             character={character}
             value={voice}
             override={voiceOverride}

@@ -1171,6 +1171,7 @@ export default function App() {
 
         <aside className="right" style={{ width: rightW, flex: `0 0 ${rightW}px` }}>
           <Inspector
+            cueId={activeCue?.id ?? ""}
             tab={inspectorTab}
             onTab={setInspectorTab}
             take={shownTake}
