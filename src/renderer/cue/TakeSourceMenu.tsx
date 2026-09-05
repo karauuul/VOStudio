@@ -30,7 +30,6 @@ interface Entry {
   kind: string
   duration: number
   final: boolean
-  unsaved: boolean
   take?: Take
 }
 
@@ -51,16 +50,12 @@ interface Props {
 function buildEntries(cue: Cue): Entry[] {
   const takes = liveTakes(cue)
   const output = outputSource(cue)
-  const converted = new Set(
-    takes.map((t) => t.meta.sourceTakeId).filter((id): id is string => !!id)
-  )
   const entries: Entry[] = takes.map((take, i) => ({
     source: { kind: 'take', takeId: take.id },
     label: `Take ${i + 1}`,
     kind: take.kind === 'recording' ? 'Recording' : take.kind.toUpperCase(),
     duration: take.duration,
     final: !!output && output.kind === 'take' && output.takeId === take.id,
-    unsaved: take.kind === 'recording' && !converted.has(take.id),
     take,
   }))
   const comp = cue.comp
@@ -71,7 +66,6 @@ function buildEntries(cue: Cue): Entry[] {
       kind: '',
       duration: compDuration(comp),
       final: output?.kind === 'comp',
-      unsaved: false,
     })
   }
   return entries
@@ -305,7 +299,6 @@ export function TakeSourceMenu({
             >
               <span className="src-row-n">{entry.label}</span>
               <span className="src-row-k">{entry.kind}</span>
-              {entry.unsaved && <span className="src-row-w">unsaved</span>}
               <span className="src-row-d">{entry.duration > 0 ? fmt(entry.duration) : ''}</span>
               <span className="src-row-f">{entry.final ? '★ Final' : ''}</span>
             </div>
