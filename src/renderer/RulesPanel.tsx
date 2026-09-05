@@ -4,7 +4,7 @@ import { applyRules } from '@shared/pronunciation'
 import { api } from './api'
 import { Confirm, Overlay } from './Overlay'
 
-export function countRules(text: string): number {
+function countRules(text: string): number {
   return text
     .split('\n')
     .filter((l) => l.trim() && !l.trim().startsWith('#') && l.includes(' → ')).length

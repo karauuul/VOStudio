@@ -17,19 +17,6 @@ export interface Clip {
   url: string
 }
 
-export interface SequenceItem {
-  id?: string
-  url: string
-  gapMs?: number
-}
-
-export interface SplitClip {
-  id?: string
-  url: string
-}
-
-export type SplitSide = SplitClip | { id?: string; comp: ResolvedComp }
-
 const TAKE = 'take:'
 
 export const clipId = {
@@ -40,10 +27,6 @@ export const clipId = {
   comp: (cueId: string): string => 'comp:' + cueId,
 }
 
-export function takeIdOf(id: string | null): string | null {
-  return id && id.startsWith(TAKE) ? id.slice(TAKE.length) : null
-}
-
 const FADE_IN = 0.005
 const FADE_OUT = 0.012
 const LEAD_IN = 0.06
@@ -52,7 +35,6 @@ const SCRUB_SEEK_MS = 60
 
 let ctx: AudioContext | null = null
 let fx: GainNode | null = null
-let master: GainNode | null = null
 
 function ac(): AudioContext {
   if (ctx) return ctx
@@ -63,7 +45,6 @@ function ac(): AudioContext {
   m.connect(c.destination)
   ctx = c
   fx = f
-  master = m
   void ensurePitchModule(c).catch(() => {})
   const wake = (): void => {
     void c.resume().catch(() => {})
@@ -126,25 +107,9 @@ interface Loaded {
   dur: number
 }
 
-interface SeqItem {
-  id: string
-  url: string
-  at: number
-  dur: number
-  voice: Voice
-}
-
 interface Bus {
   gain: GainNode
   sources: AudioBufferSourceNode[]
-  nodes: AudioNode[]
-}
-
-interface SplitState {
-  id: string
-  at: number
-  dur: number
-  buses: Bus[]
 }
 
 interface CompState {
@@ -158,7 +123,7 @@ interface CompState {
   bus: Bus | null
 }
 
-type Mode = 'idle' | 'clip' | 'seq' | 'split' | 'comp'
+type Mode = 'idle' | 'clip' | 'comp'
 
 let mode: Mode = 'idle'
 let cur: Loaded | null = null
@@ -170,14 +135,7 @@ let pausedPos = 0
 let wantPlay = false
 let gen = 0
 
-let seq: SeqItem[] | null = null
-let seqIndex = -1
-
-let split: SplitState | null = null
 let comp: CompState | null = null
-
-let loopA = 0
-let loopB: number | null = null
 
 let lastScrubAt = 0
 let raf = 0
@@ -213,10 +171,6 @@ export function currentClipId(): string | null {
   return state.clipId
 }
 
-export function isAB(): boolean {
-  return mode === 'seq' || mode === 'split'
-}
-
 export function sourceLabel(id: string | null): string {
   if (!id) return '—'
   if (id.startsWith('orig:')) return 'Original'
@@ -227,14 +181,12 @@ export function sourceLabel(id: string | null): string {
   return 'Clip'
 }
 
-function makeVoice(buf: AudioBuffer, when: number, offset: number, fade: boolean): Voice {
+function makeVoice(buf: AudioBuffer, when: number, offset: number): Voice {
   const c = ac()
   const plan = buildClipGraph(c, buf, emptyEdits(), { when, seek: offset })
   const g = c.createGain()
-  if (fade) {
-    g.gain.setValueAtTime(0, when)
-    g.gain.linearRampToValueAtTime(1, when + FADE_IN)
-  }
+  g.gain.setValueAtTime(0, when)
+  g.gain.linearRampToValueAtTime(1, when + FADE_IN)
   plan.output.connect(g)
   g.connect(fx as GainNode)
   plan.source.start(when, plan.offset)
@@ -262,23 +214,7 @@ function makeCompBus(sources: CompSource[], when: number, seek: number, until = 
       }
     }
   }
-  return { gain, sources: voices, nodes: [] }
-}
-
-function makeSplitBus(sources: CompSource[], when: number, pan: number): Bus {
-  const c = ac()
-  const mono = c.createGain()
-  mono.channelCount = 1
-  mono.channelCountMode = 'explicit'
-  mono.channelInterpretation = 'speakers'
-  const panner = c.createStereoPanner()
-  panner.pan.value = pan
-  const gain = c.createGain()
-  const s = scheduleComp(c, sources, mono, { when, seek: 0 })
-  mono.connect(panner)
-  panner.connect(gain)
-  gain.connect(fx as GainNode)
-  return { gain, sources: s.voices.map((v) => v.source), nodes: [mono, panner] }
+  return { gain, sources: voices }
 }
 
 function killBus(b: Bus): void {
@@ -300,7 +236,7 @@ function killBus(b: Bus): void {
   }
   setTimeout(
     () => {
-      for (const n of [...b.sources, ...b.nodes, b.gain]) {
+      for (const n of [...b.sources, b.gain]) {
         try {
           n.disconnect()
         } catch {
@@ -353,16 +289,6 @@ function teardown(): void {
     killVoice(voice)
     voice = null
   }
-  if (seq) {
-    for (const it of seq) killVoice(it.voice)
-    seq = null
-    seqIndex = -1
-  }
-  if (split) {
-    for (const b of split.buses) killBus(b)
-    split = null
-    mode = 'idle'
-  }
   if (comp?.bus) {
     killBus(comp.bus)
     comp.bus = null
@@ -388,33 +314,18 @@ function livePos(): number {
   if (!cur) return 0
   if (!playing || !ctx) return pausedPos
   const el = ctx.currentTime - startedAt
-  if (loopB !== null && loopB > loopA) {
-    const len = loopB - loopA
-    const rel = startOffset - loopA + el
-    return loopA + (((rel % len) + len) % len)
-  }
   return Math.max(0, Math.min(cur.dur, startOffset + el))
 }
 
 function audible(): { id: string; pos: number; dur: number } | null {
   if (mode === 'comp' && comp) return { id: comp.id, pos: compPos(), dur: comp.dur }
-  if (mode === 'split' && split) {
-    const now = ctx ? ctx.currentTime : split.at
-    return { id: split.id, pos: Math.max(0, Math.min(split.dur, now - split.at)), dur: split.dur }
-  }
-  if (mode === 'seq' && seq && seqIndex >= 0) {
-    const it = seq[seqIndex]
-    const now = ctx ? ctx.currentTime : it.at
-    return { id: it.id, pos: Math.max(0, Math.min(it.dur, now - it.at)), dur: it.dur }
-  }
   if (cur) return { id: cur.id, pos: livePos(), dur: cur.dur }
   return null
 }
 
 function halt(): void {
   const a = audible()
-  const wasPlaying = playing || mode === 'seq'
-  if (mode === 'seq') collapseSeq()
+  const wasPlaying = playing
   teardown()
   if (a) {
     pausedPos = a.pos
@@ -422,25 +333,7 @@ function halt(): void {
   }
 }
 
-function collapseSeq(): boolean {
-  if (mode !== 'seq' || !seq) return playing
-  const i = Math.max(0, seqIndex)
-  const it = seq[i]
-  const now = ctx ? ctx.currentTime : it.at
-  cur = { id: it.id, url: it.url, buf: buffers.peek(it.url) ?? null, dur: it.dur }
-  pausedPos = Math.max(0, Math.min(it.dur, now - it.at))
-  for (const s of seq) killVoice(s.voice)
-  seq = null
-  seqIndex = -1
-  voice = null
-  mode = 'clip'
-  const was = playing
-  playing = false
-  pin([it.url])
-  return was
-}
-
-export function load(clip: Clip): void {
+function load(clip: Clip): void {
   if (mode === 'clip' && cur && cur.id === clip.id && cur.url === clip.url) return
   halt()
   dropComp()
@@ -485,16 +378,10 @@ function startClip(offset: number, rewindAtEnd: boolean): void {
   if (rewindAtEnd && off >= dur - END_EPS) off = 0
   startOffset = off
   startedAt = c.currentTime
-  const v = makeVoice(cur.buf, startedAt, off, true)
-  if (loopB !== null && loopB > loopA) {
-    v.src.loop = true
-    v.src.loopStart = loopA
-    v.src.loopEnd = loopB
-  } else {
-    v.src.onended = (): void => {
-      if (voice !== v) return
-      onClipEnded()
-    }
+  const v = makeVoice(cur.buf, startedAt, off)
+  v.src.onended = (): void => {
+    if (voice !== v) return
+    onClipEnded()
   }
   voice = v
   playing = true
@@ -624,79 +511,14 @@ export function playRange(clip: Clip, from: number, to: number): Promise<void> {
   )
 }
 
-export async function playSplit(left: SplitSide, right: SplitSide): Promise<void> {
-  halt()
-  dropComp()
-  const g = ++gen
-  const sides = [left, right]
-  const urls = [...new Set(sides.flatMap(sideUrls))]
-  pin(urls)
-  let prepared: CompSource[][]
-  try {
-    prepared = await Promise.all(sides.map(prepSide))
-  } catch {
-    return
-  }
-  if (g !== gen) return
-  if (!(await pitchReady(prepared.flat()))) return
-  if (g !== gen) return
-
-  const c = ac()
-  void c.resume().catch(() => {})
-  const when = c.currentTime + LEAD_IN
-  const buses = [makeSplitBus(prepared[0], when, -1), makeSplitBus(prepared[1], when, 1)]
-  const durs = prepared.map((s) => {
-    const clips = s.map((x) => x.clip)
-    return compDuration({ clips }) + compEffectsTail(clips)
-  })
-  const longer = durs[0] >= durs[1] ? 0 : 1
-  const id = sides[longer].id ?? 'split:' + (sideUrls(sides[longer])[0] ?? longer)
-
-  mode = 'split'
-  split = { id, at: when, dur: durs[longer], buses }
-  cur = null
-  playing = true
-  const p = new Promise<void>((res) => waiters.push(res))
-  emit({ clipId: id, playing: true, pos: 0, dur: split.dur })
-  startTicking()
-  return p
-}
-
-function sideUrls(side: SplitSide): string[] {
-  return 'comp' in side ? side.comp.clips.map((c) => c.url) : [side.url]
-}
-
-async function prepSide(side: SplitSide): Promise<CompSource[]> {
-  if ('comp' in side) return loadCompSources(side.comp)
-  const buffer = await getBuffer(side.url)
-  return [
-    {
-      clip: {
-        id: 'ab',
-        sourceTakeId: '',
-        srcIn: 0,
-        srcOut: buffer.duration,
-        start: 0,
-        edits: emptyEdits(),
-      },
-      buffer,
-    },
-  ]
-}
-
 export function play(): void {
-  if (mode === 'split') {
-    halt()
-    return
-  }
   if (mode === 'comp' && comp) {
     if (playing && comp.bus) return
     startComp(pausedPos, true)
     return
   }
-  const wasPlaying = mode === 'seq' ? collapseSeq() : playing
   if (!cur) return
-  if (wasPlaying && mode === 'clip' && voice) return
+  if (playing && mode === 'clip' && voice) return
   if (cur.buf) startClip(pausedPos, true)
   else wantPlay = true
 }
@@ -716,7 +538,7 @@ export function playClip(clip: Clip, offset = 0): Promise<void> {
 
 export function pause(): void {
   wantPlay = false
-  if (!playing && mode !== 'seq') {
+  if (!playing) {
     resolveWaiters()
     return
   }
@@ -730,14 +552,12 @@ export function toggle(): void {
 
 export function stop(): void {
   const a = audible()
-  if (mode === 'seq') collapseSeq()
   teardown()
   pausedPos = 0
   if (a || cur) emit({ clipId: a?.id ?? cur?.id ?? null, playing: false, pos: 0, dur: a?.dur ?? cur?.dur ?? 0 })
 }
 
 export function seek(t: number): void {
-  if (mode === 'split') halt()
   if (mode === 'comp' && comp) {
     const was = playing && !!comp.bus
     const p = Math.max(0, Math.min(comp.dur, t))
@@ -747,7 +567,7 @@ export function seek(t: number): void {
     else emit({ clipId: comp.id, playing: false, pos: p, dur: comp.dur })
     return
   }
-  const wasPlaying = mode === 'seq' ? collapseSeq() : playing
+  const wasPlaying = playing
   if (!cur) return
   const p = Math.max(0, cur.dur > 0 ? Math.min(cur.dur, t) : t)
   pausedPos = p
@@ -757,7 +577,6 @@ export function seek(t: number): void {
 }
 
 export function scrubTo(t: number): void {
-  if (mode === 'split') halt()
   if (mode === 'comp' && comp) {
     const p = Math.max(0, Math.min(comp.dur, t))
     pausedPos = p
@@ -771,7 +590,7 @@ export function scrubTo(t: number): void {
     startComp(p, false)
     return
   }
-  const wasPlaying = mode === 'seq' ? collapseSeq() : playing
+  const wasPlaying = playing
   if (!cur) return
   const p = Math.max(0, cur.dur > 0 ? Math.min(cur.dur, t) : t)
   pausedPos = p
@@ -783,63 +602,6 @@ export function scrubTo(t: number): void {
   if (now - lastScrubAt < SCRUB_SEEK_MS) return
   lastScrubAt = now
   startClip(p, false)
-}
-
-export function setLoop(a: number, b: number | null): void {
-  if (mode === 'comp') return
-  loopA = Math.max(0, a)
-  loopB = b
-  if (!voice) return
-  if (b !== null && b > loopA) {
-    voice.src.loop = true
-    voice.src.loopStart = loopA
-    voice.src.loopEnd = b
-  } else {
-    voice.src.loop = false
-  }
-}
-
-export async function playSequence(items: SequenceItem[]): Promise<void> {
-  halt()
-  dropComp()
-  const g = ++gen
-  if (items.length === 0) return
-  const urls = items.map((i) => i.url)
-  pin(urls)
-  let bufs: AudioBuffer[]
-  try {
-    bufs = await Promise.all(urls.map((u) => getBuffer(u)))
-  } catch {
-    return
-  }
-  if (g !== gen) return
-
-  const c = ac()
-  void c.resume().catch(() => {})
-  let at = c.currentTime + LEAD_IN
-  const built: SeqItem[] = []
-  for (let i = 0; i < items.length; i++) {
-    if (i > 0) at += (items[i].gapMs ?? 0) / 1000
-    const b = bufs[i]
-    built.push({
-      id: items[i].id ?? 'seq:' + urls[i],
-      url: urls[i],
-      at,
-      dur: b.duration,
-      voice: makeVoice(b, at, 0, false),
-    })
-    at += b.duration
-  }
-
-  mode = 'seq'
-  seq = built
-  seqIndex = 0
-  cur = null
-  playing = true
-  const p = new Promise<void>((res) => waiters.push(res))
-  emit({ clipId: built[0].id, playing: true, pos: 0, dur: built[0].dur })
-  startTicking()
-  return p
 }
 
 function startTicking(): void {
@@ -867,40 +629,6 @@ function tick(): void {
       return
     }
     emit({ clipId: s.id, playing: true, pos: compPos(), dur: s.dur })
-  } else if (mode === 'split' && split) {
-    const s = split
-    if (now >= s.at + s.dur) {
-      teardown()
-      emit({ clipId: s.id, playing: false, pos: 0, dur: s.dur })
-      return
-    }
-    emit({
-      clipId: s.id,
-      playing: true,
-      pos: Math.max(0, Math.min(s.dur, now - s.at)),
-      dur: s.dur,
-    })
-  } else if (mode === 'seq' && seq) {
-    let i = seqIndex
-    while (i + 1 < seq.length && now >= seq[i].at + seq[i].dur) i++
-    if (i !== seqIndex) {
-      const prev = seq[seqIndex]
-      emit({ clipId: prev.id, playing: false, pos: 0, dur: prev.dur })
-      seqIndex = i
-    }
-    const it = seq[i]
-    if (now >= it.at + it.dur) {
-      teardown()
-      mode = 'idle'
-      emit({ clipId: it.id, playing: false, pos: 0, dur: it.dur })
-      return
-    }
-    emit({
-      clipId: it.id,
-      playing: true,
-      pos: Math.max(0, Math.min(it.dur, now - it.at)),
-      dur: it.dur,
-    })
   } else if (cur) {
     emit({ clipId: cur.id, playing: true, pos: livePos(), dur: cur.dur })
   }
@@ -909,7 +637,6 @@ function tick(): void {
 }
 
 export const transport = {
-  load,
   play,
   playClip,
   pause,
@@ -917,15 +644,11 @@ export const transport = {
   stop,
   seek,
   scrubTo,
-  setLoop,
-  playSequence,
-  playSplit,
   playComp,
   playRange,
   subscribe,
   getState,
   currentClipId,
-  isAB,
   sourceLabel,
   getBuffer,
   release,

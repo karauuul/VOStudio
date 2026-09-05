@@ -25,8 +25,15 @@ node scripts/convert-satisfactory.ts --csv <master_vo_table.csv> --audio <origin
 ## Layout
 
 - `src/main/` — Electron main process: project store (`project-store.ts`, atomic writes, autosave), IPC handlers and zod validation (`index.ts`, `schemas.ts`), export encoding (`export.ts`), provider adapters (`providers/elevenlabs.ts`), API keys via `safeStorage` (`secrets.ts`).
-- `src/shared/` — pure logic, no Electron and no DOM: data model (`domain.ts`), composition math (`comp.ts`), effect params and clamps (`effects.ts`), pitch math (`pitch.ts`), export planning (`export-plan.ts`), IPC types (`ipc.ts`).
-- `src/renderer/` — React UI and audio engine: `audio/clip-graph.ts` (`buildClipGraph` / `scheduleComp`, the only place audio node chains are built), `audio/transport.ts` (live playback), `audio/offline-render.ts` (export rendering), `audio/worklets/` and `worklets/` (AudioWorklet sources, delivered as Blob URLs), `cue/` (cue workspace).
+- `src/shared/` — pure logic, no Electron and no DOM: data model (`domain.ts`), composition math (`comp.ts`), effect params and clamps (`effects.ts`), pitch math (`pitch.ts`), export planning (`export-plan.ts`), export preflight (`export-preflight.ts`), preview/output selectors (`workspace-source.ts`), queue filters (`cue-filter.ts`), IPC types (`ipc.ts`).
+- `src/renderer/` — React UI and audio engine.
+  - Shell and routes: `App.tsx` (project lifetime, route composition), `useProjectSession.ts` (snapshot, dispatch, draft flush), `ProjectHeader.tsx`, `WorkScreen.tsx`, `ProjectTable.tsx`, `DeliverScreen.tsx`, `ProjectHome.tsx`, `TransportBar.tsx`, `StatusToast.tsx`.
+  - Work centre: `CueEditor.tsx`, `CueList.tsx`, `Waveform.tsx` (peaks cache), `playback.ts` (shared playback intent), `keyboard.ts` (`e.code` dispatcher with focus scopes).
+  - Overlays: `Overlay.tsx` (one manager), `SettingsDialog.tsx`, `ShortcutsDialog.tsx`, `CharactersDialog.tsx`, `JobsDrawer.tsx`, `RulesPanel.tsx`, `TemplatePreviewDialog.tsx`, `TemplateReimport.tsx`, `MigrationDialog.tsx` (legacy recovery, unmounted).
+  - `cue/` — cue workspace: header, script, create bar, take source menu, lanes, timeline editor, inspector, recording and fragment hooks.
+  - `audio/` — `clip-graph.ts` (`buildClipGraph` / `scheduleComp`, the only place audio node chains are built), `transport.ts` (live playback), `offline-render.ts` (export rendering), `comp-source.ts`, `recorder.ts`, `duration-queue.ts`, `lru.ts`; `audio/worklets/` and `worklets/` (AudioWorklet sources, delivered as Blob URLs).
+  - `export/run-export.ts` (`runJob` / `runPlan`), `jobs/` (queue and store), `api.ts` (typed IPC bridge and audio URLs).
+  - `styles/` — `tokens.css`, `base.css`, `work.css`, `project.css`, `overlays.css`; `app.css` imports them in that order.
 - `tests/` — vitest, pure logic only.
 
 ## Project data

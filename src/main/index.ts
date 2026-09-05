@@ -26,7 +26,6 @@ import {
   cueVoiceUnchanged,
   emptyEdits,
   singleFlight,
-  liveTakes,
   MAX_STS_SECONDS,
   type Cue,
   type Take,
@@ -51,7 +50,6 @@ import {
   encodeJob,
   finishExport,
   planBatchExport,
-  planCueExport,
   preflightExport,
 } from './export'
 import { applyAlienMigration } from './satisfactory-preset'
@@ -407,11 +405,6 @@ function registerHandlers(): void {
 
   typedHandle('rules:get', async () => requireProject().pronunciationRules)
 
-  typedHandle('rules:preview', async (text: string) => {
-    const project = store.getProject()
-    return applyRules(text, project?.pronunciationRules ?? '')
-  })
-
   typedHandle('audio:readRef', async (absPath: string) => {
     if (!isAllowedPath(absPath)) throw new Error('Path is outside the allowlist')
     const buf = await fs.readFile(absPath)
@@ -621,7 +614,6 @@ function registerHandlers(): void {
 
   typedHandle('csv:sync', () => syncCsv())
 
-  typedHandle('export:planCue', async (cueId: string) => planCueExport(z.string().min(1).parse(cueId)))
   typedHandle('export:planBatch', async (req) => planBatchExport(batchExportSchema.parse(req)))
   typedHandle('export:preflight', async (req) => preflightExport(batchExportSchema.parse(req)))
   typedHandle('export:copy', (outPath: string) => copyJob(z.string().min(1).parse(outPath)))

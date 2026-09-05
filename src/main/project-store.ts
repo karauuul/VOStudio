@@ -137,11 +137,6 @@ export async function persistProjectSnapshot(project: Project): Promise<void> {
   await atomicWrite(file, JSON.stringify(rest, null, 2))
 }
 
-async function persist(): Promise<void> {
-  if (!current) return
-  await persistProjectSnapshot(current)
-}
-
 export async function listProjects(): Promise<ProjectSummary[]> {
   const root = defaultProjectsRoot()
   let entries: Dirent[]

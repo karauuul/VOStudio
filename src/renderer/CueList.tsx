@@ -4,9 +4,9 @@ import type { Character, Cue } from '@shared/domain'
 import { approvalState, hasValidVoicedOutput } from '@shared/approval'
 import { ALL_CHARACTERS, FILTERS, filterCounts } from '@shared/cue-filter'
 
-export const PRIMARY_CHARACTER = 'ada'
+const PRIMARY_CHARACTER = 'ada'
 
-export function dotClass(cue: Cue): string {
+function dotClass(cue: Cue): string {
   if (cue.status === 'excluded') return 'excluded'
   const review = approvalState(cue)
   if (review === 'approved') return 'approved'

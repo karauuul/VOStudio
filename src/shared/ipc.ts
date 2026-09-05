@@ -241,7 +241,6 @@ export interface IpcApi {
   'suggestions:load': () => Promise<SuggestionsLoadResult>
 
   'rules:get': () => Promise<string>
-  'rules:preview': (text: string) => Promise<string>
 
   'audio:readRef': (absPath: string) => Promise<ArrayBuffer>
 
@@ -268,7 +267,6 @@ export interface IpcApi {
   'csv:preview': (path: string) => Promise<CsvPreview>
   'csv:sync': () => Promise<CsvSyncResult>
 
-  'export:planCue': (cueId: string) => Promise<ExportPlan>
   'export:planBatch': (req: BatchExportRequest) => Promise<ExportPlan>
   'export:preflight': (req: BatchExportRequest) => Promise<ExportPreflight>
   'export:copy': (outPath: string) => Promise<ExportResult>

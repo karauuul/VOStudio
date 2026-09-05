@@ -1,5 +1,5 @@
 import { GAIN_MAX_DB, GAIN_MIN_DB, MIN_CLIP_SRC, SPEED_MAX, SPEED_MIN } from '@shared/comp'
-import { clipSpeed, type ClipEditPatch, type ClipEdits, type CompClip } from '@shared/domain'
+import { clipSpeed, type ClipEditPatch, type CompClip } from '@shared/domain'
 import {
   DELAY_FEEDBACK_MAX,
   DELAY_FEEDBACK_MIN,
