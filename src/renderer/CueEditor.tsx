@@ -15,6 +15,7 @@ import {
   type Term,
   type VoiceSettings,
 } from '@shared/domain'
+import type { PreviewSource, ResolvedPreview } from '@shared/workspace-source'
 import { approvalState, hasValidVoicedOutput } from '@shared/approval'
 import type { AppSettings } from '@shared/ipc'
 import { api, audioUrl } from './api'
@@ -35,9 +36,8 @@ interface Props {
   character?: Character
   characters: Character[]
   onCharacter: (characterId: string) => void
-  shownTake?: Take
-  selectedTakeId?: string
-  onSelectTake: (takeId: string) => void
+  preview: ResolvedPreview
+  onSelectSource: (source: PreviewSource) => void
   onText: (text: string) => void
   onCopy: (kind: CopyKind) => void
   terms: Term[]
@@ -70,9 +70,8 @@ export function CueEditor({
   character,
   characters,
   onCharacter,
-  shownTake,
-  selectedTakeId,
-  onSelectTake,
+  preview,
+  onSelectSource,
   onText,
   onCopy,
   terms,
@@ -99,18 +98,18 @@ export function CueEditor({
   isActiveCue,
   rulesVersion,
 }: Props) {
-  const [preview, setPreview] = useState('')
+  const [spoken, setSpoken] = useState('')
   const textRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    setPreview('')
+    setSpoken('')
   }, [cue.id])
 
   useEffect(() => {
     let cancelled = false
     const t = setTimeout(() => {
       void api['rules:preview'](cue.text).then((p) => {
-        if (!cancelled) setPreview(p)
+        if (!cancelled) setSpoken(p)
       })
     }, 300)
     return () => {
@@ -176,7 +175,7 @@ export function CueEditor({
 
       <WaveLanes
         cue={cue}
-        take={shownTake}
+        preview={preview}
         origRef={origRef}
         takeRef={takeRef}
         abRef={abRef}
@@ -195,7 +194,7 @@ export function CueEditor({
         onCopy={onCopy}
         onAcceptSuggestion={onAcceptSuggestion}
         onRejectSuggestion={onRejectSuggestion}
-        preview={preview}
+        preview={spoken}
       />
 
       <GenerateBar
@@ -228,8 +227,8 @@ export function CueEditor({
 
       <TakesStrip
         cue={cue}
-        selectedTakeId={selectedTakeId}
-        onSelect={onSelectTake}
+        source={preview.source}
+        onSelect={onSelectSource}
         onAudition={audition}
         onReconvert={v2v.reconvert}
         converting={v2v.converting}
