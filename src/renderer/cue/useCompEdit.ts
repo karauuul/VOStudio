@@ -27,8 +27,7 @@ export function useCompEdit(
 ): CompEdit {
   const undoRef = useRef<(CueComp | null)[]>([])
   const redoRef = useRef<(CueComp | null)[]>([])
-  const queueRef = useRef<Promise<unknown>>(Promise.resolve())
-  const queuedRef = useRef(0)
+  const inflightRef = useRef(0)
   const pendingRef = useRef<CueComp | null | undefined>(undefined)
   const genRef = useRef(0)
   const [depth, setDepth] = useState({ u: 0, r: 0 })
@@ -42,8 +41,7 @@ export function useCompEdit(
   useEffect(() => {
     undoRef.current = []
     redoRef.current = []
-    queueRef.current = Promise.resolve()
-    queuedRef.current = 0
+    inflightRef.current = 0
     pendingRef.current = undefined
     genRef.current += 1
     setDepth({ u: 0, r: 0 })
@@ -58,29 +56,21 @@ export function useCompEdit(
     []
   )
 
-  const enqueue = useCallback(
-    (value: CueComp | null, rollback: () => void): void => {
+  const submit = useCallback(
+    (value: CueComp | null): void => {
       const gen = genRef.current
       pendingRef.current = value
-      queuedRef.current += 1
-      const run = queueRef.current
-        .then(() => cbRef.current.onComp(cueId, value))
-        .then(
-          (ok) => ok,
-          () => false
-        )
-        .then((ok) => {
+      inflightRef.current += 1
+      void cbRef.current
+        .onComp(cueId, value)
+        .catch(() => false)
+        .then(() => {
           if (gen !== genRef.current) return
-          queuedRef.current -= 1
-          if (queuedRef.current === 0) pendingRef.current = undefined
-          if (!ok) {
-            rollback()
-            sync()
-          }
+          inflightRef.current -= 1
+          if (inflightRef.current === 0) pendingRef.current = undefined
         })
-      queueRef.current = run
     },
-    [cueId, sync]
+    [cueId]
   )
 
   const commit = useCallback(
@@ -98,12 +88,9 @@ export function useCompEdit(
       if (undoRef.current.length > LIMIT) undoRef.current.shift()
       redoRef.current = []
       sync()
-      enqueue(value, () => {
-        const i = undoRef.current.lastIndexOf(prev)
-        if (i >= 0) undoRef.current.splice(i, 1)
-      })
+      submit(value)
     },
-    [current, enqueue, sync]
+    [current, submit, sync]
   )
 
   const undo = useCallback(() => {
@@ -112,12 +99,8 @@ export function useCompEdit(
     const cur = current()
     redoRef.current.push(cur)
     sync()
-    enqueue(prev, () => {
-      const i = redoRef.current.lastIndexOf(cur)
-      if (i >= 0) redoRef.current.splice(i, 1)
-      undoRef.current.push(prev)
-    })
-  }, [current, enqueue, sync])
+    submit(prev)
+  }, [current, submit, sync])
 
   const redo = useCallback(() => {
     if (redoRef.current.length === 0) return
@@ -125,12 +108,8 @@ export function useCompEdit(
     const cur = current()
     undoRef.current.push(cur)
     sync()
-    enqueue(next, () => {
-      const i = undoRef.current.lastIndexOf(cur)
-      if (i >= 0) undoRef.current.splice(i, 1)
-      redoRef.current.push(next)
-    })
-  }, [current, enqueue, sync])
+    submit(next)
+  }, [current, submit, sync])
 
   const pending = useCallback(() => pendingRef.current, [])
 
