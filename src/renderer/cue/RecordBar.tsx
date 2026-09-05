@@ -87,7 +87,6 @@ export function RecordBar({ v2v }: { v2v: VoiceToVoice }) {
           className="btn primary"
           onClick={v2v.saveRecording}
           disabled={converting}
-          title="Save as a recording take"
         >
           Save recording
         </button>

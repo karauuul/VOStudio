@@ -20,6 +20,11 @@ export function VoicePanel({
   onUseAsDefault,
 }: Props) {
   const [confirm, setConfirm] = useState(false)
+  const [confirmFor, setConfirmFor] = useState(character?.id)
+  if (confirmFor !== character?.id) {
+    setConfirmFor(character?.id)
+    setConfirm(false)
+  }
 
   if (!character) return <div className="insp-empty">No character for this cue</div>
 
