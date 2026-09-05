@@ -237,6 +237,7 @@ export function TakeSourceMenu({
       }
       if (e.code === 'Enter' || e.code === 'NumpadEnter') {
         e.stopPropagation()
+        if (e.target instanceof HTMLElement && e.target.closest('button')) return
         e.preventDefault()
         const entry = entries[cursor]
         if (entry) pick(entry)
