@@ -252,10 +252,10 @@ export function TakeSourceMenu({
       if (e.code === 'Delete') {
         e.stopPropagation()
         e.preventDefault()
-        remove(entries[cursor])
+        if (!insert) remove(entries[cursor])
       }
     },
-    [entries, cursor, pick, close, remove]
+    [entries, cursor, pick, close, remove, insert]
   )
 
   return (
