@@ -593,12 +593,17 @@ export default function App() {
   }, [activeCue, dispatch, pushStatus])
 
   const submitTts = useCallback(
-    (cueId: string, text: string, voiceSettings: VoiceSettings, announce: boolean) => {
+    (cueId: string, text: string, announce: boolean) => {
       submitJob({
         kind: 'tts',
         cueId,
         run: async () => {
           if (announce) pushStatus('info', 'Generating TTS…')
+          const project = projectRef.current
+          const cue = project?.cues.find((c) => c.id === cueId)
+          if (!project || !cue) throw new Error('Cue is no longer in the project')
+          const character = project.characters.find((c) => c.id === cue.characterId)
+          const voiceSettings = resolveVoiceSettings(character, cue)
           const take = await api['provider:tts']({ cueId, text, voiceSettings, selectOutput: false })
           onTakeAdded(cueId, take)
           if (announce) pushStatus('ok', `Take ready (${take.kind})`)
@@ -606,7 +611,7 @@ export default function App() {
         onError: (e) => pushStatus('err', String(e)),
       })
     },
-    [submitJob, onTakeAdded, pushStatus]
+    [submitJob, onTakeAdded, pushStatus, projectRef]
   )
 
   const generate = useCallback(() => {
@@ -615,8 +620,8 @@ export default function App() {
     if (isCueBusyNow(cue.id)) return
     noteSubmit(cue.id)
     void flushText()
-    submitTts(cue.id, cue.text, resolveVoiceSettings(activeCharacter, cue), true)
-  }, [activeCue, activeCharacter, flushText, noteSubmit, submitTts])
+    submitTts(cue.id, cue.text, true)
+  }, [activeCue, flushText, noteSubmit, submitTts])
 
   const generateSelected = useCallback(
     (cues: Cue[]) => {
@@ -624,13 +629,12 @@ export default function App() {
       let queued = 0
       for (const cue of cues) {
         if (isCueBusyNow(cue.id)) continue
-        const character = projectRef.current?.characters.find((c) => c.id === cue.characterId)
-        submitTts(cue.id, cue.text, resolveVoiceSettings(character, cue), false)
+        submitTts(cue.id, cue.text, false)
         queued++
       }
       pushStatus('info', `Queued ${queued} ${queued === 1 ? 'job' : 'jobs'}`)
     },
-    [flushText, projectRef, submitTts, pushStatus]
+    [flushText, submitTts, pushStatus]
   )
 
   const assignCharacter = useCallback(
