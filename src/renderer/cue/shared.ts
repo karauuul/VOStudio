@@ -1,18 +1,6 @@
 import { isEmptyComp } from '@shared/comp'
-import { estimateStsCredits, type Cue, type CueStatus } from '@shared/domain'
+import { estimateStsCredits, type Cue } from '@shared/domain'
 import { outputSource } from '@shared/workspace-source'
-
-export const REF_COLOR = '#6d9ff2'
-export const TAKE_COLOR = '#46c98c'
-export const REC_COLOR = '#e6a23c'
-
-export const STATUS_LABEL: Record<CueStatus, string> = {
-  empty: 'Empty',
-  translated: 'Translated',
-  generated: 'Voiced',
-  approved: 'Approved',
-  excluded: 'Excluded',
-}
 
 export function clock(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return '00:00.0'

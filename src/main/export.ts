@@ -15,11 +15,9 @@ import type {
 } from '@shared/ipc'
 import {
   containerOf,
-  exportName,
   findCollisions,
   hasEdits,
   isFastPath,
-  outputTakeOf,
   planBatch,
   resolvePlan,
   type PlannedTake,
@@ -107,17 +105,6 @@ function publish(
 ): ExportPlan {
   planned = new Map(jobs.map((j) => [j.outPath, j]))
   return { token, jobs, skipped, outDir, collisions }
-}
-
-export function planCueExport(cueId: string): ExportPlan {
-  const { project, dir } = ctx()
-  const cue = project.cues.find((c) => c.id === cueId)
-  if (!cue) throw new Error('Cue not found')
-  const take = outputTakeOf(cue)
-  if (!take) throw new Error('No voiced output')
-  const outDir = path.join(dir, 'exports')
-  batchPlan = null
-  return publish(randomUUID(), toJobs([{ cue, take, name: exportName(project, cue, take) }], outDir), 0, outDir, [])
 }
 
 async function readLastExport(outDir: string): Promise<LastExport | null> {

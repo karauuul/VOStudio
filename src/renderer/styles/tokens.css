@@ -1,0 +1,24 @@
+:root {
+  --bg: #141416;
+  --panel: #1c1c1f;
+  --raise: #242428;
+  --line: #2e2e33;
+  --line-hi: #3b3b43;
+
+  --tx: #ececf1;
+  --tx2: #9a9aa5;
+  --tx3: #5f5f6b;
+
+  --ac: #6d9ff2;
+  --ac-hi: #8bb4f6;
+  --ac-dim: rgba(109, 159, 242, 0.12);
+  --ok: #46c98c;
+  --warn: #e6a23c;
+  --err: #e5655f;
+  --on-ac: #10131a;
+
+  --mono: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+  --sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --r: 6px;
+}

@@ -1,5 +1,4 @@
 import { isEmptyComp } from '@shared/comp'
-import { usesCompOutput } from '@shared/approval'
 import type { CompClip, CompRegion, Cue, CueComp } from '@shared/domain'
 import { audioUrl } from '../api'
 
@@ -23,11 +22,6 @@ export function resolveComp(cue: Cue, comp: CueComp | null | undefined): Resolve
   })
   const region = comp!.region
   return region ? { clips, region } : { clips }
-}
-
-export function resolveCueComp(cue: Cue): ResolvedComp | null {
-  if (!usesCompOutput(cue)) return null
-  return resolveComp(cue, cue.comp)
 }
 
 export function tryResolveComp(cue: Cue, comp: CueComp | null | undefined): ResolvedComp | null {

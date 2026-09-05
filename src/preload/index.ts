@@ -17,7 +17,6 @@ const channelMap: Record<IpcChannel, true> = {
   'suggestions:load': true,
 
   'rules:get': true,
-  'rules:preview': true,
 
   'audio:readRef': true,
 
@@ -37,7 +36,6 @@ const channelMap: Record<IpcChannel, true> = {
   'csv:preview': true,
   'csv:sync': true,
 
-  'export:planCue': true,
   'export:planBatch': true,
   'export:preflight': true,
   'export:copy': true,

@@ -80,10 +80,3 @@ export async function runPlan(
     ...paths,
   }
 }
-
-export async function exportCue(cueId: string): Promise<ExportResult> {
-  const plan = await api['export:planCue'](cueId)
-  const job = plan.jobs[0]
-  if (!job) throw new Error('Nothing to export for this cue')
-  return runJob(job)
-}
