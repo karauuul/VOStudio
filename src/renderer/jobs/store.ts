@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   cueHasPending,
   enqueue,
+  isTerminal,
   fail,
   finish,
   nextQueued,
@@ -73,6 +74,9 @@ function pump(): void {
     }
   )
 }
+
+export const clearTerminalJobs = (): void =>
+  useJobsStore.setState((s) => ({ jobs: s.jobs.filter((j) => !isTerminal(j)) }))
 
 export const useJobCount = (): number => useJobsStore((s) => pendingCount(s.jobs))
 
