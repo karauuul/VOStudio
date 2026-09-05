@@ -91,7 +91,19 @@ describe('routes', () => {
     expect(action({ code: 'KeyF', ctrlKey: true, scope: 'decision' })).toBeNull()
     expect(action({ code: 'Digit1' })).toBe('selectTake')
     expect(action({ code: 'KeyF' })).toBe('makeFinal')
-    expect(action({ code: 'Digit3', ctrlKey: true })).toBeNull()
+    expect(action({ code: 'Digit3', ctrlKey: true })).toBe('routeDeliver')
+    expect(action({ code: 'Digit4', ctrlKey: true })).toBeNull()
+  })
+
+  it('leaves Deliver only its route keys and Escape', () => {
+    expect(action({ code: 'Digit3', ctrlKey: true, scope: 'deliver' })).toBe('routeDeliver')
+    expect(action({ code: 'Digit1', ctrlKey: true, scope: 'deliver' })).toBe('routeWork')
+    expect(action({ code: 'Escape', scope: 'deliver' })).toBe('escape')
+    for (const code of ['KeyA', 'KeyF', 'KeyR', 'KeyD', 'Space', 'Enter', 'Digit1', 'ArrowDown']) {
+      expect(action({ code, scope: 'deliver' })).toBeNull()
+    }
+    expect(action({ code: 'KeyG', ctrlKey: true, scope: 'deliver' })).toBeNull()
+    expect(action({ code: 'KeyF', ctrlKey: true, scope: 'deliver' })).toBeNull()
   })
 })
 

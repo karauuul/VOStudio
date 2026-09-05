@@ -17,11 +17,19 @@ import type { UpdateStatus } from '@shared/updater'
 import { api } from './api'
 import { transport } from './audio/transport'
 import { playback } from './playback'
-import { isCueBusyNow, useBusyCount, useCueBusy, useJobCount, useJobsStore } from './jobs/store'
+import {
+  busyCountNow,
+  isCueBusyNow,
+  useBusyCount,
+  useCueBusy,
+  useJobCount,
+  useJobsStore,
+} from './jobs/store'
 import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues } from '@shared/cue-filter'
 import { CueList } from './CueList'
 import { CueEditor } from './CueEditor'
 import { ProjectTable, type GridApi } from './ProjectTable'
+import { DeliverScreen } from './DeliverScreen'
 import { WorkScreen } from './WorkScreen'
 import { useProjectSession, type StatusKind } from './useProjectSession'
 import type { EffectName, EffectsTarget } from './cue/ClipParams'
@@ -29,7 +37,6 @@ import { Inspector, type InspectorTab } from './cue/Inspector'
 import { compositionLabel } from './cue/shared'
 import type { CompApi } from './cue/WaveLanes'
 import { TransportBar } from './TransportBar'
-import { BatchExportDialog } from './BatchExportDialog'
 import { CharactersDialog } from './CharactersDialog'
 import { RulesDialog } from './RulesPanel'
 import { ProjectHome } from './ProjectHome'
@@ -47,12 +54,12 @@ import {
   type PreviewSource,
 } from '@shared/workspace-source'
 import { isEmptyComp } from '@shared/comp'
-import type { ProjectSnapshot } from '@shared/project-commands'
+import type { ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
 import { buildPrompt } from '@shared/prompt'
 import type { CopyKind } from './cue/TextBlock'
 
 type Status = { id: number; kind: StatusKind; text: string } | null
-type Route = 'work' | 'project'
+type Route = 'work' | 'project' | 'deliver'
 
 const UPDATE_LABEL: Record<UpdateStatus['phase'], string> = {
   idle: 'Ready',
@@ -142,7 +149,7 @@ export default function App() {
   const [keyInput, setKeyInput] = useState('')
   const [status, setStatus] = useState<Status>(null)
   const [bulk, setBulk] = useState(false)
-  const [showExport, setShowExport] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [showCharacters, setShowCharacters] = useState(false)
   const [showRules, setShowRules] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -172,6 +179,7 @@ export default function App() {
   const statusSeq = useRef(0)
   const menuRef = useRef<HTMLDivElement>(null)
   const activeCueIdRef = useRef<string | undefined>(undefined)
+  const exportingRef = useRef(false)
 
   const submitJob = useJobsStore((s) => s.submit)
   const jobCount = useJobCount()
@@ -202,13 +210,46 @@ export default function App() {
     projectRef,
     setProject,
     mutateCue,
-    dispatch,
+    dispatch: sessionDispatch,
     flushText,
     flushVoice,
     debounceVoice,
     saveUi,
     onText: sessionText,
   } = session
+
+  const refuseWhileExporting = useCallback((): boolean => {
+    if (!exportingRef.current) return false
+    pushStatus('info', 'Export in progress')
+    return true
+  }, [pushStatus])
+
+  const dispatch = useCallback(
+    (command: ProjectCommand): Promise<void> =>
+      exportingRef.current
+        ? Promise.reject(new Error('Export in progress'))
+        : sessionDispatch(command),
+    [sessionDispatch]
+  )
+
+  const beginExport = useCallback(async (): Promise<boolean> => {
+    if (refuseWhileExporting()) return false
+    if (busyCountNow() > 0) {
+      pushStatus('info', 'Generation is still running')
+      return false
+    }
+    const saved = await flushText()
+    await flushVoice()
+    if (!saved) return false
+    exportingRef.current = true
+    setExporting(true)
+    return true
+  }, [flushText, flushVoice, pushStatus])
+
+  const endExport = useCallback(() => {
+    exportingRef.current = false
+    setExporting(false)
+  }, [])
 
   const enterProject = useCallback(
     (snapshot: ProjectSnapshot) => {
@@ -337,9 +378,10 @@ export default function App() {
   const onText = useCallback(
     (text: string) => {
       const id = activeCueId
-      if (id) sessionText(id, text)
+      if (!id || refuseWhileExporting()) return
+      sessionText(id, text)
     },
-    [activeCueId, sessionText]
+    [activeCueId, sessionText, refuseWhileExporting]
   )
 
   const onApprove = useCallback(
@@ -445,7 +487,7 @@ export default function App() {
   const onVoiceChange = useCallback(
     (patch: Partial<VoiceSettings>) => {
       const cue = activeCue
-      if (!cue) return
+      if (!cue || refuseWhileExporting()) return
       const base = activeCharacter?.voiceSettings ?? DEFAULT_VOICE_SETTINGS
       const effective = resolveVoiceSettings(activeCharacter, cue)
       const next = normalizeOverride(base, { ...effective, ...patch })
@@ -462,12 +504,20 @@ export default function App() {
         )
       )
     },
-    [activeCue, activeCharacter, mutateCue, debounceVoice, pushStatus, dispatch]
+    [
+      activeCue,
+      activeCharacter,
+      mutateCue,
+      debounceVoice,
+      pushStatus,
+      dispatch,
+      refuseWhileExporting,
+    ]
   )
 
   const onVoiceReset = useCallback(() => {
     const cue = activeCue
-    if (!cue) return
+    if (!cue || refuseWhileExporting()) return
     mutateCue(cue.id, (c) => {
       const { voiceSettingsOverride: _drop, ...rest } = c
       return rest
@@ -477,10 +527,11 @@ export default function App() {
         (e: unknown) => pushStatus('err', String(e))
       )
     )
-  }, [activeCue, mutateCue, debounceVoice, pushStatus, dispatch])
+  }, [activeCue, mutateCue, debounceVoice, pushStatus, dispatch, refuseWhileExporting])
 
   const onCharacterVoice = useCallback(
     (characterId: string, settings: VoiceSettings) => {
+      if (refuseWhileExporting()) return
       setProject((p) =>
         p
           ? {
@@ -497,7 +548,7 @@ export default function App() {
         )
       )
     },
-    [setProject, debounceVoice, pushStatus, dispatch]
+    [setProject, debounceVoice, pushStatus, dispatch, refuseWhileExporting]
   )
 
   const onVoiceDefault = useCallback(() => {
@@ -510,6 +561,7 @@ export default function App() {
 
   const onCharacterProvider = useCallback(
     (characterId: string, patch: { voiceId?: string; ttsModel?: string; stsModel?: string }) => {
+      if (refuseWhileExporting()) return
       setProject((p) =>
         p
           ? {
@@ -524,7 +576,7 @@ export default function App() {
         pushStatus('err', String(e))
       )
     },
-    [setProject, dispatch, pushStatus]
+    [setProject, dispatch, pushStatus, refuseWhileExporting]
   )
 
   const onCueCharacter = useCallback(
@@ -617,15 +669,15 @@ export default function App() {
   const generate = useCallback(() => {
     const cue = activeCue
     if (!cue || !cue.text.trim()) return
-    if (isCueBusyNow(cue.id)) return
+    if (isCueBusyNow(cue.id) || refuseWhileExporting()) return
     noteSubmit(cue.id)
     void flushText()
     submitTts(cue.id, cue.text, true)
-  }, [activeCue, flushText, noteSubmit, submitTts])
+  }, [activeCue, flushText, noteSubmit, submitTts, refuseWhileExporting])
 
   const generateSelected = useCallback(
     async (cues: Cue[]) => {
-      if (!(await flushText())) return
+      if (refuseWhileExporting() || !(await flushText())) return
       let queued = 0
       for (const cue of cues) {
         if (isCueBusyNow(cue.id)) continue
@@ -634,7 +686,7 @@ export default function App() {
       }
       pushStatus('info', `Queued ${queued} ${queued === 1 ? 'job' : 'jobs'}`)
     },
-    [flushText, submitTts, pushStatus]
+    [flushText, submitTts, pushStatus, refuseWhileExporting]
   )
 
   const assignCharacter = useCallback(
@@ -670,6 +722,15 @@ export default function App() {
     [route]
   )
 
+  const openFilter = useCallback(
+    (id: string) => {
+      setFilter(id)
+      setReviewIds(null)
+      goRoute('project')
+    },
+    [goRoute]
+  )
+
   const openCue = useCallback(
     (cueId: string) => {
       void selectCue(cueId).then((ok) => {
@@ -703,17 +764,19 @@ export default function App() {
   }, [session])
 
   const goHome = useCallback(() => {
+    if (refuseWhileExporting()) return
     if (guardRef.current?.(() => void leaveProject())) return
     void leaveProject()
-  }, [leaveProject])
+  }, [leaveProject, refuseWhileExporting])
 
   const startReimport = useCallback(async () => {
+    if (refuseWhileExporting()) return
     const saved = await flushText()
     await flushVoice()
     if (!saved) return
     playback.stop()
     reimport.start()
-  }, [flushText, flushVoice, reimport])
+  }, [flushText, flushVoice, reimport, refuseWhileExporting])
 
   async function syncCsv(): Promise<void> {
     setBulk(true)
@@ -792,6 +855,7 @@ export default function App() {
     () => ({
       routeWork: () => goRoute('work'),
       routeProject: () => goRoute('project'),
+      routeDeliver: () => goRoute('deliver'),
       focusSearch: () =>
         (route === 'project' ? tableSearchRef : queueSearchRef).current?.focus(),
       gridNext: () => gridRef.current?.move(1),
@@ -854,7 +918,6 @@ export default function App() {
   )
 
   const blocked =
-    showExport ||
     showCharacters ||
     showRules ||
     showSettings ||
@@ -869,6 +932,7 @@ export default function App() {
   useKeyboard(handlers, !!project && !blocked, {
     timeline: timelineOpen,
     grid: route === 'project',
+    deliver: route === 'deliver',
     decision: () => decisionRef.current?.() ?? false,
   })
 
@@ -999,6 +1063,14 @@ export default function App() {
           >
             Project <kbd>Ctrl+2</kbd>
           </button>
+          <button
+            role="tab"
+            aria-selected={route === 'deliver'}
+            className={route === 'deliver' ? 'on' : ''}
+            onClick={() => goRoute('deliver')}
+          >
+            Deliver <kbd>Ctrl+3</kbd>
+          </button>
         </div>
 
         <div className="chips">
@@ -1037,7 +1109,7 @@ export default function App() {
                 <button
                   className="menu-item"
                   role="menuitem"
-                  disabled={bulk || busyCount > 0}
+                  disabled={bulk || exporting || busyCount > 0}
                   onClick={() => {
                     setMenuOpen(false)
                     goHome()
@@ -1049,7 +1121,7 @@ export default function App() {
                   <button
                     className="menu-item"
                     role="menuitem"
-                    disabled={bulk}
+                    disabled={bulk || exporting}
                     onClick={() => {
                       setMenuOpen(false)
                       void syncCsv()
@@ -1061,7 +1133,7 @@ export default function App() {
                 <button
                   className="menu-item"
                   role="menuitem"
-                  disabled={bulk || busyCount > 0}
+                  disabled={bulk || exporting || busyCount > 0}
                   onClick={() => {
                     setMenuOpen(false)
                     if (guardRef.current?.(() => void startReimport())) return
@@ -1089,17 +1161,6 @@ export default function App() {
                   }}
                 >
                   Rules…
-                </button>
-                <button
-                  className="menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    void flushText()
-                    setShowExport(true)
-                  }}
-                >
-                  Batch Export
                 </button>
                 <button
                   className="menu-item"
@@ -1188,11 +1249,19 @@ export default function App() {
         onOverlay={setTableOverlay}
       />
 
+      <DeliverScreen
+        hidden={route !== 'deliver'}
+        project={project}
+        onStatus={pushStatus}
+        onOpenFilter={openFilter}
+        onOpenCue={openCue}
+        beginExport={beginExport}
+        endExport={endExport}
+      />
+
       <TransportBar />
 
       {status && <Toast status={status} onClose={closeStatus} />}
-
-      {showExport && <BatchExportDialog onClose={() => setShowExport(false)} />}
 
       {reimport.dialog}
 

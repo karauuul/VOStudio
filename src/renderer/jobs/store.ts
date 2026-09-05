@@ -81,5 +81,10 @@ export const useBusyCount = (): number => useJobsStore((s) => pendingCount(s.job
 export const useCueBusy = (cueId: string): boolean =>
   useJobsStore((s) => cueHasPending(s.jobs, cueId))
 
+export const busyCountNow = (): number => {
+  const s = useJobsStore.getState()
+  return pendingCount(s.jobs) + s.saving
+}
+
 export const isCueBusyNow = (cueId: string): boolean =>
   cueHasPending(useJobsStore.getState().jobs, cueId)

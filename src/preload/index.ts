@@ -39,6 +39,7 @@ const channelMap: Record<IpcChannel, true> = {
 
   'export:planCue': true,
   'export:planBatch': true,
+  'export:preflight': true,
   'export:copy': true,
   'export:encode': true,
   'export:finish': true,

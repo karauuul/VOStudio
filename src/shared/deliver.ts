@@ -46,11 +46,15 @@ function cell(cue: Cue, header: string): string {
   return cue.fields[header] ?? ''
 }
 
+export function indexBound(project: Project): boolean {
+  const first = project.cues[0]
+  return !!first && Object.keys(first.fields).includes('cueId')
+}
+
 export function buildUpdatedIndex(project: Project): string | null {
   const first = project.cues[0]
-  if (!first) return null
+  if (!first || !indexBound(project)) return null
   const headers = Object.keys(first.fields)
-  if (!headers.includes('cueId')) return null
   for (const required of ['translation', 'status']) {
     if (!headers.includes(required)) headers.push(required)
   }

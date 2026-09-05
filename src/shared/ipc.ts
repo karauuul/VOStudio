@@ -6,6 +6,7 @@ import type {
   UiSessionState,
 } from './domain'
 import type { ExportFormat } from './export-plan'
+import type { PreflightPlan, PreflightSource } from './export-preflight'
 import type { UpdateStatus } from './updater'
 import type { CommandResult, ProjectCommand, ProjectSnapshot } from './project-commands'
 import type { ProjectSummary } from './project-summary'
@@ -99,6 +100,21 @@ export interface BatchExportResult {
 export interface ExportSummary {
   exported: { cueKey: string; name: string; bytes: number; sha256: string }[]
   failed: { cueKey: string; name: string; reason: string }[]
+}
+
+export interface LastExport {
+  createdAt: string
+  scope: string
+  exported: number
+  failed: number
+  skipped: number
+}
+
+export interface ExportPreflight extends Omit<PreflightPlan, 'sources'> {
+  outDir: string
+  missingFiles: PreflightSource[]
+  writesIndex: boolean
+  last: LastExport | null
 }
 
 export interface DeliverPaths {
@@ -254,6 +270,7 @@ export interface IpcApi {
 
   'export:planCue': (cueId: string) => Promise<ExportPlan>
   'export:planBatch': (req: BatchExportRequest) => Promise<ExportPlan>
+  'export:preflight': (req: BatchExportRequest) => Promise<ExportPreflight>
   'export:copy': (outPath: string) => Promise<ExportResult>
   'export:encode': (outPath: string, wav: ArrayBuffer) => Promise<ExportResult>
   'export:finish': (token: string, summary: ExportSummary) => Promise<DeliverPaths>
