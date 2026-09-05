@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useRef,
   useEffect,
   useMemo,
   useState,
@@ -170,11 +171,21 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   )
   const edit = useCompEdit(cue.id, cue.comp, onComp, onProblem)
 
+  const optimistic = useRef<CueComp | null | undefined>(undefined)
+  useEffect(() => {
+    optimistic.current = undefined
+  }, [cue.comp])
+  const shownComp = useCallback(
+    (): CueComp | null => (optimistic.current === undefined ? refs.display.current : optimistic.current),
+    [refs]
+  )
+
   const commit = useCallback(
-    (next: CueComp | null, base: CueComp | null): void => {
+    (next: CueComp | null, from: CueComp | null): void => {
       if (!refs.editable.current) return
       const value = next && next.clips.length > 0 ? next : null
-      if (sameComp(value, base)) return
+      if (sameComp(value, from)) return
+      optimistic.current = value
       edit.commit(value)
     },
     [edit, refs]
@@ -195,7 +206,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   const onRulerDown = useCallback(
     (e: ReactMouseEvent): void => {
       if (e.button !== 0) return
-      const base = refs.display.current
+      const base = shownComp()
       if (!base || !refs.ruler.current || !refs.editable.current || e.nativeEvent.offsetY > REGION_BAND_PX) {
         startScrub(e)
         return
@@ -235,7 +246,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
 
   const onRulerDouble = useCallback(
     (e: ReactMouseEvent): void => {
-      const base = refs.display.current
+      const base = shownComp()
       if (refs.editable.current && base?.region && e.nativeEvent.offsetY <= REGION_BAND_PX) {
         const at = Math.max(0, xToTime(refs.view.current, localX(e.clientX)))
         if (at >= base.region.in && at <= base.region.out) {
@@ -252,7 +263,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   const onCompDown = useCallback(
     (e: ReactMouseEvent): void => {
       if (e.button !== 0) return
-      const base = refs.display.current
+      const base = shownComp()
       const canvas = refs.canvas.current
       if (!base || !canvas || !refs.editable.current) {
         startScrub(e)
@@ -318,7 +329,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   const onCompHover = useCallback(
     (e: ReactMouseEvent): void => {
       const canvas = refs.canvas.current
-      const base = refs.pending.current ?? refs.display.current
+      const base = refs.pending.current ?? shownComp()
       if (!canvas || !base) return
       if (!refs.editable.current) {
         canvas.style.cursor = 'pointer'
@@ -352,7 +363,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
 
   const editSelected = useCallback(
     (patch: Partial<ClipEdits>, doCommit: boolean): void => {
-      const base = refs.display.current
+      const base = shownComp()
       const id = refs.sel.current
       if (!base || !id) return
       const next = setClipEdits(base, id, patch)
@@ -369,7 +380,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
 
   const trimSelected = useCallback(
     (edge: 'start' | 'end', at: number, doCommit: boolean): void => {
-      const base = refs.display.current
+      const base = shownComp()
       const id = refs.sel.current
       const clip = base?.clips.find((c) => c.id === id)
       if (!base || !id || !clip) return
@@ -389,7 +400,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   )
 
   const removeSelected = useCallback((): boolean => {
-    const base = refs.display.current
+    const base = shownComp()
     const id = refs.sel.current
     if (!refs.editable.current || !base || !id || !base.clips.some((c) => c.id === id)) return false
     commit(removeClip(base, id), base)
@@ -398,7 +409,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   }, [refs, commit, setSelected])
 
   const splitAtHead = useCallback((): void => {
-    const base = refs.display.current
+    const base = shownComp()
     if (!base) return
     const at = refs.pos.current
     const sel = base.clips.find((c) => c.id === refs.sel.current)
@@ -419,7 +430,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   )
 
   const healSelected = useCallback((): void => {
-    const base = refs.display.current
+    const base = shownComp()
     if (!base) return
     const id =
       refs.sel.current && canHeal(base, refs.sel.current)
@@ -442,7 +453,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   }, [displayComp, selected])
 
   const toggleCrossfade = useCallback((): void => {
-    const base = refs.display.current
+    const base = shownComp()
     const id = refs.sel.current
     if (!base || !id) return
     const i = base.clips.findIndex((c) => c.id === id)
@@ -453,7 +464,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
 
   const toggleFx = useCallback(
     (which: EffectName): void => {
-      const base = refs.display.current
+      const base = shownComp()
       const id = refs.sel.current
       if (!base || !id) return
       const clip = base.clips.find((c) => c.id === id)
@@ -467,7 +478,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
 
   const insertTake = useCallback(
     (take: Take): void => {
-      const base = refs.display.current
+      const base = shownComp()
       if (!base) return
       const duration = refs.peaks.current[take.id]?.duration || take.duration
       if (!(duration > 0)) {
@@ -488,7 +499,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   useEffect(() => {
     return takeDrag.subscribe((d: TakeDrag | null) => {
       const canvas = refs.canvas.current
-      const base = refs.display.current
+      const base = shownComp()
       if (!d) {
         refs.ghost.current = null
         requestDraw()
@@ -529,7 +540,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   }, [refs, hitClips, requestDraw, commit])
 
   const selection = useCallback((): ClipSelection | null => {
-    const base = refs.display.current
+    const base = shownComp()
     const id = refs.sel.current
     const clip = refs.editable.current && base && id ? base.clips.find((c) => c.id === id) : null
     if (!clip) return null
@@ -560,7 +571,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
     (targetId: string, takeId: string, duration: number): boolean => {
       const hasClip = (c: CueComp | null | undefined): c is CueComp =>
         !!c && c.clips.some((x) => x.id === targetId)
-      const shown = refs.display.current
+      const shown = shownComp()
       const base = hasClip(shown) ? shown : hasClip(cue.comp) ? cue.comp : null
       if (!base) return false
       const next = replaceClipSource(base, targetId, takeId, duration)
@@ -575,7 +586,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
 
   const regionEdge = useCallback(
     (edge: 'in' | 'out'): void => {
-      const base = refs.display.current
+      const base = shownComp()
       if (!base) return
       commit(setRegionEdge(base, edge, refs.pos.current), base)
       requestDraw()
@@ -584,7 +595,7 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   )
 
   const clearRegion = useCallback((): void => {
-    const base = refs.display.current
+    const base = shownComp()
     if (!base?.region) return
     commit(setRegion(base, null), base)
     requestDraw()

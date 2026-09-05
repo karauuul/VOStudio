@@ -12,7 +12,7 @@ interface Props {
   perPx: number
   decimals: number
   unit: string
-  title: string
+  title?: string
   disabled?: boolean
   onInput: (v: number) => void
   onCommit: (v: number) => void

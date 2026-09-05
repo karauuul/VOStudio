@@ -515,7 +515,6 @@ export function WaveLanes({
           ref={rulerRef}
           onMouseDown={editor.onRulerDown}
           onDoubleClick={editor.onRulerDouble}
-          title="Top strip: drag to set the render range · below: drag to scrub · double-click to fit"
         />
 
         <div className="tl-lane orig">
@@ -568,7 +567,6 @@ export function WaveLanes({
         {delta !== null && (
           <span
             className={'delta' + (Math.abs(delta) > 0.5 ? ' warn' : '')}
-            title="Length difference against the original"
           >
             Δ {delta >= 0 ? '+' : ''}
             {delta.toFixed(2)}s

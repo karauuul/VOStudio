@@ -83,7 +83,7 @@ const IconClearRegion = (): JSX.Element => (
 interface ToolProps {
   icon?: JSX.Element
   label?: string
-  title: string
+  title?: string
   hotkey?: string
   onClick: () => void
   disabled?: boolean
@@ -97,8 +97,7 @@ function Tool({ icon, label, title, hotkey, onClick, disabled, on }: ToolProps) 
       className={'tlb-btn' + (on ? ' on' : '')}
       onClick={onClick}
       disabled={disabled}
-      title={title}
-      aria-label={label ?? title}
+      aria-label={label ?? title ?? ''}
       aria-pressed={on === undefined ? undefined : on}
       onMouseDown={(e) => e.preventDefault()}
     >
@@ -158,7 +157,6 @@ export function TimelineBar(p: Props) {
       <Tool
         icon={<IconCut />}
         label="Cut"
-        title="Cut at the playhead"
         hotkey="C"
         onClick={p.onCut}
         disabled={!p.canCut}
@@ -166,7 +164,6 @@ export function TimelineBar(p: Props) {
       <Tool
         icon={<IconHeal />}
         label="Heal"
-        title="Heal the cut back into one clip"
         hotkey="H"
         onClick={p.onHeal}
         disabled={!p.canHeal}
@@ -174,7 +171,6 @@ export function TimelineBar(p: Props) {
       <Tool
         icon={<IconXfade />}
         label="Crossfade"
-        title="Cross-fade into the next clip"
         hotkey="X"
         onClick={p.onCrossfade}
         disabled={!p.canCrossfade}
@@ -190,7 +186,6 @@ export function TimelineBar(p: Props) {
           aria-haspopup="menu"
           aria-expanded={menu}
           aria-label="More clip actions"
-          title="More clip actions"
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => setMenu((v) => !v)}
         >
@@ -248,27 +243,24 @@ export function TimelineBar(p: Props) {
 
       <span className="tlb-sep" />
 
-      <span className="tlb-label" title="Limits the exported audio">
+      <span className="tlb-label">
         Render range
       </span>
       <Tool
         icon={<IconSetIn />}
         label="In"
-        title="Set the render range in at the playhead — this limits the export"
         onClick={p.onSetIn}
         disabled={!p.canRegion}
       />
       <Tool
         icon={<IconSetOut />}
         label="Out"
-        title="Set the render range out at the playhead — this limits the export"
         onClick={p.onSetOut}
         disabled={!p.canRegion}
       />
       <Tool
         icon={<IconClearRegion />}
         label="Clear"
-        title="Clear the render range"
         onClick={p.onClearRegion}
         disabled={!p.hasRegion}
       />
@@ -278,13 +270,12 @@ export function TimelineBar(p: Props) {
       <Tool
         icon={<IconSnap />}
         label="Snap"
-        title="Snap to edges"
         onClick={p.onSnap}
         on={p.snap}
       />
-      <Tool label="−" title="Zoom out" onClick={p.onZoomOut} disabled={!p.canZoomOut} />
-      <Tool label="+" title="Zoom in" onClick={p.onZoomIn} disabled={!p.canZoomIn} />
-      <Tool icon={<IconFit />} label="Fit" title="Fit the whole cue" onClick={p.onFit} />
+      <Tool label="−" onClick={p.onZoomOut} disabled={!p.canZoomOut} />
+      <Tool label="+" onClick={p.onZoomIn} disabled={!p.canZoomIn} />
+      <Tool icon={<IconFit />} label="Fit" onClick={p.onFit} />
     </div>
   )
 }

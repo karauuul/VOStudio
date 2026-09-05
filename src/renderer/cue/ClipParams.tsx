@@ -100,7 +100,6 @@ export function ClipParams({
       <DragNumber
         label="Gain"
         unit="dB"
-        title="Clip gain — drag, or click to type (Shift = fine)"
         value={e.gainDb ?? 0}
         min={GAIN_MIN_DB}
         max={GAIN_MAX_DB}
@@ -112,7 +111,6 @@ export function ClipParams({
       <DragNumber
         label="Speed"
         unit="×"
-        title="Playback rate — tempo and pitch together (use Pitch to shift back)"
         value={speed}
         min={SPEED_MIN}
         max={SPEED_MAX}
@@ -124,7 +122,6 @@ export function ClipParams({
       <DragNumber
         label="Fade in"
         unit="ms"
-        title="Fade in length"
         value={Math.round(fadeIn.duration * 1000)}
         min={0}
         max={10000}
@@ -136,7 +133,6 @@ export function ClipParams({
       <DragNumber
         label="Fade out"
         unit="ms"
-        title="Fade out length"
         value={Math.round(fadeOut.duration * 1000)}
         min={0}
         max={10000}
@@ -150,7 +146,6 @@ export function ClipParams({
       <DragNumber
         label="Trim in"
         unit="s"
-        title="Source position where the clip starts"
         value={clip.srcIn}
         min={0}
         max={Math.max(0, clip.srcOut - MIN_CLIP_SRC)}
@@ -162,7 +157,6 @@ export function ClipParams({
       <DragNumber
         label="Trim out"
         unit="s"
-        title="Source position where the clip ends"
         value={clip.srcOut}
         min={clip.srcIn + MIN_CLIP_SRC}
         max={srcMax}
@@ -187,14 +181,13 @@ export function ClipParams({
         <>
           <div className="insp-h">
             Reverb
-            <button className="icon-btn fx-off" title="Remove reverb" onClick={() => onEffect('reverb')}>
+            <button className="icon-btn fx-off" onClick={() => onEffect('reverb')}>
               ×
             </button>
           </div>
           <DragNumber
             label="Mix"
             unit="%"
-            title="Dry / wet balance"
             value={Math.round(rv.mix * 100)}
             min={MIX_MIN * 100}
             max={MIX_MAX * 100}
@@ -206,7 +199,6 @@ export function ClipParams({
           <DragNumber
             label="Size"
             unit="%"
-            title="Room size — density and darkness of the tail"
             value={Math.round(rv.size * 100)}
             min={REVERB_SIZE_MIN * 100}
             max={REVERB_SIZE_MAX * 100}
@@ -218,7 +210,6 @@ export function ClipParams({
           <DragNumber
             label="Decay"
             unit="s"
-            title="Time to fall to −60 dB"
             value={rv.decay}
             min={REVERB_DECAY_MIN}
             max={REVERB_DECAY_MAX}
@@ -234,14 +225,13 @@ export function ClipParams({
         <>
           <div className="insp-h">
             Delay
-            <button className="icon-btn fx-off" title="Remove delay" onClick={() => onEffect('delay')}>
+            <button className="icon-btn fx-off" onClick={() => onEffect('delay')}>
               ×
             </button>
           </div>
           <DragNumber
             label="Time"
             unit="ms"
-            title="Delay time — longer is an echo"
             value={Math.round(dl.time * 1000)}
             min={DELAY_TIME_MIN * 1000}
             max={DELAY_TIME_MAX * 1000}
@@ -253,7 +243,6 @@ export function ClipParams({
           <DragNumber
             label="Feedback"
             unit="%"
-            title="How much of each repeat feeds back — capped at 90%"
             value={Math.round(dl.feedback * 100)}
             min={DELAY_FEEDBACK_MIN * 100}
             max={DELAY_FEEDBACK_MAX * 100}
@@ -265,7 +254,6 @@ export function ClipParams({
           <DragNumber
             label="Mix"
             unit="%"
-            title="Dry / wet balance"
             value={Math.round(dl.mix * 100)}
             min={MIX_MIN * 100}
             max={MIX_MAX * 100}
@@ -281,14 +269,13 @@ export function ClipParams({
         <>
           <div className="insp-h">
             Pitch
-            <button className="icon-btn fx-off" title="Remove pitch" onClick={() => onEffect('pitch')}>
+            <button className="icon-btn fx-off" onClick={() => onEffect('pitch')}>
               ×
             </button>
           </div>
           <DragNumber
             label="Shift"
             unit="st"
-            title="Pitch in semitones — length stays the same (Speed changes tempo, this does not)"
             value={pt.semitones}
             min={PITCH_SEMITONES_MIN}
             max={PITCH_SEMITONES_MAX}
