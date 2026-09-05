@@ -251,4 +251,29 @@ describe('shouldSelectCandidate', () => {
     expect(shouldSelectCandidate({ ...base, take: take('r1', { kind: 'recording' }) })).toBe(false)
     expect(shouldSelectCandidate({ ...base, take: take('f1', { fragment: true }) })).toBe(false)
   })
+
+  it('an explicitly saved recording is selected', () => {
+    expect(
+      shouldSelectCandidate({
+        ...base,
+        take: take('r1', { kind: 'recording' }),
+        submitted: null,
+        current: { kind: 'comp' },
+        playing: true,
+        explicit: true,
+      })
+    ).toBe(true)
+  })
+
+  it('explicit still respects the open cue and fragment takes', () => {
+    const rec = take('r1', { kind: 'recording' })
+    expect(shouldSelectCandidate({ ...base, take: rec, active: false, explicit: true })).toBe(false)
+    expect(
+      shouldSelectCandidate({
+        ...base,
+        take: take('f1', { kind: 'recording', fragment: true }),
+        explicit: true,
+      })
+    ).toBe(false)
+  })
 })

@@ -83,8 +83,11 @@ export function shouldSelectCandidate(o: {
   current: PreviewSource
   playing: boolean
   recording: boolean
+  explicit?: boolean
 }): boolean {
-  if (!o.active || o.playing || o.recording) return false
-  if (o.take.kind === 'recording' || o.take.fragment) return false
+  if (!o.active || o.take.fragment) return false
+  if (o.explicit) return true
+  if (o.playing || o.recording) return false
+  if (o.take.kind === 'recording') return false
   return !!o.submitted && sameSource(o.submitted, o.current)
 }

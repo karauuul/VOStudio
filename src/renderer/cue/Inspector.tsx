@@ -1,16 +1,15 @@
 import type { Character, CueComp, Take, VoiceSettings } from '@shared/domain'
 import { compDuration } from '@shared/comp'
-import { RulesPanel } from '../RulesPanel'
 import { fmt } from '../Waveform'
 import { stamp } from './shared'
-import { knobText, KNOBS, fromSlider, toSlider } from './voice'
+import { knobText, KNOBS } from './voice'
+import { VoicePanel } from './VoicePanel'
 
-export type InspectorTab = 'take' | 'voice' | 'rules'
+export type InspectorTab = 'take' | 'voice'
 
 const TABS: { id: InspectorTab; label: string }[] = [
-  { id: 'take', label: 'Take' },
   { id: 'voice', label: 'Voice' },
-  { id: 'rules', label: 'Rules' },
+  { id: 'take', label: 'Take' },
 ]
 
 interface Props {
@@ -23,9 +22,11 @@ interface Props {
   onSetFinal: () => void
   onDelete: () => void
   character?: Character
-  onCharacterVoice: (characterId: string, settings: VoiceSettings) => void
-  rules: string
-  onRulesSaved: (text: string) => void
+  voice: VoiceSettings
+  voiceOverride?: Partial<VoiceSettings>
+  onVoiceChange: (patch: Partial<VoiceSettings>) => void
+  onVoiceReset: () => void
+  onVoiceDefault: () => void
 }
 
 export function Inspector({
@@ -38,9 +39,11 @@ export function Inspector({
   onSetFinal,
   onDelete,
   character,
-  onCharacterVoice,
-  rules,
-  onRulesSaved,
+  voice,
+  voiceOverride,
+  onVoiceChange,
+  onVoiceReset,
+  onVoiceDefault,
 }: Props) {
   return (
     <div className="insp">
@@ -69,10 +72,15 @@ export function Inspector({
         )}
 
         {tab === 'voice' && (
-          <VoiceTab character={character} onChange={onCharacterVoice} />
+          <VoicePanel
+            character={character}
+            value={voice}
+            override={voiceOverride}
+            onChange={onVoiceChange}
+            onReset={onVoiceReset}
+            onUseAsDefault={onVoiceDefault}
+          />
         )}
-
-        {tab === 'rules' && <RulesPanel rules={rules} onSaved={onRulesSaved} />}
       </div>
     </div>
   )
@@ -168,49 +176,3 @@ function TakeTab({
   )
 }
 
-function VoiceTab({
-  character,
-  onChange,
-}: {
-  character?: Character
-  onChange: (characterId: string, s: VoiceSettings) => void
-}) {
-  if (!character) return <div className="insp-empty">No character for this cue</div>
-
-  const v = character.voiceSettings
-
-  return (
-    <div className="insp-pad">
-      <div className="insp-h">
-        <span className="char-dot" style={{ background: character.color }} />
-        {character.name} defaults
-      </div>
-
-      {KNOBS.map((k) => (
-        <label key={k.key} className="knob wide" title={k.title}>
-          <span className="knob-l">{k.title}</span>
-          <input
-            type="range"
-            min={k.min}
-            max={k.max}
-            value={toSlider(v[k.key])}
-            onChange={(e) => onChange(character.id, { ...v, [k.key]: fromSlider(Number(e.target.value)) })}
-          />
-          <span className="knob-v">{knobText(k, v[k.key])}</span>
-        </label>
-      ))}
-
-      <label className="tgl insp-tgl">
-        <input
-          type="checkbox"
-          checked={v.boost}
-          onChange={(e) => onChange(character.id, { ...v, boost: e.target.checked })}
-        />
-        Speaker boost
-      </label>
-
-      <Row label="Voice ID" value={character.provider.voiceId || '— not set —'} />
-      <Row label="TTS model" value={character.provider.ttsModel} />
-    </div>
-  )
-}

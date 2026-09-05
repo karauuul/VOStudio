@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type MutableRefObject,
-} from 'react'
+import { useCallback, useMemo, useRef, type MutableRefObject } from 'react'
 import {
   resolveVoiceSettings,
   type Character,
@@ -13,15 +6,13 @@ import {
   type CueComp,
   type Take,
   type Term,
-  type VoiceSettings,
 } from '@shared/domain'
+import { applyRules } from '@shared/pronunciation'
 import type { PreviewSource, ResolvedPreview } from '@shared/workspace-source'
 import type { AppSettings } from '@shared/ipc'
-import { api } from './api'
 import type { WaveformHandle } from './Waveform'
 import { CueHeader } from './cue/CueHeader'
-import { GenerateBar } from './cue/GenerateBar'
-import { RecordBar } from './cue/RecordBar'
+import { CreateBar } from './cue/CreateBar'
 import { TakeSourceMenu } from './cue/TakeSourceMenu'
 import { TextBlock, type CopyKind } from './cue/TextBlock'
 import { useFragment } from './cue/useFragment'
@@ -48,8 +39,6 @@ interface Props {
   onSubmit: (cueId: string) => void
   onAcceptSuggestion: () => void
   onRejectSuggestion: () => void
-  onVoiceChange: (patch: Partial<VoiceSettings>) => void
-  onVoiceReset: () => void
   cueBusy: boolean
   origRef: MutableRefObject<WaveformHandle | null>
   takeRef: MutableRefObject<WaveformHandle | null>
@@ -59,13 +48,14 @@ interface Props {
   recRef: MutableRefObject<(() => void) | null>
   escRef: MutableRefObject<(() => boolean) | null>
   recActiveRef: MutableRefObject<(() => boolean) | null>
+  guardRef: MutableRefObject<((proceed: () => void) => boolean) | null>
   focusTextRef: MutableRefObject<(() => void) | null>
   appSettings: AppSettings
   onAppSettings: (s: AppSettings) => void
-  onTakeAdded: (cueId: string, take: Take) => void
+  onTakeAdded: (cueId: string, take: Take, explicit?: boolean) => void
   onStatus: (kind: 'ok' | 'err' | 'info', text: string) => void
   isActiveCue: (cueId: string) => boolean
-  rulesVersion: string
+  rules: string
 }
 
 export function CueEditor({
@@ -87,8 +77,6 @@ export function CueEditor({
   onSubmit,
   onAcceptSuggestion,
   onRejectSuggestion,
-  onVoiceChange,
-  onVoiceReset,
   cueBusy,
   origRef,
   takeRef,
@@ -98,33 +86,18 @@ export function CueEditor({
   recRef,
   escRef,
   recActiveRef,
+  guardRef,
   focusTextRef,
   appSettings,
   onAppSettings,
   onTakeAdded,
   onStatus,
   isActiveCue,
-  rulesVersion,
+  rules,
 }: Props) {
-  const [spoken, setSpoken] = useState('')
   const textRef = useRef<HTMLTextAreaElement>(null)
 
-  useEffect(() => {
-    setSpoken('')
-  }, [cue.id])
-
-  useEffect(() => {
-    let cancelled = false
-    const t = setTimeout(() => {
-      void api['rules:preview'](cue.text).then((p) => {
-        if (!cancelled) setSpoken(p)
-      })
-    }, 300)
-    return () => {
-      cancelled = true
-      clearTimeout(t)
-    }
-  }, [cue.text, cue.id, rulesVersion])
+  const spoken = useMemo(() => applyRules(cue.text, rules), [cue.text, rules])
 
   const voice = useMemo(() => resolveVoiceSettings(character, cue), [character, cue])
 
@@ -176,6 +149,7 @@ export function CueEditor({
   useWire(recRef, v2v.toggleRec)
   useWire(escRef, v2v.onEscape)
   useWire(recActiveRef, recActive)
+  useWire(guardRef, v2v.guard)
   useWire(focusTextRef, focusText)
 
   return (
@@ -189,6 +163,27 @@ export function CueEditor({
         onApprove={onApprove}
         onApproveNext={onApproveNext}
         onSetFinal={onSetFinal}
+      />
+
+      <TextBlock
+        cue={cue}
+        terms={terms}
+        textRef={textRef}
+        onText={onText}
+        onCopy={onCopy}
+        onAcceptSuggestion={onAcceptSuggestion}
+        onRejectSuggestion={onRejectSuggestion}
+        spoken={spoken}
+      />
+
+      <CreateBar
+        onGenerate={onGenerate}
+        generating={cueBusy}
+        genDisabled={cueBusy || !cue.text.trim() || noVoice}
+        genTitle={genTitle}
+        v2v={v2v}
+        appSettings={appSettings}
+        onAppSettings={onAppSettings}
       />
 
       <WaveLanes
@@ -217,39 +212,6 @@ export function CueEditor({
         onStatus={onStatus}
         busyClipId={fragment.busyClipId}
         onFragmentText={fragment.generate}
-      />
-
-      <TextBlock
-        cue={cue}
-        terms={terms}
-        textRef={textRef}
-        onText={onText}
-        onCopy={onCopy}
-        onAcceptSuggestion={onAcceptSuggestion}
-        onRejectSuggestion={onRejectSuggestion}
-        preview={spoken}
-      />
-
-      <GenerateBar
-        value={voice}
-        override={cue.voiceSettingsOverride}
-        onChange={onVoiceChange}
-        onResetOverride={onVoiceReset}
-        onGenerate={onGenerate}
-        generating={cueBusy}
-        genDisabled={cueBusy || !cue.text.trim() || noVoice}
-        genTitle={genTitle}
-      />
-
-      <RecordBar
-        rec={v2v.rec}
-        appSettings={appSettings}
-        onAppSettings={onAppSettings}
-        onToggle={v2v.toggleRec}
-        onConvert={v2v.convertClip}
-        converting={v2v.converting}
-        convertBlockedReason={v2v.convertBlocked}
-        preroll={v2v.preroll}
       />
     </div>
   )
