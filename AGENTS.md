@@ -19,7 +19,7 @@ For UI/audio changes: also start the built app and verify zero JS errors (CDP ru
 3. **No new runtime dependencies.** DSP is hand-written on Web Audio/AudioWorklet. Worklet code ships as an embedded string via Blob URL (see `pitch-node.ts`) — `?url`/`?worker` imports break under `file://` inside asar.
 4. **Non-destructive audio.** Takes are never overwritten or deleted by edits; everything is parametric and undoable. Slider drags commit as ONE undo step on release.
 5. **Hotkeys: `e.code` only** — hotkeys must use `e.code`, not `e.key`; layouts other than QWERTY (e.g. Cyrillic) break `e.key`. Check for conflicts with the existing map (`src/renderer/keyboard.ts`) before adding.
-6. **UI: English, zero explanatory text.** Everything discoverable visually — buttons, badges, hotkey badges. No prose in the UI.
+6. **UI: English, label only what structure cannot make obvious.** A section name, a field name, a unit, a state, a hotkey badge: yes, short. Sentences, hints, help prose, explanatory tooltips: no. If an element needs a sentence to be understood, fix the placement instead of adding text.
 7. **Secrets.** API keys only via `safeStorage` (`src/main/secrets.ts`). Never in code, project files, logs or test fixtures.
 8. **Zero comments in code.** No comments of any kind in source files — no explanations, no doc blocks, no TODO/ponytail markers, no commented-out code. Code must carry its meaning through names and structure; anything that needs prose goes into the PR description or docs/. When touching a file that still has legacy comments, delete the ones inside the lines you change.
 
