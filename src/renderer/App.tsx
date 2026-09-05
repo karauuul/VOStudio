@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type MouseEvent as ReactMouseEvent,
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import {
   DEFAULT_VOICE_SETTINGS,
   liveTakes,
@@ -16,19 +9,21 @@ import {
   type CueComp,
   type Project,
   type Take,
-  type UiSessionState,
   type UsageInfo,
   type VoiceSettings,
 } from '@shared/domain'
-import { DEFAULT_APP_SETTINGS, type AppSettings, type TakeDurationUpdate } from '@shared/ipc'
+import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
 import type { UpdateStatus } from '@shared/updater'
 import { api } from './api'
 import { transport } from './audio/transport'
 import { playback } from './playback'
 import { isCueBusyNow, useBusyCount, useCueBusy, useJobCount, useJobsStore } from './jobs/store'
-import { durationQueue } from './audio/duration-backfill'
-import { ALL_CHARACTERS, CueList, DEFAULT_FILTER, filterCues } from './CueList'
+import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues } from '@shared/cue-filter'
+import { CueList } from './CueList'
 import { CueEditor } from './CueEditor'
+import { ProjectTable, type GridApi } from './ProjectTable'
+import { WorkScreen } from './WorkScreen'
+import { useProjectSession, type StatusKind } from './useProjectSession'
 import type { EffectName, EffectsTarget } from './cue/ClipParams'
 import { Inspector, type InspectorTab } from './cue/Inspector'
 import { compositionLabel } from './cue/shared'
@@ -40,7 +35,7 @@ import { RulesDialog } from './RulesPanel'
 import { ProjectHome } from './ProjectHome'
 import { useTemplateReimport } from './TemplateReimport'
 import { useKeyboard, type KeyboardHandlers } from './keyboard'
-import { approvalState, hasValidVoicedOutput } from '@shared/approval'
+import { approvalState } from '@shared/approval'
 import {
   cueDecision,
   initialPreviewSource,
@@ -52,12 +47,12 @@ import {
   type PreviewSource,
 } from '@shared/workspace-source'
 import { isEmptyComp } from '@shared/comp'
-import { applyChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
+import type { ProjectSnapshot } from '@shared/project-commands'
 import { buildPrompt } from '@shared/prompt'
 import type { CopyKind } from './cue/TextBlock'
 
-type StatusKind = 'ok' | 'err' | 'info'
 type Status = { id: number; kind: StatusKind; text: string } | null
+type Route = 'work' | 'project'
 
 const UPDATE_LABEL: Record<UpdateStatus['phase'], string> = {
   idle: 'Ready',
@@ -117,59 +112,10 @@ function Toast({ status, onClose }: { status: NonNullable<Status>; onClose: () =
   )
 }
 
-const SIDE = { key: 'vo.sidebar.w', def: 320, min: 280, max: 460 }
-const INSP = { key: 'vo.inspector.w', def: 300, min: 280, max: 320 }
-
-const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
-
-function storedWidth({ key, def, min, max }: { key: string; def: number; min: number; max: number }): number {
-  try {
-    const v = parseInt(localStorage.getItem(key) ?? '', 10)
-    return Number.isFinite(v) ? clamp(v, min, max) : def
-  } catch {
-    return def
-  }
-}
-
-function applyDurations(project: Project, items: TakeDurationUpdate[]): Project {
-  const byCue = new Map<string, Map<string, number>>()
-  for (const it of items) {
-    let m = byCue.get(it.cueId)
-    if (!m) byCue.set(it.cueId, (m = new Map()))
-    m.set(it.takeId, it.duration)
-  }
-  let touched = false
-  const cues = project.cues.map((c) => {
-    const m = byCue.get(c.id)
-    if (!m) return c
-    let cueTouched = false
-    const takes = c.takes.map((t) => {
-      const d = m.get(t.id)
-      if (d === undefined || t.duration === d) return t
-      cueTouched = true
-      return { ...t, duration: d }
-    })
-    if (!cueTouched) return c
-    touched = true
-    return { ...c, takes }
-  })
-  return touched ? { ...project, cues } : project
-}
-
-function Chip({
-  label,
-  value,
-  total,
-  tone,
-}: {
-  label: string
-  value: number
-  total: number
-  tone?: 'ok' | 'warn'
-}) {
+function Chip({ label, value, total }: { label: string; value: number; total: number }) {
   const pct = total > 0 ? Math.min(100, (value / total) * 100) : 0
   return (
-    <div className={'chip' + (tone ? ' ' + tone : '')}>
+    <div className="chip ok">
       <div className="chip-top">
         <span className="chip-label">{label}</span>
         <span className="chip-val">
@@ -185,14 +131,12 @@ function Chip({
 }
 
 export default function App() {
-  const [project, setProject] = useState<Project | null>(null)
-  const projectRef = useRef<Project | null>(null)
-  projectRef.current = project
-  const revisionRef = useRef(0)
   const [activeCueId, setActiveCueId] = useState<string | undefined>(undefined)
   const [filter, setFilter] = useState(DEFAULT_FILTER)
   const [characterFilter, setCharacterFilter] = useState(ALL_CHARACTERS)
   const [search, setSearch] = useState('')
+  const [route, setRoute] = useState<Route>('work')
+  const [reviewIds, setReviewIds] = useState<string[] | null>(null)
   const [usage, setUsage] = useState<UsageInfo | null>(null)
   const [hasKey, setHasKey] = useState(true)
   const [keyInput, setKeyInput] = useState('')
@@ -203,8 +147,7 @@ export default function App() {
   const [showRules, setShowRules] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [sideW, setSideW] = useState(() => storedWidth(SIDE))
-  const [rightW, setRightW] = useState(() => storedWidth(INSP))
+  const [tableOverlay, setTableOverlay] = useState(false)
   const [previewCueId, setPreviewCueId] = useState<string | undefined>(undefined)
   const [previewSource, setPreviewSource] = useState<PreviewSource>({ kind: 'none' })
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('take')
@@ -219,18 +162,13 @@ export default function App() {
   const recActiveRef = useRef<(() => boolean) | null>(null)
   const decisionRef = useRef<(() => boolean) | null>(null)
   const guardRef = useRef<((proceed: () => void) => boolean) | null>(null)
+  const gridRef = useRef<GridApi | null>(null)
+  const queueSearchRef = useRef<HTMLInputElement>(null)
+  const tableSearchRef = useRef<HTMLInputElement>(null)
   const previewSourceRef = useRef<PreviewSource>({ kind: 'none' })
   const submittedRef = useRef<{ cueId: string; source: PreviewSource } | null>(null)
   const focusTextRef = useRef<(() => void) | null>(null)
-  const textTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingText = useRef<{ id: string; text: string } | null>(null)
-  const textGenRef = useRef(0)
   const selectSeqRef = useRef(0)
-  const uiTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingUi = useRef<UiSessionState | null>(null)
-  const voiceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingVoice = useRef<{ key: string; fn: () => Promise<unknown> } | null>(null)
-  const bootstrapped = useRef(false)
   const statusSeq = useRef(0)
   const menuRef = useRef<HTMLDivElement>(null)
   const activeCueIdRef = useRef<string | undefined>(undefined)
@@ -252,34 +190,34 @@ export default function App() {
   const closeStatus = useCallback(() => setStatus(null), [])
   const reimport = useTemplateReimport(pushStatus)
 
-  const load = useCallback((snapshot: ProjectSnapshot | null) => {
-    const p = snapshot?.project ?? null
-    revisionRef.current = snapshot?.revision ?? 0
-    setProject(p)
-    if (!p) return
-    if (!bootstrapped.current) {
-      bootstrapped.current = true
-      setFilter(p.ui.filter || DEFAULT_FILTER)
-      setSearch(p.ui.search ?? '')
-      setActiveCueId(p.ui.activeCueId ?? p.cues[0]?.id)
-    }
+  const onBootstrap = useCallback((p: Project) => {
+    setFilter(p.ui.filter || DEFAULT_FILTER)
+    setSearch(p.ui.search ?? '')
+    setActiveCueId(p.ui.activeCueId ?? p.cues[0]?.id)
   }, [])
 
-  const dispatch = useCallback(async (command: ProjectCommand) => {
-    const result = await api['project:command'](command)
-    if (result.revision <= revisionRef.current) return
-    revisionRef.current = result.revision
-    setProject((current) => current ? applyChangeSet(current, result.changes) : current)
-  }, [])
+  const session = useProjectSession({ onStatus: pushStatus, onBootstrap })
+  const {
+    project,
+    projectRef,
+    setProject,
+    mutateCue,
+    dispatch,
+    flushText,
+    flushVoice,
+    debounceVoice,
+    saveUi,
+    onText: sessionText,
+  } = session
 
   const enterProject = useCallback(
     (snapshot: ProjectSnapshot) => {
-      bootstrapped.current = false
       setCharacterFilter(ALL_CHARACTERS)
-      durationQueue.reset()
-      load(snapshot)
+      setRoute('work')
+      setReviewIds(null)
+      session.enter(snapshot)
     },
-    [load]
+    [session]
   )
 
   useEffect(() => {
@@ -293,64 +231,31 @@ export default function App() {
 
   useEffect(() => api.on('usage:updated', setUsage), [])
   useEffect(() => api.on('updater:status', setUpdateStatus), [])
-  useEffect(() => api.on('project:changed', (result) => {
-    if (result.revision <= revisionRef.current) return
-    revisionRef.current = result.revision
-    setProject((current) => current ? applyChangeSet(current, result.changes) : current)
-  }), [])
 
-  useEffect(
-    () => api.on('takes:durations', (items) => setProject((p) => (p ? applyDurations(p, items) : p))),
-    []
-  )
-
-  const onAppSettings = useCallback((s: AppSettings) => {
-    setAppSettings(s)
-    void api['settings:set'](s).catch((e: unknown) =>
-      pushStatus('err', String(e))
-    )
-  }, [pushStatus])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(SIDE.key, String(sideW))
-      localStorage.setItem(INSP.key, String(rightW))
-    } catch {
-    }
-  }, [sideW, rightW])
-
-  const startDrag = useCallback(
-    (side: 'left' | 'right') => (e: ReactMouseEvent) => {
-      e.preventDefault()
-      const x0 = e.clientX
-      const w0 = side === 'left' ? sideW : rightW
-      const cfg = side === 'left' ? SIDE : INSP
-      const set = side === 'left' ? setSideW : setRightW
-      document.body.classList.add('resizing')
-      const move = (ev: MouseEvent): void => {
-        const dx = side === 'left' ? ev.clientX - x0 : x0 - ev.clientX
-        set(clamp(w0 + dx, cfg.min, cfg.max))
-      }
-      const up = (): void => {
-        document.body.classList.remove('resizing')
-        window.removeEventListener('mousemove', move)
-        window.removeEventListener('mouseup', up)
-      }
-      window.addEventListener('mousemove', move)
-      window.addEventListener('mouseup', up)
+  const onAppSettings = useCallback(
+    (s: AppSettings) => {
+      setAppSettings(s)
+      void api['settings:set'](s).catch((e: unknown) => pushStatus('err', String(e)))
     },
-    [sideW, rightW]
+    [pushStatus]
   )
 
   const liveCharacterFilter =
-    characterFilter !== ALL_CHARACTERS && project && !project.characters.some((c) => c.id === characterFilter)
+    characterFilter !== ALL_CHARACTERS &&
+    project &&
+    !project.characters.some((c) => c.id === characterFilter)
       ? ALL_CHARACTERS
       : characterFilter
 
-  const visible = useMemo(
-    () => (project ? filterCues(project.cues, filter, search, liveCharacterFilter) : []),
-    [project, filter, search, liveCharacterFilter]
-  )
+  const visible = useMemo(() => {
+    if (!project) return []
+    if (reviewIds) {
+      const byId = new Map(project.cues.map((c) => [c.id, c]))
+      return reviewIds.flatMap((id) => byId.get(id) ?? [])
+    }
+    return filterCues(project.cues, filter, search, liveCharacterFilter)
+  }, [project, reviewIds, filter, search, liveCharacterFilter])
+
   const activeCue = useMemo(
     () => project?.cues.find((c) => c.id === activeCueId),
     [project, activeCueId]
@@ -390,115 +295,19 @@ export default function App() {
   const shownTake = preview.take
   const output = useMemo(() => (activeCue ? outputSource(activeCue) : null), [activeCue])
 
-  const stats = useMemo(() => {
-    const s = { translated: 0, generated: 0, approved: 0, suggested: 0 }
-    for (const c of project?.cues ?? []) {
-      if (c.suggestedText !== undefined) s.suggested++
-      if (c.status === 'excluded') continue
-      if (c.text.trim()) s.translated++
-      if (hasValidVoicedOutput(c)) s.generated++
-      if (approvalState(c) === 'approved') s.approved++
-    }
-    return s
-  }, [project])
+  const approved = useMemo(
+    () =>
+      (project?.cues ?? []).reduce(
+        (n, c) => (c.status !== 'excluded' && approvalState(c) === 'approved' ? n + 1 : n),
+        0
+      ),
+    [project]
+  )
 
   useEffect(() => {
     if (!project) return
-    const next: UiSessionState = { activeCueId, filter, search }
-    pendingUi.current = next
-    if (uiTimer.current) clearTimeout(uiTimer.current)
-    uiTimer.current = setTimeout(() => {
-      pendingUi.current = null
-      void api['ui:save'](next).catch(() => {})
-    }, 1000)
-    return () => {
-      if (uiTimer.current) clearTimeout(uiTimer.current)
-    }
-  }, [activeCueId, filter, search, project !== null])
-
-  const flushUi = useCallback(() => {
-    if (uiTimer.current) {
-      clearTimeout(uiTimer.current)
-      uiTimer.current = null
-    }
-    const next = pendingUi.current
-    pendingUi.current = null
-    if (!next) return Promise.resolve()
-    return api['ui:save'](next).catch(() => {})
-  }, [])
-
-  const mutateCue = useCallback((cueId: string, fn: (c: Cue) => Cue) => {
-    setProject((p) => (p ? { ...p, cues: p.cues.map((c) => (c.id === cueId ? fn(c) : c)) } : p))
-  }, [])
-
-  const flushVoice = useCallback(() => {
-    if (voiceTimer.current) {
-      clearTimeout(voiceTimer.current)
-      voiceTimer.current = null
-    }
-    const p = pendingVoice.current
-    if (!p) return Promise.resolve()
-    pendingVoice.current = null
-    return p.fn()
-  }, [])
-
-  const cancelCharacterVoice = useCallback((characterId: string) => {
-    if (pendingVoice.current?.key !== `char:${characterId}`) return
-    pendingVoice.current = null
-    if (voiceTimer.current) {
-      clearTimeout(voiceTimer.current)
-      voiceTimer.current = null
-    }
-  }, [])
-
-  const debounceVoice = useCallback(
-    (key: string, fn: () => Promise<unknown>) => {
-      const prev = pendingVoice.current
-      if (prev && prev.key !== key) flushVoice()
-      pendingVoice.current = { key, fn }
-      if (voiceTimer.current) clearTimeout(voiceTimer.current)
-      voiceTimer.current = setTimeout(() => {
-        voiceTimer.current = null
-        const p = pendingVoice.current
-        pendingVoice.current = null
-        void p?.fn()
-      }, 400)
-    },
-    [flushVoice]
-  )
-
-  const flushText = useCallback(() => {
-    if (textTimer.current) {
-      clearTimeout(textTimer.current)
-      textTimer.current = null
-    }
-    const p = pendingText.current
-    if (!p) return Promise.resolve(true)
-    pendingText.current = null
-    const gen = ++textGenRef.current
-    return dispatch({ type: 'cue.saveText', cueId: p.id, text: p.text }).then(
-      () => true,
-      (e: unknown) => {
-        if (gen === textGenRef.current && !pendingText.current) pendingText.current = p
-        pushStatus('err', String(e))
-        return false
-      }
-    )
-  }, [pushStatus, dispatch])
-
-  const onText = useCallback(
-    (text: string) => {
-      const id = activeCueId
-      if (!id) return
-      mutateCue(id, (c) => ({ ...c, text }))
-      const prev = pendingText.current
-      if (prev && prev.id !== id) void flushText()
-      pendingText.current = { id, text }
-      if (textTimer.current) clearTimeout(textTimer.current)
-      textTimer.current = setTimeout(() => void flushText(), 1200)
-    },
-    [activeCueId, mutateCue, flushText]
-  )
+    saveUi({ activeCueId, filter, search })
+  }, [saveUi, activeCueId, filter, search, project !== null])
 
   const doSelectCue = useCallback(
     async (cueId: string | undefined): Promise<boolean> => {
@@ -525,11 +334,19 @@ export default function App() {
     [doSelectCue]
   )
 
+  const onText = useCallback(
+    (text: string) => {
+      const id = activeCueId
+      if (id) sessionText(id, text)
+    },
+    [activeCueId, sessionText]
+  )
+
   const onApprove = useCallback(
-    (approved: boolean): Promise<boolean> => {
+    (approvedNow: boolean): Promise<boolean> => {
       const cue = activeCue
       if (!cue) return Promise.resolve(false)
-      if (approved) {
+      if (approvedNow) {
         const decision = cueDecision(cue, previewSource)
         if (decision === 'approved') return Promise.resolve(false)
         if (decision !== 'approve') {
@@ -539,7 +356,7 @@ export default function App() {
       }
       return flushText().then((saved) => {
         if (!saved) return false
-        return dispatch({ type: 'cue.approve', cueId: cue.id, approved }).then(
+        return dispatch({ type: 'cue.approve', cueId: cue.id, approved: approvedNow }).then(
           () => true,
           (e: unknown) => {
             pushStatus('err', String(e))
@@ -618,7 +435,9 @@ export default function App() {
         const rest = liveTakes(cue).filter((t) => t.id !== takeId)
         setPreviewSource(rest[0] ? { kind: 'take', takeId: rest[0].id } : { kind: 'none' })
       }
-      void dispatch({ type: 'cue.deleteTake', cueId: cue.id, takeId }).catch((e: unknown) => pushStatus('err', String(e)))
+      void dispatch({ type: 'cue.deleteTake', cueId: cue.id, takeId }).catch((e: unknown) =>
+        pushStatus('err', String(e))
+      )
     },
     [activeCue, previewSource, dispatch, pushStatus]
   )
@@ -638,8 +457,8 @@ export default function App() {
         return { ...c, voiceSettingsOverride: next }
       })
       debounceVoice(`cue:${cue.id}`, () =>
-        dispatch({ type: 'cue.setVoiceOverride', cueId: cue.id, override: next }).catch((e: unknown) =>
-          pushStatus('err', String(e))
+        dispatch({ type: 'cue.setVoiceOverride', cueId: cue.id, override: next }).catch(
+          (e: unknown) => pushStatus('err', String(e))
         )
       )
     },
@@ -654,8 +473,8 @@ export default function App() {
       return rest
     })
     debounceVoice(`cue:${cue.id}`, () =>
-      dispatch({ type: 'cue.setVoiceOverride', cueId: cue.id, override: null }).catch((e: unknown) =>
-        pushStatus('err', String(e))
+      dispatch({ type: 'cue.setVoiceOverride', cueId: cue.id, override: null }).catch(
+        (e: unknown) => pushStatus('err', String(e))
       )
     )
   }, [activeCue, mutateCue, debounceVoice, pushStatus, dispatch])
@@ -673,12 +492,12 @@ export default function App() {
           : p
       )
       debounceVoice(`char:${characterId}`, () =>
-        dispatch({ type: 'character.setVoiceSettings', characterId, settings }).catch((e: unknown) =>
-          pushStatus('err', String(e))
+        dispatch({ type: 'character.setVoiceSettings', characterId, settings }).catch(
+          (e: unknown) => pushStatus('err', String(e))
         )
       )
     },
-    [debounceVoice, pushStatus, dispatch]
+    [setProject, debounceVoice, pushStatus, dispatch]
   )
 
   const onVoiceDefault = useCallback(() => {
@@ -705,7 +524,7 @@ export default function App() {
         pushStatus('err', String(e))
       )
     },
-    [dispatch, pushStatus]
+    [setProject, dispatch, pushStatus]
   )
 
   const onCueCharacter = useCallback(
@@ -773,52 +592,105 @@ export default function App() {
     )
   }, [activeCue, dispatch, pushStatus])
 
+  const submitTts = useCallback(
+    (cueId: string, text: string, voiceSettings: VoiceSettings, announce: boolean) => {
+      submitJob({
+        kind: 'tts',
+        cueId,
+        run: async () => {
+          if (announce) pushStatus('info', 'Generating TTS…')
+          const take = await api['provider:tts']({ cueId, text, voiceSettings, selectOutput: false })
+          onTakeAdded(cueId, take)
+          if (announce) pushStatus('ok', `Take ready (${take.kind})`)
+        },
+        onError: (e) => pushStatus('err', String(e)),
+      })
+    },
+    [submitJob, onTakeAdded, pushStatus]
+  )
+
   const generate = useCallback(() => {
     const cue = activeCue
     if (!cue || !cue.text.trim()) return
     if (isCueBusyNow(cue.id)) return
-    const cueId = cue.id
-    const text = cue.text
-    noteSubmit(cueId)
+    noteSubmit(cue.id)
     void flushText()
-    submitJob({
-      kind: 'tts',
-      cueId,
-      run: async () => {
-        const current = projectRef.current
-        const liveCue = current?.cues.find((c) => c.id === cueId)
-        const liveCharacter = current?.characters.find((c) => c.id === liveCue?.characterId)
-        const voiceSettings = resolveVoiceSettings(liveCharacter, liveCue)
-        pushStatus('info', 'Generating TTS…')
-        const take = await api['provider:tts']({ cueId, text, voiceSettings, selectOutput: false })
-        onTakeAdded(cueId, take)
-        pushStatus('ok', `Take ready (${take.kind})`)
-      },
-      onError: (e) => pushStatus('err', String(e)),
-    })
-  }, [activeCue, flushText, noteSubmit, onTakeAdded, pushStatus, submitJob])
+    submitTts(cue.id, cue.text, resolveVoiceSettings(activeCharacter, cue), true)
+  }, [activeCue, activeCharacter, flushText, noteSubmit, submitTts])
+
+  const generateSelected = useCallback(
+    (cues: Cue[]) => {
+      void flushText()
+      let queued = 0
+      for (const cue of cues) {
+        if (isCueBusyNow(cue.id)) continue
+        const character = projectRef.current?.characters.find((c) => c.id === cue.characterId)
+        submitTts(cue.id, cue.text, resolveVoiceSettings(character, cue), false)
+        queued++
+      }
+      pushStatus('info', `Queued ${queued} ${queued === 1 ? 'job' : 'jobs'}`)
+    },
+    [flushText, projectRef, submitTts, pushStatus]
+  )
+
+  const assignCharacter = useCallback(
+    async (cueIds: string[], characterId: string) => {
+      const failed: string[] = []
+      for (const cueId of cueIds) {
+        try {
+          await dispatch({ type: 'cue.setCharacter', cueId, characterId })
+        } catch {
+          const cue = projectRef.current?.cues.find((c) => c.id === cueId)
+          failed.push(cue?.fields['EventName'] || cue?.key || cueId)
+        }
+      }
+      const done = cueIds.length - failed.length
+      if (failed.length > 0) pushStatus('err', `Assigned ${done} · failed: ${failed.join(', ')}`)
+      else pushStatus('ok', `Assigned ${done}`)
+    },
+    [dispatch, projectRef, pushStatus]
+  )
+
+  const goRoute = useCallback(
+    (next: Route) => {
+      if (next === route) return
+      if (guardRef.current?.(() => setRoute(next))) return
+      setRoute(next)
+    },
+    [route]
+  )
+
+  const openCue = useCallback(
+    (cueId: string) => {
+      void selectCue(cueId).then((ok) => {
+        if (!ok) return
+        setReviewIds(null)
+        setRoute('work')
+      })
+    },
+    [selectCue]
+  )
+
+  const startReviewSelection = useCallback(
+    (cueIds: string[]) => {
+      if (cueIds.length === 0) return
+      void selectCue(cueIds[0]).then((ok) => {
+        if (!ok) return
+        setReviewIds(cueIds)
+        setRoute('work')
+      })
+    },
+    [selectCue]
+  )
 
   const leaveProject = useCallback(async () => {
-    try {
-      const saved = await flushText()
-      await flushVoice()
-      if (!saved) return
-      await flushUi()
-      await durationQueue.flushNow()
-      playback.stop()
-      await api['project:close']()
-    } catch (e) {
-      pushStatus('err', String(e))
-      return
-    }
-    durationQueue.reset()
-    bootstrapped.current = false
-    revisionRef.current = 0
-    setProject(null)
+    if (!(await session.close())) return
     setActiveCueId(undefined)
     setTimelineOpen(false)
     setEffects(null)
-  }, [flushText, flushVoice, flushUi, pushStatus])
+    setRoute('work')
+    setReviewIds(null)
+  }, [session])
 
   const goHome = useCallback(() => {
     if (guardRef.current?.(() => void leaveProject())) return
@@ -883,7 +755,7 @@ export default function App() {
     if (!timelineOpen) return
     const cue = projectRef.current?.cues.find((c) => c.id === activeCueIdRef.current)
     if (cue && !isEmptyComp(cue.comp)) selectSource({ kind: 'comp' })
-  }, [timelineOpen, activeCueId, selectSource])
+  }, [timelineOpen, activeCueId, selectSource, projectRef])
 
   const onClipEdit = useCallback((patch: ClipEditPatch, commit: boolean) => {
     compRef.current?.editSelected(patch, commit)
@@ -908,6 +780,15 @@ export default function App() {
 
   const handlers: KeyboardHandlers = useMemo(
     () => ({
+      routeWork: () => goRoute('work'),
+      routeProject: () => goRoute('project'),
+      focusSearch: () =>
+        (route === 'project' ? tableSearchRef : queueSearchRef).current?.focus(),
+      gridNext: () => gridRef.current?.move(1),
+      gridPrev: () => gridRef.current?.move(-1),
+      gridOpen: () => gridRef.current?.open(),
+      gridToggle: () => gridRef.current?.toggle(),
+      gridSelectAll: () => gridRef.current?.selectAll(),
       next: () => move(1),
       prev: () => move(-1),
       generate: () => generate(),
@@ -946,6 +827,8 @@ export default function App() {
       copyPrompt: () => onCopy('prompt'),
     }),
     [
+      goRoute,
+      route,
       move,
       generate,
       onApprove,
@@ -961,7 +844,13 @@ export default function App() {
   )
 
   const blocked =
-    showExport || showCharacters || showRules || showSettings || menuOpen || reimport.open
+    showExport ||
+    showCharacters ||
+    showRules ||
+    showSettings ||
+    menuOpen ||
+    tableOverlay ||
+    reimport.open
 
   useEffect(() => {
     if (blocked) playback.cancelCompare()
@@ -969,6 +858,7 @@ export default function App() {
 
   useKeyboard(handlers, !!project && !blocked, {
     timeline: timelineOpen,
+    grid: route === 'project',
     decision: () => decisionRef.current?.() ?? false,
   })
 
@@ -983,6 +873,97 @@ export default function App() {
 
   const creditsLow = usage ? usage.remaining / Math.max(1, usage.limit) < 0.15 : false
 
+  const queue: ComponentProps<typeof CueList> = {
+    cues: visible,
+    allCues: project.cues,
+    activeCueId,
+    filter,
+    search,
+    characters: project.characters,
+    characterFilter: liveCharacterFilter,
+    onFilter: setFilter,
+    onSearch: setSearch,
+    onCharacterFilter: setCharacterFilter,
+    onSelect: selectCue,
+    scrollToIndex: activeIndex,
+    searchRef: queueSearchRef,
+    scope: reviewIds
+      ? { label: `Selection · ${visible.length}`, onExit: () => setReviewIds(null) }
+      : undefined,
+  }
+
+  const editor: ComponentProps<typeof CueEditor> | null = activeCue
+    ? {
+        cue: activeCue,
+        character: activeCharacter,
+        characters: project.characters,
+        onCharacter: onCueCharacter,
+        preview,
+        onSelectSource: selectSource,
+        onText,
+        onCopy,
+        terms: project.terms ?? [],
+        onGenerate: generate,
+        onApprove,
+        onApproveNext,
+        onSetFinal: makeFinal,
+        onDetails: () => setInspectorTab('take'),
+        onDeleteTake,
+        onSubmit: noteSubmit,
+        onAcceptSuggestion,
+        onRejectSuggestion,
+        cueBusy: activeCueBusy,
+        compRef,
+        onComp: onSetComp,
+        timelineOpen,
+        onTimeline: toggleTimeline,
+        onEffectsTarget: setEffects,
+        recRef,
+        escRef,
+        recActiveRef,
+        decisionRef,
+        guardRef,
+        focusTextRef,
+        appSettings,
+        onAppSettings,
+        onTakeAdded,
+        onStatus: pushStatus,
+        isActiveCue,
+        rules: project.pronunciationRules,
+      }
+    : null
+
+  const inspector: ComponentProps<typeof Inspector> = {
+    cueId: activeCue?.id ?? '',
+    tab: inspectorTab,
+    onTab: setInspectorTab,
+    take: shownTake,
+    comp: preview.source.kind === 'comp' ? preview.comp : undefined,
+    isFinal: !!output && sameSource(output, preview.source),
+    canSetFinal: !!activeCue && setFinalEligible(activeCue, previewSource),
+    onSetFinal: makeFinal,
+    onDelete: () => shownTake && onDeleteTake(shownTake.id),
+    character: activeCharacter,
+    voice: resolveVoiceSettings(activeCharacter, activeCue),
+    voiceOverride: activeCue?.voiceSettingsOverride,
+    onVoiceChange,
+    onVoiceReset,
+    onVoiceDefault,
+    effects,
+    effectsLabel: timelineOpen && activeCue ? compositionLabel(activeCue) : 'Composition',
+    onClipEdit,
+    onClipTrim,
+    onClipEffect,
+    onEditAsComposition:
+      !timelineOpen &&
+      activeCue &&
+      (previewSource.kind === 'comp'
+        ? !isEmptyComp(activeCue.comp)
+        : !!shownTake && shownTake.kind !== 'recording')
+        ? openTimeline
+        : undefined,
+  }
+
   return (
     <div className="app">
       <header className="hdr">
@@ -991,18 +972,27 @@ export default function App() {
           <span className="hdr-sub">{project.cues.length} cues</span>
         </div>
 
+        <div className="tabs" role="tablist">
+          <button
+            role="tab"
+            aria-selected={route === 'work'}
+            className={route === 'work' ? 'on' : ''}
+            onClick={() => goRoute('work')}
+          >
+            Work <kbd>Ctrl+1</kbd>
+          </button>
+          <button
+            role="tab"
+            aria-selected={route === 'project'}
+            className={route === 'project' ? 'on' : ''}
+            onClick={() => goRoute('project')}
+          >
+            Project <kbd>Ctrl+2</kbd>
+          </button>
+        </div>
+
         <div className="chips">
-          <Chip label="Translated" value={stats.translated} total={project.cues.length} />
-          <Chip label="Voiced" value={stats.generated} total={project.cues.length} tone="ok" />
-          <Chip label="Approved" value={stats.approved} total={project.cues.length} tone="ok" />
-          {stats.suggested > 0 && (
-            <Chip
-              label="Suggestions"
-              value={stats.suggested}
-              total={project.cues.length}
-              tone="warn"
-            />
-          )}
+          <Chip label="Approved" value={approved} total={project.cues.length} />
         </div>
 
         <div className="hdr-right">
@@ -1011,19 +1001,17 @@ export default function App() {
               Restart to update
             </button>
           )}
-          {}
-          {jobCount > 0 && (
-            <span className="jobs" title="Generation tasks in the queue">
-              <i className="spin" />
-              {jobCount} {jobCount === 1 ? 'job' : 'jobs'}
-            </span>
-          )}
           <span className={'credits' + (creditsLow ? ' low' : '')}>
             {usage
               ? `${usage.remaining.toLocaleString('en-US')} / ${usage.limit.toLocaleString('en-US')} chars`
               : 'credits —'}
           </span>
-          {}
+          {jobCount > 0 && (
+            <span className="jobs" title="Generation tasks in the queue">
+              <i className="spin" />
+              Jobs {jobCount}
+            </span>
+          )}
           <div className="menu" ref={menuRef}>
             <button
               className="btn ghost menu-btn"
@@ -1036,7 +1024,6 @@ export default function App() {
             </button>
             {menuOpen && (
               <div className="menu-pop" role="menu">
-                {}
                 <button
                   className="menu-item"
                   role="menuitem"
@@ -1148,7 +1135,9 @@ export default function App() {
               ) : (
                 <button
                   className="btn ghost"
-                  disabled={updateStatus.phase === 'checking' || updateStatus.phase === 'downloading'}
+                  disabled={
+                    updateStatus.phase === 'checking' || updateStatus.phase === 'downloading'
+                  }
                   onClick={() => void api['updater:check']().then(setUpdateStatus)}
                 >
                   Check for updates
@@ -1156,7 +1145,6 @@ export default function App() {
               )}
             </div>
           )}
-          {}
           {showSettings && (
             <button className="icon-btn" onClick={() => setShowSettings(false)} title="Close">
               ×
@@ -1165,109 +1153,31 @@ export default function App() {
         </div>
       )}
 
-      <div className="work">
-        <div style={{ width: sideW, flex: `0 0 ${sideW}px`, display: 'flex', minHeight: 0 }}>
-          <CueList
-            cues={visible}
-            allCues={project.cues}
-            activeCueId={activeCueId}
-            filter={filter}
-            search={search}
-            characters={project.characters}
-            characterFilter={liveCharacterFilter}
-            onFilter={setFilter}
-            onSearch={setSearch}
-            onCharacterFilter={setCharacterFilter}
-            onSelect={selectCue}
-            scrollToIndex={activeIndex}
-          />
-        </div>
+      <WorkScreen
+        hidden={route !== 'work'}
+        queue={queue}
+        editor={editor}
+        inspector={inspector}
+      />
 
-        <div className="resizer" onMouseDown={startDrag('left')} title="Drag to resize" />
+      <ProjectTable
+        hidden={route !== 'project'}
+        project={project}
+        filter={filter}
+        search={search}
+        characterFilter={liveCharacterFilter}
+        onFilter={setFilter}
+        onSearch={setSearch}
+        onCharacterFilter={setCharacterFilter}
+        searchRef={tableSearchRef}
+        gridRef={gridRef}
+        onOpenCue={openCue}
+        onReviewSelection={startReviewSelection}
+        onGenerate={generateSelected}
+        onAssignCharacter={(ids, characterId) => void assignCharacter(ids, characterId)}
+        onOverlay={setTableOverlay}
+      />
 
-        <main className="center">
-          {activeCue ? (
-            <CueEditor
-              cue={activeCue}
-              character={activeCharacter}
-              characters={project.characters}
-              onCharacter={onCueCharacter}
-              preview={preview}
-              onSelectSource={selectSource}
-              onText={onText}
-              onCopy={onCopy}
-              terms={project.terms ?? []}
-              onGenerate={generate}
-              onApprove={onApprove}
-              onApproveNext={onApproveNext}
-              onSetFinal={makeFinal}
-              onDetails={() => setInspectorTab('take')}
-              onDeleteTake={onDeleteTake}
-              onSubmit={noteSubmit}
-              onAcceptSuggestion={onAcceptSuggestion}
-              onRejectSuggestion={onRejectSuggestion}
-              cueBusy={activeCueBusy}
-              compRef={compRef}
-              onComp={onSetComp}
-              timelineOpen={timelineOpen}
-              onTimeline={toggleTimeline}
-              onEffectsTarget={setEffects}
-              recRef={recRef}
-              escRef={escRef}
-              recActiveRef={recActiveRef}
-              decisionRef={decisionRef}
-              guardRef={guardRef}
-              focusTextRef={focusTextRef}
-              appSettings={appSettings}
-              onAppSettings={onAppSettings}
-              onTakeAdded={onTakeAdded}
-              onStatus={pushStatus}
-              isActiveCue={isActiveCue}
-              rules={project.pronunciationRules}
-            />
-          ) : (
-            <div className="center-empty">Select a cue from the list</div>
-          )}
-        </main>
-
-        <div className="resizer" onMouseDown={startDrag('right')} title="Drag to resize" />
-
-        <aside className="right" style={{ width: rightW, flex: `0 0 ${rightW}px` }}>
-          <Inspector
-            cueId={activeCue?.id ?? ""}
-            tab={inspectorTab}
-            onTab={setInspectorTab}
-            take={shownTake}
-            comp={preview.source.kind === 'comp' ? preview.comp : undefined}
-            isFinal={!!output && sameSource(output, preview.source)}
-            canSetFinal={!!activeCue && setFinalEligible(activeCue, previewSource)}
-            onSetFinal={makeFinal}
-            onDelete={() => shownTake && onDeleteTake(shownTake.id)}
-            character={activeCharacter}
-            voice={resolveVoiceSettings(activeCharacter, activeCue)}
-            voiceOverride={activeCue?.voiceSettingsOverride}
-            onVoiceChange={onVoiceChange}
-            onVoiceReset={onVoiceReset}
-            onVoiceDefault={onVoiceDefault}
-            effects={effects}
-            effectsLabel={timelineOpen && activeCue ? compositionLabel(activeCue) : 'Composition'}
-            onClipEdit={onClipEdit}
-            onClipTrim={onClipTrim}
-            onClipEffect={onClipEffect}
-            onEditAsComposition={
-              !timelineOpen &&
-              activeCue &&
-              (previewSource.kind === 'comp'
-                ? !isEmptyComp(activeCue.comp)
-                : !!shownTake && shownTake.kind !== 'recording')
-                ? openTimeline
-                : undefined
-            }
-          />
-        </aside>
-      </div>
-
-      {}
       <TransportBar />
 
       {status && <Toast status={status} onClose={closeStatus} />}
@@ -1283,7 +1193,7 @@ export default function App() {
           onVoiceSettings={onCharacterVoice}
           onProvider={onCharacterProvider}
           onFlushVoice={flushVoice}
-          onCancelVoice={cancelCharacterVoice}
+          onCancelVoice={session.cancelCharacterVoice}
           dispatch={dispatch}
           onStatus={pushStatus}
           onClose={() => setShowCharacters(false)}
