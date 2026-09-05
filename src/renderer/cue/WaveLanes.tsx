@@ -925,7 +925,7 @@ export function WaveLanes({
               className="tl-play"
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => t.compHandle.toggle()}
-              title={t.playingId === compClipId ? 'Pause' : editable ? 'Play the composition' : 'Play the take'}
+              title={t.playingId === compClipId ? 'Pause' : isComp ? 'Play the composition' : 'Play the take'}
             >
               {t.playingId === compClipId ? '❚❚' : '▶'}
             </button>
