@@ -515,7 +515,10 @@ export default function App() {
 
   const selectCue = useCallback(
     (cueId: string | undefined): Promise<boolean> => {
-      if (cueId === activeCueIdRef.current) return Promise.resolve(true)
+      if (cueId === activeCueIdRef.current) {
+        selectSeqRef.current++
+        return Promise.resolve(true)
+      }
       if (guardRef.current?.(() => void doSelectCue(cueId))) return Promise.resolve(false)
       return doSelectCue(cueId)
     },

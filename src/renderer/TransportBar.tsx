@@ -48,7 +48,7 @@ export function TransportBar() {
     <div className="tbar">
       <button
         className="icon-btn"
-        onClick={() => playback.restart(sides.target)}
+        onClick={() => (foreign ? transport.seek(0) : playback.restart(sides.target))}
         title="Restart"
       >
         ⏮
