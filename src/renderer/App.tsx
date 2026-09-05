@@ -11,6 +11,7 @@ import {
   liveTakes,
   normalizeOverride,
   resolveVoiceSettings,
+  type ClipEdits,
   type Cue,
   type CueComp,
   type Project,
@@ -27,7 +28,9 @@ import { isCueBusyNow, useBusyCount, useCueBusy, useJobCount, useJobsStore } fro
 import { durationQueue } from './audio/duration-backfill'
 import { ALL_CHARACTERS, CueList, DEFAULT_FILTER, filterCues } from './CueList'
 import { CueEditor } from './CueEditor'
+import type { EffectName, EffectsTarget } from './cue/ClipParams'
 import { Inspector, type InspectorTab } from './cue/Inspector'
+import { compositionLabel } from './cue/shared'
 import type { CompApi } from './cue/WaveLanes'
 import { TransportBar } from './cue/TransportBar'
 import { BatchExportDialog } from './BatchExportDialog'
@@ -48,6 +51,7 @@ import {
   shouldSelectCandidate,
   type PreviewSource,
 } from '@shared/workspace-source'
+import { isEmptyComp } from '@shared/comp'
 import { applyChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
 import { buildPrompt } from '@shared/prompt'
 import type { CopyKind } from './cue/TextBlock'
@@ -204,6 +208,8 @@ export default function App() {
   const [previewCueId, setPreviewCueId] = useState<string | undefined>(undefined)
   const [previewSource, setPreviewSource] = useState<PreviewSource>({ kind: 'none' })
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('take')
+  const [timelineOpen, setTimelineOpen] = useState(false)
+  const [effects, setEffects] = useState<EffectsTarget | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
 
@@ -211,7 +217,7 @@ export default function App() {
   const takeRef = useRef<WaveformHandle | null>(null)
   const abRef = useRef<(() => void) | null>(null)
   const compRef = useRef<CompApi | null>(null)
-  const recRef = useRef<(() => void) | null>(null)
+  const recRef = useRef<((fragment?: boolean) => void) | null>(null)
   const escRef = useRef<(() => boolean) | null>(null)
   const recActiveRef = useRef<(() => boolean) | null>(null)
   const guardRef = useRef<((proceed: () => void) => boolean) | null>(null)
@@ -363,6 +369,8 @@ export default function App() {
   if (previewCueId !== activeCue?.id) {
     setPreviewCueId(activeCue?.id)
     setPreviewSource(activeCue ? initialPreviewSource(activeCue) : { kind: 'none' })
+  } else if (activeCue && previewSource.kind === 'comp' && isEmptyComp(activeCue.comp)) {
+    setPreviewSource(initialPreviewSource(activeCue))
   }
 
   previewSourceRef.current = previewSource
@@ -560,13 +568,17 @@ export default function App() {
   )
 
   const onSetComp = useCallback(
-    (cueId: string, comp: CueComp | null) => {
-      void dispatch({ type: 'cue.setComp', cueId, comp })
-        .then(() => {
+    (cueId: string, comp: CueComp | null): Promise<boolean> =>
+      dispatch({ type: 'cue.setComp', cueId, comp }).then(
+        () => {
           if (comp && isActiveCue(cueId)) selectSource({ kind: 'comp' })
-        })
-        .catch((e: unknown) => pushStatus('err', String(e)))
-    },
+          return true
+        },
+        (e: unknown) => {
+          pushStatus('err', String(e))
+          return false
+        }
+      ),
     [dispatch, pushStatus, selectSource, isActiveCue]
   )
 
@@ -756,7 +768,6 @@ export default function App() {
   }, [activeCue, dispatch, pushStatus])
 
   const generate = useCallback(() => {
-    if (compRef.current?.promptFragment()) return
     const cue = activeCue
     if (!cue || !cue.text.trim()) return
     if (isCueBusyNow(cue.id)) return
@@ -798,6 +809,8 @@ export default function App() {
     revisionRef.current = 0
     setProject(null)
     setActiveCueId(undefined)
+    setTimelineOpen(false)
+    setEffects(null)
   }, [flushText, flushVoice, flushUi, pushStatus])
 
   const goHome = useCallback(() => {
@@ -847,6 +860,28 @@ export default function App() {
     }
   }, [menuOpen])
 
+  const toggleTimeline = useCallback(() => setTimelineOpen((v) => !v), [])
+
+  const openTimeline = useCallback(() => setTimelineOpen(true), [])
+
+  useEffect(() => {
+    if (!timelineOpen) return
+    const cue = projectRef.current?.cues.find((c) => c.id === activeCueIdRef.current)
+    if (cue && !isEmptyComp(cue.comp)) selectSource({ kind: 'comp' })
+  }, [timelineOpen, activeCueId, selectSource])
+
+  const onClipEdit = useCallback((patch: Partial<ClipEdits>, commit: boolean) => {
+    compRef.current?.editSelected(patch, commit)
+  }, [])
+
+  const onClipTrim = useCallback((edge: 'start' | 'end', at: number, commit: boolean) => {
+    compRef.current?.trimSelected(edge, at, commit)
+  }, [])
+
+  const onClipEffect = useCallback((which: EffectName) => {
+    compRef.current?.toggleEffect(which)
+  }, [])
+
   const move = useCallback(
     (delta: number) => {
       if (visible.length === 0) return
@@ -885,6 +920,11 @@ export default function App() {
       acceptSuggestion: onAcceptSuggestion,
       rejectSuggestion: onRejectSuggestion,
       toggleRecord: () => recRef.current?.(),
+      toggleFragmentRecord: () => recRef.current?.(true),
+      toggleTimeline,
+      promptFragment: () => {
+        compRef.current?.promptFragment()
+      },
       escape: () => escRef.current?.() ?? false,
       focusText: () => focusTextRef.current?.(),
       copySource: () => onCopy('source'),
@@ -904,6 +944,7 @@ export default function App() {
       onAcceptSuggestion,
       onRejectSuggestion,
       onCopy,
+      toggleTimeline,
     ]
   )
   useKeyboard(
@@ -1150,6 +1191,9 @@ export default function App() {
               abRef={abRef}
               compRef={compRef}
               onComp={onSetComp}
+              timelineOpen={timelineOpen}
+              onTimeline={toggleTimeline}
+              onEffectsTarget={setEffects}
               recRef={recRef}
               escRef={escRef}
               recActiveRef={recActiveRef}
@@ -1186,6 +1230,20 @@ export default function App() {
             onVoiceChange={onVoiceChange}
             onVoiceReset={onVoiceReset}
             onVoiceDefault={onVoiceDefault}
+            effects={effects}
+            effectsLabel={timelineOpen && activeCue ? compositionLabel(activeCue) : 'Composition'}
+            onClipEdit={onClipEdit}
+            onClipTrim={onClipTrim}
+            onClipEffect={onClipEffect}
+            onEditAsComposition={
+              !timelineOpen &&
+              activeCue &&
+              (previewSource.kind === 'comp'
+                ? !isEmptyComp(activeCue.comp)
+                : !!shownTake && shownTake.kind !== 'recording')
+                ? openTimeline
+                : undefined
+            }
           />
         </aside>
       </div>

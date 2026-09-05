@@ -8,96 +8,47 @@ import {
   type MutableRefObject,
   type ReactNode,
 } from 'react'
-import {
-  canHeal,
-  clipEnd,
-  clipTimelineDuration,
-  compDuration,
-  compRenderPlan,
-  DEFAULT_CROSSFADE,
-  effectiveCrossfade,
-  findInsertSlot,
-  healableAt,
-  healCut,
-  insertClipFromTake,
-  maxCrossfade,
-  moveClip,
-  removeClip,
-  replaceClipSource,
-  setClipEdits,
-  setCrossfade,
-  setRegion,
-  setRegionEdge,
-  isEmptyComp,
-  splitClipAt,
-  trimClipEdge,
-} from '@shared/comp'
-import { liveTakes, type ClipEdits, type Cue, type CueComp } from '@shared/domain'
-import { toggleEffect } from '@shared/effects'
+import { compDuration, compRenderPlan, isEmptyComp } from '@shared/comp'
+import { liveTakes, type Cue, type CueComp } from '@shared/domain'
 import { resolvePreview, type ResolvedPreview } from '@shared/workspace-source'
 import { audioUrl } from '../api'
 import { tryResolveComp } from '../audio/comp-source'
 import { reportTakeDuration } from '../audio/duration-backfill'
 import { clipId, transport } from '../audio/transport'
 import { fmt, getPeaks, type Peaks, type WaveformHandle } from '../Waveform'
-import { ClipParams } from './ClipParams'
+import type { EffectsTarget } from './ClipParams'
 import { drawCompLane, drawRuler, drawSourceLane, type DrawClip, type DrawGhost } from './timeline-draw'
 import {
   clampView,
-  clipAt,
-  FADE_ZONE_PX,
   fitView,
-  hitTest,
   MAX_PX_PER_SEC,
   MIN_PX_PER_SEC,
-  REGION_BAND_PX,
-  regionHit,
-  snap,
-  SNAP_PX,
-  snapDelta,
-  snapTargets,
   timeToX,
   xToTime,
   zoomAt,
-  type HitClip,
   type TimelineView,
 } from './timeline-math'
-import { takeDrag, type TakeDrag } from './take-drag'
-import { TimelineBar } from './TimelineBar'
-import { sameComp, useCompEdit } from './useCompEdit'
+import { TimelineEditor, useTimelineEditor, type CompApi } from './TimelineEditor'
 import { useLaneTransport } from './useLaneTransport'
 import { useWire } from './useWire'
 import { timecode } from './shared'
 
-export interface ClipSelection {
-  clipId: string
-  start: number
-  end: number
-  reference: { id: string; url: string; from: number; to: number } | null
-}
-
-export interface CompApi {
-  deleteSelected: () => boolean
-  split: () => void
-  heal: () => void
-  crossfade: () => void
-  undo: () => void
-  redo: () => void
-  selection: () => ClipSelection | null
-  promptFragment: () => boolean
-  replaceSource: (clipId: string, takeId: string, duration: number) => boolean
-}
+export type { ClipSelection, CompApi } from './TimelineEditor'
 
 interface Props {
   cue: Cue
   preview: ResolvedPreview
   sourceHeader: ReactNode
+  insertMenu: ReactNode
+  timelineOpen: boolean
+  onTimeline: () => void
   origRef: MutableRefObject<WaveformHandle | null>
   takeRef: MutableRefObject<WaveformHandle | null>
   abRef: MutableRefObject<(() => void) | null>
   compRef: MutableRefObject<CompApi | null>
-  onComp: (cueId: string, comp: CueComp | null) => void
+  onComp: (cueId: string, comp: CueComp | null) => Promise<boolean>
   onStatus: (kind: 'ok' | 'err' | 'info', text: string) => void
+  onEffectsTarget: (target: EffectsTarget | null) => void
   busyClipId?: string | null
   onFragmentText: (clipId: string, text: string) => void
 }
@@ -106,12 +57,16 @@ export function WaveLanes({
   cue,
   preview,
   sourceHeader,
+  insertMenu,
+  timelineOpen,
+  onTimeline,
   origRef,
   takeRef,
   abRef,
   compRef,
   onComp,
   onStatus,
+  onEffectsTarget,
   busyClipId,
   onFragmentText,
 }: Props) {
@@ -124,7 +79,6 @@ export function WaveLanes({
 
   const [width, setWidth] = useState(0)
   const [selected, setSelected] = useState<string | null>(null)
-  const [prompt, setPrompt] = useState(false)
   const [refWave, setRefWave] = useState<{ path: string; peaks: Peaks } | null>(null)
   const [srcPeaks, setSrcPeaks] = useState<Record<string, Peaks>>({})
   const [snapOn, setSnapOn] = useState(true)
@@ -141,7 +95,6 @@ export function WaveLanes({
   const refPeaks = refWave && refWave.path === refPath ? refWave.peaks : null
 
   const take = preview.take
-  const editable = preview.source.kind === 'comp' || (preview.source.kind === 'take' && isEmptyComp(cue.comp))
 
   const takeDur = (take && (srcPeaks[take.id]?.duration || take.duration)) || 0
 
@@ -150,6 +103,12 @@ export function WaveLanes({
     [cue.comp, cue.takes, preview.source, takeDur]
   )
   const resolved = useMemo(() => tryResolveComp(cue, displayComp), [cue.takes, displayComp])
+
+  const editable =
+    timelineOpen &&
+    !!displayComp &&
+    (preview.source.kind === 'comp' ||
+      (!!take && take.kind !== 'recording' && isEmptyComp(cue.comp)))
 
   const refDur = refPeaks?.duration ?? 0
   const compDur = displayComp ? compDuration(displayComp) : 0
@@ -316,11 +275,14 @@ export function WaveLanes({
   useEffect(() => {
     const el = bodyRef.current
     if (!el) return
-    const ro = new ResizeObserver(() => setWidth(el.clientWidth))
+    const ro = new ResizeObserver(() => {
+      setWidth(el.clientWidth)
+      requestDraw()
+    })
     ro.observe(el)
     setWidth(el.clientWidth)
     return () => ro.disconnect()
-  }, [])
+  }, [requestDraw])
 
   const FIT_TAIL = 1.04
 
@@ -376,36 +338,9 @@ export function WaveLanes({
     return () => el.removeEventListener('wheel', onWheel)
   }, [requestDraw])
 
-  const onProblem = useCallback(
-    (p: string) => onStatus('err', `Composition rejected: ${p}`),
-    [onStatus]
-  )
-  const edit = useCompEdit(cue.id, cue.comp, onComp, onProblem)
-  const editRef = useRef(edit)
-  editRef.current = edit
-
-  const commit = useCallback((next: CueComp | null, base: CueComp | null): void => {
-    if (!editableRef.current) return
-    const value = next && next.clips.length > 0 ? next : null
-    if (sameComp(value, base)) return
-    editRef.current.commit(value)
-  }, [])
-
   const localX = useCallback((clientX: number): number => {
     const el = bodyRef.current
     return el ? clientX - el.getBoundingClientRect().left : 0
-  }, [])
-
-  const hitClips = useCallback((comp: CueComp | null): HitClip[] => {
-    const clips = comp?.clips ?? []
-    return clips.map((c, i) => ({
-      id: c.id,
-      start: c.start,
-      end: clipEnd(c),
-      fadeIn: c.edits.fadeIn.duration,
-      fadeOut: c.edits.fadeOut.duration,
-      crossfade: effectiveCrossfade(c, clips[i + 1]),
-    }))
   }, [])
 
   const dragRef = useRef<(() => void) | null>(null)
@@ -457,413 +392,70 @@ export function WaveLanes({
     [t, localX, requestDraw, startDrag]
   )
 
-  const onRulerDown = useCallback(
-    (e: ReactMouseEvent): void => {
-      if (e.button !== 0) return
-      const base = displayRef.current
-      const canvas = rulerRef.current
-      if (!base || !canvas || !editableRef.current || e.nativeEvent.offsetY > REGION_BAND_PX) {
-        startScrub(e)
-        return
-      }
-      e.preventDefault()
-      const view = viewRef.current
-      const at = Math.max(0, xToTime(view, localX(e.clientX)))
-      const grab = regionHit(base.region, at, view.pxPerSec)
-      const targets = snapTargets(hitClips(base), null, [t.posRef.current, refDurRef.current])
-      const anchor =
-        grab === 'in' && base.region ? base.region.out : grab === 'out' && base.region ? base.region.in : at
-      let next: CueComp = base
-
-      const apply = (clientX: number, alt: boolean): void => {
-        const v = viewRef.current
-        const tol = alt || !snapRef.current ? 0 : SNAP_PX / v.pxPerSec
-        const raw = Math.max(0, xToTime(v, localX(clientX)))
-        const edge = snap(raw, targets, tol)
-        next = setRegion(base, { in: Math.min(anchor, edge), out: Math.max(anchor, edge) })
-        pendingRef.current = next
-        requestDraw()
-      }
-
-      startDrag(
-        (ev) => apply(ev.clientX, ev.altKey),
-        (ev) => {
-          apply(ev.clientX, ev.altKey)
-          pendingRef.current = null
-          commit(next, base)
-          requestDraw()
-        }
-      )
-      apply(e.clientX, e.altKey)
+  const editor = useTimelineEditor({
+    cue,
+    displayComp,
+    selected,
+    setSelected,
+    editable,
+    compDur,
+    refs: {
+      display: displayRef,
+      pending: pendingRef,
+      ghost: ghostRef,
+      sel: selRef,
+      peaks: peaksRef,
+      refDur: refDurRef,
+      refPath: refPathRef,
+      snap: snapRef,
+      editable: editableRef,
+      view: viewRef,
+      pos: posRef,
+      canvas: compCanvas,
+      ruler: rulerRef,
     },
-    [startScrub, localX, hitClips, t, snapRef, requestDraw, startDrag, commit]
-  )
+    requestDraw,
+    localX,
+    startDrag,
+    startScrub,
+    fit,
+    onComp,
+    onStatus,
+  })
 
-  const onRulerDouble = useCallback(
-    (e: ReactMouseEvent): void => {
-      const base = displayRef.current
-      if (editableRef.current && base?.region && e.nativeEvent.offsetY <= REGION_BAND_PX) {
-        const at = Math.max(0, xToTime(viewRef.current, localX(e.clientX)))
-        if (at >= base.region.in && at <= base.region.out) {
-          commit(setRegion(base, null), base)
-          requestDraw()
-          return
-        }
-      }
-      fit()
-    },
-    [localX, commit, requestDraw, fit]
-  )
-
-  const onCompDown = useCallback(
-    (e: ReactMouseEvent): void => {
-      if (e.button !== 0) return
-      const base = displayRef.current
-      const canvas = compCanvas.current
-      if (!base || !canvas || !editableRef.current) {
-        startScrub(e)
-        return
-      }
-      const box = canvas.getBoundingClientRect()
-      const view = viewRef.current
-      const at = xToTime(view, e.clientX - box.left)
-      const hits = hitClips(base)
-      const hit = hitTest(hits, at, view.pxPerSec, e.clientY - box.top <= FADE_ZONE_PX)
-      if (!hit) {
-        setSelected(null)
-        startScrub(e)
-        return
-      }
-      setSelected(hit.id)
-      selRef.current = hit.id
-      const clip = base.clips.find((c) => c.id === hit.id)
-      if (!clip) return
-      e.preventDefault()
-
-      const x0 = e.clientX
-      const targets = snapTargets(hits, hit.id, [t.posRef.current, refDurRef.current])
-      const srcDur = peaksRef.current[clip.sourceTakeId]?.duration ?? Infinity
-      const tl = clipTimelineDuration(clip)
-      const xf0 = hits.find((h) => h.id === hit.id)?.crossfade ?? 0
-      let next: CueComp = base
-
-      const onMove = (ev: MouseEvent): void => {
-        const pps = viewRef.current.pxPerSec
-        const raw = (ev.clientX - x0) / pps
-        const tol = ev.altKey || !snapRef.current ? 0 : SNAP_PX / pps
-        if (hit.kind === 'crossfade') {
-          next = setCrossfade(base, hit.id, xf0 - raw)
-        } else if (hit.kind === 'clip') {
-          const d = snapDelta([clip.start, clipEnd(clip)], raw, targets, tol)
-          next = moveClip(base, hit.id, clip.start + d)
-        } else if (hit.kind === 'trimStart' || hit.kind === 'trimEnd') {
-          const edge = hit.kind === 'trimStart' ? 'start' : 'end'
-          const anchor = edge === 'start' ? clip.start : clipEnd(clip)
-          const d = snapDelta([anchor], raw, targets, tol)
-          next = trimClipEdge(base, hit.id, edge, d, srcDur)
-        } else if (hit.kind === 'fadeIn') {
-          const d = Math.max(0, Math.min(tl, clip.edits.fadeIn.duration + raw))
-          next = setClipEdits(base, hit.id, { fadeIn: { ...clip.edits.fadeIn, duration: d } })
-        } else {
-          const d = Math.max(0, Math.min(tl, clip.edits.fadeOut.duration - raw))
-          next = setClipEdits(base, hit.id, { fadeOut: { ...clip.edits.fadeOut, duration: d } })
-        }
-        pendingRef.current = next
-        requestDraw()
-      }
-
-      startDrag(onMove, () => {
-        pendingRef.current = null
-        commit(next, base)
-        requestDraw()
-      })
-    },
-    [startScrub, hitClips, t, requestDraw, startDrag, commit]
-  )
-
-  const onCompHover = useCallback(
-    (e: ReactMouseEvent): void => {
-      const canvas = compCanvas.current
-      const base = pendingRef.current ?? displayRef.current
-      if (!canvas || !base) return
-      if (!editableRef.current) {
-        canvas.style.cursor = 'pointer'
-        return
-      }
-      const box = canvas.getBoundingClientRect()
-      const view = viewRef.current
-      const hit = hitTest(
-        hitClips(base),
-        xToTime(view, e.clientX - box.left),
-        view.pxPerSec,
-        e.clientY - box.top <= FADE_ZONE_PX
-      )
-      canvas.style.cursor = !hit
-        ? 'pointer'
-        : hit.kind === 'clip'
-          ? 'grab'
-          : hit.kind === 'fadeIn' || hit.kind === 'fadeOut'
-            ? 'crosshair'
-            : hit.kind === 'crossfade'
-              ? 'col-resize'
-              : 'ew-resize'
-    },
-    [hitClips]
-  )
-
-  const selectedClip = useMemo(
-    () => displayComp?.clips.find((c) => c.id === selected) ?? null,
-    [displayComp, selected]
-  )
-
-  const onClipEdit = useCallback(
-    (patch: Partial<ClipEdits>, doCommit: boolean): void => {
-      const base = displayRef.current
-      const id = selRef.current
-      if (!base || !id) return
-      const next = setClipEdits(base, id, patch)
-      if (doCommit) {
-        pendingRef.current = null
-        commit(next, base)
-      } else {
-        pendingRef.current = next
-      }
-      requestDraw()
-    },
-    [commit, requestDraw]
-  )
-
-  const removeSelected = useCallback((): boolean => {
-    const base = displayRef.current
-    const id = selRef.current
-    if (!base || !id || !base.clips.some((c) => c.id === id)) return false
-    commit(removeClip(base, id), base)
-    setSelected(null)
-    return true
-  }, [commit])
-
-  const splitAtHead = useCallback((): void => {
-    const base = displayRef.current
-    if (!base) return
-    const at = t.posRef.current
-    const sel = base.clips.find((c) => c.id === selRef.current)
-    const target =
-      sel && at > sel.start && at < clipEnd(sel)
-        ? sel.id
-        : clipAt(
-            base.clips.map((c) => ({ id: c.id, start: c.start, end: clipEnd(c) })),
-            at
-          )
-    if (!target) return
-    commit(splitClipAt(base, target, at), base)
-  }, [commit, t])
-
-  const canHealAny = useMemo(
-    () => !!displayComp && displayComp.clips.some((c) => canHeal(displayComp, c.id)),
-    [displayComp]
-  )
-
-  const healSelected = useCallback((): void => {
-    const base = displayRef.current
-    if (!base) return
-    const id =
-      selRef.current && canHeal(base, selRef.current)
-        ? selRef.current
-        : healableAt(base, t.posRef.current, Infinity)
-    if (!id) return
-    commit(healCut(base, id), base)
-    setSelected(id)
-    selRef.current = id
-  }, [commit, t])
-
-  const xfRoom = useMemo(
-    () => (displayComp && selected ? maxCrossfade(displayComp, selected) : 0),
-    [displayComp, selected]
-  )
-  const xfNow = useMemo(() => {
-    if (!displayComp || !selected) return 0
-    const i = displayComp.clips.findIndex((c) => c.id === selected)
-    return i < 0 ? 0 : effectiveCrossfade(displayComp.clips[i], displayComp.clips[i + 1])
-  }, [displayComp, selected])
-
-  const toggleCrossfade = useCallback((): void => {
-    const base = displayRef.current
-    const id = selRef.current
-    if (!base || !id) return
-    const i = base.clips.findIndex((c) => c.id === id)
-    if (i < 0) return
-    const on = effectiveCrossfade(base.clips[i], base.clips[i + 1]) > 0
-    commit(setCrossfade(base, id, on ? 0 : DEFAULT_CROSSFADE), base)
-  }, [commit])
-
-  const toggleFx = useCallback(
-    (which: 'reverb' | 'delay' | 'pitch'): void => {
-      const base = displayRef.current
-      const id = selRef.current
-      if (!base || !id) return
-      const clip = base.clips.find((c) => c.id === id)
-      if (!clip) return
-      const on = !!clip.edits.effects?.[which]
-      const effects = toggleEffect(clip.edits.effects, which, !on)
-      commit(setClipEdits(base, id, { effects }), base)
-      requestDraw()
-    },
-    [commit, requestDraw]
-  )
-
-  const insertable = take && take.kind !== 'recording' && takeDur > 0 ? take : null
-
-  const insertAtHead = useCallback((): void => {
-    const base = displayRef.current
-    if (!base || !insertable) return
-    const next = insertClipFromTake(base, insertable.id, takeDur, t.posRef.current)
-    if (sameComp(next, base)) {
-      onStatus('info', 'No room for this take on the timeline')
-      return
-    }
-    commit(next, base)
-    requestDraw()
-  }, [insertable, takeDur, t, commit, requestDraw, onStatus])
+  useWire(compRef, editor.api)
 
   useEffect(() => {
-    return takeDrag.subscribe((d: TakeDrag | null) => {
-      const canvas = compCanvas.current
-      const base = displayRef.current
-      if (!d) {
-        ghostRef.current = null
-        requestDraw()
-        return
-      }
-      const box = canvas?.getBoundingClientRect()
-      const over =
-        !!box && d.x >= box.left && d.x <= box.right && d.y >= box.top && d.y <= box.bottom
-      if (!over || !base || !editableRef.current || !(d.duration > 0)) {
-        if (ghostRef.current) {
-          ghostRef.current = null
-          requestDraw()
-        }
-        return
-      }
-      const view = viewRef.current
-      const at = Math.max(0, xToTime(view, d.x - box.left))
-      const targets = snapTargets(hitClips(base), null, [t.posRef.current, refDurRef.current])
-      const tol = snapRef.current ? SNAP_PX / view.pxPerSec : 0
-      const wanted = snap(at, targets, tol)
-      const slot = findInsertSlot(base, d.duration, wanted, d.duration)
-      if (d.dropped) {
-        ghostRef.current = null
-        if (slot !== null) {
-          commit(insertClipFromTake(base, d.takeId, d.duration, slot), base)
-        }
-        requestDraw()
-        return
-      }
-      ghostRef.current = {
-        start: slot ?? wanted,
-        duration: d.duration,
-        valid: slot !== null,
-        label: d.label,
-      }
-      requestDraw()
-    })
-  }, [hitClips, t, requestDraw, commit])
+    if (!timelineOpen) setSelected(null)
+  }, [timelineOpen])
 
-  const selectedNow = useCallback(() => {
-    const base = displayRef.current
-    const id = selRef.current
-    if (!base || !id) return null
-    return base.clips.find((c) => c.id === id) ?? null
-  }, [])
+  useEffect(() => {
+    setSelected((s) => (s && !displayComp?.clips.some((c) => c.id === s) ? null : s))
+  }, [displayComp])
 
-  const selection = useCallback((): ClipSelection | null => {
-    const clip = selectedNow()
-    if (!clip) return null
-    const start = clip.start
-    const end = clipEnd(clip)
-    const path = refPathRef.current
-    const to = Math.min(end, refDurRef.current)
-    return {
-      clipId: clip.id,
-      start,
-      end,
-      reference:
-        path && to > start
-          ? { id: clipId.original(path), url: audioUrl(path), from: start, to }
-          : null,
-    }
-  }, [selectedNow])
+  const selectedClip = editor.selectedClip
 
-  const promptFragment = useCallback((): boolean => {
-    if (!editableRef.current || !selectedNow()) return false
-    setPrompt(true)
-    return true
-  }, [selectedNow])
+  const targetLabel = useMemo(() => {
+    if (!selectedClip || !displayComp) return ''
+    const ci = displayComp.clips.findIndex((c) => c.id === selectedClip.id)
+    const ti = live.findIndex((x) => x.id === selectedClip.sourceTakeId)
+    return `Composition · Clip ${ci + 1} · ${ti >= 0 ? `Take ${ti + 1}` : 'Take ×'}`
+  }, [selectedClip, displayComp, live])
 
-  useEffect(() => setPrompt(false), [cue.id, selected])
+  useEffect(() => {
+    onEffectsTarget(
+      selectedClip
+        ? {
+            label: targetLabel,
+            clip: selectedClip,
+            sourceDuration: srcPeaks[selectedClip.sourceTakeId]?.duration ?? 0,
+            busy: busyClipId === selectedClip.id,
+          }
+        : null
+    )
+  }, [selectedClip, targetLabel, srcPeaks, busyClipId, onEffectsTarget])
 
-  useEffect(() => setSelected(null), [preview.source])
-
-  const replaceSource = useCallback(
-    (targetId: string, takeId: string, duration: number): boolean => {
-      const hasClip = (c: CueComp | null | undefined): c is CueComp => !!c && c.clips.some((x) => x.id === targetId)
-      const shown = displayRef.current
-      const base = hasClip(shown) ? shown : hasClip(cue.comp) ? cue.comp : null
-      if (!base) return false
-      const next = replaceClipSource(base, targetId, takeId, duration)
-      if (sameComp(next, base)) return false
-      pendingRef.current = null
-      editRef.current.commit(next)
-      if (base === shown) requestDraw()
-      return true
-    },
-    [requestDraw, cue.comp]
-  )
-
-  const regionEdge = useCallback(
-    (edge: 'in' | 'out'): void => {
-      const base = displayRef.current
-      if (!base) return
-      commit(setRegionEdge(base, edge, t.posRef.current), base)
-      requestDraw()
-    },
-    [commit, t, requestDraw]
-  )
-
-  const clearRegion = useCallback((): void => {
-    const base = displayRef.current
-    if (!base?.region) return
-    commit(setRegion(base, null), base)
-    requestDraw()
-  }, [commit, requestDraw])
-
-  const api = useMemo<CompApi>(
-    () => ({
-      deleteSelected: removeSelected,
-      split: splitAtHead,
-      heal: healSelected,
-      crossfade: toggleCrossfade,
-      undo: () => {
-        if (editableRef.current) editRef.current.undo()
-      },
-      redo: () => {
-        if (editableRef.current) editRef.current.redo()
-      },
-      selection,
-      promptFragment,
-      replaceSource,
-    }),
-    [
-      removeSelected,
-      splitAtHead,
-      healSelected,
-      toggleCrossfade,
-      selection,
-      promptFragment,
-      replaceSource,
-    ]
-  )
-
-  useWire(compRef, api)
+  useEffect(() => () => onEffectsTarget(null), [onEffectsTarget])
 
   const abCompare = useCallback(() => {
     if (!refPath) {
@@ -886,14 +478,44 @@ export function WaveLanes({
   const origId = refPath ? clipId.original(refPath) : null
 
   return (
-    <div className="tl">
+    <div className={'tl' + (timelineOpen ? ' timeline' : '')}>
+      <div className="tl-top">
+        <span className="tl-top-l">{timelineOpen ? 'Output timeline' : 'Compare'}</span>
+        <span className="sp" />
+        <button className="btn ghost" onClick={abCompare} disabled={!cue.referenceAudio}>
+          Compare <kbd>B</kbd>
+        </button>
+        <button className="btn ghost" onClick={onTimeline} aria-pressed={timelineOpen}>
+          {timelineOpen ? 'Review' : 'Timeline'} <kbd>D</kbd>
+        </button>
+      </div>
+
+      {timelineOpen && (
+        <TimelineEditor
+          editor={editor}
+          insert={editor.canInsert ? insertMenu : null}
+          snap={snapOn}
+          onSnap={() => setSnapOn((v) => !v)}
+          onZoomIn={() => zoomBy(1.5)}
+          canZoomIn={pxPerSec < MAX_PX_PER_SEC}
+          onZoomOut={() => zoomBy(1 / 1.5)}
+          canZoomOut={pxPerSec > MIN_PX_PER_SEC}
+          onFit={fit}
+          busy={!!busyClipId}
+          onFragmentText={(text) => {
+            const id = selRef.current
+            if (id) onFragmentText(id, text)
+          }}
+        />
+      )}
+
       <div className="tl-body" ref={bodyRef}>
         <canvas
           className="tl-ruler"
           ref={rulerRef}
-          onMouseDown={onRulerDown}
-          onDoubleClick={onRulerDouble}
-          title="Top strip: drag to set the render region · below: drag to scrub · double-click to fit"
+          onMouseDown={editor.onRulerDown}
+          onDoubleClick={editor.onRulerDouble}
+          title="Top strip: drag to set the render range · below: drag to scrub · double-click to fit"
         />
 
         <div className="tl-lane orig">
@@ -919,8 +541,8 @@ export function WaveLanes({
         <div className="tl-lane comp">
           <canvas
             ref={compCanvas}
-            onMouseDown={onCompDown}
-            onMouseMove={onCompHover}
+            onMouseDown={editor.onCompDown}
+            onMouseMove={editor.onCompHover}
             onDoubleClick={(e) => e.stopPropagation()}
           />
           <span className="tl-len">{fmt(compDur)}</span>
@@ -942,71 +564,17 @@ export function WaveLanes({
       </div>
 
       <div className="tl-foot">
-        <TimelineBar
-          onCut={splitAtHead}
-          canCut={editable && !!displayComp}
-          onHeal={healSelected}
-          canHeal={editable && canHealAny}
-          onDelete={removeSelected}
-          canDelete={editable && !!selectedClip}
-          onUndo={() => editRef.current.undo()}
-          canUndo={editable && edit.canUndo}
-          onRedo={() => editRef.current.redo()}
-          canRedo={editable && edit.canRedo}
-          onZoomIn={() => zoomBy(1.5)}
-          canZoomIn={pxPerSec < MAX_PX_PER_SEC}
-          onZoomOut={() => zoomBy(1 / 1.5)}
-          canZoomOut={pxPerSec > MIN_PX_PER_SEC}
-          onFit={fit}
-          snap={snapOn}
-          onSnap={() => setSnapOn((v) => !v)}
-          onFragment={() => void promptFragment()}
-          canFragment={editable && !!selectedClip && !busyClipId}
-          onAb={abCompare}
-          canAb={!!cue.referenceAudio}
-          onCrossfade={toggleCrossfade}
-          canCrossfade={editable && xfRoom > 0}
-          crossfadeOn={xfNow > 0}
-          onReverb={() => toggleFx('reverb')}
-          reverbOn={!!selectedClip?.edits.effects?.reverb}
-          onDelay={() => toggleFx('delay')}
-          delayOn={!!selectedClip?.edits.effects?.delay}
-          onPitch={() => toggleFx('pitch')}
-          pitchOn={!!selectedClip?.edits.effects?.pitch}
-          canFx={editable && !!selectedClip}
-          onInsert={insertAtHead}
-          canInsert={editable && !!insertable && !!displayComp}
-          onSetIn={() => regionEdge('in')}
-          onSetOut={() => regionEdge('out')}
-          onClearRegion={clearRegion}
-          canRegion={editable && !!displayComp && compDur > 0}
-          hasRegion={editable && !!displayComp?.region}
-        />
         <span className="tl-time" ref={timeRef} />
         {delta !== null && (
           <span
             className={'delta' + (Math.abs(delta) > 0.5 ? ' warn' : '')}
             title="Length difference against the original"
           >
-            {}
             Δ {delta >= 0 ? '+' : ''}
             {delta.toFixed(2)}s
           </span>
         )}
       </div>
-
-      <ClipParams
-        clip={selectedClip}
-        onEdit={onClipEdit}
-        onRemove={removeSelected}
-        busy={!!busyClipId && busyClipId === selected}
-        prompt={prompt}
-        onPromptSubmit={(text) => {
-          const id = selRef.current
-          if (id) onFragmentText(id, text)
-        }}
-        onPromptClose={() => setPrompt(false)}
-      />
     </div>
   )
 }

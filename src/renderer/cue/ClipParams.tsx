@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { GAIN_MAX_DB, GAIN_MIN_DB, SPEED_MAX, SPEED_MIN } from '@shared/comp'
+import { GAIN_MAX_DB, GAIN_MIN_DB, MIN_CLIP_SRC, SPEED_MAX, SPEED_MIN } from '@shared/comp'
 import { clipSpeed, type ClipEdits, type CompClip } from '@shared/domain'
 import {
   DELAY_FEEDBACK_MAX,
@@ -18,256 +17,110 @@ import {
   type DelayEffect,
   type ReverbEffect,
 } from '@shared/effects'
+import { DragNumber } from './DragNumber'
 
-const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
+export type EffectName = 'reverb' | 'delay' | 'pitch'
 
-interface NumProps {
+export interface EffectsTarget {
   label: string
-  value: number
-  min: number
-  max: number
-  perPx: number
-  decimals: number
-  unit: string
-  title: string
-  disabled?: boolean
-  onInput: (v: number) => void
-  onCommit: (v: number) => void
+  clip: CompClip
+  sourceDuration: number
+  busy: boolean
 }
 
-const DRAG_PX = 3
-
-function DragNumber({
-  label,
-  value,
-  min,
-  max,
-  perPx,
-  decimals,
-  unit,
-  title,
-  disabled,
-  onInput,
-  onCommit,
-}: NumProps) {
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [live, setLive] = useState<number | null>(null)
-  const [text, setText] = useState<string | null>(null)
-  const cleanupRef = useRef<(() => void) | null>(null)
-
-  useEffect(() => () => cleanupRef.current?.(), [])
-
-  const shown = text ?? (live ?? value).toFixed(decimals)
-
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      if (disabled || e.button !== 0 || text !== null) return
-      const x0 = e.clientX
-      const v0 = value
-      let dragging = false
-      const move = (ev: MouseEvent): void => {
-        if (ev.buttons === 0) {
-          up(ev)
-          return
-        }
-        const dx = ev.clientX - x0
-        if (!dragging && Math.abs(dx) < DRAG_PX) return
-        dragging = true
-        const k = ev.shiftKey ? 0.2 : 1
-        const v = clamp(v0 + dx * perPx * k, min, max)
-        setLive(v)
-        onInput(v)
-      }
-      const stop = (): void => {
-        window.removeEventListener('mousemove', move)
-        window.removeEventListener('mouseup', up)
-        cleanupRef.current = null
-      }
-      const up = (ev: MouseEvent): void => {
-        stop()
-        if (!dragging) {
-          setText(value.toFixed(decimals))
-          setLive(null)
-          requestAnimationFrame(() => inputRef.current?.select())
-          return
-        }
-        const dx = ev.clientX - x0
-        const k = ev.shiftKey ? 0.2 : 1
-        const v = clamp(v0 + dx * perPx * k, min, max)
-        setLive(null)
-        onCommit(v)
-      }
-      cleanupRef.current = stop
-      window.addEventListener('mousemove', move)
-      window.addEventListener('mouseup', up)
-      e.preventDefault()
-    },
-    [disabled, text, value, perPx, min, max, decimals, onInput, onCommit]
-  )
-
-  const finish = useCallback(
-    (accept: boolean) => {
-      const t = text
-      setText(null)
-      if (!accept || t === null) return
-      const n = Number.parseFloat(t.replace(',', '.'))
-      if (!Number.isFinite(n)) return
-      onCommit(clamp(n, min, max))
-    },
-    [text, min, max, onCommit]
-  )
-
-  return (
-    <label className={'cp-num' + (disabled ? ' off' : '')} title={title}>
-      <span className="cp-k">{label}</span>
-      <span className="cp-in" onMouseDown={onMouseDown}>
-        <input
-          ref={inputRef}
-          value={shown}
-          readOnly={text === null}
-          disabled={disabled}
-          onChange={(e) => setText(e.target.value)}
-          onBlur={() => finish(true)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              inputRef.current?.blur()
-            } else if (e.key === 'Escape') {
-              e.preventDefault()
-              setText(null)
-              inputRef.current?.blur()
-            }
-          }}
-        />
-        <span className="cp-u">{unit}</span>
-      </span>
-    </label>
-  )
-}
-
-function FragmentPrompt({
-  onSubmit,
-  onClose,
-}: {
-  onSubmit: (text: string) => void
-  onClose: () => void
-}) {
-  const [text, setText] = useState('')
-  return (
-    <div className="frag-pop">
-      <input
-        autoFocus
-        value={text}
-        placeholder="fragment text"
-        onChange={(ev) => setText(ev.target.value)}
-        onBlur={onClose}
-        onKeyDown={(ev) => {
-          ev.stopPropagation()
-          if (ev.key === 'Enter') {
-            ev.preventDefault()
-            onSubmit(text)
-            onClose()
-          } else if (ev.key === 'Escape') {
-            ev.preventDefault()
-            onClose()
-          }
-        }}
-      />
-    </div>
-  )
-}
+const FX_LABEL: Record<EffectName, string> = { reverb: 'Reverb', delay: 'Delay', pitch: 'Pitch' }
 
 interface Props {
-  clip: CompClip | null
+  target: EffectsTarget | null
+  emptyLabel: string
   onEdit: (patch: Partial<ClipEdits>, commit: boolean) => void
-  onRemove: () => void
-  busy?: boolean
-  prompt?: boolean
-  onPromptSubmit?: (text: string) => void
-  onPromptClose?: () => void
+  onTrim: (edge: 'start' | 'end', at: number, commit: boolean) => void
+  onEffect: (which: EffectName) => void
+  onEditAsComposition?: () => void
 }
 
 export function ClipParams({
-  clip,
+  target,
+  emptyLabel,
   onEdit,
-  onRemove,
-  busy,
-  prompt,
-  onPromptSubmit,
-  onPromptClose,
+  onTrim,
+  onEffect,
+  onEditAsComposition,
 }: Props) {
-  const off = !clip
-  const e = clip?.edits
-  const fadeIn = e?.fadeIn ?? { duration: 0, shape: 'equalPower' as const }
-  const fadeOut = e?.fadeOut ?? { duration: 0, shape: 'equalPower' as const }
-
-  const edit = (patch: Partial<ClipEdits>, commit: boolean): void => {
-    if (!clip) return
-    onEdit(patch, commit)
+  if (!target) {
+    return (
+      <div className="insp-pad">
+        <div className="insp-h">Target</div>
+        <div className="fx-target">{emptyLabel}</div>
+        {onEditAsComposition && (
+          <div className="insp-actions">
+            <button className="btn ghost" onClick={onEditAsComposition}>
+              Edit as composition <kbd>D</kbd>
+            </button>
+          </div>
+        )}
+      </div>
+    )
   }
 
-  const fx = e?.effects
+  const clip = target.clip
+  const e = clip.edits
+  const fadeIn = e.fadeIn
+  const fadeOut = e.fadeOut
+  const fx = e.effects
   const rv = fx?.reverb
   const dl = fx?.delay
   const pt = fx?.pitch
+  const speed = clipSpeed(e)
+  const srcMax = target.sourceDuration > 0 ? target.sourceDuration : clip.srcOut
 
   const setReverb = (patch: Partial<ReverbEffect>, commit: boolean): void => {
     if (!fx?.reverb) return
-    edit({ effects: { ...fx, reverb: { ...fx.reverb, ...patch } } }, commit)
+    onEdit({ effects: { ...fx, reverb: { ...fx.reverb, ...patch } } }, commit)
   }
   const setDelay = (patch: Partial<DelayEffect>, commit: boolean): void => {
     if (!fx?.delay) return
-    edit({ effects: { ...fx, delay: { ...fx.delay, ...patch } } }, commit)
+    onEdit({ effects: { ...fx, delay: { ...fx.delay, ...patch } } }, commit)
   }
   const setPitch = (semitones: number, commit: boolean): void => {
     if (!fx?.pitch) return
-    edit({ effects: { ...fx, pitch: { semitones } } }, commit)
+    onEdit({ effects: { ...fx, pitch: { semitones: Math.round(semitones / PITCH_STEP) * PITCH_STEP } } }, commit)
   }
-  const quant = (v: number): number => Math.round(v / PITCH_STEP) * PITCH_STEP
+
+  const missing = (['reverb', 'delay', 'pitch'] as EffectName[]).filter((k) => !fx?.[k])
 
   return (
-    <>
-    <div className="clipbar">
-      {prompt && clip && (
-        <FragmentPrompt
-          onSubmit={(t) => onPromptSubmit?.(t)}
-          onClose={() => onPromptClose?.()}
-        />
-      )}
-
-      <span className="cp-tag">
-        {busy && <i className="spin" />}
-        {clip ? 'CLIP' : 'NO CLIP'}
-      </span>
+    <div className="insp-pad">
+      <div className="insp-h">Target</div>
+      <div className="fx-target">
+        {target.busy && <i className="spin" />}
+        {target.label}
+      </div>
 
       <DragNumber
         label="Gain"
         unit="dB"
         title="Clip gain — drag, or click to type (Shift = fine)"
-        value={e?.gainDb ?? 0}
+        value={e.gainDb ?? 0}
         min={GAIN_MIN_DB}
         max={GAIN_MAX_DB}
         perPx={0.2}
         decimals={1}
-        disabled={off}
-        onInput={(v) => edit({ gainDb: v }, false)}
-        onCommit={(v) => edit({ gainDb: v }, true)}
+        onInput={(v) => onEdit({ gainDb: v }, false)}
+        onCommit={(v) => onEdit({ gainDb: v }, true)}
       />
-
       <DragNumber
         label="Speed"
         unit="×"
         title="Playback rate — tempo and pitch together (use Pitch to shift back)"
-        value={e ? clipSpeed(e) : 1}
+        value={speed}
         min={SPEED_MIN}
         max={SPEED_MAX}
         perPx={0.01}
         decimals={2}
-        disabled={off}
-        onInput={(v) => edit({ timeStretch: v }, false)}
-        onCommit={(v) => edit({ timeStretch: v }, true)}
+        onInput={(v) => onEdit({ timeStretch: v }, false)}
+        onCommit={(v) => onEdit({ timeStretch: v }, true)}
       />
-
       <DragNumber
         label="Fade in"
         unit="ms"
@@ -277,11 +130,9 @@ export function ClipParams({
         max={10000}
         perPx={5}
         decimals={0}
-        disabled={off}
-        onInput={(v) => edit({ fadeIn: { ...fadeIn, duration: v / 1000 } }, false)}
-        onCommit={(v) => edit({ fadeIn: { ...fadeIn, duration: v / 1000 } }, true)}
+        onInput={(v) => onEdit({ fadeIn: { ...fadeIn, duration: v / 1000 } }, false)}
+        onCommit={(v) => onEdit({ fadeIn: { ...fadeIn, duration: v / 1000 } }, true)}
       />
-
       <DragNumber
         label="Fade out"
         unit="ms"
@@ -291,122 +142,163 @@ export function ClipParams({
         max={10000}
         perPx={5}
         decimals={0}
-        disabled={off}
-        onInput={(v) => edit({ fadeOut: { ...fadeOut, duration: v / 1000 } }, false)}
-        onCommit={(v) => edit({ fadeOut: { ...fadeOut, duration: v / 1000 } }, true)}
+        onInput={(v) => onEdit({ fadeOut: { ...fadeOut, duration: v / 1000 } }, false)}
+        onCommit={(v) => onEdit({ fadeOut: { ...fadeOut, duration: v / 1000 } }, true)}
       />
 
-      <button
-        className="btn danger cp-del"
-        onClick={onRemove}
-        disabled={off}
-        title="Remove the selected clip"
-      >
-        Remove <kbd>Del</kbd>
-      </button>
+      <div className="insp-h">Clip</div>
+      <DragNumber
+        label="Trim in"
+        unit="s"
+        title="Source position where the clip starts"
+        value={clip.srcIn}
+        min={0}
+        max={Math.max(0, clip.srcOut - MIN_CLIP_SRC)}
+        perPx={0.01 * speed}
+        decimals={3}
+        onInput={(v) => onTrim('start', v, false)}
+        onCommit={(v) => onTrim('start', v, true)}
+      />
+      <DragNumber
+        label="Trim out"
+        unit="s"
+        title="Source position where the clip ends"
+        value={clip.srcOut}
+        min={clip.srcIn + MIN_CLIP_SRC}
+        max={srcMax}
+        perPx={0.01 * speed}
+        decimals={3}
+        onInput={(v) => onTrim('end', v, false)}
+        onCommit={(v) => onTrim('end', v, true)}
+      />
+
+      {missing.length > 0 && (
+        <div className="fx-add">
+          <span className="cp-k">+ Effect</span>
+          {missing.map((k) => (
+            <button key={k} className="btn ghost" onClick={() => onEffect(k)}>
+              {FX_LABEL[k]}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {rv && (
+        <>
+          <div className="insp-h">
+            Reverb
+            <button className="icon-btn fx-off" title="Remove reverb" onClick={() => onEffect('reverb')}>
+              ×
+            </button>
+          </div>
+          <DragNumber
+            label="Mix"
+            unit="%"
+            title="Dry / wet balance"
+            value={Math.round(rv.mix * 100)}
+            min={MIX_MIN * 100}
+            max={MIX_MAX * 100}
+            perPx={0.5}
+            decimals={0}
+            onInput={(v) => setReverb({ mix: v / 100 }, false)}
+            onCommit={(v) => setReverb({ mix: v / 100 }, true)}
+          />
+          <DragNumber
+            label="Size"
+            unit="%"
+            title="Room size — density and darkness of the tail"
+            value={Math.round(rv.size * 100)}
+            min={REVERB_SIZE_MIN * 100}
+            max={REVERB_SIZE_MAX * 100}
+            perPx={0.5}
+            decimals={0}
+            onInput={(v) => setReverb({ size: v / 100 }, false)}
+            onCommit={(v) => setReverb({ size: v / 100 }, true)}
+          />
+          <DragNumber
+            label="Decay"
+            unit="s"
+            title="Time to fall to −60 dB"
+            value={rv.decay}
+            min={REVERB_DECAY_MIN}
+            max={REVERB_DECAY_MAX}
+            perPx={0.02}
+            decimals={2}
+            onInput={(v) => setReverb({ decay: v }, false)}
+            onCommit={(v) => setReverb({ decay: v }, true)}
+          />
+        </>
+      )}
+
+      {dl && (
+        <>
+          <div className="insp-h">
+            Delay
+            <button className="icon-btn fx-off" title="Remove delay" onClick={() => onEffect('delay')}>
+              ×
+            </button>
+          </div>
+          <DragNumber
+            label="Time"
+            unit="ms"
+            title="Delay time — longer is an echo"
+            value={Math.round(dl.time * 1000)}
+            min={DELAY_TIME_MIN * 1000}
+            max={DELAY_TIME_MAX * 1000}
+            perPx={4}
+            decimals={0}
+            onInput={(v) => setDelay({ time: v / 1000 }, false)}
+            onCommit={(v) => setDelay({ time: v / 1000 }, true)}
+          />
+          <DragNumber
+            label="Feedback"
+            unit="%"
+            title="How much of each repeat feeds back — capped at 90%"
+            value={Math.round(dl.feedback * 100)}
+            min={DELAY_FEEDBACK_MIN * 100}
+            max={DELAY_FEEDBACK_MAX * 100}
+            perPx={0.4}
+            decimals={0}
+            onInput={(v) => setDelay({ feedback: v / 100 }, false)}
+            onCommit={(v) => setDelay({ feedback: v / 100 }, true)}
+          />
+          <DragNumber
+            label="Mix"
+            unit="%"
+            title="Dry / wet balance"
+            value={Math.round(dl.mix * 100)}
+            min={MIX_MIN * 100}
+            max={MIX_MAX * 100}
+            perPx={0.5}
+            decimals={0}
+            onInput={(v) => setDelay({ mix: v / 100 }, false)}
+            onCommit={(v) => setDelay({ mix: v / 100 }, true)}
+          />
+        </>
+      )}
+
+      {pt && (
+        <>
+          <div className="insp-h">
+            Pitch
+            <button className="icon-btn fx-off" title="Remove pitch" onClick={() => onEffect('pitch')}>
+              ×
+            </button>
+          </div>
+          <DragNumber
+            label="Shift"
+            unit="st"
+            title="Pitch in semitones — length stays the same (Speed changes tempo, this does not)"
+            value={pt.semitones}
+            min={PITCH_SEMITONES_MIN}
+            max={PITCH_SEMITONES_MAX}
+            perPx={0.1}
+            decimals={1}
+            onInput={(v) => setPitch(v, false)}
+            onCommit={(v) => setPitch(v, true)}
+          />
+        </>
+      )}
     </div>
-
-    {rv && (
-      <div className="fxbar">
-        <span className="cp-tag fx">REVERB</span>
-        <DragNumber
-          label="Mix"
-          unit="%"
-          title="Dry / wet balance"
-          value={Math.round(rv.mix * 100)}
-          min={MIX_MIN * 100}
-          max={MIX_MAX * 100}
-          perPx={0.5}
-          decimals={0}
-          onInput={(v) => setReverb({ mix: v / 100 }, false)}
-          onCommit={(v) => setReverb({ mix: v / 100 }, true)}
-        />
-        <DragNumber
-          label="Size"
-          unit="%"
-          title="Room size — density and darkness of the tail"
-          value={Math.round(rv.size * 100)}
-          min={REVERB_SIZE_MIN * 100}
-          max={REVERB_SIZE_MAX * 100}
-          perPx={0.5}
-          decimals={0}
-          onInput={(v) => setReverb({ size: v / 100 }, false)}
-          onCommit={(v) => setReverb({ size: v / 100 }, true)}
-        />
-        <DragNumber
-          label="Decay"
-          unit="s"
-          title="Time to fall to −60 dB"
-          value={rv.decay}
-          min={REVERB_DECAY_MIN}
-          max={REVERB_DECAY_MAX}
-          perPx={0.02}
-          decimals={2}
-          onInput={(v) => setReverb({ decay: v }, false)}
-          onCommit={(v) => setReverb({ decay: v }, true)}
-        />
-      </div>
-    )}
-
-    {dl && (
-      <div className="fxbar">
-        <span className="cp-tag fx">DELAY</span>
-        <DragNumber
-          label="Time"
-          unit="ms"
-          title="Delay time — longer is an echo"
-          value={Math.round(dl.time * 1000)}
-          min={DELAY_TIME_MIN * 1000}
-          max={DELAY_TIME_MAX * 1000}
-          perPx={4}
-          decimals={0}
-          onInput={(v) => setDelay({ time: v / 1000 }, false)}
-          onCommit={(v) => setDelay({ time: v / 1000 }, true)}
-        />
-        <DragNumber
-          label="Feedback"
-          unit="%"
-          title="How much of each repeat feeds back — capped at 90%"
-          value={Math.round(dl.feedback * 100)}
-          min={DELAY_FEEDBACK_MIN * 100}
-          max={DELAY_FEEDBACK_MAX * 100}
-          perPx={0.4}
-          decimals={0}
-          onInput={(v) => setDelay({ feedback: v / 100 }, false)}
-          onCommit={(v) => setDelay({ feedback: v / 100 }, true)}
-        />
-        <DragNumber
-          label="Mix"
-          unit="%"
-          title="Dry / wet balance"
-          value={Math.round(dl.mix * 100)}
-          min={MIX_MIN * 100}
-          max={MIX_MAX * 100}
-          perPx={0.5}
-          decimals={0}
-          onInput={(v) => setDelay({ mix: v / 100 }, false)}
-          onCommit={(v) => setDelay({ mix: v / 100 }, true)}
-        />
-      </div>
-    )}
-
-    {pt && (
-      <div className="fxbar">
-        <span className="cp-tag fx">PITCH</span>
-        <DragNumber
-          label="Shift"
-          unit="st"
-          title="Pitch in semitones — length stays the same (Speed changes tempo, this does not)"
-          value={pt.semitones}
-          min={PITCH_SEMITONES_MIN}
-          max={PITCH_SEMITONES_MAX}
-          perPx={0.1}
-          decimals={1}
-          onInput={(v) => setPitch(quant(v), false)}
-          onCommit={(v) => setPitch(quant(v), true)}
-        />
-      </div>
-    )}
-    </>
   )
 }

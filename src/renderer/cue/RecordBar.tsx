@@ -113,7 +113,7 @@ export function RecordBar({ v2v }: { v2v: VoiceToVoice }) {
       <div className="rec">
         <button
           className="btn primary rec-main"
-          onClick={v2v.toggleRec}
+          onClick={() => v2v.toggleRec()}
           disabled={converting}
           title="Start recording"
         >
@@ -131,7 +131,7 @@ export function RecordBar({ v2v }: { v2v: VoiceToVoice }) {
     <div className={'rec' + (phase === 'recording' ? ' on' : '')}>
       <button
         className="btn primary rec-main"
-        onClick={v2v.toggleRec}
+        onClick={() => v2v.toggleRec()}
         disabled={converting}
         title={armed ? 'Cancel' : 'Stop recording'}
       >

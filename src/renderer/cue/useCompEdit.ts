@@ -21,11 +21,12 @@ export function sameComp(a: CueComp | null, b: CueComp | null): boolean {
 export function useCompEdit(
   cueId: string,
   comp: CueComp | undefined,
-  onComp: (cueId: string, comp: CueComp | null) => void,
+  onComp: (cueId: string, comp: CueComp | null) => Promise<boolean>,
   onProblem: (message: string) => void
 ): CompEdit {
   const undoRef = useRef<(CueComp | null)[]>([])
   const redoRef = useRef<(CueComp | null)[]>([])
+  const queueRef = useRef<Promise<unknown>>(Promise.resolve())
   const [depth, setDepth] = useState({ u: 0, r: 0 })
 
   const currentRef = useRef<CueComp | null>(null)
@@ -37,6 +38,7 @@ export function useCompEdit(
   useEffect(() => {
     undoRef.current = []
     redoRef.current = []
+    queueRef.current = Promise.resolve()
     setDepth({ u: 0, r: 0 })
   }, [cueId])
 
@@ -44,27 +46,36 @@ export function useCompEdit(
     setDepth({ u: undoRef.current.length, r: redoRef.current.length })
   }, [])
 
-  const send = useCallback((next: CueComp | null): boolean => {
-    const value = next && next.clips.length > 0 ? normalizeComp(next) : null
-    if (value) {
-      const problem = compProblem(value)
-      if (problem) {
-        cbRef.current.onProblem(problem)
-        return false
+  const send = useCallback(
+    async (next: CueComp | null): Promise<boolean> => {
+      const value = next && next.clips.length > 0 ? normalizeComp(next) : null
+      if (value) {
+        const problem = compProblem(value)
+        if (problem) {
+          cbRef.current.onProblem(problem)
+          return false
+        }
       }
-    }
-    cbRef.current.onComp(cueId, value)
-    return true
-  }, [cueId])
+      const run = queueRef.current.then(() => cbRef.current.onComp(cueId, value))
+      queueRef.current = run.catch(() => undefined)
+      return run
+    },
+    [cueId]
+  )
 
   const commit = useCallback(
     (next: CueComp | null) => {
-      const prev = currentRef.current
-      if (!send(next)) return
-      undoRef.current.push(prev)
-      if (undoRef.current.length > LIMIT) undoRef.current.shift()
-      redoRef.current = []
-      sync()
+      let prev = currentRef.current
+      void queueRef.current.then(() => {
+        prev = currentRef.current
+      })
+      void send(next).then((ok) => {
+        if (!ok) return
+        undoRef.current.push(prev)
+        if (undoRef.current.length > LIMIT) undoRef.current.shift()
+        redoRef.current = []
+        sync()
+      })
     },
     [send, sync]
   )
@@ -73,20 +84,24 @@ export function useCompEdit(
     if (undoRef.current.length === 0) return
     const prev = undoRef.current[undoRef.current.length - 1]
     const cur = currentRef.current
-    if (!send(prev)) return
-    undoRef.current.pop()
-    redoRef.current.push(cur)
-    sync()
+    void send(prev).then((ok) => {
+      if (!ok) return
+      undoRef.current.pop()
+      redoRef.current.push(cur)
+      sync()
+    })
   }, [send, sync])
 
   const redo = useCallback(() => {
     if (redoRef.current.length === 0) return
     const next = redoRef.current[redoRef.current.length - 1]
     const cur = currentRef.current
-    if (!send(next)) return
-    redoRef.current.pop()
-    undoRef.current.push(cur)
-    sync()
+    void send(next).then((ok) => {
+      if (!ok) return
+      redoRef.current.pop()
+      undoRef.current.push(cur)
+      sync()
+    })
   }, [send, sync])
 
   return { commit, undo, redo, canUndo: depth.u > 0, canRedo: depth.r > 0 }

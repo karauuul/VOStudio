@@ -30,7 +30,7 @@ export interface VoiceToVoice {
   converting: boolean
   preroll: boolean
   pending: boolean
-  toggleRec: () => void
+  toggleRec: (fragment?: boolean) => void
   saveRecording: () => void
   convertClip: () => void
   discard: () => void
@@ -97,8 +97,9 @@ export function useVoiceToVoice({
     clearRecError()
   }, [recError, clearRecError, onStatus])
 
-  const startRec = useCallback(() => {
-    const sel = selection()
+  const startRec = useCallback((useSelection: boolean) => {
+    const sel = useSelection ? selection() : null
+    if (useSelection && !sel) return
     if (!sel) {
       targetRef.current = null
       rec.start({
@@ -288,11 +289,13 @@ export function useVoiceToVoice({
 
   const retake = useCallback(() => {
     if (converting) return
-    if (guard(startRec)) return
-    startRec()
+    const frag = targetRef.current !== null
+    const again = (): void => startRec(frag)
+    if (guard(again)) return
+    again()
   }, [converting, guard, startRec])
 
-  const toggleRec = useCallback(() => {
+  const toggleRec = useCallback((fragment?: boolean) => {
     if (converting) return
     if (preRef.current) {
       cancelPre()
@@ -300,7 +303,7 @@ export function useVoiceToVoice({
     }
     switch (rec.phase) {
       case 'idle':
-        startRec()
+        startRec(fragment === true)
         return
       case 'preview':
         retake()

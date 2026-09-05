@@ -21,6 +21,9 @@ export interface KeyboardHandlers {
   acceptSuggestion: () => void
   rejectSuggestion: () => void
   toggleRecord: () => void
+  toggleFragmentRecord: () => void
+  toggleTimeline: () => void
+  promptFragment: () => void
   escape: () => boolean
   focusText: () => void
   copySource: () => void
@@ -48,8 +51,10 @@ export function useKeyboard(handlers: KeyboardHandlers, enabled: boolean): void 
     const onKey = (e: KeyboardEvent): void => {
       const handlers = ref.current
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyG') {
+        if (e.altKey) return
         e.preventDefault()
-        handlers.generate()
+        if (e.shiftKey) handlers.promptFragment()
+        else handlers.generate()
         return
       }
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') {
@@ -114,7 +119,13 @@ export function useKeyboard(handlers: KeyboardHandlers, enabled: boolean): void 
           return
         case 'KeyR':
           e.preventDefault()
-          handlers.toggleRecord()
+          if (e.shiftKey) handlers.toggleFragmentRecord()
+          else handlers.toggleRecord()
+          return
+        case 'KeyD':
+          if (e.shiftKey) return
+          e.preventDefault()
+          handlers.toggleTimeline()
           return
         case 'KeyJ':
           e.preventDefault()
