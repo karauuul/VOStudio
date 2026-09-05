@@ -11,7 +11,7 @@ export interface Job {
 
 export const KEEP_TERMINAL = 20
 
-const isTerminal = (j: Job): boolean => j.state === 'done' || j.state === 'error'
+export const isTerminal = (j: Job): boolean => j.state === 'done' || j.state === 'error'
 
 function prune(jobs: Job[]): Job[] {
   const terminal = jobs.filter(isTerminal)

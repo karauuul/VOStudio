@@ -19,6 +19,7 @@ import { transport } from './audio/transport'
 import { playback } from './playback'
 import {
   busyCountNow,
+  clearTerminalJobs,
   isCueBusyNow,
   useBusyCount,
   useCueBusy,
@@ -189,6 +190,7 @@ export default function App() {
       setCharacterFilter(ALL_CHARACTERS)
       setRoute('work')
       setReviewIds(null)
+      clearTerminalJobs()
       session.enter(snapshot)
     },
     [session]

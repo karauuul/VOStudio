@@ -21,13 +21,47 @@ export function Overlay({ title, label, onClose, children, busy, drawer, wide }:
   const closeRef = useRef(onClose)
   closeRef.current = onClose
 
+  const rootRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     const dismiss = (): void => {
       if (!busyRef.current) closeRef.current()
     }
     stack.push(dismiss)
+    const focusables = (): HTMLElement[] => {
+      const root = rootRef.current
+      if (!root) return []
+      return Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      )
+    }
+    const root = rootRef.current
+    if (root && !root.contains(document.activeElement)) {
+      const items = focusables()
+      const first = items.find((el) => !el.closest('.modal-head')) ?? items[0]
+      ;(first ?? root).focus()
+    }
     const onKey = (e: KeyboardEvent): void => {
-      if (e.code !== 'Escape' || stack[stack.length - 1] !== dismiss) return
+      if (stack[stack.length - 1] !== dismiss) return
+      if (e.code === 'Tab') {
+        const items = focusables()
+        if (items.length === 0) return
+        const first = items[0]
+        const last = items[items.length - 1]
+        const active = document.activeElement
+        const inside = !!rootRef.current?.contains(active)
+        if (e.shiftKey && (active === first || !inside)) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && (active === last || !inside)) {
+          e.preventDefault()
+          first.focus()
+        }
+        return
+      }
+      if (e.code !== 'Escape') return
       e.preventDefault()
       dismiss()
     }
@@ -54,7 +88,7 @@ export function Overlay({ title, label, onClose, children, busy, drawer, wide }:
         if (e.target === e.currentTarget) dismiss()
       }}
     >
-      <div className={cls} role="dialog" aria-modal="true" aria-label={label}>
+      <div ref={rootRef} className={cls} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1}>
         <div className="modal-head">
           {title}
           <button className="icon-btn" onClick={dismiss} disabled={busy} aria-label="Close">
