@@ -22,8 +22,9 @@ import {
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings, type TakeDurationUpdate } from '@shared/ipc'
 import type { UpdateStatus } from '@shared/updater'
-import { api, audioUrl } from './api'
-import { clipId, transport } from './audio/transport'
+import { api } from './api'
+import { transport } from './audio/transport'
+import { playback } from './playback'
 import { isCueBusyNow, useBusyCount, useCueBusy, useJobCount, useJobsStore } from './jobs/store'
 import { durationQueue } from './audio/duration-backfill'
 import { ALL_CHARACTERS, CueList, DEFAULT_FILTER, filterCues } from './CueList'
@@ -32,14 +33,13 @@ import type { EffectName, EffectsTarget } from './cue/ClipParams'
 import { Inspector, type InspectorTab } from './cue/Inspector'
 import { compositionLabel } from './cue/shared'
 import type { CompApi } from './cue/WaveLanes'
-import { TransportBar } from './cue/TransportBar'
+import { TransportBar } from './TransportBar'
 import { BatchExportDialog } from './BatchExportDialog'
 import { CharactersDialog } from './CharactersDialog'
 import { RulesDialog } from './RulesPanel'
 import { ProjectHome } from './ProjectHome'
 import { useTemplateReimport } from './TemplateReimport'
 import { useKeyboard, type KeyboardHandlers } from './keyboard'
-import type { WaveformHandle } from './Waveform'
 import { approvalState, hasValidVoicedOutput } from '@shared/approval'
 import {
   cueDecision,
@@ -213,13 +213,11 @@ export default function App() {
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
 
-  const origRef = useRef<WaveformHandle | null>(null)
-  const takeRef = useRef<WaveformHandle | null>(null)
-  const abRef = useRef<(() => void) | null>(null)
   const compRef = useRef<CompApi | null>(null)
   const recRef = useRef<((fragment?: boolean) => void) | null>(null)
   const escRef = useRef<(() => boolean) | null>(null)
   const recActiveRef = useRef<(() => boolean) | null>(null)
+  const decisionRef = useRef<(() => boolean) | null>(null)
   const guardRef = useRef<((proceed: () => void) => boolean) | null>(null)
   const previewSourceRef = useRef<PreviewSource>({ kind: 'none' })
   const submittedRef = useRef<{ cueId: string; source: PreviewSource } | null>(null)
@@ -478,6 +476,7 @@ export default function App() {
     return dispatch({ type: 'cue.saveText', cueId: p.id, text: p.text }).then(
       () => true,
       (e: unknown) => {
+        if (!pendingText.current) pendingText.current = p
         pushStatus('err', String(e))
         return false
       }
@@ -499,20 +498,22 @@ export default function App() {
   )
 
   const doSelectCue = useCallback(
-    (cueId: string | undefined) => {
-      void flushText()
-      void flushVoice()
-      transport.stop()
+    async (cueId: string | undefined): Promise<boolean> => {
+      const saved = await flushText()
+      await flushVoice()
+      if (!saved) return false
+      playback.stop()
       setActiveCueId(cueId)
+      return true
     },
     [flushText, flushVoice]
   )
 
   const selectCue = useCallback(
-    (cueId: string | undefined) => {
-      if (cueId === activeCueIdRef.current) return
-      if (guardRef.current?.(() => doSelectCue(cueId))) return
-      doSelectCue(cueId)
+    (cueId: string | undefined): Promise<boolean> => {
+      if (cueId === activeCueIdRef.current) return Promise.resolve(true)
+      if (guardRef.current?.(() => void doSelectCue(cueId))) return Promise.resolve(false)
+      return doSelectCue(cueId)
     },
     [doSelectCue]
   )
@@ -548,9 +549,11 @@ export default function App() {
     if (!cue || cueDecision(cue, previewSource) !== 'approve') return
     const targetId = visible[activeIndex + 1]?.id
     void onApprove(true).then((ok) => {
-      if (ok && targetId !== undefined) selectCue(targetId)
+      if (!ok) return
+      if (targetId === undefined) pushStatus('ok', 'Queue complete')
+      else void selectCue(targetId)
     })
-  }, [activeCue, previewSource, visible, activeIndex, onApprove, selectCue])
+  }, [activeCue, previewSource, visible, activeIndex, onApprove, selectCue, pushStatus])
 
   const onSetFinal = useCallback(
     (takeId: string) => {
@@ -581,10 +584,6 @@ export default function App() {
       ),
     [dispatch, pushStatus, selectSource, isActiveCue]
   )
-
-  const audition = useCallback((take: Take) => {
-    void transport.playClip({ id: clipId.take(take.id), url: audioUrl(take.file.relPath) }, 0)
-  }, [])
 
   const makeFinal = useCallback(() => {
     const cue = activeCue
@@ -794,11 +793,12 @@ export default function App() {
 
   const leaveProject = useCallback(async () => {
     try {
-      await flushText()
+      const saved = await flushText()
       await flushVoice()
+      if (!saved) return
       await flushUi()
       await durationQueue.flushNow()
-      transport.stop()
+      playback.stop()
       await api['project:close']()
     } catch (e) {
       pushStatus('err', String(e))
@@ -817,6 +817,14 @@ export default function App() {
     if (guardRef.current?.(() => void leaveProject())) return
     void leaveProject()
   }, [leaveProject])
+
+  const startReimport = useCallback(async () => {
+    const saved = await flushText()
+    await flushVoice()
+    if (!saved) return
+    playback.stop()
+    reimport.start()
+  }, [flushText, flushVoice, reimport])
 
   async function syncCsv(): Promise<void> {
     setBulk(true)
@@ -850,7 +858,7 @@ export default function App() {
       if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
     }
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setMenuOpen(false)
+      if (e.code === 'Escape') setMenuOpen(false)
     }
     window.addEventListener('mousedown', onDown)
     window.addEventListener('keydown', onKey)
@@ -898,10 +906,12 @@ export default function App() {
       generate: () => generate(),
       approve: () => void onApprove(true),
       approveNext: onApproveNext,
-      playOriginal: () => origRef.current?.toggle(),
-      playFinal: () => takeRef.current?.toggle(),
-      abCompare: () => abRef.current?.(),
-      selectTakeByIndex: (n) => {
+      playOriginal: () => playback.toggle('orig'),
+      playPause: () => playback.toggleTarget(),
+      restartActive: () => playback.restart('active'),
+      compare: () => playback.compare(),
+      stopPlayback: () => playback.stop(),
+      selectTake: (n) => {
         const t = activeTakes[n]
         if (t) selectSource({ kind: 'take', takeId: t.id })
       },
@@ -914,9 +924,6 @@ export default function App() {
       crossfadeClip: () => compRef.current?.crossfade(),
       undo: () => compRef.current?.undo(),
       redo: () => compRef.current?.redo(),
-      auditionTake: () => {
-        if (shownTake) audition(shownTake)
-      },
       acceptSuggestion: onAcceptSuggestion,
       rejectSuggestion: onRejectSuggestion,
       toggleRecord: () => recRef.current?.(),
@@ -938,8 +945,6 @@ export default function App() {
       onApproveNext,
       activeTakes,
       selectSource,
-      shownTake,
-      audition,
       makeFinal,
       onAcceptSuggestion,
       onRejectSuggestion,
@@ -947,10 +952,18 @@ export default function App() {
       toggleTimeline,
     ]
   )
-  useKeyboard(
-    handlers,
-    !!project && !showExport && !showCharacters && !showRules && !menuOpen && !reimport.open
-  )
+
+  const blocked =
+    showExport || showCharacters || showRules || showSettings || menuOpen || reimport.open
+
+  useEffect(() => {
+    if (blocked) playback.cancelCompare()
+  }, [blocked])
+
+  useKeyboard(handlers, !!project && !blocked, {
+    timeline: timelineOpen,
+    decision: () => decisionRef.current?.() ?? false,
+  })
 
   if (!project) {
     return (
@@ -1047,7 +1060,8 @@ export default function App() {
                   disabled={bulk || busyCount > 0}
                   onClick={() => {
                     setMenuOpen(false)
-                    reimport.start()
+                    if (guardRef.current?.(() => void startReimport())) return
+                    void startReimport()
                   }}
                 >
                   Re-import template…
@@ -1186,9 +1200,6 @@ export default function App() {
               onAcceptSuggestion={onAcceptSuggestion}
               onRejectSuggestion={onRejectSuggestion}
               cueBusy={activeCueBusy}
-              origRef={origRef}
-              takeRef={takeRef}
-              abRef={abRef}
               compRef={compRef}
               onComp={onSetComp}
               timelineOpen={timelineOpen}
@@ -1197,6 +1208,7 @@ export default function App() {
               recRef={recRef}
               escRef={escRef}
               recActiveRef={recActiveRef}
+              decisionRef={decisionRef}
               guardRef={guardRef}
               focusTextRef={focusTextRef}
               appSettings={appSettings}

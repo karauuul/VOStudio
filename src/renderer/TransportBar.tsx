@@ -1,18 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
-import { transport } from '../audio/transport'
-import { timecode } from './shared'
+import { transport, type TransportState } from './audio/transport'
+import { playback, usePlayback } from './playback'
+import { timecode } from './cue/shared'
 
 export function TransportBar() {
   const [playing, setPlaying] = useState(false)
-  const [source, setSource] = useState('—')
+  const [foreign, setForeign] = useState<string | null>(null)
+  const sides = usePlayback()
+  const sidesRef = useRef(sides)
+  sidesRef.current = sides
   const posRef = useRef<HTMLSpanElement>(null)
   const durRef = useRef<HTMLSpanElement>(null)
   const fillRef = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
     let lastPlaying = false
-    let lastSource = '—'
-    const apply = (s: ReturnType<typeof transport.getState>): void => {
+    let lastForeign: string | null = null
+    const apply = (s: TransportState): void => {
       const p = posRef.current
       if (p) p.textContent = timecode(s.pos)
       const d = durRef.current
@@ -24,26 +28,39 @@ export function TransportBar() {
         lastPlaying = s.playing
         setPlaying(s.playing)
       }
-      const label = transport.isAB() ? 'A/B' : transport.sourceLabel(s.clipId)
-      if (label !== lastSource) {
-        lastSource = label
-        setSource(label)
+      const st = sidesRef.current
+      const other =
+        s.playing && s.clipId && s.clipId !== st.orig.id && s.clipId !== st.active.id
+          ? s.clipId
+          : null
+      if (other !== lastForeign) {
+        lastForeign = other
+        setForeign(other)
       }
     }
     apply(transport.getState())
     return transport.subscribe(apply)
   }, [])
 
+  const label = foreign ? transport.sourceLabel(foreign) : sides[sides.target].label
+
   return (
     <div className="tbar">
       <button
         className="icon-btn"
-        onClick={() => transport.toggle()}
+        onClick={() => playback.restart(sides.target)}
+        title="Restart"
+      >
+        ⏮
+      </button>
+      <button
+        className="icon-btn"
+        onClick={() => playback.toggleTarget()}
         title={playing ? 'Pause' : 'Play'}
       >
         {playing ? '❚❚' : '▶'}
       </button>
-      <button className="icon-btn" onClick={() => transport.stop()} title="Stop">
+      <button className="icon-btn" onClick={() => playback.stop()} title="Stop">
         ■
       </button>
 
@@ -59,7 +76,7 @@ export function TransportBar() {
         <span className="tbar-fill" ref={fillRef} />
       </span>
 
-      <span className={'tbar-src' + (playing ? ' on' : '')}>{source}</span>
+      <span className={'tbar-src' + (playing ? ' on' : '')}>{label}</span>
     </div>
   )
 }

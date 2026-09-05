@@ -14,9 +14,11 @@ import { resolvePreview, type ResolvedPreview } from '@shared/workspace-source'
 import { audioUrl } from '../api'
 import { tryResolveComp } from '../audio/comp-source'
 import { reportTakeDuration } from '../audio/duration-backfill'
-import { clipId, transport } from '../audio/transport'
-import { fmt, getPeaks, type Peaks, type WaveformHandle } from '../Waveform'
+import { clipId } from '../audio/transport'
+import { playback, usePlayback } from '../playback'
+import { fmt, getPeaks, type Peaks } from '../Waveform'
 import type { EffectsTarget } from './ClipParams'
+import { activeSourceLabel } from './TakeSourceMenu'
 import { drawCompLane, drawRuler, drawSourceLane, type DrawClip, type DrawGhost } from './timeline-draw'
 import {
   clampView,
@@ -42,9 +44,6 @@ interface Props {
   insertMenu: ReactNode
   timelineOpen: boolean
   onTimeline: () => void
-  origRef: MutableRefObject<WaveformHandle | null>
-  takeRef: MutableRefObject<WaveformHandle | null>
-  abRef: MutableRefObject<(() => void) | null>
   compRef: MutableRefObject<CompApi | null>
   onComp: (cueId: string, comp: CueComp | null) => Promise<boolean>
   onStatus: (kind: 'ok' | 'err' | 'info', text: string) => void
@@ -60,9 +59,6 @@ export function WaveLanes({
   insertMenu,
   timelineOpen,
   onTimeline,
-  origRef,
-  takeRef,
-  abRef,
   compRef,
   onComp,
   onStatus,
@@ -164,13 +160,15 @@ export function WaveLanes({
     if (c) c.textContent = timecode(at)
   }, [])
 
+  const origId = refPath ? clipId.original(refPath) : null
+
   const t = useLaneTransport({
     orig: {
-      id: refPath ? clipId.original(refPath) : null,
+      id: origId,
       url: refPath ? audioUrl(refPath) : undefined,
       duration: refDur,
     },
-    comp: {
+    active: {
       id: compClipId,
       comp: resolved,
       duration: compDur,
@@ -179,9 +177,27 @@ export function WaveLanes({
     onFrame: paintHead,
   })
 
-  const { origHandle, compHandle, posRef } = t
-  useWire(origRef, origHandle)
-  useWire(takeRef, compHandle)
+  const { posRef } = t
+  const target = usePlayback().target
+
+  const origInfo = useMemo(
+    () => ({ id: origId, label: refDur > 0 ? `Original · ${fmt(refDur)}` : 'Original' }),
+    [origId, refDur]
+  )
+  const activeInfo = useMemo(
+    () => ({ id: compClipId, label: activeSourceLabel(cue, preview.source) }),
+    [compClipId, cue, preview.source]
+  )
+
+  useEffect(() => playback.setOps(t.ops), [t.ops])
+  useEffect(() => playback.setSides(origInfo, activeInfo), [origInfo, activeInfo])
+  useEffect(
+    () => () => {
+      playback.setOps(null)
+      playback.reset()
+    },
+    []
+  )
 
   const draw = useCallback((): void => {
     const view = viewRef.current
@@ -459,32 +475,14 @@ export function WaveLanes({
 
   useEffect(() => () => onEffectsTarget(null), [onEffectsTarget])
 
-  const abCompare = useCallback(() => {
-    if (!refPath) {
-      compHandle.play()
-      return
-    }
-    if (!resolved || !compClipId) {
-      origHandle.play()
-      return
-    }
-    void transport.playSplit(
-      { id: clipId.original(refPath), url: audioUrl(refPath) },
-      { id: compClipId, comp: resolved }
-    )
-  }, [refPath, resolved, compClipId, origHandle, compHandle])
-
-  useWire(abRef, abCompare)
-
   const delta = refDur > 0 && compDur > 0 ? compDur - refDur : null
-  const origId = refPath ? clipId.original(refPath) : null
 
   return (
     <div className={'tl' + (timelineOpen ? ' timeline' : '')}>
       <div className="tl-top">
         <span className="tl-top-l">{timelineOpen ? 'Output timeline' : 'Compare'}</span>
         <span className="sp" />
-        <button className="btn ghost" onClick={abCompare} disabled={!cue.referenceAudio}>
+        <button className="btn ghost" onClick={() => playback.compare()} disabled={!cue.referenceAudio}>
           Compare <kbd>B</kbd>
         </button>
         <button className="btn ghost" onClick={onTimeline} aria-pressed={timelineOpen}>
@@ -519,7 +517,7 @@ export function WaveLanes({
           onDoubleClick={editor.onRulerDouble}
         />
 
-        <div className="tl-lane orig">
+        <div className={'tl-lane orig' + (target === 'orig' ? ' target' : '')}>
           <canvas ref={origCanvas} onMouseDown={startScrub} />
           <span className="tl-tag">ORIGINAL</span>
           <span className="tl-len">{fmt(refDur)}</span>
@@ -527,7 +525,7 @@ export function WaveLanes({
             <button
               className="tl-play"
               onMouseDown={(e) => e.stopPropagation()}
-              onClick={() => t.origHandle.toggle()}
+              onClick={() => playback.toggle('orig')}
               title={t.playingId === origId ? 'Pause' : 'Play the reference'}
             >
               {t.playingId === origId ? '❚❚' : '▶'}
@@ -539,7 +537,7 @@ export function WaveLanes({
 
         {sourceHeader}
 
-        <div className="tl-lane comp">
+        <div className={'tl-lane comp' + (target === 'active' ? ' target' : '')}>
           <canvas
             ref={compCanvas}
             onMouseDown={editor.onCompDown}
@@ -551,7 +549,7 @@ export function WaveLanes({
             <button
               className="tl-play"
               onMouseDown={(e) => e.stopPropagation()}
-              onClick={() => t.compHandle.toggle()}
+              onClick={() => playback.toggle('active')}
               title={t.playingId === compClipId ? 'Pause' : isComp ? 'Play the composition' : 'Play the take'}
             >
               {t.playingId === compClipId ? '❚❚' : '▶'}

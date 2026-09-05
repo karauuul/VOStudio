@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ResolvedComp } from '../audio/comp-source'
 import { transport, type TransportState } from '../audio/transport'
-import type { WaveformHandle } from '../Waveform'
+import { playback, type PlaybackOps, type Side } from '../playback'
 
 export interface LaneSource {
   id: string | null
@@ -15,27 +15,27 @@ export interface LaneTransport {
   scrubRef: React.MutableRefObject<boolean>
   playingId: string | null
   seek: (t: number, exact: boolean) => void
-  origHandle: WaveformHandle
-  compHandle: WaveformHandle
+  ops: PlaybackOps
 }
 
 export function useLaneTransport(opts: {
   orig: LaneSource
-  comp: LaneSource
+  active: LaneSource
   resetKey: string
   onFrame: (t: number) => void
 }): LaneTransport {
-  const { orig, comp, resetKey, onFrame } = opts
+  const { orig, active, resetKey, onFrame } = opts
 
   const posRef = useRef(0)
   const scrubRef = useRef(false)
   const [playingId, setPlayingId] = useState<string | null>(null)
   const playingRef = useRef<string | null>(null)
+  const compareRef = useRef(0)
 
   const frameRef = useRef(onFrame)
   frameRef.current = onFrame
-  const srcRef = useRef({ orig, comp })
-  srcRef.current = { orig, comp }
+  const srcRef = useRef({ orig, active })
+  srcRef.current = { orig, active }
 
   const paint = useCallback((t: number): void => {
     posRef.current = t
@@ -48,7 +48,7 @@ export function useLaneTransport(opts: {
 
   const isMine = useCallback((id: string | null): boolean => {
     const s = srcRef.current
-    return !!id && (id === s.orig.id || id === s.comp.id)
+    return !!id && (id === s.orig.id || id === s.active.id)
   }, [])
 
   useEffect(() => {
@@ -70,22 +70,27 @@ export function useLaneTransport(opts: {
   }, [resetKey, paint])
 
   const origId = orig.id
-  const compId = comp.id
+  const activeId = active.id
+  useEffect(() => {
+    compareRef.current++
+    playback.setTarget('active')
+  }, [origId, activeId])
+
   useEffect(
     () => () => {
       const cur = transport.currentClipId()
-      if (cur && (cur === origId || cur === compId)) transport.stop()
+      if (cur && (cur === origId || cur === activeId)) transport.stop()
     },
-    [origId, compId]
+    [origId, activeId]
   )
 
-  const resolved = comp.comp ?? null
+  const resolved = active.comp ?? null
   useEffect(() => {
-    if (!resolved || !compId) return
+    if (!resolved || !activeId) return
     const st = transport.getState()
-    if (st.clipId !== compId || !st.playing) return
-    void transport.playComp(resolved, { id: compId, seek: st.pos })
-  }, [resolved, compId])
+    if (st.clipId !== activeId || !st.playing) return
+    void transport.playComp(resolved, { id: activeId, seek: st.pos })
+  }, [resolved, activeId])
 
   const startAt = useCallback((src: LaneSource, fromStart: boolean): number => {
     const region = src.comp?.region
@@ -95,61 +100,73 @@ export function useLaneTransport(opts: {
     return !fromStart && pos > region.in && pos < region.out ? pos : region.in
   }, [])
 
-  const start = useCallback(
-    (which: 'orig' | 'comp', fromStart: boolean): void => {
-      const src = srcRef.current[which]
-      if (!src.id) return
+  const startStage = useCallback(
+    (side: Side, fromStart: boolean): Promise<void> => {
+      const src = srcRef.current[side]
+      if (!src.id) return Promise.resolve()
       const at = startAt(src, fromStart)
       if (fromStart || at !== posRef.current) paint(at)
-      if (src.comp) void transport.playComp(src.comp, { id: src.id, seek: at })
-      else if (src.url) void transport.playClip({ id: src.id, url: src.url }, at)
+      if (src.comp) return transport.playComp(src.comp, { id: src.id, seek: at })
+      if (src.url) return transport.playClip({ id: src.id, url: src.url }, at)
+      return Promise.resolve()
     },
     [paint, startAt]
   )
 
-  const toggle = useCallback(
-    (which: 'orig' | 'comp'): void => {
-      const src = srcRef.current[which]
-      if (!src.id) return
-      if (playingRef.current === src.id) transport.pause()
-      else start(which, false)
+  const cancelCompare = useCallback((): void => {
+    compareRef.current++
+  }, [])
+
+  const restart = useCallback(
+    (side: Side): void => {
+      void startStage(side, true)
     },
-    [start]
+    [startStage]
   )
 
-  const pauseSide = useCallback((which: 'orig' | 'comp'): void => {
-    const src = srcRef.current[which]
-    if (src.id && transport.currentClipId() === src.id) transport.pause()
-  }, [])
+  const toggle = useCallback(
+    (side: Side): void => {
+      const src = srcRef.current[side]
+      if (!src.id) return
+      if (playingRef.current === src.id) transport.pause()
+      else void startStage(side, false)
+    },
+    [startStage]
+  )
+
+  const compare = useCallback((): void => {
+    const token = ++compareRef.current
+    const { orig: o, active: a } = srcRef.current
+    if (!o.id || !a.id) {
+      const side: Side = o.id ? 'orig' : 'active'
+      playback.setTarget(side)
+      void startStage(side, true)
+      return
+    }
+    playback.setTarget('orig')
+    void startStage('orig', true).then(() => {
+      if (compareRef.current !== token) return
+      playback.setTarget('active')
+      void startStage('active', true)
+    })
+  }, [startStage])
 
   const seek = useCallback(
     (t: number, exact: boolean): void => {
       const v = Math.max(0, t)
       paint(v)
       if (!isMine(transport.currentClipId())) return
+      compareRef.current++
       if (exact) transport.seek(v)
       else transport.scrubTo(v)
     },
     [isMine, paint]
   )
 
-  const origHandle = useMemo<WaveformHandle>(
-    () => ({
-      toggle: () => toggle('orig'),
-      play: () => start('orig', true),
-      pause: () => pauseSide('orig'),
-    }),
-    [toggle, start, pauseSide]
+  const ops = useMemo<PlaybackOps>(
+    () => ({ toggle, restart, compare, cancelCompare }),
+    [toggle, restart, compare, cancelCompare]
   )
 
-  const compHandle = useMemo<WaveformHandle>(
-    () => ({
-      toggle: () => toggle('comp'),
-      play: () => start('comp', true),
-      pause: () => pauseSide('comp'),
-    }),
-    [toggle, start, pauseSide]
-  )
-
-  return { posRef, scrubRef, playingId, seek, origHandle, compHandle }
+  return { posRef, scrubRef, playingId, seek, ops }
 }

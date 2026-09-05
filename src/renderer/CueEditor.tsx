@@ -19,7 +19,6 @@ import { isEmptyComp } from '@shared/comp'
 import { applyRules } from '@shared/pronunciation'
 import type { PreviewSource, ResolvedPreview } from '@shared/workspace-source'
 import type { AppSettings } from '@shared/ipc'
-import type { WaveformHandle } from './Waveform'
 import type { EffectsTarget } from './cue/ClipParams'
 import { CueHeader } from './cue/CueHeader'
 import { CreateBar } from './cue/CreateBar'
@@ -79,9 +78,6 @@ interface Props {
   onAcceptSuggestion: () => void
   onRejectSuggestion: () => void
   cueBusy: boolean
-  origRef: MutableRefObject<WaveformHandle | null>
-  takeRef: MutableRefObject<WaveformHandle | null>
-  abRef: MutableRefObject<(() => void) | null>
   compRef: MutableRefObject<CompApi | null>
   onComp: (cueId: string, comp: CueComp | null) => Promise<boolean>
   timelineOpen: boolean
@@ -90,6 +86,7 @@ interface Props {
   recRef: MutableRefObject<((fragment?: boolean) => void) | null>
   escRef: MutableRefObject<(() => boolean) | null>
   recActiveRef: MutableRefObject<(() => boolean) | null>
+  decisionRef: MutableRefObject<(() => boolean) | null>
   guardRef: MutableRefObject<((proceed: () => void) => boolean) | null>
   focusTextRef: MutableRefObject<(() => void) | null>
   appSettings: AppSettings
@@ -120,9 +117,6 @@ export function CueEditor({
   onAcceptSuggestion,
   onRejectSuggestion,
   cueBusy,
-  origRef,
-  takeRef,
-  abRef,
   compRef,
   onComp,
   timelineOpen,
@@ -131,6 +125,7 @@ export function CueEditor({
   recRef,
   escRef,
   recActiveRef,
+  decisionRef,
   guardRef,
   focusTextRef,
   appSettings,
@@ -249,10 +244,12 @@ export function CueEditor({
   }, [])
 
   const recActive = useCallback(() => v2v.rec.phase !== 'idle', [v2v.rec.phase])
+  const decision = useCallback(() => v2v.pending, [v2v.pending])
 
   useWire(recRef, v2v.toggleRec)
   useWire(escRef, v2v.onEscape)
   useWire(recActiveRef, recActive)
+  useWire(decisionRef, decision)
   useWire(guardRef, v2v.guard)
   useWire(focusTextRef, focusText)
 
@@ -347,9 +344,6 @@ export function CueEditor({
           }
           timelineOpen={timelineOpen}
           onTimeline={onTimeline}
-          origRef={origRef}
-          takeRef={takeRef}
-          abRef={abRef}
           compRef={compRef}
           onComp={onComp}
           onStatus={onStatus}

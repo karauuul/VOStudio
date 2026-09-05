@@ -5,6 +5,7 @@ import type { AppSettings } from '@shared/ipc'
 import { api, audioUrl } from '../api'
 import { useRecorder, type RecorderApi } from '../audio/recorder'
 import { clipId, transport } from '../audio/transport'
+import { playback } from '../playback'
 import { useCueBusy, useJobsStore } from '../jobs/store'
 import { credits } from './shared'
 import type { FragmentApi } from './useFragment'
@@ -98,6 +99,7 @@ export function useVoiceToVoice({
   }, [recError, clearRecError, onStatus])
 
   const startRec = useCallback((useSelection: boolean) => {
+    playback.cancelCompare()
     const sel = useSelection ? selection() : null
     if (useSelection && !sel) return
     if (!sel) {
