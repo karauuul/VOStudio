@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { changeCompOutput, changeTakeOutput } from '../src/shared/approval'
+import { approvalState, approveCue, changeCompOutput, changeTakeOutput } from '../src/shared/approval'
 import { emptyEdits, type Cue, type CueComp, type Take } from '../src/shared/domain'
-import { initialPreviewSource, resolvePreview } from '../src/shared/workspace-source'
+import {
+  cueDecision,
+  initialPreviewSource,
+  outputSource,
+  resolvePreview,
+  setFinalEligible,
+  shouldSelectCandidate,
+  type PreviewSource,
+} from '../src/shared/workspace-source'
 
 const take = (id: string, over: Partial<Take> = {}): Take => ({
   id,
@@ -153,5 +161,94 @@ describe('resolvePreview', () => {
 
   it('resolves nothing for the none source', () => {
     expect(resolvePreview(cue(), { kind: 'none' })).toEqual({ source: { kind: 'none' } })
+  })
+})
+
+describe('outputSource', () => {
+  it('reports the explicit take and comp outputs', () => {
+    expect(outputSource(changeTakeOutput(cue(), 't1'))).toEqual({ kind: 'take', takeId: 't1' })
+    expect(outputSource(changeCompOutput(cue({ comp: comp() }), comp()))).toEqual({ kind: 'comp' })
+  })
+
+  it('reports nothing for an explicit null output', () => {
+    expect(outputSource(cue({ output: null }))).toBeNull()
+  })
+
+  it('follows the legacy final take without an output field', () => {
+    expect(outputSource(cue({ finalTakeId: 't1', output: undefined }))).toEqual({
+      kind: 'take',
+      takeId: 't1',
+    })
+  })
+})
+
+describe('setFinalEligible', () => {
+  it('accepts a voiced take that is not the output', () => {
+    const c = changeTakeOutput(cue({ takes: [take('t1'), take('t2')] }), 't1')
+    expect(setFinalEligible(c, { kind: 'take', takeId: 't2' })).toBe(true)
+    expect(setFinalEligible(c, { kind: 'take', takeId: 't1' })).toBe(false)
+  })
+
+  it('rejects a raw recording and a missing take', () => {
+    const c = cue({ takes: [take('r1', { kind: 'recording' })], output: null })
+    expect(setFinalEligible(c, { kind: 'take', takeId: 'r1' })).toBe(false)
+    expect(setFinalEligible(c, { kind: 'take', takeId: 'gone' })).toBe(false)
+  })
+
+  it('accepts a retained comp that is not the output', () => {
+    const c = changeTakeOutput(cue({ comp: comp() }), 't1')
+    expect(setFinalEligible(c, { kind: 'comp' })).toBe(true)
+    expect(setFinalEligible(changeCompOutput(c, comp()), { kind: 'comp' })).toBe(false)
+    expect(setFinalEligible(cue(), { kind: 'comp' })).toBe(false)
+  })
+})
+
+describe('cueDecision', () => {
+  it('offers Set final while a different source is previewed', () => {
+    const c = approveCue(changeTakeOutput(cue({ takes: [take('t1'), take('t2')] }), 't1'))
+    expect(cueDecision(c, { kind: 'take', takeId: 't2' })).toBe('set-final')
+    expect(cueDecision(c, { kind: 'take', takeId: 't1' })).toBe('approved')
+  })
+
+  it('offers Approve for an unapproved output and after a stale approval', () => {
+    const c = changeTakeOutput(cue({ takes: [take('t1'), take('t2')] }), 't1')
+    expect(cueDecision(c, { kind: 'take', takeId: 't1' })).toBe('approve')
+    const stale = changeTakeOutput(approveCue(c), 't2')
+    expect(approvalState(stale)).toBe('stale')
+    expect(cueDecision(stale, { kind: 'take', takeId: 't2' })).toBe('approve')
+  })
+
+  it('has no action without an output or for an excluded cue', () => {
+    expect(cueDecision(cue({ takes: [], output: null }), { kind: 'none' })).toBe('none')
+    const c = approveCue(changeTakeOutput(cue(), 't1'))
+    expect(cueDecision({ ...c, status: 'excluded' }, { kind: 'take', takeId: 't1' })).toBe('none')
+  })
+})
+
+describe('shouldSelectCandidate', () => {
+  const base = {
+    active: true,
+    take: take('new'),
+    submitted: { kind: 'take', takeId: 't1' } as PreviewSource,
+    current: { kind: 'take', takeId: 't1' } as PreviewSource,
+    playing: false,
+    recording: false,
+  }
+
+  it('selects a finished candidate on an untouched cue', () => {
+    expect(shouldSelectCandidate(base)).toBe(true)
+  })
+
+  it('keeps the preview when the user changed the source, left the cue, or is busy', () => {
+    expect(shouldSelectCandidate({ ...base, current: { kind: 'comp' } })).toBe(false)
+    expect(shouldSelectCandidate({ ...base, active: false })).toBe(false)
+    expect(shouldSelectCandidate({ ...base, playing: true })).toBe(false)
+    expect(shouldSelectCandidate({ ...base, recording: true })).toBe(false)
+    expect(shouldSelectCandidate({ ...base, submitted: null })).toBe(false)
+  })
+
+  it('ignores raw recordings and fragment takes', () => {
+    expect(shouldSelectCandidate({ ...base, take: take('r1', { kind: 'recording' }) })).toBe(false)
+    expect(shouldSelectCandidate({ ...base, take: take('f1', { fragment: true }) })).toBe(false)
   })
 })

@@ -6,6 +6,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
   type MutableRefObject,
+  type ReactNode,
 } from 'react'
 import {
   canHeal,
@@ -90,6 +91,7 @@ export interface CompApi {
 interface Props {
   cue: Cue
   preview: ResolvedPreview
+  sourceHeader: ReactNode
   origRef: MutableRefObject<WaveformHandle | null>
   takeRef: MutableRefObject<WaveformHandle | null>
   abRef: MutableRefObject<(() => void) | null>
@@ -103,6 +105,7 @@ interface Props {
 export function WaveLanes({
   cue,
   preview,
+  sourceHeader,
   origRef,
   takeRef,
   abRef,
@@ -153,9 +156,7 @@ export function WaveLanes({
   const contentDur = Math.max(refDur, compDur)
 
   const live = useMemo(() => liveTakes(cue), [cue.takes])
-  const takeNumber = take ? live.findIndex((t) => t.id === take.id) + 1 : 0
   const isComp = preview.source.kind === 'comp'
-  const laneTag = isComp ? 'COMP' : takeNumber > 0 ? `TAKE ${takeNumber}` : 'TAKE'
 
   const compClipId = isComp ? clipId.comp(cue.id) : take ? clipId.take(take.id) : null
 
@@ -913,6 +914,8 @@ export function WaveLanes({
           )}
         </div>
 
+        {sourceHeader}
+
         <div className="tl-lane comp">
           <canvas
             ref={compCanvas}
@@ -920,7 +923,6 @@ export function WaveLanes({
             onMouseMove={onCompHover}
             onDoubleClick={(e) => e.stopPropagation()}
           />
-          <span className="tl-tag">{laneTag}</span>
           <span className="tl-len">{fmt(compDur)}</span>
           {displayComp ? (
             <button

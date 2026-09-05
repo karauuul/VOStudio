@@ -16,15 +16,13 @@ import {
   type VoiceSettings,
 } from '@shared/domain'
 import type { PreviewSource, ResolvedPreview } from '@shared/workspace-source'
-import { approvalState, hasValidVoicedOutput } from '@shared/approval'
 import type { AppSettings } from '@shared/ipc'
-import { api, audioUrl } from './api'
-import { clipId, transport } from './audio/transport'
+import { api } from './api'
 import type { WaveformHandle } from './Waveform'
 import { CueHeader } from './cue/CueHeader'
 import { GenerateBar } from './cue/GenerateBar'
 import { RecordBar } from './cue/RecordBar'
-import { TakesStrip } from './cue/TakesStrip'
+import { TakeSourceMenu } from './cue/TakeSourceMenu'
 import { TextBlock, type CopyKind } from './cue/TextBlock'
 import { useFragment } from './cue/useFragment'
 import { useVoiceToVoice } from './cue/useVoiceToVoice'
@@ -44,6 +42,10 @@ interface Props {
   onGenerate: () => void
   onApprove: (approved: boolean) => void
   onApproveNext: () => void
+  onSetFinal: () => void
+  onDetails: () => void
+  onDeleteTake: (takeId: string) => void
+  onSubmit: (cueId: string) => void
   onAcceptSuggestion: () => void
   onRejectSuggestion: () => void
   onVoiceChange: (patch: Partial<VoiceSettings>) => void
@@ -56,6 +58,7 @@ interface Props {
   onComp: (cueId: string, comp: CueComp | null) => void
   recRef: MutableRefObject<(() => void) | null>
   escRef: MutableRefObject<(() => boolean) | null>
+  recActiveRef: MutableRefObject<(() => boolean) | null>
   focusTextRef: MutableRefObject<(() => void) | null>
   appSettings: AppSettings
   onAppSettings: (s: AppSettings) => void
@@ -78,6 +81,10 @@ export function CueEditor({
   onGenerate,
   onApprove,
   onApproveNext,
+  onSetFinal,
+  onDetails,
+  onDeleteTake,
+  onSubmit,
   onAcceptSuggestion,
   onRejectSuggestion,
   onVoiceChange,
@@ -90,6 +97,7 @@ export function CueEditor({
   onComp,
   recRef,
   escRef,
+  recActiveRef,
   focusTextRef,
   appSettings,
   onAppSettings,
@@ -126,6 +134,7 @@ export function CueEditor({
     : noVoice
       ? `No voice configured for character "${character.name}"`
       : ''
+  const genTitle = noVoice ? noVoiceReason : cueBusy ? 'Already in the queue' : 'Generate a new take'
 
   const fragment = useFragment({
     cue,
@@ -146,6 +155,7 @@ export function CueEditor({
     voice,
     appSettings,
     onTakeAdded,
+    onSubmit,
     onStatus,
     isActiveCue,
     noVoiceReason,
@@ -161,21 +171,44 @@ export function CueEditor({
     el.setSelectionRange(n, n)
   }, [])
 
-  const audition = useCallback((take: Take) => {
-    void transport.playClip({ id: clipId.take(take.id), url: audioUrl(take.file.relPath) }, 0)
-  }, [])
+  const recActive = useCallback(() => v2v.rec.phase !== 'idle', [v2v.rec.phase])
 
   useWire(recRef, v2v.toggleRec)
   useWire(escRef, v2v.onEscape)
+  useWire(recActiveRef, recActive)
   useWire(focusTextRef, focusText)
 
   return (
     <div className="editor">
-      <CueHeader cue={cue} character={character} characters={characters} onCharacter={onCharacter} />
+      <CueHeader
+        cue={cue}
+        character={character}
+        characters={characters}
+        onCharacter={onCharacter}
+        source={preview.source}
+        onApprove={onApprove}
+        onApproveNext={onApproveNext}
+        onSetFinal={onSetFinal}
+      />
 
       <WaveLanes
         cue={cue}
         preview={preview}
+        sourceHeader={
+          <TakeSourceMenu
+            cue={cue}
+            source={preview.source}
+            onSelect={onSelectSource}
+            onGenerate={onGenerate}
+            onDetails={onDetails}
+            onDelete={onDeleteTake}
+            onReconvert={v2v.reconvert}
+            converting={v2v.converting}
+            genDisabled={cueBusy || !cue.text.trim() || noVoice}
+            genTitle={genTitle}
+            noVoiceReason={noVoiceReason}
+          />
+        }
         origRef={origRef}
         takeRef={takeRef}
         abRef={abRef}
@@ -203,15 +236,9 @@ export function CueEditor({
         onChange={onVoiceChange}
         onResetOverride={onVoiceReset}
         onGenerate={onGenerate}
-        onApprove={onApprove}
-        onApproveNext={onApproveNext}
-        approved={approvalState(cue) === 'approved'}
-        approveDisabled={!hasValidVoicedOutput(cue)}
         generating={cueBusy}
         genDisabled={cueBusy || !cue.text.trim() || noVoice}
-        genTitle={
-          noVoice ? noVoiceReason : cueBusy ? 'Already in the queue' : 'Generate a new take'
-        }
+        genTitle={genTitle}
       />
 
       <RecordBar
@@ -223,16 +250,6 @@ export function CueEditor({
         converting={v2v.converting}
         convertBlockedReason={v2v.convertBlocked}
         preroll={v2v.preroll}
-      />
-
-      <TakesStrip
-        cue={cue}
-        source={preview.source}
-        onSelect={onSelectSource}
-        onAudition={audition}
-        onReconvert={v2v.reconvert}
-        converting={v2v.converting}
-        noVoiceReason={noVoiceReason}
       />
     </div>
   )
