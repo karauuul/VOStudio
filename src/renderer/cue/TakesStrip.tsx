@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { compDuration } from '@shared/comp'
 import { liveTakes, MAX_STS_SECONDS, type Cue, type Take } from '@shared/domain'
+import type { PreviewSource } from '@shared/workspace-source'
 import { reportTakeDuration } from '../audio/duration-backfill'
 import { takeIdOf, transport } from '../audio/transport'
 import { fmt, MiniWave } from '../Waveform'
@@ -10,8 +12,8 @@ const DRAG_SLOP = 5
 
 interface Props {
   cue: Cue
-  selectedTakeId?: string
-  onSelect: (takeId: string) => void
+  source: PreviewSource
+  onSelect: (source: PreviewSource) => void
   onAudition: (take: Take) => void
   onReconvert: (take: Take) => void
   converting: boolean
@@ -20,7 +22,7 @@ interface Props {
 
 export function TakesStrip({
   cue,
-  selectedTakeId,
+  source,
   onSelect,
   onAudition,
   onReconvert,
@@ -72,6 +74,7 @@ export function TakesStrip({
   }, [])
 
   const takes = liveTakes(cue)
+  const comp = cue.comp && cue.comp.clips.length > 0 ? cue.comp : null
 
   const dragged = useRef(false)
 
@@ -118,7 +121,7 @@ export function TakesStrip({
     []
   )
 
-  if (takes.length === 0) {
+  if (takes.length === 0 && !comp) {
     return (
       <div className="takes empty" ref={stripRef}>
         <span className="takes-none">no takes yet</span>
@@ -130,7 +133,7 @@ export function TakesStrip({
     <div className="takes" ref={stripRef}>
       {takes.map((t, i) => {
         const final = t.id === cue.finalTakeId
-        const selected = t.id === selectedTakeId
+        const selected = source.kind === 'take' && source.takeId === t.id
         const d = durs[t.id] ?? t.duration
         const raw = t.kind === 'recording'
         const dur = raw ? t.duration : d
@@ -153,7 +156,7 @@ export function TakesStrip({
                 dragged.current = false
                 return
               }
-              onSelect(t.id)
+              onSelect({ kind: 'take', takeId: t.id })
             }}
             onDoubleClick={() => onAudition(t)}
           >
@@ -196,6 +199,23 @@ export function TakesStrip({
           </div>
         )
       })}
+      {comp && (
+        <div
+          className={'take' + (source.kind === 'comp' ? ' sel' : '')}
+          title="Composition"
+          onClick={() => onSelect({ kind: 'comp' })}
+        >
+          <span className="take-meta">
+            <span className="take-top">
+              <span className="take-n">C</span>
+            </span>
+            <span className="take-bot">
+              <span>comp</span>
+              <span>{fmt(compDuration(comp))}</span>
+            </span>
+          </span>
+        </div>
+      )}
     </div>
   )
 }

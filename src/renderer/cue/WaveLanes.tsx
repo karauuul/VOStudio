@@ -14,7 +14,6 @@ import {
   compDuration,
   compRenderPlan,
   DEFAULT_CROSSFADE,
-  defaultCompFromTake,
   effectiveCrossfade,
   findInsertSlot,
   healableAt,
@@ -28,13 +27,15 @@ import {
   setCrossfade,
   setRegion,
   setRegionEdge,
+  isEmptyComp,
   splitClipAt,
   trimClipEdge,
 } from '@shared/comp'
-import { liveTakes, type ClipEdits, type Cue, type CueComp, type Take } from '@shared/domain'
+import { liveTakes, type ClipEdits, type Cue, type CueComp } from '@shared/domain'
 import { toggleEffect } from '@shared/effects'
+import { resolvePreview, type ResolvedPreview } from '@shared/workspace-source'
 import { audioUrl } from '../api'
-import { tryResolveCueComp } from '../audio/comp-source'
+import { tryResolveComp } from '../audio/comp-source'
 import { reportTakeDuration } from '../audio/duration-backfill'
 import { clipId, transport } from '../audio/transport'
 import { fmt, getPeaks, type Peaks, type WaveformHandle } from '../Waveform'
@@ -88,7 +89,7 @@ export interface CompApi {
 
 interface Props {
   cue: Cue
-  take?: Take
+  preview: ResolvedPreview
   origRef: MutableRefObject<WaveformHandle | null>
   takeRef: MutableRefObject<WaveformHandle | null>
   abRef: MutableRefObject<(() => void) | null>
@@ -101,7 +102,7 @@ interface Props {
 
 export function WaveLanes({
   cue,
-  take,
+  preview,
   origRef,
   takeRef,
   abRef,
@@ -136,31 +137,26 @@ export function WaveLanes({
   const refPath = cue.referenceAudio?.relPath
   const refPeaks = refWave && refWave.path === refPath ? refWave.peaks : null
 
-  const modelComp = cue.comp && cue.comp.clips.length > 0 ? cue.comp : null
+  const take = preview.take
+  const editable = preview.source.kind === 'comp' || (preview.source.kind === 'take' && isEmptyComp(cue.comp))
 
   const takeDur = (take && (srcPeaks[take.id]?.duration || take.duration)) || 0
 
-  const virtualComp = useMemo(() => {
-    if (modelComp || !take || !(takeDur > 0)) return null
-    try {
-      return defaultCompFromTake(take, { duration: takeDur, id: `cc_v_${take.id}` })
-    } catch {
-      return null
-    }
-  }, [modelComp, take, takeDur])
-
-  const displayComp = modelComp ?? virtualComp
-  const resolved = useMemo(() => tryResolveCueComp(cue), [cue.comp, cue.takes])
+  const displayComp = useMemo(
+    () => resolvePreview(cue, preview.source, takeDur).comp ?? null,
+    [cue.comp, cue.takes, preview.source, takeDur]
+  )
+  const resolved = useMemo(() => tryResolveComp(cue, displayComp), [cue.takes, displayComp])
 
   const refDur = refPeaks?.duration ?? 0
   const compDur = displayComp ? compDuration(displayComp) : 0
   const contentDur = Math.max(refDur, compDur)
 
-  const compClipId = modelComp
-    ? clipId.comp(cue.id)
-    : take
-      ? clipId.take(take.id)
-      : null
+  const live = useMemo(() => liveTakes(cue), [cue.takes])
+  const takeNumber = take ? live.findIndex((t) => t.id === take.id) + 1 : 0
+  const laneTag = editable ? 'COMP' : takeNumber > 0 ? `TAKE ${takeNumber}` : 'TAKE'
+
+  const compClipId = editable ? clipId.comp(cue.id) : take ? clipId.take(take.id) : null
 
   const viewRef = useRef<TimelineView>({ pxPerSec: 100, scroll: 0 })
   const pendingRef = useRef<CueComp | null>(null)
@@ -186,9 +182,10 @@ export function WaveLanes({
   busyRef.current = busyClipId ?? null
   const snapRef = useRef(true)
   snapRef.current = snapOn
+  const editableRef = useRef(false)
+  editableRef.current = editable
 
   const labels = useMemo(() => {
-    const live = liveTakes(cue)
     const m = new Map<string, string>()
     for (const t of cue.takes) {
       const i = live.findIndex((x) => x.id === t.id)
@@ -214,8 +211,7 @@ export function WaveLanes({
     },
     comp: {
       id: compClipId,
-      url: take ? audioUrl(take.file.relPath) : undefined,
-      comp: modelComp ? resolved : null,
+      comp: resolved,
       duration: compDur,
     },
     resetKey: cue.id,
@@ -387,6 +383,7 @@ export function WaveLanes({
   editRef.current = edit
 
   const commit = useCallback((next: CueComp | null, base: CueComp | null): void => {
+    if (!editableRef.current) return
     const value = next && next.clips.length > 0 ? next : null
     if (sameComp(value, base)) return
     editRef.current.commit(value)
@@ -463,7 +460,7 @@ export function WaveLanes({
       if (e.button !== 0) return
       const base = displayRef.current
       const canvas = rulerRef.current
-      if (!base || !canvas || e.nativeEvent.offsetY > REGION_BAND_PX) {
+      if (!base || !canvas || !editableRef.current || e.nativeEvent.offsetY > REGION_BAND_PX) {
         startScrub(e)
         return
       }
@@ -503,7 +500,7 @@ export function WaveLanes({
   const onRulerDouble = useCallback(
     (e: ReactMouseEvent): void => {
       const base = displayRef.current
-      if (base?.region && e.nativeEvent.offsetY <= REGION_BAND_PX) {
+      if (editableRef.current && base?.region && e.nativeEvent.offsetY <= REGION_BAND_PX) {
         const at = Math.max(0, xToTime(viewRef.current, localX(e.clientX)))
         if (at >= base.region.in && at <= base.region.out) {
           commit(setRegion(base, null), base)
@@ -521,7 +518,7 @@ export function WaveLanes({
       if (e.button !== 0) return
       const base = displayRef.current
       const canvas = compCanvas.current
-      if (!base || !canvas) {
+      if (!base || !canvas || !editableRef.current) {
         startScrub(e)
         return
       }
@@ -587,6 +584,10 @@ export function WaveLanes({
       const canvas = compCanvas.current
       const base = pendingRef.current ?? displayRef.current
       if (!canvas || !base) return
+      if (!editableRef.current) {
+        canvas.style.cursor = 'pointer'
+        return
+      }
       const box = canvas.getBoundingClientRect()
       const view = viewRef.current
       const hit = hitTest(
@@ -734,7 +735,7 @@ export function WaveLanes({
       const box = canvas?.getBoundingClientRect()
       const over =
         !!box && d.x >= box.left && d.x <= box.right && d.y >= box.top && d.y <= box.bottom
-      if (!over || !base || !(d.duration > 0)) {
+      if (!over || !base || !editableRef.current || !(d.duration > 0)) {
         if (ghostRef.current) {
           ghostRef.current = null
           requestDraw()
@@ -791,12 +792,14 @@ export function WaveLanes({
   }, [selectedNow])
 
   const promptFragment = useCallback((): boolean => {
-    if (!selectedNow()) return false
+    if (!editableRef.current || !selectedNow()) return false
     setPrompt(true)
     return true
   }, [selectedNow])
 
   useEffect(() => setPrompt(false), [cue.id, selected])
+
+  useEffect(() => setSelected(null), [preview.source])
 
   const replaceSource = useCallback(
     (targetId: string, takeId: string, duration: number): boolean => {
@@ -859,17 +862,15 @@ export function WaveLanes({
       compHandle.play()
       return
     }
-    const right = resolved
-      ? { id: clipId.comp(cue.id), comp: resolved }
-      : take
-        ? { id: clipId.take(take.id), url: audioUrl(take.file.relPath) }
-        : null
-    if (!right) {
+    if (!resolved || !compClipId) {
       origHandle.play()
       return
     }
-    void transport.playSplit({ id: clipId.original(refPath), url: audioUrl(refPath) }, right)
-  }, [refPath, resolved, take, cue.id, origHandle, compHandle])
+    void transport.playSplit(
+      { id: clipId.original(refPath), url: audioUrl(refPath) },
+      { id: compClipId, comp: resolved }
+    )
+  }, [refPath, resolved, compClipId, origHandle, compHandle])
 
   useWire(abRef, abCompare)
 
@@ -912,14 +913,14 @@ export function WaveLanes({
             onMouseMove={onCompHover}
             onDoubleClick={(e) => e.stopPropagation()}
           />
-          <span className="tl-tag">COMP</span>
+          <span className="tl-tag">{laneTag}</span>
           <span className="tl-len">{fmt(compDur)}</span>
           {displayComp ? (
             <button
               className="tl-play"
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => t.compHandle.toggle()}
-              title={t.playingId === compClipId ? 'Pause' : 'Play the composition'}
+              title={t.playingId === compClipId ? 'Pause' : editable ? 'Play the composition' : 'Play the take'}
             >
               {t.playingId === compClipId ? '❚❚' : '▶'}
             </button>
@@ -934,15 +935,15 @@ export function WaveLanes({
       <div className="tl-foot">
         <TimelineBar
           onCut={splitAtHead}
-          canCut={!!displayComp}
+          canCut={editable && !!displayComp}
           onHeal={healSelected}
-          canHeal={canHealAny}
+          canHeal={editable && canHealAny}
           onDelete={removeSelected}
-          canDelete={!!selectedClip}
+          canDelete={editable && !!selectedClip}
           onUndo={() => editRef.current.undo()}
-          canUndo={edit.canUndo}
+          canUndo={editable && edit.canUndo}
           onRedo={() => editRef.current.redo()}
-          canRedo={edit.canRedo}
+          canRedo={editable && edit.canRedo}
           onZoomIn={() => zoomBy(1.5)}
           canZoomIn={pxPerSec < MAX_PX_PER_SEC}
           onZoomOut={() => zoomBy(1 / 1.5)}
@@ -951,11 +952,11 @@ export function WaveLanes({
           snap={snapOn}
           onSnap={() => setSnapOn((v) => !v)}
           onFragment={() => void promptFragment()}
-          canFragment={!!selectedClip && !busyClipId}
+          canFragment={editable && !!selectedClip && !busyClipId}
           onAb={abCompare}
           canAb={!!cue.referenceAudio}
           onCrossfade={toggleCrossfade}
-          canCrossfade={xfRoom > 0}
+          canCrossfade={editable && xfRoom > 0}
           crossfadeOn={xfNow > 0}
           onReverb={() => toggleFx('reverb')}
           reverbOn={!!selectedClip?.edits.effects?.reverb}
@@ -963,14 +964,14 @@ export function WaveLanes({
           delayOn={!!selectedClip?.edits.effects?.delay}
           onPitch={() => toggleFx('pitch')}
           pitchOn={!!selectedClip?.edits.effects?.pitch}
-          canFx={!!selectedClip}
+          canFx={editable && !!selectedClip}
           onInsert={insertAtHead}
-          canInsert={!!insertable && !!displayComp}
+          canInsert={editable && !!insertable && !!displayComp}
           onSetIn={() => regionEdge('in')}
           onSetOut={() => regionEdge('out')}
           onClearRegion={clearRegion}
-          canRegion={!!displayComp && compDur > 0}
-          hasRegion={!!displayComp?.region}
+          canRegion={editable && !!displayComp && compDur > 0}
+          hasRegion={editable && !!displayComp?.region}
         />
         <span className="tl-time" ref={timeRef} />
         {delta !== null && (

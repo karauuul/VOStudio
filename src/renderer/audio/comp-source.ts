@@ -1,6 +1,6 @@
 import { isEmptyComp } from '@shared/comp'
 import { usesCompOutput } from '@shared/approval'
-import type { CompClip, CompRegion, Cue } from '@shared/domain'
+import type { CompClip, CompRegion, Cue, CueComp } from '@shared/domain'
 import { audioUrl } from '../api'
 
 export interface ResolvedCompClip {
@@ -13,22 +13,26 @@ export interface ResolvedComp {
   region?: CompRegion
 }
 
-export function resolveCueComp(cue: Cue): ResolvedComp | null {
-  if (!usesCompOutput(cue)) return null
-  if (isEmptyComp(cue.comp)) return null
+export function resolveComp(cue: Cue, comp: CueComp | null | undefined): ResolvedComp | null {
+  if (isEmptyComp(comp ?? undefined)) return null
   const byId = new Map(cue.takes.map((t) => [t.id, t]))
-  const clips = cue.comp!.clips.map((clip) => {
+  const clips = comp!.clips.map((clip) => {
     const take = byId.get(clip.sourceTakeId)
     if (!take) throw new Error(`Composition clip "${clip.id}": take ${clip.sourceTakeId} is gone`)
     return { clip, url: audioUrl(take.file.relPath) }
   })
-  const region = cue.comp!.region
+  const region = comp!.region
   return region ? { clips, region } : { clips }
 }
 
-export function tryResolveCueComp(cue: Cue): ResolvedComp | null {
+export function resolveCueComp(cue: Cue): ResolvedComp | null {
+  if (!usesCompOutput(cue)) return null
+  return resolveComp(cue, cue.comp)
+}
+
+export function tryResolveComp(cue: Cue, comp: CueComp | null | undefined): ResolvedComp | null {
   try {
-    return resolveCueComp(cue)
+    return resolveComp(cue, comp)
   } catch {
     return null
   }

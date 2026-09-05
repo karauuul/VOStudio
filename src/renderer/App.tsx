@@ -37,6 +37,7 @@ import { useTemplateReimport } from './TemplateReimport'
 import { useKeyboard, type KeyboardHandlers } from './keyboard'
 import type { WaveformHandle } from './Waveform'
 import { approvalState, hasValidVoicedOutput } from '@shared/approval'
+import { initialPreviewSource, resolvePreview, type PreviewSource } from '@shared/workspace-source'
 import { applyChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
 import { buildPrompt } from '@shared/prompt'
 import type { CopyKind } from './cue/TextBlock'
@@ -106,6 +107,11 @@ const SIDE = { key: 'vo.sidebar.w', def: 320, min: 280, max: 460 }
 const INSP = { key: 'vo.inspector.w', def: 300, min: 280, max: 320 }
 
 const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
+
+function sameSource(a: PreviewSource, b: PreviewSource): boolean {
+  if (a.kind !== b.kind) return false
+  return a.kind !== 'take' || b.kind !== 'take' || a.takeId === b.takeId
+}
 
 function storedWidth({ key, def, min, max }: { key: string; def: number; min: number; max: number }): number {
   try {
@@ -189,7 +195,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [sideW, setSideW] = useState(() => storedWidth(SIDE))
   const [rightW, setRightW] = useState(() => storedWidth(INSP))
-  const [selectedTakeId, setSelectedTakeId] = useState<string | undefined>(undefined)
+  const [previewCueId, setPreviewCueId] = useState<string | undefined>(undefined)
+  const [previewSource, setPreviewSource] = useState<PreviewSource>({ kind: 'none' })
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
 
@@ -342,12 +349,20 @@ export default function App() {
 
   const activeTakes = useMemo(() => (activeCue ? liveTakes(activeCue) : []), [activeCue])
 
-  const shownTake = useMemo(
-    () =>
-      activeTakes.find((t) => t.id === selectedTakeId) ??
-      activeTakes.find((t) => t.id === activeCue?.finalTakeId),
-    [activeTakes, selectedTakeId, activeCue?.finalTakeId]
+  if (previewCueId !== activeCue?.id) {
+    setPreviewCueId(activeCue?.id)
+    setPreviewSource(activeCue ? initialPreviewSource(activeCue) : { kind: 'none' })
+  }
+
+  const selectSource = useCallback((source: PreviewSource) => {
+    setPreviewSource((prev) => (sameSource(prev, source) ? prev : source))
+  }, [])
+
+  const preview = useMemo(
+    () => (activeCue ? resolvePreview(activeCue, previewSource) : { source: previewSource }),
+    [activeCue, previewSource]
   )
+  const shownTake = preview.take
 
   const stats = useMemo(() => {
     const s = { translated: 0, generated: 0, approved: 0, suggested: 0 }
@@ -463,7 +478,6 @@ export default function App() {
       void flushVoice()
       transport.stop()
       setActiveCueId(cueId)
-      setSelectedTakeId(undefined)
     },
     [flushText, flushVoice]
   )
@@ -516,9 +530,13 @@ export default function App() {
 
   const onSetComp = useCallback(
     (cueId: string, comp: CueComp | null) => {
-      void dispatch({ type: 'cue.setComp', cueId, comp }).catch((e: unknown) => pushStatus('err', String(e)))
+      void dispatch({ type: 'cue.setComp', cueId, comp })
+        .then(() => {
+          if (comp) selectSource({ kind: 'comp' })
+        })
+        .catch((e: unknown) => pushStatus('err', String(e)))
     },
-    [dispatch, pushStatus]
+    [dispatch, pushStatus, selectSource]
   )
 
   const audition = useCallback((take: Take) => {
@@ -533,11 +551,13 @@ export default function App() {
     (takeId: string) => {
       const cue = activeCue
       if (!cue || takeId === cue.finalTakeId) return
-      const rest = liveTakes(cue).filter((t) => t.id !== takeId)
-      setSelectedTakeId(rest[0]?.id)
+      if (previewSource.kind === 'take' && previewSource.takeId === takeId) {
+        const rest = liveTakes(cue).filter((t) => t.id !== takeId)
+        setPreviewSource(rest[0] ? { kind: 'take', takeId: rest[0].id } : { kind: 'none' })
+      }
       void dispatch({ type: 'cue.deleteTake', cueId: cue.id, takeId }).catch((e: unknown) => pushStatus('err', String(e)))
     },
-    [activeCue, dispatch, pushStatus]
+    [activeCue, previewSource, dispatch, pushStatus]
   )
 
   const onVoiceChange = useCallback(
@@ -711,7 +731,6 @@ export default function App() {
     revisionRef.current = 0
     setProject(null)
     setActiveCueId(undefined)
-    setSelectedTakeId(undefined)
   }, [flushText, flushVoice, flushUi, pushStatus])
 
   async function syncCsv(): Promise<void> {
@@ -777,7 +796,7 @@ export default function App() {
       abCompare: () => abRef.current?.(),
       selectTakeByIndex: (n) => {
         const t = activeTakes[n]
-        if (t) setSelectedTakeId(t.id)
+        if (t) selectSource({ kind: 'take', takeId: t.id })
       },
       makeFinal: makeShownFinal,
       deleteTake: () => {
@@ -808,6 +827,7 @@ export default function App() {
       onApproveNext,
       activeCue,
       activeTakes,
+      selectSource,
       shownTake,
       audition,
       makeShownFinal,
@@ -1028,9 +1048,8 @@ export default function App() {
               character={activeCharacter}
               characters={project.characters}
               onCharacter={onCueCharacter}
-              shownTake={shownTake}
-              selectedTakeId={selectedTakeId}
-              onSelectTake={setSelectedTakeId}
+              preview={preview}
+              onSelectSource={selectSource}
               onText={onText}
               onCopy={onCopy}
               terms={project.terms ?? []}
