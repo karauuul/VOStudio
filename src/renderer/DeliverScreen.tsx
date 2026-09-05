@@ -69,6 +69,7 @@ export function DeliverScreen({
 
   const refresh = useCallback(() => {
     const n = ++seq.current
+    setData(null)
     void api['export:preflight']({ scope, collisionStrategy: strategy }).then(
       (d) => {
         if (n === seq.current) {

@@ -238,10 +238,13 @@ export default function App() {
       pushStatus('info', 'Generation is still running')
       return false
     }
+    exportingRef.current = true
     const saved = await flushText()
     await flushVoice()
-    if (!saved) return false
-    exportingRef.current = true
+    if (!saved) {
+      exportingRef.current = false
+      return false
+    }
     setExporting(true)
     return true
   }, [flushText, flushVoice, pushStatus])
