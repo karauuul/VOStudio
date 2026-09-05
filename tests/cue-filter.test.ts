@@ -22,6 +22,8 @@ import {
   matchesFilter,
   reviewGeneration,
   reviewLabel,
+  deltaLabel,
+  outputDuration,
 } from '../src/shared/cue-filter'
 
 const APPROVED_AT = '2026-08-30T01:00:00.000Z'
@@ -199,5 +201,19 @@ describe('bulk generation review', () => {
     expect([review.busy, review.missingText, review.missingVoice, review.excluded]).toEqual([
       1, 1, 1, 1,
     ])
+  })
+})
+
+describe('outputDuration and deltaLabel', () => {
+  it('treats an undecoded zero duration as unavailable', () => {
+    const c = cue({ referenceDuration: 2.4, takes: [{ ...take(), duration: 0 }], finalTakeId: 't1' })
+    expect(outputDuration(c)).toBeUndefined()
+    expect(deltaLabel(c)).toBe('n/a')
+  })
+
+  it('reports the signed delta against the reference', () => {
+    const c = cue({ referenceDuration: 2.4, takes: [{ ...take(), duration: 3.1 }], finalTakeId: 't1' })
+    expect(deltaLabel(c)).toBe('+0.70')
+    expect(deltaLabel(cue({ takes: [{ ...take(), duration: 3.1 }], finalTakeId: 't1' }))).toBe('n/a')
   })
 })

@@ -1,5 +1,7 @@
 import { approvalState, hasValidVoicedOutput } from './approval'
+import { compDuration } from './comp'
 import { hasVoicedTake, type Character, type Cue } from './domain'
+import { outputSource } from './workspace-source'
 
 export const DEFAULT_FILTER = 'work'
 export const ALL_CHARACTERS = 'all'
@@ -121,4 +123,24 @@ export function reviewGeneration(
     else review.eligible.push(cue)
   }
   return review
+}
+
+export function outputDuration(cue: Cue): number | undefined {
+  const source = outputSource(cue)
+  if (!source || source.kind === 'none') return undefined
+  const d =
+    source.kind === 'comp'
+      ? cue.comp
+        ? compDuration(cue.comp)
+        : undefined
+      : cue.takes.find((t) => t.id === source.takeId)?.duration
+  return d !== undefined && d > 0 ? d : undefined
+}
+
+export function deltaLabel(cue: Cue): string {
+  const reference = cue.referenceDuration
+  const actual = outputDuration(cue)
+  if (reference === undefined || actual === undefined) return 'n/a'
+  const d = actual - reference
+  return `${d >= 0 ? '+' : ''}${d.toFixed(2)}`
 }

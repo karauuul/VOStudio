@@ -10,7 +10,6 @@ import {
 } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { liveTakes, type Character, type Cue, type Project } from '@shared/domain'
-import { compDuration } from '@shared/comp'
 import {
   ALL_CHARACTERS,
   FILTERS,
@@ -19,6 +18,7 @@ import {
   reviewGeneration,
   reviewLabel,
   type GenerateReview,
+  deltaLabel,
 } from '@shared/cue-filter'
 import { exportName, outputTakeOf } from '@shared/export-plan'
 import { outputSource } from '@shared/workspace-source'
@@ -66,20 +66,6 @@ function outputLabel(cue: Cue): string {
   return `Take ${index + 1} · ${take.kind === 'recording' ? 'Recording' : take.kind.toUpperCase()}`
 }
 
-function outputDuration(cue: Cue): number | undefined {
-  const source = outputSource(cue)
-  if (!source || source.kind === 'none') return undefined
-  if (source.kind === 'comp') return cue.comp ? compDuration(cue.comp) : undefined
-  return cue.takes.find((t) => t.id === source.takeId)?.duration
-}
-
-function deltaLabel(cue: Cue): string {
-  const reference = cue.referenceDuration
-  const actual = outputDuration(cue)
-  if (reference === undefined || actual === undefined) return 'n/a'
-  const d = actual - reference
-  return `${d >= 0 ? '+' : ''}${d.toFixed(2)}`
-}
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
 
@@ -124,6 +110,17 @@ export function ProjectTable({
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [review, setReview] = useState<GenerateReview | null>(null)
   const vRef = useRef<VirtuosoHandle>(null)
+  const headRef = useRef<HTMLDivElement>(null)
+  const scrollerRef = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    const el = scrollerRef.current
+    if (!el) return
+    const sync = (): void => {
+      if (headRef.current) headRef.current.scrollLeft = el.scrollLeft
+    }
+    el.addEventListener('scroll', sync, { passive: true })
+    return () => el.removeEventListener('scroll', sync)
+  }, [])
   const columnsRef = useRef<HTMLDivElement>(null)
   const submittingRef = useRef(false)
 
@@ -385,7 +382,7 @@ export function ProjectTable({
         </div>
       )}
 
-      <div className="pt-head" style={{ gridTemplateColumns: template }}>
+      <div ref={headRef} className="pt-head" style={{ gridTemplateColumns: template }}>
         {columns.map((c) => (
           <span key={c.id}>{c.label}</span>
         ))}
@@ -393,6 +390,9 @@ export function ProjectTable({
 
       <Virtuoso
         ref={vRef}
+        scrollerRef={(el) => {
+          scrollerRef.current = el instanceof HTMLElement ? el : null
+        }}
         className="pt-scroll"
         data={rows}
         fixedItemHeight={ROW_H}

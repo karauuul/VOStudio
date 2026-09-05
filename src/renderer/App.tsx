@@ -624,8 +624,8 @@ export default function App() {
   }, [activeCue, flushText, noteSubmit, submitTts])
 
   const generateSelected = useCallback(
-    (cues: Cue[]) => {
-      void flushText()
+    async (cues: Cue[]) => {
+      if (!(await flushText())) return
       let queued = 0
       for (const cue of cues) {
         if (isCueBusyNow(cue.id)) continue

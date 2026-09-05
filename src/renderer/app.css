@@ -2235,6 +2235,7 @@ mark.term {
   padding: 0 16px;
 }
 .pt-head {
+  overflow: hidden;
   height: 32px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
