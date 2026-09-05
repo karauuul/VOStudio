@@ -55,7 +55,7 @@ export function TransportBar() {
       </button>
       <button
         className="icon-btn"
-        onClick={() => playback.toggleTarget()}
+        onClick={() => (foreign ? transport.toggle() : playback.toggleTarget())}
         title={playing ? 'Pause' : 'Play'}
       >
         {playing ? '❚❚' : '▶'}

@@ -224,6 +224,8 @@ export default function App() {
   const focusTextRef = useRef<(() => void) | null>(null)
   const textTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingText = useRef<{ id: string; text: string } | null>(null)
+  const textGenRef = useRef(0)
+  const selectSeqRef = useRef(0)
   const uiTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingUi = useRef<UiSessionState | null>(null)
   const voiceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -473,10 +475,11 @@ export default function App() {
     const p = pendingText.current
     if (!p) return Promise.resolve(true)
     pendingText.current = null
+    const gen = ++textGenRef.current
     return dispatch({ type: 'cue.saveText', cueId: p.id, text: p.text }).then(
       () => true,
       (e: unknown) => {
-        if (!pendingText.current) pendingText.current = p
+        if (gen === textGenRef.current && !pendingText.current) pendingText.current = p
         pushStatus('err', String(e))
         return false
       }
@@ -499,9 +502,10 @@ export default function App() {
 
   const doSelectCue = useCallback(
     async (cueId: string | undefined): Promise<boolean> => {
+      const seq = ++selectSeqRef.current
       const saved = await flushText()
       await flushVoice()
-      if (!saved) return false
+      if (!saved || seq !== selectSeqRef.current) return false
       playback.stop()
       setActiveCueId(cueId)
       return true

@@ -55,6 +55,7 @@ export function useLaneTransport(opts: {
     const apply = (s: TransportState): void => {
       const mine = isMine(s.clipId)
       if (mine && !scrubRef.current) paint(s.pos)
+      if (s.clipId && !mine && s.playing) compareRef.current++
       const p = mine && s.playing ? s.clipId : null
       if (p !== playingRef.current) {
         playingRef.current = p
