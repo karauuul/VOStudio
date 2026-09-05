@@ -46,7 +46,14 @@ import { diffTemplate } from '@shared/template-reimport'
 import * as migration from './migration'
 import { GENERATED_DIR } from './migration'
 import { syncCsv } from './csv-sync'
-import { copyJob, encodeJob, finishExport, planBatchExport, planCueExport } from './export'
+import {
+  copyJob,
+  encodeJob,
+  finishExport,
+  planBatchExport,
+  planCueExport,
+  preflightExport,
+} from './export'
 import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
@@ -616,6 +623,7 @@ function registerHandlers(): void {
 
   typedHandle('export:planCue', async (cueId: string) => planCueExport(z.string().min(1).parse(cueId)))
   typedHandle('export:planBatch', async (req) => planBatchExport(batchExportSchema.parse(req)))
+  typedHandle('export:preflight', async (req) => preflightExport(batchExportSchema.parse(req)))
   typedHandle('export:copy', (outPath: string) => copyJob(z.string().min(1).parse(outPath)))
   typedHandle('export:encode', (outPath, wav) => encodeJob(z.string().min(1).parse(outPath), wav))
   typedHandle('export:finish', (token, summary) =>

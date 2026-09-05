@@ -2319,3 +2319,158 @@ mark.term {
   font: 600 16px var(--mono);
   color: var(--tx);
 }
+
+.deliver {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  align-content: start;
+  gap: 16px;
+  padding: 16px;
+  overflow: auto;
+  background: var(--bg);
+}
+.dlv-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.dlv-sec {
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+.dlv-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dlv-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font: 12px var(--sans);
+  color: var(--tx2);
+}
+.dlv-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dlv-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--raise);
+  color: var(--tx2);
+  font: 12px var(--sans);
+  cursor: pointer;
+}
+.dlv-row:hover:not(:disabled) {
+  border-color: var(--ac);
+  color: var(--tx);
+}
+.dlv-row:disabled {
+  cursor: default;
+}
+.dlv-row b {
+  font: 600 13px var(--mono);
+  color: var(--tx);
+}
+.dlv-row.ok b {
+  color: var(--ok);
+}
+.dlv-row.warn b {
+  color: var(--warn);
+}
+.dlv-row.err b {
+  color: var(--err);
+}
+.dlv-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  font: 11px var(--sans);
+}
+.dlv-link {
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  font: 11px var(--mono);
+  color: var(--tx2);
+  cursor: pointer;
+}
+.dlv-link:hover {
+  color: var(--ac);
+}
+.dlv-colls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dlv-coll {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  font: 11px var(--mono);
+  color: var(--tx2);
+}
+.dlv-choice {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.dlv-choice .btn.on {
+  border-color: var(--ac);
+  color: var(--ac);
+}
+.dlv-names {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font: 11px var(--mono);
+  color: var(--tx2);
+}
+.dlv-path {
+  overflow-wrap: anywhere;
+}
+.dlv-prog {
+  font: 12px var(--mono);
+  color: var(--tx);
+}
+.dlv-fails {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0;
+  max-height: 220px;
+  overflow: auto;
+}
+.dlv-fail {
+  font: 11px var(--sans);
+  color: var(--tx2);
+}
+.dlv-actions {
+  display: flex;
+  gap: 8px;
+}
+.dlv-actions .btn.primary {
+  flex: 1;
+}
+@media (max-width: 1000px) {
+  .deliver {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

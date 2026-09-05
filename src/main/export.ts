@@ -8,8 +8,10 @@ import type {
   ExportCompClip,
   ExportJob,
   ExportPlan,
+  ExportPreflight,
   ExportResult,
   ExportSummary,
+  LastExport,
 } from '@shared/ipc'
 import {
   containerOf,
@@ -23,7 +25,8 @@ import {
   type PlannedTake,
   type SkippedCue,
 } from '@shared/export-plan'
-import { buildReport, buildUpdatedIndex, type DeliverSummary } from '@shared/deliver'
+import { preflightPlan } from '@shared/export-preflight'
+import { buildReport, buildUpdatedIndex, indexBound, type DeliverReport, type DeliverSummary } from '@shared/deliver'
 import { isEmptyComp } from '@shared/comp'
 import { usesCompOutput } from '@shared/approval'
 import type { Cue, Project } from '@shared/domain'
@@ -115,6 +118,45 @@ export function planCueExport(cueId: string): ExportPlan {
   const outDir = path.join(dir, 'exports')
   batchPlan = null
   return publish(randomUUID(), toJobs([{ cue, take, name: exportName(project, cue, take) }], outDir), 0, outDir, [])
+}
+
+async function readLastExport(outDir: string): Promise<LastExport | null> {
+  try {
+    const raw = await fs.readFile(path.join(outDir, 'report.json'), 'utf8')
+    const report = JSON.parse(raw) as Partial<DeliverReport>
+    return {
+      createdAt: typeof report.createdAt === 'string' ? report.createdAt : '',
+      scope: typeof report.scope === 'string' ? report.scope : '',
+      exported: report.exported?.length ?? 0,
+      failed: report.failed?.length ?? 0,
+      skipped: report.skipped?.length ?? 0,
+    }
+  } catch {
+    return null
+  }
+}
+
+export async function preflightExport(req: BatchExportRequest): Promise<ExportPreflight> {
+  const { project, dir } = ctx()
+  const { sources, ...plan } = preflightPlan(project, req.scope, req.collisionStrategy ?? {})
+  const outDir = path.join(dir, 'export')
+  const seen = new Map<string, boolean>()
+  const missingFiles: ExportPreflight['missingFiles'] = []
+  for (const source of sources) {
+    let exists = seen.get(source.path)
+    if (exists === undefined) {
+      exists = await fs.stat(source.path).then(() => true, () => false)
+      seen.set(source.path, exists)
+    }
+    if (!exists) missingFiles.push(source)
+  }
+  return {
+    ...plan,
+    outDir,
+    missingFiles,
+    writesIndex: indexBound(project),
+    last: await readLastExport(outDir),
+  }
 }
 
 export async function planBatchExport(req: BatchExportRequest): Promise<ExportPlan> {

@@ -1,6 +1,5 @@
 import type {
   BatchExportFailure,
-  BatchExportRequest,
   BatchExportResult,
   ExportJob,
   ExportPlan,
@@ -80,17 +79,6 @@ export async function runPlan(
     outDir: plan.outDir,
     ...paths,
   }
-}
-
-export async function exportBatch(
-  req: BatchExportRequest,
-  onProgress?: (p: ExportProgress) => void
-): Promise<BatchExportResult> {
-  const plan = await api['export:planBatch'](req)
-  if (plan.collisions.length > 0) {
-    return { written: 0, skipped: 0, failed: [], collisions: plan.collisions, outDir: plan.outDir }
-  }
-  return runPlan(plan, onProgress)
 }
 
 export async function exportCue(cueId: string): Promise<ExportResult> {

@@ -8,10 +8,12 @@ export type Scope =
   | 'grid'
   | 'timeline'
   | 'workspace'
+  | 'deliver'
 
 export type KeyAction =
   | 'routeWork'
   | 'routeProject'
+  | 'routeDeliver'
   | 'focusSearch'
   | 'gridNext'
   | 'gridPrev'
@@ -72,17 +74,19 @@ const WORK: Scope[] = ['workspace', 'timeline']
 const TIMELINE: Scope[] = ['timeline']
 const TEXT: Scope[] = ['workspace', 'timeline', 'text']
 const GRID: Scope[] = ['grid']
-const ROUTES: Scope[] = ['workspace', 'timeline', 'text', 'grid', 'gridText']
+const ROUTES: Scope[] = ['workspace', 'timeline', 'text', 'grid', 'gridText', 'deliver']
+const SEARCHABLE: Scope[] = ['workspace', 'timeline', 'text', 'grid', 'gridText']
 
 export const BINDINGS: Binding[] = [
   {
     action: 'escape',
     codes: ['Escape'],
-    scopes: ['workspace', 'timeline', 'text', 'grid', 'gridText', 'decision'],
+    scopes: ['workspace', 'timeline', 'text', 'grid', 'gridText', 'deliver', 'decision'],
   },
   { action: 'routeWork', codes: ['Digit1', 'Numpad1'], mod: true, scopes: ROUTES },
   { action: 'routeProject', codes: ['Digit2', 'Numpad2'], mod: true, scopes: ROUTES },
-  { action: 'focusSearch', codes: ['KeyF'], mod: true, scopes: ROUTES },
+  { action: 'routeDeliver', codes: ['Digit3', 'Numpad3'], mod: true, scopes: ROUTES },
+  { action: 'focusSearch', codes: ['KeyF'], mod: true, scopes: SEARCHABLE },
   { action: 'gridNext', codes: ['ArrowDown'], scopes: GRID, repeat: true },
   { action: 'gridPrev', codes: ['ArrowUp'], scopes: GRID, repeat: true },
   { action: 'gridOpen', codes: ['Enter', 'NumpadEnter'], scopes: GRID },
@@ -139,6 +143,7 @@ export function resolveKey(e: KeyInput): Binding | null {
 export interface KeyboardHandlers {
   routeWork: () => void
   routeProject: () => void
+  routeDeliver: () => void
   focusSearch: () => void
   gridNext: () => void
   gridPrev: () => void
@@ -179,6 +184,7 @@ export interface KeyboardHandlers {
 export interface KeyboardScopes {
   timeline: boolean
   grid: boolean
+  deliver: boolean
   decision: () => boolean
 }
 
@@ -218,6 +224,7 @@ export function useKeyboard(
       const ctx = scopeRef.current
       let scope: Scope
       if (ctx.decision()) scope = 'decision'
+      else if (ctx.deliver) scope = 'deliver'
       else if (isEditor(el)) scope = ctx.grid ? 'gridText' : 'text'
       else if (el?.closest(NATIVE) && NATIVE_CODES.includes(e.code)) return
       else if (ctx.grid) scope = 'grid'
