@@ -1,15 +1,17 @@
-import type { Character, CueComp, Take, VoiceSettings } from '@shared/domain'
+import type { Character, ClipEditPatch, CueComp, Take, VoiceSettings } from '@shared/domain'
 import { compDuration } from '@shared/comp'
 import { fmt } from '../Waveform'
+import { ClipParams, type EffectName, type EffectsTarget } from './ClipParams'
 import { stamp } from './shared'
 import { knobText, KNOBS } from './voice'
 import { VoicePanel } from './VoicePanel'
 
-export type InspectorTab = 'take' | 'voice'
+export type InspectorTab = 'take' | 'voice' | 'effects'
 
 const TABS: { id: InspectorTab; label: string }[] = [
   { id: 'voice', label: 'Voice' },
   { id: 'take', label: 'Take' },
+  { id: 'effects', label: 'Effects' },
 ]
 
 interface Props {
@@ -28,6 +30,12 @@ interface Props {
   onVoiceChange: (patch: Partial<VoiceSettings>) => void
   onVoiceReset: () => void
   onVoiceDefault: () => void
+  effects: EffectsTarget | null
+  effectsLabel: string
+  onClipEdit: (patch: ClipEditPatch, commit: boolean) => void
+  onClipTrim: (edge: 'start' | 'end', at: number, commit: boolean) => void
+  onClipEffect: (which: EffectName) => void
+  onEditAsComposition?: () => void
 }
 
 export function Inspector({
@@ -46,6 +54,12 @@ export function Inspector({
   onVoiceChange,
   onVoiceReset,
   onVoiceDefault,
+  effects,
+  effectsLabel,
+  onClipEdit,
+  onClipTrim,
+  onClipEffect,
+  onEditAsComposition,
 }: Props) {
   return (
     <div className="insp">
@@ -70,6 +84,17 @@ export function Inspector({
             canSetFinal={canSetFinal}
             onSetFinal={onSetFinal}
             onDelete={onDelete}
+          />
+        )}
+
+        {tab === 'effects' && (
+          <ClipParams
+            target={effects}
+            emptyLabel={effectsLabel}
+            onEdit={onClipEdit}
+            onTrim={onClipTrim}
+            onEffect={onClipEffect}
+            onEditAsComposition={onEditAsComposition}
           />
         )}
 

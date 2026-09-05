@@ -36,6 +36,9 @@ interface Entry {
 interface Props {
   cue: Cue
   source: PreviewSource
+  label?: string
+  variant?: 'insert'
+  onInsert?: (take: Take) => void
   onSelect: (source: PreviewSource) => void
   onGenerate: () => void
   onDetails: () => void
@@ -89,6 +92,9 @@ function finalLabel(cue: Cue, entries: Entry[]): string {
 export function TakeSourceMenu({
   cue,
   source,
+  label,
+  variant,
+  onInsert,
   onSelect,
   onGenerate,
   onDetails,
@@ -106,8 +112,10 @@ export function TakeSourceMenu({
   const popRef = useRef<HTMLDivElement>(null)
   const dragged = useRef(false)
 
-  const entries = buildEntries(cue)
-  const current = entries.findIndex((e) => sameSource(e.source, source))
+  const insert = variant === 'insert'
+  const all = buildEntries(cue)
+  const entries = insert ? all.filter((e) => !!e.take && e.take.kind !== 'recording') : all
+  const current = insert ? -1 : entries.findIndex((e) => sameSource(e.source, source))
   const selected = entries[current]
   const raw = selected?.take?.kind === 'recording' ? selected.take : null
 
@@ -200,10 +208,14 @@ export function TakeSourceMenu({
 
   const pick = useCallback(
     (entry: Entry): void => {
-      onSelect(entry.source)
+      if (insert) {
+        if (entry.take) onInsert?.(entry.take)
+      } else {
+        onSelect(entry.source)
+      }
       close()
     },
-    [onSelect, close]
+    [insert, onInsert, onSelect, close]
   )
 
   const remove = useCallback(
@@ -240,35 +252,37 @@ export function TakeSourceMenu({
       if (e.code === 'Delete') {
         e.stopPropagation()
         e.preventDefault()
-        remove(entries[cursor])
+        if (!insert) remove(entries[cursor])
       }
     },
-    [entries, cursor, pick, close, remove]
+    [entries, cursor, pick, close, remove, insert]
   )
 
   return (
-    <div className="tl-src">
-      <span className="tl-src-l">ACTIVE SOURCE</span>
+    <div className={insert ? 'tlb-menu' : 'tl-src'}>
+      {!insert && <span className="tl-src-l">ACTIVE SOURCE</span>}
       <button
         ref={btnRef}
-        className="src-btn"
+        className={insert ? 'tlb-btn' : 'src-btn'}
         aria-haspopup="menu"
         aria-expanded={open}
+        disabled={insert && entries.length === 0}
+        onMouseDown={insert ? (e) => e.preventDefault() : undefined}
         onClick={() => {
           setCursor(current < 0 ? 0 : current)
           setOpen((v) => !v)
         }}
         onKeyDown={(e) => {
-          if (e.code !== 'Delete') return
+          if (insert || e.code !== 'Delete') return
           e.stopPropagation()
           e.preventDefault()
           remove(selected)
         }}
       >
-        {sourceLabel(entries, source)}
+        {insert ? <span className="tlb-l">Insert</span> : label ?? sourceLabel(entries, source)}
         <span className="src-caret">▾</span>
       </button>
-      <span className="tl-src-final">{finalLabel(cue, entries)}</span>
+      {!insert && <span className="tl-src-final">{finalLabel(cue, entries)}</span>}
 
       {open && (
         <div
@@ -305,6 +319,8 @@ export function TakeSourceMenu({
           ))}
           {entries.length === 0 && <div className="src-none">No take</div>}
 
+          {!insert && (
+            <>
           <div className="src-sep" />
           <button
             className="menu-item"
@@ -361,6 +377,8 @@ export function TakeSourceMenu({
           >
             Delete
           </button>
+            </>
+          )}
         </div>
       )}
     </div>

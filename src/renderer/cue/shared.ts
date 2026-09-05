@@ -1,4 +1,6 @@
-import { estimateStsCredits, type CueStatus } from '@shared/domain'
+import { isEmptyComp } from '@shared/comp'
+import { estimateStsCredits, type Cue, type CueStatus } from '@shared/domain'
+import { outputSource } from '@shared/workspace-source'
 
 export const REF_COLOR = '#6d9ff2'
 export const TAKE_COLOR = '#46c98c'
@@ -30,3 +32,8 @@ export function meterPct(rms: number): number {
 export const credits = (sec: number): string => estimateStsCredits(sec).toLocaleString('en-US')
 
 export const stamp = (at: string | number): string => new Date(at).toLocaleString('en-US')
+
+export function compositionLabel(cue: Cue): string {
+  if (isEmptyComp(cue.comp)) return 'Composition · Unsaved'
+  return outputSource(cue)?.kind === 'comp' ? 'Composition · Final' : 'Composition'
+}
