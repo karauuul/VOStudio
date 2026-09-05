@@ -804,16 +804,18 @@ export function WaveLanes({
 
   const replaceSource = useCallback(
     (targetId: string, takeId: string, duration: number): boolean => {
-      const base = displayRef.current
-      if (!base || !base.clips.some((c) => c.id === targetId)) return false
+      const hasClip = (c: CueComp | null | undefined): c is CueComp => !!c && c.clips.some((x) => x.id === targetId)
+      const shown = displayRef.current
+      const base = hasClip(shown) ? shown : hasClip(cue.comp) ? cue.comp : null
+      if (!base) return false
       const next = replaceClipSource(base, targetId, takeId, duration)
       if (sameComp(next, base)) return false
       pendingRef.current = null
-      commit(next, base)
-      requestDraw()
+      editRef.current.commit(next)
+      if (base === shown) requestDraw()
       return true
     },
-    [commit, requestDraw]
+    [requestDraw, cue.comp]
   )
 
   const regionEdge = useCallback(
