@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { MAX_STS_SECONDS, type Cue, type Take, type VoiceSettings } from '@shared/domain'
+import { recordingGuard } from '@shared/recording-guard'
 import type { AppSettings } from '@shared/ipc'
 import { api, audioUrl } from '../api'
 import { useRecorder, type RecorderApi } from '../audio/recorder'
@@ -9,11 +10,13 @@ import { credits } from './shared'
 import type { FragmentApi } from './useFragment'
 import type { ClipSelection } from './WaveLanes'
 
+export type PendingChoice = 'save' | 'discard' | 'cancel'
+
 interface Options {
   cue: Cue
   voice: VoiceSettings
   appSettings: AppSettings
-  onTakeAdded: (cueId: string, take: Take) => void
+  onTakeAdded: (cueId: string, take: Take, explicit?: boolean) => void
   onSubmit: (cueId: string) => void
   onStatus: (kind: 'ok' | 'err' | 'info', text: string) => void
   isActiveCue: (cueId: string) => boolean
@@ -26,8 +29,14 @@ export interface VoiceToVoice {
   rec: RecorderApi
   converting: boolean
   preroll: boolean
+  pending: boolean
   toggleRec: () => void
+  saveRecording: () => void
   convertClip: () => void
+  discard: () => void
+  retake: () => void
+  resolvePending: (choice: PendingChoice) => void
+  guard: (proceed: () => void) => boolean
   reconvert: (take: Take) => void
   convertBlocked: string
   onEscape: () => boolean
@@ -55,6 +64,9 @@ export function useVoiceToVoice({
   const preRef = useRef(false)
   const preGen = useRef(0)
   const targetRef = useRef<string | null>(null)
+  const savingRef = useRef(false)
+  const pendingRef = useRef<(() => void) | null>(null)
+  const [pending, setPending] = useState(false)
 
   const cancelPre = useCallback((): void => {
     preGen.current++
@@ -65,11 +77,17 @@ export function useVoiceToVoice({
     transport.stop()
   }, [])
 
+  const clearPending = useCallback((): void => {
+    pendingRef.current = null
+    setPending(false)
+  }, [])
+
   const recCancel = rec.cancel
   useEffect(() => {
+    clearPending()
     cancelPre()
     recCancel()
-  }, [cue.id, recCancel, cancelPre])
+  }, [cue.id, recCancel, cancelPre, clearPending])
 
   const recError = rec.error
   const clearRecError = rec.clearError
@@ -117,38 +135,38 @@ export function useVoiceToVoice({
     }
   }, [rec, appSettings, cue.referenceAudio, selection])
 
-  const toggleRec = useCallback(() => {
-    if (converting) return
-    if (preRef.current) {
-      cancelPre()
-      return
-    }
-    switch (rec.phase) {
-      case 'idle':
-      case 'preview':
-        startRec()
-        return
-      case 'arming':
-      case 'countin':
+  const saveClip = useCallback(
+    async (select: boolean): Promise<Take | null> => {
+      const clip = rec.clip
+      if (!clip || savingRef.current) return null
+      const cueId = cue.id
+      const target = targetRef.current
+      savingRef.current = true
+      setSaving(true)
+      useJobsStore.getState().beginSave()
+      try {
+        const take = await api['take:saveRecording'](
+          cueId,
+          clip.wav,
+          clip.durationSec,
+          clip.sampleRate,
+          target ? true : undefined
+        )
+        targetRef.current = null
         rec.cancel()
-        return
-      case 'recording':
-        rec.stop()
-        return
-    }
-  }, [converting, rec, startRec, cancelPre])
-
-  const recPhase = rec.phase
-  const onEscape = useCallback((): boolean => {
-    if (preRef.current) {
-      cancelPre()
-      return true
-    }
-    if (recPhase === 'idle') return false
-    cancelPre()
-    recCancel()
-    return true
-  }, [recPhase, recCancel, cancelPre])
+        onTakeAdded(cueId, take, select)
+        return take
+      } catch (e) {
+        onStatus('err', String(e))
+        return null
+      } finally {
+        savingRef.current = false
+        setSaving(false)
+        useJobsStore.getState().endSave()
+      }
+    },
+    [rec, cue.id, onTakeAdded, onStatus]
+  )
 
   const submitSts = useCallback(
     (
@@ -196,42 +214,137 @@ export function useVoiceToVoice({
     const clip = rec.clip
     if (!clip || converting) return
     const cueId = cue.id
-    onSubmit(cueId)
-    const voiceSettings = voice
     const target = targetRef.current
-    setSaving(true)
-    useJobsStore.getState().beginSave()
+    const voiceSettings = voice
+    clearPending()
+    onSubmit(cueId)
     onStatus(
       'info',
       `Converting ${clip.durationSec.toFixed(1)}s (≈${credits(clip.durationSec)} credits)…`
     )
-    void (async () => {
-      try {
-        const recTake = await api['take:saveRecording'](
-          cueId,
-          clip.wav,
-          clip.durationSec,
-          clip.sampleRate,
-          target ? true : undefined
-        )
-        onTakeAdded(cueId, recTake)
-        targetRef.current = null
-        rec.cancel()
-        submitSts(
-          cueId,
-          recTake.id,
-          voiceSettings,
-          target ? 'Fragment replaced' : 'Voice converted',
-          target ? { clipId: target } : {}
-        )
-      } catch (e) {
-        onStatus('err', String(e))
-      } finally {
-        setSaving(false)
-        useJobsStore.getState().endSave()
+    void saveClip(false).then((recTake) => {
+      if (!recTake) return
+      submitSts(
+        cueId,
+        recTake.id,
+        voiceSettings,
+        target ? 'Fragment replaced' : 'Voice converted',
+        target ? { clipId: target } : {}
+      )
+    })
+  }, [rec.clip, converting, cue.id, voice, clearPending, onSubmit, onStatus, saveClip, submitSts])
+
+  const saveRecording = useCallback(() => {
+    if (!rec.clip || converting) return
+    clearPending()
+    void saveClip(true).then((take) => {
+      if (take) onStatus('ok', 'Recording saved')
+    })
+  }, [rec.clip, converting, clearPending, saveClip, onStatus])
+
+  const discard = useCallback(() => {
+    clearPending()
+    recCancel()
+  }, [clearPending, recCancel])
+
+  const guard = useCallback(
+    (proceed: () => void): boolean => {
+      const decision = recordingGuard(rec.phase, !!rec.clip)
+      if (decision === 'block') {
+        onStatus('info', 'Stop the recording first')
+        return true
       }
-    })()
-  }, [rec, converting, cue.id, voice, onStatus, onSubmit, onTakeAdded, submitSts])
+      if (decision === 'cancel') {
+        cancelPre()
+        recCancel()
+        return false
+      }
+      if (decision === 'allow') return false
+      pendingRef.current = proceed
+      setPending(true)
+      return true
+    },
+    [rec.phase, rec.clip, cancelPre, recCancel, onStatus]
+  )
+
+  const resolvePending = useCallback(
+    (choice: PendingChoice) => {
+      const run = pendingRef.current
+      clearPending()
+      if (choice === 'cancel') return
+      if (choice === 'discard') {
+        recCancel()
+        run?.()
+        return
+      }
+      void saveClip(true).then((take) => {
+        if (!take) return
+        onStatus('ok', 'Recording saved')
+        run?.()
+      })
+    },
+    [clearPending, recCancel, saveClip, onStatus]
+  )
+
+  const retake = useCallback(() => {
+    if (converting) return
+    if (guard(startRec)) return
+    startRec()
+  }, [converting, guard, startRec])
+
+  const toggleRec = useCallback(() => {
+    if (converting) return
+    if (preRef.current) {
+      cancelPre()
+      return
+    }
+    switch (rec.phase) {
+      case 'idle':
+        startRec()
+        return
+      case 'preview':
+        retake()
+        return
+      case 'arming':
+      case 'countin':
+        rec.cancel()
+        return
+      case 'recording':
+        rec.stop()
+        return
+    }
+  }, [converting, rec, startRec, retake, cancelPre])
+
+  const recPhase = rec.phase
+  const hasClip = !!rec.clip
+  const recStop = rec.stop
+  const onEscape = useCallback((): boolean => {
+    if (preRef.current) {
+      cancelPre()
+      return true
+    }
+    if (pendingRef.current !== null || pending) {
+      clearPending()
+      return true
+    }
+    const decision = recordingGuard(recPhase, hasClip)
+    if (decision === 'allow') {
+      if (recPhase === 'preview') recCancel()
+      return recPhase !== 'idle'
+    }
+    if (decision === 'block') {
+      recStop()
+      return true
+    }
+    if (decision === 'cancel') {
+      cancelPre()
+      recCancel()
+      return true
+    }
+    pendingRef.current = null
+    setPending(true)
+    return true
+  }, [recPhase, hasClip, pending, recCancel, recStop, cancelPre, clearPending])
 
   const reconvert = useCallback(
     (take: Take) => {
@@ -252,15 +365,21 @@ export function useVoiceToVoice({
   const convertBlocked =
     noVoiceReason ||
     (rec.clip && rec.clip.durationSec > MAX_STS_SECONDS
-      ? `Recording is ${rec.clip.durationSec.toFixed(1)}s — ElevenLabs accepts at most 5 min per request. Record a shorter one.`
+      ? `Recording is ${rec.clip.durationSec.toFixed(1)}s — the STS limit is 5 min`
       : '')
 
   return {
     rec,
     converting,
     preroll: pre,
+    pending,
     toggleRec,
+    saveRecording,
     convertClip,
+    discard,
+    retake,
+    resolvePending,
+    guard,
     reconvert,
     convertBlocked,
     onEscape,

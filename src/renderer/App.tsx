@@ -32,6 +32,7 @@ import type { CompApi } from './cue/WaveLanes'
 import { TransportBar } from './cue/TransportBar'
 import { BatchExportDialog } from './BatchExportDialog'
 import { CharactersDialog } from './CharactersDialog'
+import { RulesDialog } from './RulesPanel'
 import { ProjectHome } from './ProjectHome'
 import { useTemplateReimport } from './TemplateReimport'
 import { useKeyboard, type KeyboardHandlers } from './keyboard'
@@ -195,6 +196,7 @@ export default function App() {
   const [bulk, setBulk] = useState(false)
   const [showExport, setShowExport] = useState(false)
   const [showCharacters, setShowCharacters] = useState(false)
+  const [showRules, setShowRules] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [sideW, setSideW] = useState(() => storedWidth(SIDE))
@@ -212,6 +214,7 @@ export default function App() {
   const recRef = useRef<(() => void) | null>(null)
   const escRef = useRef<(() => boolean) | null>(null)
   const recActiveRef = useRef<(() => boolean) | null>(null)
+  const guardRef = useRef<((proceed: () => void) => boolean) | null>(null)
   const previewSourceRef = useRef<PreviewSource>({ kind: 'none' })
   const submittedRef = useRef<{ cueId: string; source: PreviewSource } | null>(null)
   const focusTextRef = useRef<(() => void) | null>(null)
@@ -487,7 +490,7 @@ export default function App() {
     [activeCueId, mutateCue, flushText]
   )
 
-  const selectCue = useCallback(
+  const doSelectCue = useCallback(
     (cueId: string | undefined) => {
       void flushText()
       void flushVoice()
@@ -495,6 +498,15 @@ export default function App() {
       setActiveCueId(cueId)
     },
     [flushText, flushVoice]
+  )
+
+  const selectCue = useCallback(
+    (cueId: string | undefined) => {
+      if (cueId === activeCueIdRef.current) return
+      if (guardRef.current?.(() => doSelectCue(cueId))) return
+      doSelectCue(cueId)
+    },
+    [doSelectCue]
   )
 
   const onApprove = useCallback(
@@ -651,6 +663,14 @@ export default function App() {
     [debounceVoice, pushStatus, dispatch]
   )
 
+  const onVoiceDefault = useCallback(() => {
+    const cue = activeCue
+    const character = activeCharacter
+    if (!cue || !character) return
+    onCharacterVoice(character.id, resolveVoiceSettings(character, cue))
+    onVoiceReset()
+  }, [activeCue, activeCharacter, onCharacterVoice, onVoiceReset])
+
   const onCharacterProvider = useCallback(
     (characterId: string, patch: { voiceId?: string; ttsModel?: string; stsModel?: string }) => {
       setProject((p) =>
@@ -685,15 +705,16 @@ export default function App() {
   )
 
   const onTakeAdded = useCallback(
-    (cueId: string, take: Take) => {
+    (cueId: string, take: Take, explicit?: boolean) => {
       const submitted = submittedRef.current
       const ok = shouldSelectCandidate({
-        active: isActiveCue(cueId) && submitted?.cueId === cueId,
+        active: isActiveCue(cueId) && (!!explicit || submitted?.cueId === cueId),
         take,
         submitted: submitted?.source ?? null,
         current: previewSourceRef.current,
         playing: transport.getState().playing,
         recording: recActiveRef.current?.() ?? false,
+        explicit,
       })
       if (ok) setPreviewSource({ kind: 'take', takeId: take.id })
     },
@@ -760,7 +781,7 @@ export default function App() {
     })
   }, [activeCue, flushText, noteSubmit, onTakeAdded, pushStatus, submitJob])
 
-  const goHome = useCallback(async () => {
+  const leaveProject = useCallback(async () => {
     try {
       await flushText()
       await flushVoice()
@@ -778,6 +799,11 @@ export default function App() {
     setProject(null)
     setActiveCueId(undefined)
   }, [flushText, flushVoice, flushUi, pushStatus])
+
+  const goHome = useCallback(() => {
+    if (guardRef.current?.(() => void leaveProject())) return
+    void leaveProject()
+  }, [leaveProject])
 
   async function syncCsv(): Promise<void> {
     setBulk(true)
@@ -880,7 +906,10 @@ export default function App() {
       onCopy,
     ]
   )
-  useKeyboard(handlers, !!project && !showExport && !showCharacters && !menuOpen && !reimport.open)
+  useKeyboard(
+    handlers,
+    !!project && !showExport && !showCharacters && !showRules && !menuOpen && !reimport.open
+  )
 
   if (!project) {
     return (
@@ -953,7 +982,7 @@ export default function App() {
                   disabled={bulk || busyCount > 0}
                   onClick={() => {
                     setMenuOpen(false)
-                    void goHome()
+                    goHome()
                   }}
                 >
                   Home
@@ -991,6 +1020,16 @@ export default function App() {
                   }}
                 >
                   Characters
+                </button>
+                <button
+                  className="menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setShowRules(true)
+                  }}
+                >
+                  Rules…
                 </button>
                 <button
                   className="menu-item"
@@ -1105,8 +1144,6 @@ export default function App() {
               onSubmit={noteSubmit}
               onAcceptSuggestion={onAcceptSuggestion}
               onRejectSuggestion={onRejectSuggestion}
-              onVoiceChange={onVoiceChange}
-              onVoiceReset={onVoiceReset}
               cueBusy={activeCueBusy}
               origRef={origRef}
               takeRef={takeRef}
@@ -1116,13 +1153,14 @@ export default function App() {
               recRef={recRef}
               escRef={escRef}
               recActiveRef={recActiveRef}
+              guardRef={guardRef}
               focusTextRef={focusTextRef}
               appSettings={appSettings}
               onAppSettings={onAppSettings}
               onTakeAdded={onTakeAdded}
               onStatus={pushStatus}
               isActiveCue={isActiveCue}
-              rulesVersion={project.pronunciationRules}
+              rules={project.pronunciationRules}
             />
           ) : (
             <div className="center-empty">Select a cue from the list</div>
@@ -1142,11 +1180,11 @@ export default function App() {
             onSetFinal={makeFinal}
             onDelete={() => shownTake && onDeleteTake(shownTake.id)}
             character={activeCharacter}
-            onCharacterVoice={onCharacterVoice}
-            rules={project.pronunciationRules}
-            onRulesSaved={(text) =>
-              setProject((p) => (p ? { ...p, pronunciationRules: text } : p))
-            }
+            voice={resolveVoiceSettings(activeCharacter, activeCue)}
+            voiceOverride={activeCue?.voiceSettingsOverride}
+            onVoiceChange={onVoiceChange}
+            onVoiceReset={onVoiceReset}
+            onVoiceDefault={onVoiceDefault}
           />
         </aside>
       </div>
@@ -1171,6 +1209,15 @@ export default function App() {
           dispatch={dispatch}
           onStatus={pushStatus}
           onClose={() => setShowCharacters(false)}
+        />
+      )}
+
+      {showRules && (
+        <RulesDialog
+          rules={project.pronunciationRules}
+          cue={activeCue}
+          onSaved={(text) => setProject((p) => (p ? { ...p, pronunciationRules: text } : p))}
+          onClose={() => setShowRules(false)}
         />
       )}
     </div>

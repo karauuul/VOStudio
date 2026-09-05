@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode, type RefObject } from 'react'
 import type { Cue, Term } from '@shared/domain'
 import { highlightRanges, matchTerms } from '@shared/prompt'
+import { diffWords } from '@shared/text-diff'
 
 export type CopyKind = 'source' | 'translation' | 'prompt'
 
@@ -12,7 +13,7 @@ interface Props {
   onCopy: (kind: CopyKind) => void
   onAcceptSuggestion: () => void
   onRejectSuggestion: () => void
-  preview: string
+  spoken: string
 }
 
 function Source({ text, needles }: { text: string; needles: string[] }) {
@@ -33,6 +34,26 @@ function Source({ text, needles }: { text: string; needles: string[] }) {
   return <>{out}</>
 }
 
+function Spoken({ from, to }: { from: string; to: string }) {
+  const parts = useMemo(() => diffWords(from, to), [from, to])
+  return (
+    <div className="spoken">
+      <span className="spoken-l">Spoken</span>
+      <span className="spoken-tx">
+        {parts.map((p, i) =>
+          p.changed ? (
+            <b key={i} className="spoken-d">
+              {p.text}
+            </b>
+          ) : (
+            <span key={i}>{p.text}</span>
+          )
+        )}
+      </span>
+    </div>
+  )
+}
+
 export function TextBlock({
   cue,
   terms,
@@ -41,7 +62,7 @@ export function TextBlock({
   onCopy,
   onAcceptSuggestion,
   onRejectSuggestion,
-  preview,
+  spoken,
 }: Props) {
   const matched = useMemo(
     () => matchTerms(terms, cue.sourceText, cue.text),
@@ -50,69 +71,72 @@ export function TextBlock({
   const needles = useMemo(() => matched.map((t) => t.term), [matched])
 
   return (
-    <div className="text-block">
-      <div className="copy-bar">
-        <span className="sp" />
-        <button className="btn ghost" onClick={() => onCopy('source')}>
-          Copy source <kbd>S</kbd>
-        </button>
-        <button className="btn ghost" onClick={() => onCopy('translation')}>
-          Copy translation <kbd>T</kbd>
-        </button>
-        <button className="btn ghost" onClick={() => onCopy('prompt')}>
-          Copy as prompt <kbd>P</kbd>
-        </button>
-      </div>
-
-      <div className="eng">
-        <Source text={cue.sourceText} needles={needles} />
-      </div>
-
-      <div className="ukr-wrap">
-        <textarea
-          ref={textRef}
-          className="ukr"
-          value={cue.text}
-          onChange={(e) => onText(e.target.value)}
-          placeholder="Ukrainian translation…"
-          spellCheck={false}
-        />
-        <span className="cc" title="Characters">
-          {cue.text.length}
-        </span>
-      </div>
-
-      {matched.length > 0 && (
-        <div className="term-chips">
-          {matched.map((t) => (
-            <span className="term-chip" key={t.term + t.translation} title={t.note}>
-              {t.term} → {t.translation}
-            </span>
-          ))}
+    <div className="script">
+      <section className="script-cell">
+        <div className="script-h">
+          <span className="script-l">Original</span>
+          <span className="sp" />
+          <button className="btn ghost script-cp" onClick={() => onCopy('source')}>
+            Copy <kbd>S</kbd>
+          </button>
         </div>
-      )}
-
-      {cue.suggestedText !== undefined && (
-        <div className="sugg">
-          <div className="sugg-h">
-            Suggested translation
-            <span className="sp" />
-            <button className="btn ok" onClick={onAcceptSuggestion}>
-              Accept <kbd>Y</kbd>
-            </button>
-            <button className="btn ghost" onClick={onRejectSuggestion}>
-              Reject <kbd>N</kbd>
-            </button>
+        <div className="script-tx">
+          <Source text={cue.sourceText} needles={needles} />
+        </div>
+        {matched.length > 0 && (
+          <div className="term-chips">
+            {matched.map((t) => (
+              <span className="term-chip" key={t.term + t.translation} title={t.note}>
+                {t.term} → {t.translation}
+              </span>
+            ))}
           </div>
-          <div className="sugg-tx">{cue.suggestedText}</div>
-        </div>
-      )}
+        )}
+      </section>
 
-      {preview && preview !== cue.text && (
-        <div className="rules-prev" title="Text after pronunciation rules — this is what gets voiced">
-          {preview}
+      <section className="script-cell">
+        <div className="script-h">
+          <span className="script-l">Translation</span>
+          <span className="sp" />
+          <button className="btn ghost script-cp" onClick={() => onCopy('translation')}>
+            Copy <kbd>T</kbd>
+          </button>
+          <button className="btn ghost script-cp" onClick={() => onCopy('prompt')}>
+            Prompt <kbd>P</kbd>
+          </button>
         </div>
-      )}
+
+        <div className="ukr-wrap">
+          <textarea
+            ref={textRef}
+            className="ukr"
+            value={cue.text}
+            onChange={(e) => onText(e.target.value)}
+            spellCheck={false}
+          />
+          <span className="cc" title="Characters">
+            {cue.text.length}
+          </span>
+        </div>
+
+        {cue.suggestedText !== undefined && (
+          <div className="sugg">
+            <div className="sugg-h">
+              Suggested
+              <span className="sp" />
+              <button className="btn ok" onClick={onAcceptSuggestion}>
+                Accept <kbd>Y</kbd>
+              </button>
+              <button className="btn ghost" onClick={onRejectSuggestion}>
+                Reject <kbd>N</kbd>
+              </button>
+            </div>
+            <div className="sugg-tx">{cue.suggestedText}</div>
+          </div>
+        )}
+
+        {!!spoken && spoken !== cue.text && <Spoken from={cue.text} to={spoken} />}
+      </section>
     </div>
   )
 }
