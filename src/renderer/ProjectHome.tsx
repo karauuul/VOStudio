@@ -129,6 +129,12 @@ export function ProjectHome({
             tabIndex={0}
             title={p.dir}
             onClick={() => open(p.dir)}
+            onKeyDown={(e) => {
+              if (e.code !== 'Enter' && e.code !== 'NumpadEnter' && e.code !== 'Space') return
+              if (e.target !== e.currentTarget) return
+              e.preventDefault()
+              open(p.dir)
+            }}
           >
             <span className="home-name">{p.name}</span>
             <span className="home-badges">

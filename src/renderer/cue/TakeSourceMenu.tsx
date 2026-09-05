@@ -82,6 +82,10 @@ function sourceLabel(entries: Entry[], source: PreviewSource): string {
     .join(' · ')
 }
 
+export function activeSourceLabel(cue: Cue, source: PreviewSource): string {
+  return sourceLabel(buildEntries(cue), source)
+}
+
 function finalLabel(cue: Cue, entries: Entry[]): string {
   const output = outputSource(cue)
   if (!output) return 'No output'
