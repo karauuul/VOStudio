@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { mergeEffects } from '../src/shared/effects'
 import {
   compEffectsTail,
   compHasReverb,
@@ -259,5 +260,33 @@ describe('zod roundtrip', () => {
     expect(
       clipEffectsSchema.safeParse({ reverb: { mix: 0.5, size: 0.5, decay: 1, preDelay: 0.5 } }).success
     ).toBe(false)
+  })
+})
+
+describe('mergeEffects', () => {
+  const current = {
+    reverb: { mix: 0.3, size: 0.5, decay: 1.2 },
+    delay: { time: 0.25, feedback: 0.4, mix: 0.2 },
+    pitch: { semitones: 2 },
+  }
+
+  it('patches one reverb field and keeps its siblings', () => {
+    expect(mergeEffects(current, { reverb: { mix: 0.8 } })).toEqual({
+      ...current,
+      reverb: { mix: 0.8, size: 0.5, decay: 1.2 },
+    })
+  })
+
+  it('patches delay and pitch without touching reverb', () => {
+    expect(mergeEffects(current, { delay: { feedback: 0.1 }, pitch: { semitones: -3 } })).toEqual({
+      reverb: current.reverb,
+      delay: { time: 0.25, feedback: 0.1, mix: 0.2 },
+      pitch: { semitones: -3 },
+    })
+  })
+
+  it('ignores a patch for an effect that is off', () => {
+    expect(mergeEffects({ pitch: { semitones: 1 } }, { reverb: { mix: 0.5 } })).toEqual({ pitch: { semitones: 1 } })
+    expect(mergeEffects(undefined, { delay: { mix: 0.5 } })).toEqual({})
   })
 })
