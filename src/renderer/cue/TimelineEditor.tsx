@@ -171,21 +171,16 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   )
   const edit = useCompEdit(cue.id, cue.comp, onComp, onProblem)
 
-  const optimistic = useRef<CueComp | null | undefined>(undefined)
-  useEffect(() => {
-    optimistic.current = undefined
-  }, [cue.comp])
-  const shownComp = useCallback(
-    (): CueComp | null => (optimistic.current === undefined ? refs.display.current : optimistic.current),
-    [refs]
-  )
+  const shownComp = useCallback((): CueComp | null => {
+    const queued = edit.pending()
+    return queued === undefined ? refs.display.current : queued
+  }, [edit, refs])
 
   const commit = useCallback(
     (next: CueComp | null, from: CueComp | null): void => {
       if (!refs.editable.current) return
       const value = next && next.clips.length > 0 ? next : null
       if (sameComp(value, from)) return
-      optimistic.current = value
       edit.commit(value)
     },
     [edit, refs]

@@ -313,7 +313,6 @@ export function CueEditor({
           aria-orientation="horizontal"
           aria-label="Resize script and audio"
           tabIndex={0}
-          title="Drag to resize · double-click to reset"
           onMouseDown={startSplit}
           onDoubleClick={resetHeight}
           onKeyDown={(e) => {
