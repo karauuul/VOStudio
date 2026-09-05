@@ -76,6 +76,11 @@ function pump(): void {
 
 export const useJobCount = (): number => useJobsStore((s) => pendingCount(s.jobs))
 
+export const useJobTotal = (): number => useJobsStore((s) => s.jobs.length)
+
+export const useJobFailed = (): number =>
+  useJobsStore((s) => s.jobs.reduce((n, j) => (j.state === 'error' ? n + 1 : n), 0))
+
 export const useBusyCount = (): number => useJobsStore((s) => pendingCount(s.jobs) + s.saving)
 
 export const useCueBusy = (cueId: string): boolean =>

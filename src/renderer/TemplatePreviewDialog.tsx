@@ -1,4 +1,5 @@
 import type { ReimportDiff, TemplateIssue, TemplatePreview } from '@shared/ipc'
+import { Overlay } from './Overlay'
 
 interface Props {
   preview: TemplatePreview
@@ -8,6 +9,8 @@ interface Props {
   onCancel: () => void
   onCreate: () => void
 }
+
+const PRESERVED = ['Takes', 'Comps', 'Approvals', 'Voice overrides', 'Notes']
 
 function IssueList({ issues, tone }: { issues: TemplateIssue[]; tone: 'err' | 'warn' }) {
   return (
@@ -23,61 +26,111 @@ function IssueList({ issues, tone }: { issues: TemplateIssue[]; tone: 'err' | 'w
   )
 }
 
-export function TemplatePreviewDialog({ preview, busy, diff, confirmLabel, onCancel, onCreate }: Props) {
+export function TemplatePreviewDialog({
+  preview,
+  busy,
+  diff,
+  confirmLabel,
+  onCancel,
+  onCreate,
+}: Props) {
   const blocked = preview.fatalErrors.length > 0
 
   return (
-    <div className="modal-bg" onClick={onCancel}>
-      <div className="modal tpl-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          {preview.meta?.name ?? 'Template'}
-          <button className="icon-btn" onClick={onCancel} aria-label="Close">
-            ✕
-          </button>
+    <Overlay
+      title={preview.meta?.name ?? 'Template'}
+      label={diff ? 'Re-import template' : 'Import template'}
+      onClose={onCancel}
+      busy={busy}
+      wide
+    >
+      <div className="modal-body">
+        <div className="sec-h">Summary</div>
+        <div className="home-badges">
+          <span className="pb mono">{preview.dir}</span>
+          {preview.meta && (
+            <span className="pb">
+              {preview.meta.sourceLang} → {preview.meta.targetLang}
+            </span>
+          )}
+          <span className="pb">{preview.totalCues} cues</span>
+          <span className="pb">{preview.characters.length} characters</span>
+          {diff ? (
+            <span className="pb">Terms not re-imported</span>
+          ) : (
+            <span className="pb">{preview.terms} terms</span>
+          )}
+          {blocked && <span className="pb err">{preview.fatalErrors.length} errors</span>}
         </div>
 
-        <div className="modal-body">
-          <div className="home-badges">
-            <span className="pb mono">{preview.dir}</span>
-            {preview.meta && (
-              <span className="pb">
-                {preview.meta.sourceLang} → {preview.meta.targetLang}
-              </span>
-            )}
-            <span className="pb">{preview.totalCues} cues</span>
-            <span className="pb">{preview.characters.length} characters</span>
-            <span className="pb">{preview.terms} terms</span>
-            {preview.warnings.length > 0 && <span className="pb warn">{preview.warnings.length} warnings</span>}
-            {blocked && <span className="pb err">{preview.fatalErrors.length} errors</span>}
-          </div>
-
-          {diff && (
+        {diff && (
+          <>
             <div className="home-badges">
               <span className="pb ok">Added {diff.added}</span>
               <span className="pb">Updated {diff.updated}</span>
               <span className="pb">Untouched {diff.untouched}</span>
-              <span className={diff.orphaned > 0 ? 'pb warn' : 'pb'}>Orphaned {diff.orphaned}</span>
+              <span className={diff.orphaned > 0 ? 'pb warn' : 'pb'}>
+                Orphaned {diff.orphaned}
+              </span>
+            </div>
+            <div className="sec-h">Preserved</div>
+            <div className="home-badges">
+              {PRESERVED.map((p) => (
+                <span key={p} className="pb ok">
+                  {p}
+                </span>
+              ))}
+              <span className="pb">Orphaned cues kept</span>
+            </div>
+          </>
+        )}
+
+        {!diff && preview.characters.length > 0 && (
+          <div className="home-badges tpl-chars">
+            {preview.characters.map((c) => (
+              <span key={c} className="pb ok">
+                {c}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {blocked && (
+          <>
+            <div className="sec-h t-err">Errors</div>
+            <IssueList issues={preview.fatalErrors} tone="err" />
+          </>
+        )}
+
+        {preview.warnings.length > 0 && (
+          <details className="tpl-more">
+            <summary>{preview.warnings.length} warnings</summary>
+            <IssueList issues={preview.warnings} tone="warn" />
+          </details>
+        )}
+
+        {diff && diff.updatedSample.length > 0 && (
+          <details className="tpl-more">
+            <summary>Sample · {diff.updatedSample.length} changed rows</summary>
+            <ul className="tpl-issues warn">
               {diff.updatedSample.map((s) => (
-                <span key={s.cueId} className="pb mono">
-                  {s.cueId}
-                  {s.sourceChanged ? ' src' : ''}
-                  {s.translationChanged ? ' tr' : ''}
-                </span>
+                <li key={s.cueId}>
+                  <span className="mono">{s.cueId}</span>
+                  <span className="sp" />
+                  <span>
+                    {[s.sourceChanged ? 'source' : '', s.translationChanged ? 'translation' : '']
+                      .filter(Boolean)
+                      .join(', ')}
+                  </span>
+                </li>
               ))}
-            </div>
-          )}
+            </ul>
+          </details>
+        )}
 
-          {preview.characters.length > 0 && (
-            <div className="home-badges tpl-chars">
-              {preview.characters.map((c) => (
-                <span key={c} className="pb ok">
-                  {c}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {preview.firstRows.length > 0 && (
+        {preview.firstRows.length > 0 && (
+          <>
+            <div className="sec-h">Sample</div>
             <div className="tpl-scroll">
               <table className="tpl-table">
                 <thead>
@@ -104,21 +157,19 @@ export function TemplatePreviewDialog({ preview, busy, diff, confirmLabel, onCan
                 </tbody>
               </table>
             </div>
-          )}
-
-          {blocked && <IssueList issues={preview.fatalErrors} tone="err" />}
-          {preview.warnings.length > 0 && <IssueList issues={preview.warnings} tone="warn" />}
-        </div>
-
-        <div className="modal-foot">
-          <button className="btn ghost" onClick={onCancel} disabled={busy}>
-            Cancel
-          </button>
-          <button className="btn primary" onClick={onCreate} disabled={busy || blocked}>
-            {confirmLabel ?? 'Create'}
-          </button>
-        </div>
+          </>
+        )}
       </div>
-    </div>
+
+      <div className="modal-foot">
+        <button className="btn ghost" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button className="btn primary" onClick={onCreate} disabled={busy || blocked}>
+          {busy ? <span className="spin" /> : null}
+          {confirmLabel ?? 'Create project'}
+        </button>
+      </div>
+    </Overlay>
   )
 }

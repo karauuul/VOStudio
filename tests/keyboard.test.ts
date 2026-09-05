@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { BINDINGS, resolveKey, type KeyInput, type Scope } from '../src/renderer/keyboard'
+import {
+  BINDINGS,
+  groupOf,
+  keyText,
+  resolveKey,
+  SHORTCUT_GROUPS,
+  type Binding,
+  type KeyInput,
+  type Scope,
+} from '../src/renderer/keyboard'
 
 const key = (over: Partial<KeyInput> & { code: string }): KeyInput => ({
   ctrlKey: false,
@@ -106,6 +115,86 @@ describe('routes', () => {
     expect(action({ code: 'KeyF', ctrlKey: true, scope: 'deliver' })).toBeNull()
   })
 })
+
+describe('app surfaces', () => {
+  const routes: Scope[] = ['workspace', 'timeline', 'text', 'grid', 'gridText', 'deliver', 'home']
+
+  it('Settings and Shortcuts resolve from every route scope and from Home', () => {
+    for (const scope of routes) {
+      expect(action({ code: 'Comma', ctrlKey: true, scope })).toBe('settings')
+      expect(action({ code: 'F1', scope })).toBe('shortcuts')
+    }
+  })
+
+  it('they need their exact modifiers and stay out of blocking surfaces', () => {
+    expect(action({ code: 'Comma' })).toBeNull()
+    expect(action({ code: 'Comma', ctrlKey: true, shiftKey: true })).toBeNull()
+    expect(action({ code: 'F1', ctrlKey: true })).toBeNull()
+    for (const scope of ['popover', 'decision'] as Scope[]) {
+      expect(action({ code: 'Comma', ctrlKey: true, scope })).toBeNull()
+      expect(action({ code: 'F1', scope })).toBeNull()
+    }
+  })
+
+  it('Home has no Work, grid or route commands, only Escape', () => {
+    expect(action({ code: 'Escape', scope: 'home' })).toBe('escape')
+    for (const code of ['KeyA', 'KeyF', 'KeyR', 'Space', 'Enter', 'Digit1', 'ArrowDown', 'Delete']) {
+      expect(action({ code, scope: 'home' })).toBeNull()
+    }
+    expect(action({ code: 'Digit1', ctrlKey: true, scope: 'home' })).toBeNull()
+    expect(action({ code: 'KeyG', ctrlKey: true, scope: 'home' })).toBeNull()
+    expect(action({ code: 'KeyF', ctrlKey: true, scope: 'home' })).toBeNull()
+  })
+})
+
+describe('shortcuts table', () => {
+  it('labels one binding per action, and every labelled binding is reachable', () => {
+    const labelled = BINDINGS.filter((b) => b.label)
+    const actions = labelled.map((b) => b.action)
+    expect(new Set(actions).size).toBe(actions.length)
+    for (const b of labelled) {
+      expect(b.label?.trim()).toBeTruthy()
+      expect(b.codes.length).toBeGreaterThan(0)
+      expect(b.scopes.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('every action in the table has exactly one label to render', () => {
+    for (const b of BINDINGS) {
+      const same = BINDINGS.filter((o) => o.action === b.action && o.label)
+      expect(same.length).toBe(1)
+    }
+  })
+
+  it('renders physical codes as badges, numpad duplicates excluded', () => {
+    const of = (action: string): Binding => BINDINGS.find((b) => b.action === action)!
+    expect(keyText(of('approve'))).toBe('A')
+    expect(keyText(of('approveNext'))).toBe('Shift+A')
+    expect(keyText(of('generate'))).toBe('Ctrl+G')
+    expect(keyText(of('promptFragment'))).toBe('Ctrl+Shift+G')
+    expect(keyText(of('settings'))).toBe('Ctrl+,')
+    expect(keyText(of('shortcuts'))).toBe('F1')
+    expect(keyText(of('routeWork'))).toBe('Ctrl+1')
+    expect(keyText(of('gridNext'))).toBe('↓')
+    expect(keyText(of('deleteClip'))).toBe('Del')
+    expect(keyText(of('selectTake'))).toBe('1…9')
+  })
+
+  it('groups every labelled binding into exactly one visible section', () => {
+    const titles = SHORTCUT_GROUPS.map((g) => g.title)
+    for (const b of BINDINGS.filter((x) => x.label)) {
+      expect(titles).toContain(groupOf(b))
+    }
+    expect(groupOf(of('settings'))).toBe('App')
+    expect(groupOf(of('approve'))).toBe('Work')
+    expect(groupOf(of('gridToggle'))).toBe('Project')
+    expect(groupOf(of('healClip'))).toBe('Timeline')
+  })
+})
+
+function of(action: string): Binding {
+  return BINDINGS.find((b) => b.action === action)!
+}
 
 describe('project grid', () => {
   it('owns arrows, Enter, Space and select all', () => {

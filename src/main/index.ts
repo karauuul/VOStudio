@@ -718,7 +718,7 @@ void app.whenReady().then(() => {
   })
 
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {
-    cb(permission === 'media')
+    cb(permission === 'media' || permission === 'clipboard-sanitized-write')
   })
 
   registerHandlers()

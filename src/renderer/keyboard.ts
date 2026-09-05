@@ -9,8 +9,11 @@ export type Scope =
   | 'timeline'
   | 'workspace'
   | 'deliver'
+  | 'home'
 
 export type KeyAction =
+  | 'settings'
+  | 'shortcuts'
   | 'routeWork'
   | 'routeProject'
   | 'routeDeliver'
@@ -57,6 +60,8 @@ export interface Binding {
   shift?: true
   repeat?: true
   index?: number
+  label?: string
+  keys?: string
 }
 
 export interface KeyInput {
@@ -76,55 +81,129 @@ const TEXT: Scope[] = ['workspace', 'timeline', 'text']
 const GRID: Scope[] = ['grid']
 const ROUTES: Scope[] = ['workspace', 'timeline', 'text', 'grid', 'gridText', 'deliver']
 const SEARCHABLE: Scope[] = ['workspace', 'timeline', 'text', 'grid', 'gridText']
+const APP: Scope[] = [...ROUTES, 'home']
 
 export const BINDINGS: Binding[] = [
   {
     action: 'escape',
     codes: ['Escape'],
-    scopes: ['workspace', 'timeline', 'text', 'grid', 'gridText', 'deliver', 'decision'],
+    scopes: [...ROUTES, 'home', 'decision'],
+    label: 'Close surface',
   },
-  { action: 'routeWork', codes: ['Digit1', 'Numpad1'], mod: true, scopes: ROUTES },
-  { action: 'routeProject', codes: ['Digit2', 'Numpad2'], mod: true, scopes: ROUTES },
-  { action: 'routeDeliver', codes: ['Digit3', 'Numpad3'], mod: true, scopes: ROUTES },
-  { action: 'focusSearch', codes: ['KeyF'], mod: true, scopes: SEARCHABLE },
-  { action: 'gridNext', codes: ['ArrowDown'], scopes: GRID, repeat: true },
-  { action: 'gridPrev', codes: ['ArrowUp'], scopes: GRID, repeat: true },
-  { action: 'gridOpen', codes: ['Enter', 'NumpadEnter'], scopes: GRID },
-  { action: 'gridToggle', codes: ['Space'], scopes: GRID },
-  { action: 'gridSelectAll', codes: ['KeyA'], mod: true, scopes: GRID },
-  { action: 'generate', codes: ['KeyG'], mod: true, scopes: TEXT },
-  { action: 'promptFragment', codes: ['KeyG'], mod: true, shift: true, scopes: TIMELINE },
-  { action: 'undo', codes: ['KeyZ'], mod: true, scopes: TIMELINE },
-  { action: 'redo', codes: ['KeyZ'], mod: true, shift: true, scopes: TIMELINE },
-  { action: 'next', codes: ['KeyJ', 'ArrowDown'], scopes: WORK, repeat: true },
-  { action: 'prev', codes: ['KeyK', 'ArrowUp'], scopes: WORK, repeat: true },
-  { action: 'playOriginal', codes: ['KeyO'], scopes: WORK },
-  { action: 'playPause', codes: ['Space'], scopes: WORK },
-  { action: 'restartActive', codes: ['Enter', 'NumpadEnter'], scopes: WORK },
-  { action: 'compare', codes: ['KeyB'], scopes: WORK },
-  { action: 'makeFinal', codes: ['KeyF'], scopes: WORK },
-  { action: 'approve', codes: ['KeyA'], scopes: WORK },
-  { action: 'approveNext', codes: ['KeyA'], shift: true, scopes: WORK },
-  { action: 'focusText', codes: ['KeyE'], scopes: WORK },
-  { action: 'toggleRecord', codes: ['KeyR'], scopes: WORK },
-  { action: 'toggleFragmentRecord', codes: ['KeyR'], shift: true, scopes: TIMELINE },
-  { action: 'toggleTimeline', codes: ['KeyD'], scopes: WORK },
-  { action: 'acceptSuggestion', codes: ['KeyY'], scopes: WORK },
-  { action: 'rejectSuggestion', codes: ['KeyN'], scopes: WORK },
-  { action: 'copySource', codes: ['KeyS'], scopes: WORK },
-  { action: 'copyTranslation', codes: ['KeyT'], scopes: WORK },
-  { action: 'copyPrompt', codes: ['KeyP'], scopes: WORK },
-  { action: 'splitClip', codes: ['KeyC'], scopes: TIMELINE },
-  { action: 'healClip', codes: ['KeyH'], scopes: TIMELINE },
-  { action: 'crossfadeClip', codes: ['KeyX'], scopes: TIMELINE },
-  { action: 'deleteClip', codes: ['Delete'], scopes: TIMELINE },
+  { action: 'settings', codes: ['Comma'], mod: true, scopes: APP, label: 'Settings' },
+  { action: 'shortcuts', codes: ['F1'], scopes: APP, label: 'Shortcuts' },
+  { action: 'routeWork', codes: ['Digit1', 'Numpad1'], mod: true, scopes: ROUTES, label: 'Work' },
+  {
+    action: 'routeProject',
+    codes: ['Digit2', 'Numpad2'],
+    mod: true,
+    scopes: ROUTES,
+    label: 'Project',
+  },
+  {
+    action: 'routeDeliver',
+    codes: ['Digit3', 'Numpad3'],
+    mod: true,
+    scopes: ROUTES,
+    label: 'Deliver',
+  },
+  { action: 'focusSearch', codes: ['KeyF'], mod: true, scopes: SEARCHABLE, label: 'Focus search' },
+  { action: 'gridNext', codes: ['ArrowDown'], scopes: GRID, repeat: true, label: 'Next row' },
+  { action: 'gridPrev', codes: ['ArrowUp'], scopes: GRID, repeat: true, label: 'Previous row' },
+  { action: 'gridOpen', codes: ['Enter', 'NumpadEnter'], scopes: GRID, label: 'Open cue' },
+  { action: 'gridToggle', codes: ['Space'], scopes: GRID, label: 'Select row' },
+  { action: 'gridSelectAll', codes: ['KeyA'], mod: true, scopes: GRID, label: 'Select all results' },
+  { action: 'generate', codes: ['KeyG'], mod: true, scopes: TEXT, label: 'Generate' },
+  {
+    action: 'promptFragment',
+    codes: ['KeyG'],
+    mod: true,
+    shift: true,
+    scopes: TIMELINE,
+    label: 'Generate fragment',
+  },
+  { action: 'undo', codes: ['KeyZ'], mod: true, scopes: TIMELINE, label: 'Undo' },
+  { action: 'redo', codes: ['KeyZ'], mod: true, shift: true, scopes: TIMELINE, label: 'Redo' },
+  { action: 'next', codes: ['KeyJ', 'ArrowDown'], scopes: WORK, repeat: true, label: 'Next cue' },
+  {
+    action: 'prev',
+    codes: ['KeyK', 'ArrowUp'],
+    scopes: WORK,
+    repeat: true,
+    label: 'Previous cue',
+  },
+  { action: 'playOriginal', codes: ['KeyO'], scopes: WORK, label: 'Play original' },
+  { action: 'playPause', codes: ['Space'], scopes: WORK, label: 'Play / pause' },
+  { action: 'restartActive', codes: ['Enter', 'NumpadEnter'], scopes: WORK, label: 'Play active' },
+  { action: 'compare', codes: ['KeyB'], scopes: WORK, label: 'Compare' },
+  { action: 'makeFinal', codes: ['KeyF'], scopes: WORK, label: 'Set final' },
+  { action: 'approve', codes: ['KeyA'], scopes: WORK, label: 'Approve' },
+  { action: 'approveNext', codes: ['KeyA'], shift: true, scopes: WORK, label: 'Approve & next' },
+  { action: 'focusText', codes: ['KeyE'], scopes: WORK, label: 'Focus translation' },
+  { action: 'toggleRecord', codes: ['KeyR'], scopes: WORK, label: 'Record' },
+  {
+    action: 'toggleFragmentRecord',
+    codes: ['KeyR'],
+    shift: true,
+    scopes: TIMELINE,
+    label: 'Record fragment',
+  },
+  { action: 'toggleTimeline', codes: ['KeyD'], scopes: WORK, label: 'Timeline / review' },
+  { action: 'acceptSuggestion', codes: ['KeyY'], scopes: WORK, label: 'Accept suggestion' },
+  { action: 'rejectSuggestion', codes: ['KeyN'], scopes: WORK, label: 'Reject suggestion' },
+  { action: 'copySource', codes: ['KeyS'], scopes: WORK, label: 'Copy source' },
+  { action: 'copyTranslation', codes: ['KeyT'], scopes: WORK, label: 'Copy translation' },
+  { action: 'copyPrompt', codes: ['KeyP'], scopes: WORK, label: 'Copy prompt' },
+  { action: 'splitClip', codes: ['KeyC'], scopes: TIMELINE, label: 'Cut' },
+  { action: 'healClip', codes: ['KeyH'], scopes: TIMELINE, label: 'Heal' },
+  { action: 'crossfadeClip', codes: ['KeyX'], scopes: TIMELINE, label: 'Crossfade' },
+  { action: 'deleteClip', codes: ['Delete'], scopes: TIMELINE, label: 'Delete clip' },
   ...Array.from({ length: 9 }, (_, i) => ({
     action: 'selectTake' as const,
     codes: [`Digit${i + 1}`, `Numpad${i + 1}`],
     scopes: WORK,
     index: i,
+    ...(i === 0 ? { label: 'Select take', keys: '1…9' } : {}),
   })),
 ]
+
+const MOD_LABEL =
+  typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent) ? '⌘' : 'Ctrl'
+
+const CODE_NAMES: Record<string, string> = {
+  ArrowUp: '↑',
+  ArrowDown: '↓',
+  ArrowLeft: '←',
+  ArrowRight: '→',
+  Comma: ',',
+  Escape: 'Esc',
+  Delete: 'Del',
+}
+
+function codeName(code: string): string {
+  if (CODE_NAMES[code]) return CODE_NAMES[code]
+  if (code.startsWith('Key')) return code.slice(3)
+  if (code.startsWith('Digit')) return code.slice(5)
+  return code
+}
+
+export function keyText(b: Binding): string {
+  if (b.keys) return b.keys
+  const code = b.codes.find((c) => !c.startsWith('Numpad')) ?? b.codes[0]
+  return [b.mod ? MOD_LABEL : '', b.shift ? 'Shift' : '', codeName(code)].filter(Boolean).join('+')
+}
+
+export const SHORTCUT_GROUPS: { scope: Scope; title: string }[] = [
+  { scope: 'home', title: 'App' },
+  { scope: 'workspace', title: 'Work' },
+  { scope: 'grid', title: 'Project' },
+  { scope: 'timeline', title: 'Timeline' },
+  { scope: 'deliver', title: 'Deliver' },
+]
+
+export function groupOf(b: Binding): string {
+  return SHORTCUT_GROUPS.find((g) => b.scopes.includes(g.scope))?.title ?? 'Work'
+}
 
 export function resolveKey(e: KeyInput): Binding | null {
   if (e.isComposing || e.altKey || e.scope === 'popover') return null
@@ -141,6 +220,8 @@ export function resolveKey(e: KeyInput): Binding | null {
 }
 
 export interface KeyboardHandlers {
+  settings: () => void
+  shortcuts: () => void
   routeWork: () => void
   routeProject: () => void
   routeDeliver: () => void
@@ -182,6 +263,7 @@ export interface KeyboardHandlers {
 }
 
 export interface KeyboardScopes {
+  home: boolean
   timeline: boolean
   grid: boolean
   deliver: boolean
@@ -223,7 +305,8 @@ export function useKeyboard(
       if (el?.closest(LOCAL)) return
       const ctx = scopeRef.current
       let scope: Scope
-      if (ctx.decision()) scope = 'decision'
+      if (ctx.home) scope = 'home'
+      else if (ctx.decision()) scope = 'decision'
       else if (ctx.deliver) scope = 'deliver'
       else if (isEditor(el)) scope = ctx.grid ? 'gridText' : 'text'
       else if (el?.closest(NATIVE) && NATIVE_CODES.includes(e.code)) return

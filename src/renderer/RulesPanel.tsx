@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Cue } from '@shared/domain'
 import { applyRules } from '@shared/pronunciation'
 import { api } from './api'
+import { Confirm, Overlay } from './Overlay'
 
 export function countRules(text: string): number {
   return text
@@ -55,75 +56,61 @@ export function RulesDialog({ rules, cue, onSaved, onClose }: Props) {
   const output = applyRules(input, draft)
 
   return (
-    <div className="modal-bg" onClick={attemptClose}>
-      <div
-        className="modal rules-modal"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.code !== 'Escape') return
-          e.stopPropagation()
-          attemptClose()
-        }}
-      >
-        <div className="modal-head">
+    <Overlay
+      label="Pronunciation rules"
+      onClose={attemptClose}
+      drawer
+      title={
+        <>
           Pronunciation rules
           <span className="sp" />
           <span className={dirty ? 't-warn mono' : 't-ok mono'}>
             {dirty ? 'Unsaved' : '✓ Saved'}
           </span>
-          <button className="icon-btn" onClick={attemptClose} aria-label="Close">
-            ✕
-          </button>
+        </>
+      }
+    >
+      <div className="modal-body rules">
+        <textarea
+          className="rules-ta"
+          value={draft}
+          spellCheck={false}
+          autoFocus
+          onChange={(e) => {
+            setDraft(e.target.value)
+            setDirty(true)
+            setConfirmClose(false)
+          }}
+          placeholder="find → replace"
+        />
+
+        <div className="rules-prev">
+          <div className="script-l">Input</div>
+          <div className="rules-prev-tx">{input || '—'}</div>
+          <div className="script-l">Spoken</div>
+          <div className={'rules-prev-tx' + (output !== input ? ' on' : '')}>{output || '—'}</div>
         </div>
 
-        <div className="modal-body rules">
-          <textarea
-            className="rules-ta"
-            value={draft}
-            spellCheck={false}
-            autoFocus
-            onChange={(e) => {
-              setDraft(e.target.value)
-              setDirty(true)
-              setConfirmClose(false)
-            }}
-            placeholder="find → replace"
-          />
-
-          <div className="rules-prev">
-            <div className="script-l">Input</div>
-            <div className="rules-prev-tx">{input || '—'}</div>
-            <div className="script-l">Spoken</div>
-            <div className={'rules-prev-tx' + (output !== input ? ' on' : '')}>
-              {output || '—'}
-            </div>
-          </div>
-
-          {error && <div className="t-err">{error}</div>}
-        </div>
-
-        <div className="modal-foot">
-          <span className="dim mono">{countRules(draft)} rules</span>
-          {confirmClose ? (
-            <span className="rules-confirm">
-              <span className="t-warn">Unsaved rules</span>
-              <button className="btn primary" onClick={save} disabled={saving}>
-                Save
-              </button>
-              <button className="btn danger" onClick={onClose}>
-                Discard
-              </button>
-              <button className="btn ghost" autoFocus onClick={() => setConfirmClose(false)}>
-                Cancel
-              </button>
-            </span>
-          ) : (
-            <button className="btn primary" onClick={save} disabled={!dirty || saving}>
-              Save
-            </button>
-          )}
-        </div>
+        {error && <div className="t-err">{error}</div>}
       </div>
-    </div>
+
+      <div className="modal-foot">
+        <span className="dim mono">{countRules(draft)} rules</span>
+        {confirmClose ? (
+          <Confirm
+            operation="Close with unsaved rules"
+            choices={[
+              { label: 'Save', kind: 'primary', disabled: saving, onClick: save },
+              { label: 'Discard', kind: 'danger', onClick: onClose },
+              { label: 'Cancel', safe: true, onClick: () => setConfirmClose(false) },
+            ]}
+          />
+        ) : (
+          <button className="btn primary" onClick={save} disabled={!dirty || saving}>
+            Save
+          </button>
+        )}
+      </div>
+    </Overlay>
   )
 }

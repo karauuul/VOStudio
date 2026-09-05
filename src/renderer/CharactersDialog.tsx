@@ -10,6 +10,7 @@ import type { ProjectCommand } from '@shared/project-commands'
 import { api } from './api'
 import { transport } from './audio/transport'
 import { fromSlider, knobText, KNOBS, toSlider } from './cue/voice'
+import { ConfirmDialog, Overlay } from './Overlay'
 
 const TTS_MODELS = [ELEVENLABS_TTS_MODEL]
 const STS_MODELS = [ELEVENLABS_STS_MODEL]
@@ -57,6 +58,7 @@ function DraftField({
 interface Props {
   characters: Character[]
   cues: Cue[]
+  hasKey: boolean
   onVoiceSettings: (characterId: string, settings: VoiceSettings) => void
   onProvider: (characterId: string, patch: ProviderPatch) => void
   onFlushVoice: () => Promise<unknown>
@@ -69,6 +71,7 @@ interface Props {
 export function CharactersDialog({
   characters,
   cues,
+  hasKey,
   onVoiceSettings,
   onProvider,
   onFlushVoice,
@@ -77,6 +80,7 @@ export function CharactersDialog({
   onStatus,
   onClose,
 }: Props) {
+  const [selectedId, setSelectedId] = useState(characters[0]?.id ?? '')
   const [newName, setNewName] = useState('')
   const [del, setDel] = useState<{ id: string; to: string } | null>(null)
   const [testing, setTesting] = useState<ReadonlySet<string>>(new Set())
@@ -97,6 +101,8 @@ export function CharactersDialog({
     return map
   }, [cues])
 
+  const selected = characters.find((c) => c.id === selectedId) ?? characters[0]
+
   const run = (command: ProjectCommand, done?: () => void): void => {
     void dispatch(command).then(
       () => done?.(),
@@ -104,9 +110,12 @@ export function CharactersDialog({
     )
   }
 
-  const remove = (characterId: string, reassignTo: string, done?: () => void): void => {
+  const remove = (characterId: string, reassignTo: string): void => {
     onCancelVoice(characterId)
-    run({ type: 'character.delete', characterId, reassignTo }, done)
+    setDel(null)
+    run({ type: 'character.delete', characterId, reassignTo }, () => {
+      if (selectedId === characterId) setSelectedId('')
+    })
   }
 
   const test = async (character: Character): Promise<void> => {
@@ -137,156 +146,187 @@ export function CharactersDialog({
   const create = (): void => {
     const name = newName.trim()
     if (!name) return
-    run({ type: 'character.create', id: crypto.randomUUID(), name }, () => setNewName(''))
+    const id = crypto.randomUUID()
+    run({ type: 'character.create', id, name }, () => {
+      setNewName('')
+      setSelectedId(id)
+    })
   }
 
+  const busy = selected ? testing.has(selected.id) : false
+  const count = selected ? (counts.get(selected.id) ?? 0) : 0
+  const others = characters.filter((c) => c.id !== selected?.id)
+  const v = selected?.voiceSettings
+
   return (
-    <div className="modal-bg" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          Characters
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
+    <Overlay title="Characters & Voices" label="Characters and voices" onClose={onClose} drawer wide>
+      <div className="modal-body md">
+        <div className="md-list">
+          {characters.length === 0 && <div className="home-empty">No characters</div>}
+          {characters.map((c) => (
+            <button
+              key={c.id}
+              className={'md-item' + (c.id === selected?.id ? ' on' : '')}
+              onClick={() => setSelectedId(c.id)}
+            >
+              <span className="char-dot" style={{ background: c.color }} />
+              <span className="md-name">{c.name}</span>
+              <span className="dim">{counts.get(c.id) ?? 0}</span>
+            </button>
+          ))}
         </div>
 
-        <div className="modal-body">
-          <div className="coll-list">
-            {characters.map((character) => {
-              const count = counts.get(character.id) ?? 0
-              const others = characters.filter((c) => c.id !== character.id)
-              const busy = testing.has(character.id)
-              const v = character.voiceSettings
-              return (
-                <div className="coll" key={character.id}>
-                  <div className="row">
-                    <span className="char-dot" style={{ background: character.color }} />
-                    <DraftField
-                      label="Name"
-                      value={character.name}
-                      onCommit={(name) => run({ type: 'character.rename', characterId: character.id, name })}
+        <div className="md-detail">
+          {!selected || !v ? (
+            <div className="insp-empty">Select a character</div>
+          ) : (
+            <>
+              <div className="row">
+                <DraftField
+                  label="Name"
+                  value={selected.name}
+                  onCommit={(name) =>
+                    run({ type: 'character.rename', characterId: selected.id, name })
+                  }
+                />
+                <span className="dim">{count} cues</span>
+              </div>
+
+              <div className="sec-h">Voice</div>
+              <div className="row">
+                <DraftField
+                  label="Voice ID"
+                  value={selected.provider.voiceId}
+                  placeholder="voice id"
+                  onCommit={(voiceId) => onProvider(selected.id, { voiceId })}
+                />
+                <button
+                  className="btn ghost"
+                  onClick={() => void test(selected)}
+                  disabled={busy || !hasKey || !selected.provider.voiceId}
+                  title={
+                    !hasKey
+                      ? 'API key missing'
+                      : selected.provider.voiceId
+                        ? 'Test voice'
+                        : 'No voice configured'
+                  }
+                >
+                  {busy ? <span className="spin" /> : '▶'} Test voice
+                </button>
+              </div>
+
+              <div className="row">
+                <select
+                  aria-label="TTS model"
+                  value={selected.provider.ttsModel}
+                  onChange={(e) => onProvider(selected.id, { ttsModel: e.target.value })}
+                >
+                  {modelOptions(TTS_MODELS, selected.provider.ttsModel).map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="STS model"
+                  value={selected.provider.stsModel}
+                  onChange={(e) => onProvider(selected.id, { stsModel: e.target.value })}
+                >
+                  {modelOptions(STS_MODELS, selected.provider.stsModel).map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="sec-h">Character defaults</div>
+              <div className="knobs">
+                {KNOBS.map((k) => (
+                  <label key={k.key} className="knob" title={k.title}>
+                    <span className="knob-l">{k.label}</span>
+                    <input
+                      type="range"
+                      min={k.min}
+                      max={k.max}
+                      value={toSlider(v[k.key])}
+                      onChange={(e) =>
+                        onVoiceSettings(selected.id, {
+                          ...v,
+                          [k.key]: fromSlider(Number(e.target.value)),
+                        })
+                      }
                     />
-                    <DraftField
-                      label="Voice ID"
-                      value={character.provider.voiceId}
-                      placeholder="voice id"
-                      onCommit={(voiceId) => onProvider(character.id, { voiceId })}
-                    />
-                    <span className="dim">{count} cues</span>
-                  </div>
+                    <span className="knob-v">{knobText(k, v[k.key])}</span>
+                  </label>
+                ))}
+                <label className="knob tgl">
+                  <input
+                    type="checkbox"
+                    checked={v.boost}
+                    onChange={(e) => onVoiceSettings(selected.id, { ...v, boost: e.target.checked })}
+                  />
+                  Boost
+                </label>
+              </div>
 
-                  <div className="row">
-                    <select
-                      aria-label="TTS model"
-                      value={character.provider.ttsModel}
-                      onChange={(e) => onProvider(character.id, { ttsModel: e.target.value })}
-                    >
-                      {modelOptions(TTS_MODELS, character.provider.ttsModel).map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      aria-label="STS model"
-                      value={character.provider.stsModel}
-                      onChange={(e) => onProvider(character.id, { stsModel: e.target.value })}
-                    >
-                      {modelOptions(STS_MODELS, character.provider.stsModel).map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="sp" />
-                    <button
-                      className="btn ghost"
-                      onClick={() => void test(character)}
-                      disabled={busy || !character.provider.voiceId}
-                      title={character.provider.voiceId ? 'Test' : 'No voice configured'}
-                    >
-                      {busy ? <span className="spin" /> : '▶'} Test
-                    </button>
-                    <button
-                      className="btn danger"
-                      onClick={() => {
-                        if (count > 0) {
-                          setDel({ id: character.id, to: '' })
-                          return
-                        }
-                        if (confirm(`Delete ${character.name}?`)) remove(character.id, '')
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-
-                  <div className="knobs">
-                    {KNOBS.map((k) => (
-                      <label key={k.key} className="knob" title={k.title}>
-                        <span className="knob-l">{k.label}</span>
-                        <input
-                          type="range"
-                          min={k.min}
-                          max={k.max}
-                          value={toSlider(v[k.key])}
-                          onChange={(e) =>
-                            onVoiceSettings(character.id, { ...v, [k.key]: fromSlider(Number(e.target.value)) })
-                          }
-                        />
-                        <span className="knob-v">{knobText(k, v[k.key])}</span>
-                      </label>
-                    ))}
-                    <label className="knob tgl">
-                      <input
-                        type="checkbox"
-                        checked={v.boost}
-                        onChange={(e) => onVoiceSettings(character.id, { ...v, boost: e.target.checked })}
-                      />
-                      Boost
-                    </label>
-                  </div>
-
-                  {del?.id === character.id && (
-                    <div className="row">
-                      <select value={del.to} onChange={(e) => setDel({ id: character.id, to: e.target.value })}>
-                        <option value="">Unassign cues</option>
-                        {others.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            Reassign to {c.name}
-                          </option>
-                        ))}
-                      </select>
-                      <button className="btn danger" onClick={() => remove(character.id, del.to, () => setDel(null))}>
-                        Confirm delete
-                      </button>
-                      <button className="btn ghost" onClick={() => setDel(null)}>
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-
-        <div className="modal-foot">
-          <input
-            type="text"
-            aria-label="New character"
-            placeholder="new character"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.code === 'Enter' || e.code === 'NumpadEnter') create()
-            }}
-          />
-          <button className="btn primary" onClick={create} disabled={!newName.trim()}>
-            Add
-          </button>
+              <div className="row md-actions">
+                <button
+                  className="btn danger"
+                  onClick={() => setDel({ id: selected.id, to: '' })}
+                >
+                  Delete
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
-    </div>
+
+      <div className="modal-foot">
+        <input
+          type="text"
+          aria-label="New character"
+          placeholder="new character"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.code === 'Enter' || e.code === 'NumpadEnter') create()
+          }}
+        />
+        <button className="btn primary" onClick={create} disabled={!newName.trim()}>
+          Add
+        </button>
+      </div>
+
+      {del && selected && (
+        <ConfirmDialog
+          operation="Delete character"
+          name={selected.name}
+          onClose={() => setDel(null)}
+          detail={
+            count > 0 ? (
+              <select
+                aria-label="Reassign cues"
+                value={del.to}
+                onChange={(e) => setDel({ id: del.id, to: e.target.value })}
+              >
+                <option value="">Unassign {count} cues</option>
+                {others.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    Reassign {count} cues to {c.name}
+                  </option>
+                ))}
+              </select>
+            ) : undefined
+          }
+          choices={[
+            { label: 'Delete', kind: 'danger', onClick: () => remove(del.id, del.to) },
+            { label: 'Cancel', safe: true, onClick: () => setDel(null) },
+          ]}
+        />
+      )}
+    </Overlay>
   )
 }
