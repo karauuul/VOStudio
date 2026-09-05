@@ -23,6 +23,8 @@ import {
   useBusyCount,
   useCueBusy,
   useJobCount,
+  useJobFailed,
+  useJobTotal,
   useJobsStore,
 } from './jobs/store'
 import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues } from '@shared/cue-filter'
@@ -40,6 +42,11 @@ import { TransportBar } from './TransportBar'
 import { CharactersDialog } from './CharactersDialog'
 import { RulesDialog } from './RulesPanel'
 import { ProjectHome } from './ProjectHome'
+import { ProjectHeader, type MenuItem, type Route } from './ProjectHeader'
+import { StatusToast, type Status } from './StatusToast'
+import { SettingsDialog } from './SettingsDialog'
+import { ShortcutsDialog } from './ShortcutsDialog'
+import { JobsDrawer } from './JobsDrawer'
 import { useTemplateReimport } from './TemplateReimport'
 import { useKeyboard, type KeyboardHandlers } from './keyboard'
 import { approvalState } from '@shared/approval'
@@ -58,85 +65,6 @@ import type { ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
 import { buildPrompt } from '@shared/prompt'
 import type { CopyKind } from './cue/TextBlock'
 
-type Status = { id: number; kind: StatusKind; text: string } | null
-type Route = 'work' | 'project' | 'deliver'
-
-const UPDATE_LABEL: Record<UpdateStatus['phase'], string> = {
-  idle: 'Ready',
-  checking: 'Checking…',
-  available: 'Available',
-  downloading: 'Downloading',
-  ready: 'Ready',
-  'up-to-date': 'Up to date',
-  error: 'Error',
-}
-
-const TOAST_MS: Record<StatusKind, number> = { ok: 4000, info: 4000, err: 8000 }
-const TOAST_FADE_MS = 260
-
-function Toast({ status, onClose }: { status: NonNullable<Status>; onClose: () => void }) {
-  const [hover, setHover] = useState(false)
-  const [out, setOut] = useState(false)
-  const leftRef = useRef(TOAST_MS[status.kind])
-
-  useEffect(() => {
-    leftRef.current = TOAST_MS[status.kind]
-    setOut(false)
-    setHover(false)
-  }, [status.id, status.kind])
-
-  useEffect(() => {
-    if (out || hover) return
-    const left = leftRef.current
-    const from = Date.now()
-    const t = setTimeout(() => setOut(true), left)
-    return () => {
-      clearTimeout(t)
-      leftRef.current = Math.max(0, left - (Date.now() - from))
-    }
-  }, [status.id, out, hover])
-
-  useEffect(() => {
-    if (!out) return
-    const t = setTimeout(onClose, TOAST_FADE_MS)
-    return () => clearTimeout(t)
-  }, [out, onClose])
-
-  return (
-    <div
-      className={`toast ${status.kind}` + (out ? ' out' : '')}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      role="status"
-    >
-      <span className="toast-tx">{status.text}</span>
-      {status.kind === 'err' && (
-        <button className="toast-x" onClick={onClose} title="Dismiss">
-          ×
-        </button>
-      )}
-    </div>
-  )
-}
-
-function Chip({ label, value, total }: { label: string; value: number; total: number }) {
-  const pct = total > 0 ? Math.min(100, (value / total) * 100) : 0
-  return (
-    <div className="chip ok">
-      <div className="chip-top">
-        <span className="chip-label">{label}</span>
-        <span className="chip-val">
-          {value}
-          <span className="dim"> / {total}</span>
-        </span>
-      </div>
-      <div className="chip-bar">
-        <div className="chip-fill" style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  )
-}
-
 export default function App() {
   const [activeCueId, setActiveCueId] = useState<string | undefined>(undefined)
   const [filter, setFilter] = useState(DEFAULT_FILTER)
@@ -146,7 +74,6 @@ export default function App() {
   const [reviewIds, setReviewIds] = useState<string[] | null>(null)
   const [usage, setUsage] = useState<UsageInfo | null>(null)
   const [hasKey, setHasKey] = useState(true)
-  const [keyInput, setKeyInput] = useState('')
   const [status, setStatus] = useState<Status>(null)
   const [bulk, setBulk] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -154,6 +81,8 @@ export default function App() {
   const [showRules, setShowRules] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  const [showJobs, setShowJobs] = useState(false)
   const [tableOverlay, setTableOverlay] = useState(false)
   const [previewCueId, setPreviewCueId] = useState<string | undefined>(undefined)
   const [previewSource, setPreviewSource] = useState<PreviewSource>({ kind: 'none' })
@@ -177,12 +106,13 @@ export default function App() {
   const focusTextRef = useRef<(() => void) | null>(null)
   const selectSeqRef = useRef(0)
   const statusSeq = useRef(0)
-  const menuRef = useRef<HTMLDivElement>(null)
   const activeCueIdRef = useRef<string | undefined>(undefined)
   const exportingRef = useRef(false)
 
   const submitJob = useJobsStore((s) => s.submit)
   const jobCount = useJobCount()
+  const jobTotal = useJobTotal()
+  const jobFailed = useJobFailed()
   const busyCount = useBusyCount()
   const activeCueBusy = useCueBusy(activeCueId ?? '')
 
@@ -669,18 +599,24 @@ export default function App() {
     [submitJob, onTakeAdded, pushStatus, projectRef]
   )
 
+  const refuseWithoutKey = useCallback((): boolean => {
+    if (hasKey) return false
+    pushStatus('err', 'API key missing — open Settings')
+    return true
+  }, [hasKey, pushStatus])
+
   const generate = useCallback(() => {
     const cue = activeCue
     if (!cue || !cue.text.trim()) return
-    if (isCueBusyNow(cue.id) || refuseWhileExporting()) return
+    if (isCueBusyNow(cue.id) || refuseWhileExporting() || refuseWithoutKey()) return
     noteSubmit(cue.id)
     void flushText()
     submitTts(cue.id, cue.text, true)
-  }, [activeCue, flushText, noteSubmit, submitTts, refuseWhileExporting])
+  }, [activeCue, flushText, noteSubmit, submitTts, refuseWhileExporting, refuseWithoutKey])
 
   const generateSelected = useCallback(
     async (cues: Cue[]) => {
-      if (refuseWhileExporting() || !(await flushText())) return
+      if (refuseWhileExporting() || refuseWithoutKey() || !(await flushText())) return
       let queued = 0
       for (const cue of cues) {
         if (isCueBusyNow(cue.id)) continue
@@ -689,7 +625,7 @@ export default function App() {
       }
       pushStatus('info', `Queued ${queued} ${queued === 1 ? 'job' : 'jobs'}`)
     },
-    [flushText, submitTts, pushStatus, refuseWhileExporting]
+    [flushText, submitTts, pushStatus, refuseWhileExporting, refuseWithoutKey]
   )
 
   const assignCharacter = useCallback(
@@ -794,34 +730,10 @@ export default function App() {
     }
   }
 
-  async function saveKey(): Promise<void> {
-    try {
-      await api['provider:setApiKey'](keyInput.trim())
-      setHasKey(true)
-      setKeyInput('')
-      setShowSettings(false)
-      void api['provider:usage']().then(setUsage)
-      pushStatus('ok', 'API key saved (safeStorage/DPAPI)')
-    } catch (e) {
-      pushStatus('err', String(e))
-    }
-  }
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const onDown = (e: MouseEvent): void => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
-    }
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.code === 'Escape') setMenuOpen(false)
-    }
-    window.addEventListener('mousedown', onDown)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('mousedown', onDown)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [menuOpen])
+  const onKeySaved = useCallback(() => {
+    setHasKey(true)
+    void api['provider:usage']().then(setUsage)
+  }, [])
 
   const toggleTimeline = useCallback(() => setTimelineOpen((v) => !v), [])
 
@@ -856,6 +768,8 @@ export default function App() {
 
   const handlers: KeyboardHandlers = useMemo(
     () => ({
+      settings: () => setShowSettings(true),
+      shortcuts: () => setShowShortcuts(true),
       routeWork: () => goRoute('work'),
       routeProject: () => goRoute('project'),
       routeDeliver: () => goRoute('deliver'),
@@ -924,6 +838,8 @@ export default function App() {
     showCharacters ||
     showRules ||
     showSettings ||
+    showShortcuts ||
+    showJobs ||
     menuOpen ||
     tableOverlay ||
     reimport.open
@@ -932,23 +848,65 @@ export default function App() {
     if (blocked) playback.cancelCompare()
   }, [blocked])
 
-  useKeyboard(handlers, !!project && !blocked, {
+  useKeyboard(handlers, !blocked, {
+    home: !project,
     timeline: timelineOpen,
     grid: route === 'project',
     deliver: route === 'deliver',
     decision: () => decisionRef.current?.() ?? false,
   })
 
+  const settingsUi = showSettings && (
+    <SettingsDialog
+      hasKey={hasKey}
+      onKeySaved={onKeySaved}
+      settings={appSettings}
+      onSettings={onAppSettings}
+      updateStatus={updateStatus}
+      onUpdateStatus={setUpdateStatus}
+      onShortcuts={() => setShowShortcuts(true)}
+      onStatus={pushStatus}
+      onClose={() => setShowSettings(false)}
+    />
+  )
+
+  const shortcutsUi = showShortcuts && <ShortcutsDialog onClose={() => setShowShortcuts(false)} />
+
+  const toastUi = status && <StatusToast status={status} onClose={closeStatus} />
+
   if (!project) {
     return (
       <>
-        <ProjectHome onOpen={enterProject} onStatus={pushStatus} />
-        {status && <Toast status={status} onClose={closeStatus} />}
+        <ProjectHome
+          onOpen={enterProject}
+          onStatus={pushStatus}
+          onSettings={() => setShowSettings(true)}
+        />
+        {settingsUi}
+        {shortcutsUi}
+        {toastUi}
       </>
     )
   }
 
-  const creditsLow = usage ? usage.remaining / Math.max(1, usage.limit) < 0.15 : false
+  const menuItems: MenuItem[] = [
+    { label: 'Home', disabled: bulk || exporting || busyCount > 0, onClick: goHome },
+    ...(project.csvBinding
+      ? [{ label: 'Sync CSV', disabled: bulk || exporting, onClick: () => void syncCsv() }]
+      : []),
+    {
+      label: 'Re-import template…',
+      disabled: bulk || exporting || busyCount > 0,
+      onClick: () => {
+        if (guardRef.current?.(() => void startReimport())) return
+        void startReimport()
+      },
+    },
+    { label: 'Characters', onClick: () => setShowCharacters(true) },
+    { label: 'Rules…', onClick: () => setShowRules(true) },
+    { label: 'Settings', onClick: () => setShowSettings(true) },
+    { label: 'Shortcuts', onClick: () => setShowShortcuts(true) },
+  ]
 
   const queue: ComponentProps<typeof CueList> = {
     cues: visible,
@@ -1006,6 +964,7 @@ export default function App() {
         onTakeAdded,
         onStatus: pushStatus,
         isActiveCue,
+        hasKey,
         rules: project.pronunciationRules,
       }
     : null
@@ -1043,189 +1002,21 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="hdr">
-        <div className="hdr-id">
-          <span className="hdr-name">{project.name}</span>
-          <span className="hdr-sub">{project.cues.length} cues</span>
-        </div>
-
-        <div className="tabs" role="tablist">
-          <button
-            role="tab"
-            aria-selected={route === 'work'}
-            className={route === 'work' ? 'on' : ''}
-            onClick={() => goRoute('work')}
-          >
-            Work <kbd>Ctrl+1</kbd>
-          </button>
-          <button
-            role="tab"
-            aria-selected={route === 'project'}
-            className={route === 'project' ? 'on' : ''}
-            onClick={() => goRoute('project')}
-          >
-            Project <kbd>Ctrl+2</kbd>
-          </button>
-          <button
-            role="tab"
-            aria-selected={route === 'deliver'}
-            className={route === 'deliver' ? 'on' : ''}
-            onClick={() => goRoute('deliver')}
-          >
-            Deliver <kbd>Ctrl+3</kbd>
-          </button>
-        </div>
-
-        <div className="chips">
-          <Chip label="Approved" value={approved} total={project.cues.length} />
-        </div>
-
-        <div className="hdr-right">
-          {updateStatus?.phase === 'ready' && (
-            <button className="btn primary" onClick={() => void api['updater:restart']()}>
-              Restart to update
-            </button>
-          )}
-          <span className={'credits' + (creditsLow ? ' low' : '')}>
-            {usage
-              ? `${usage.remaining.toLocaleString('en-US')} / ${usage.limit.toLocaleString('en-US')} chars`
-              : 'credits —'}
-          </span>
-          {jobCount > 0 && (
-            <span className="jobs" title="Generation tasks in the queue">
-              <i className="spin" />
-              Jobs {jobCount}
-            </span>
-          )}
-          <div className="menu" ref={menuRef}>
-            <button
-              className="btn ghost menu-btn"
-              onClick={() => setMenuOpen((v) => !v)}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              title="More"
-            >
-              ⋯
-            </button>
-            {menuOpen && (
-              <div className="menu-pop" role="menu">
-                <button
-                  className="menu-item"
-                  role="menuitem"
-                  disabled={bulk || exporting || busyCount > 0}
-                  onClick={() => {
-                    setMenuOpen(false)
-                    goHome()
-                  }}
-                >
-                  Home
-                </button>
-                {project.csvBinding && (
-                  <button
-                    className="menu-item"
-                    role="menuitem"
-                    disabled={bulk || exporting}
-                    onClick={() => {
-                      setMenuOpen(false)
-                      void syncCsv()
-                    }}
-                  >
-                    Sync CSV
-                  </button>
-                )}
-                <button
-                  className="menu-item"
-                  role="menuitem"
-                  disabled={bulk || exporting || busyCount > 0}
-                  onClick={() => {
-                    setMenuOpen(false)
-                    if (guardRef.current?.(() => void startReimport())) return
-                    void startReimport()
-                  }}
-                >
-                  Re-import template…
-                </button>
-                <button
-                  className="menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    setShowCharacters(true)
-                  }}
-                >
-                  Characters
-                </button>
-                <button
-                  className="menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    setShowRules(true)
-                  }}
-                >
-                  Rules…
-                </button>
-                <button
-                  className="menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    setShowSettings(true)
-                  }}
-                >
-                  Settings
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
-
-      {(!hasKey || showSettings) && (
-        <div className="keybar">
-          <span className="lbl">ElevenLabs API key</span>
-          <input
-            type="password"
-            value={keyInput}
-            onChange={(e) => setKeyInput(e.target.value)}
-            placeholder={hasKey ? 'sk_… (replaces the stored key)' : 'sk_...'}
-          />
-          <button className="btn primary" onClick={() => void saveKey()} disabled={!keyInput.trim()}>
-            Save
-          </button>
-          {showSettings && updateStatus && (
-            <div className="update-setting">
-              <span className="lbl">Version {updateStatus.currentVersion}</span>
-              <span className="update-state" title={updateStatus.error}>
-                {UPDATE_LABEL[updateStatus.phase]}
-                {updateStatus.phase === 'downloading' && updateStatus.percent !== undefined
-                  ? ` ${Math.round(updateStatus.percent)}%`
-                  : ''}
-              </span>
-              {updateStatus.phase === 'ready' ? (
-                <button className="btn primary" onClick={() => void api['updater:restart']()}>
-                  Restart to update
-                </button>
-              ) : (
-                <button
-                  className="btn ghost"
-                  disabled={
-                    updateStatus.phase === 'checking' || updateStatus.phase === 'downloading'
-                  }
-                  onClick={() => void api['updater:check']().then(setUpdateStatus)}
-                >
-                  Check for updates
-                </button>
-              )}
-            </div>
-          )}
-          {showSettings && (
-            <button className="icon-btn" onClick={() => setShowSettings(false)} title="Close">
-              ×
-            </button>
-          )}
-        </div>
-      )}
+      <ProjectHeader
+        name={project.name}
+        cues={project.cues.length}
+        approved={approved}
+        route={route}
+        onRoute={goRoute}
+        usage={usage}
+        jobsTotal={jobTotal}
+        jobsPending={jobCount}
+        jobsFailed={jobFailed}
+        onJobs={() => setShowJobs(true)}
+        updateReady={updateStatus?.phase === 'ready'}
+        items={menuItems}
+        onMenu={setMenuOpen}
+      />
 
       <WorkScreen
         hidden={route !== 'work'}
@@ -1264,14 +1055,30 @@ export default function App() {
 
       <TransportBar />
 
-      {status && <Toast status={status} onClose={closeStatus} />}
+      {toastUi}
 
       {reimport.dialog}
+
+      {settingsUi}
+      {shortcutsUi}
+
+      {showJobs && (
+        <JobsDrawer
+          cues={project.cues}
+          onOpenCue={(cueId) => {
+            setShowJobs(false)
+            openCue(cueId)
+          }}
+          onStatus={pushStatus}
+          onClose={() => setShowJobs(false)}
+        />
+      )}
 
       {showCharacters && (
         <CharactersDialog
           characters={project.characters}
           cues={project.cues}
+          hasKey={hasKey}
           onVoiceSettings={onCharacterVoice}
           onProvider={onCharacterProvider}
           onFlushVoice={flushVoice}

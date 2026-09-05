@@ -23,6 +23,7 @@ import {
 import { exportName, outputTakeOf } from '@shared/export-plan'
 import { outputSource } from '@shared/workspace-source'
 import { isCueBusyNow } from './jobs/store'
+import { Overlay } from './Overlay'
 import { useWire } from './cue/useWire'
 
 export interface GridApi {
@@ -416,44 +417,41 @@ export function ProjectTable({
       />
 
       {review && (
-        <div className="modal-bg">
-          <div className="modal pt-modal" role="dialog" aria-label="Generate selected">
-            <div className="modal-head">Generate selected</div>
-            <div className="modal-body">
-              <div className="stats-row">
-                <div className="stat">
-                  Eligible <b>{review.eligible.length}</b>
-                </div>
-                <div className="stat">
-                  Already busy <b>{review.busy}</b>
-                </div>
-                <div className="stat">
-                  Missing text <b>{review.missingText}</b>
-                </div>
-                <div className="stat">
-                  Missing voice <b>{review.missingVoice}</b>
-                </div>
-                {review.excluded > 0 && (
-                  <div className="stat">
-                    Excluded <b>{review.excluded}</b>
-                  </div>
-                )}
+        <Overlay title="Generate selected" label="Generate selected" onClose={closeReview}>
+          <div className="modal-body">
+            <div className="stats-row">
+              <div className="stat">
+                Eligible <b>{review.eligible.length}</b>
               </div>
-            </div>
-            <div className="modal-foot">
-              <button className="btn ghost" onClick={closeReview}>
-                Cancel
-              </button>
-              <button
-                className="btn primary"
-                disabled={review.eligible.length === 0}
-                onClick={submitReview}
-              >
-                Generate {review.eligible.length}
-              </button>
+              <div className="stat">
+                Already busy <b>{review.busy}</b>
+              </div>
+              <div className="stat">
+                Missing text <b>{review.missingText}</b>
+              </div>
+              <div className="stat">
+                Missing voice <b>{review.missingVoice}</b>
+              </div>
+              {review.excluded > 0 && (
+                <div className="stat">
+                  Excluded <b>{review.excluded}</b>
+                </div>
+              )}
             </div>
           </div>
-        </div>
+          <div className="modal-foot">
+            <button className="btn ghost" onClick={closeReview}>
+              Cancel
+            </button>
+            <button
+              className="btn primary"
+              disabled={review.eligible.length === 0}
+              onClick={submitReview}
+            >
+              Generate {review.eligible.length}
+            </button>
+          </div>
+        </Overlay>
       )}
     </div>
   )

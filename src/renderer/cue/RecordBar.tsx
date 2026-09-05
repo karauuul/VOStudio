@@ -3,6 +3,7 @@ import { MAX_STS_SECONDS } from '@shared/domain'
 import { PREROLL_SECONDS } from '../audio/ring'
 import { clipId, transport } from '../audio/transport'
 import { useTransport } from '../audio/useTransport'
+import { Confirm } from '../Overlay'
 import { clock, credits, meterPct } from './shared'
 import type { VoiceToVoice } from './useVoiceToVoice'
 
@@ -41,20 +42,19 @@ export function RecordBar({ v2v }: { v2v: VoiceToVoice }) {
   if (pending) {
     return (
       <div className="rec decide">
-        <span className="rec-tag warn">Recording · Unsaved</span>
-        <button
-          className="btn primary"
-          onClick={() => v2v.resolvePending('save')}
-          disabled={converting}
-        >
-          Save recording
-        </button>
-        <button className="btn danger" onClick={() => v2v.resolvePending('discard')}>
-          Discard
-        </button>
-        <button className="btn ghost" autoFocus onClick={() => v2v.resolvePending('cancel')}>
-          Cancel
-        </button>
+        <Confirm
+          operation="Unsaved recording"
+          choices={[
+            {
+              label: 'Save recording',
+              kind: 'primary',
+              disabled: converting,
+              onClick: () => v2v.resolvePending('save'),
+            },
+            { label: 'Discard', kind: 'danger', onClick: () => v2v.resolvePending('discard') },
+            { label: 'Cancel', safe: true, onClick: () => v2v.resolvePending('cancel') },
+          ]}
+        />
       </div>
     )
   }

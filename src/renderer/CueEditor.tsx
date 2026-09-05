@@ -94,6 +94,7 @@ interface Props {
   onTakeAdded: (cueId: string, take: Take, explicit?: boolean) => void
   onStatus: (kind: 'ok' | 'err' | 'info', text: string) => void
   isActiveCue: (cueId: string) => boolean
+  hasKey: boolean
   rules: string
 }
 
@@ -133,6 +134,7 @@ export function CueEditor({
   onTakeAdded,
   onStatus,
   isActiveCue,
+  hasKey,
   rules,
 }: Props) {
   const textRef = useRef<HTMLTextAreaElement>(null)
@@ -201,12 +203,19 @@ export function CueEditor({
   const voice = useMemo(() => resolveVoiceSettings(character, cue), [character, cue])
 
   const noVoice = !character || !character.provider.voiceId
-  const noVoiceReason = !character
-    ? 'Cue has no character assigned'
-    : noVoice
-      ? `No voice configured for character "${character.name}"`
-      : ''
-  const genTitle = noVoice ? noVoiceReason : cueBusy ? 'Already in the queue' : 'Generate a new take'
+  const providerBlocked = !hasKey || noVoice
+  const noVoiceReason = !hasKey
+    ? 'API key missing — open Settings'
+    : !character
+      ? 'Cue has no character assigned'
+      : noVoice
+        ? `No voice configured for character "${character.name}"`
+        : ''
+  const genTitle = providerBlocked
+    ? noVoiceReason
+    : cueBusy
+      ? 'Already in the queue'
+      : 'Generate a new take'
 
   const fragment = useFragment({
     cue,
@@ -262,7 +271,7 @@ export function CueEditor({
     onDelete: onDeleteTake,
     onReconvert: v2v.reconvert,
     converting: v2v.converting,
-    genDisabled: cueBusy || !cue.text.trim() || noVoice,
+    genDisabled: cueBusy || !cue.text.trim() || providerBlocked,
     genTitle,
     noVoiceReason,
   }
@@ -296,7 +305,7 @@ export function CueEditor({
           <CreateBar
             onGenerate={onGenerate}
             generating={cueBusy}
-            genDisabled={cueBusy || !cue.text.trim() || noVoice}
+            genDisabled={cueBusy || !cue.text.trim() || providerBlocked}
             genTitle={genTitle}
             v2v={v2v}
             appSettings={appSettings}
