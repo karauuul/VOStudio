@@ -636,7 +636,12 @@ export default function App() {
   const assignCharacter = useCallback(
     async (cueIds: string[], characterId: string) => {
       const failed: string[] = []
+      let busy = 0
       for (const cueId of cueIds) {
+        if (isCueBusyNow(cueId)) {
+          busy++
+          continue
+        }
         try {
           await dispatch({ type: 'cue.setCharacter', cueId, characterId })
         } catch {
@@ -644,9 +649,10 @@ export default function App() {
           failed.push(cue?.fields['EventName'] || cue?.key || cueId)
         }
       }
-      const done = cueIds.length - failed.length
-      if (failed.length > 0) pushStatus('err', `Assigned ${done} · failed: ${failed.join(', ')}`)
-      else pushStatus('ok', `Assigned ${done}`)
+      const done = cueIds.length - failed.length - busy
+      const skipped = busy > 0 ? ` · ${busy} busy, skipped` : ''
+      if (failed.length > 0) pushStatus('err', `Assigned ${done}${skipped} · failed: ${failed.join(', ')}`)
+      else pushStatus(busy > 0 ? 'info' : 'ok', `Assigned ${done}${skipped}`)
     },
     [dispatch, projectRef, pushStatus]
   )
