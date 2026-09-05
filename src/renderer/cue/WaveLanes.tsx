@@ -426,8 +426,10 @@ export function WaveLanes({
   useWire(compRef, editor.api)
 
   useEffect(() => {
-    if (!timelineOpen) setSelected(null)
-  }, [timelineOpen])
+    if (!timelineOpen || !editable) setSelected(null)
+  }, [timelineOpen, editable])
+
+  useEffect(() => setSelected(null), [preview.source])
 
   useEffect(() => {
     setSelected((s) => (s && !displayComp?.clips.some((c) => c.id === s) ? null : s))

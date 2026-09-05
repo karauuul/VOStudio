@@ -1,6 +1,7 @@
 import type { ClipEffects } from './effects'
 
 export type { ClipEffects, DelayEffect, ReverbEffect } from './effects'
+import type { ClipEffectsPatch } from './effects'
 
 export interface AudioRef {
   fileId: string
@@ -29,6 +30,8 @@ export interface Character {
 export type CueStatus = 'empty' | 'translated' | 'generated' | 'approved' | 'excluded'
 export type TakeKind = 'tts' | 'sts' | 'recording' | 'imported' | 'composite'
 export type FadeShape = 'linear' | 'equalPower' | 'sCurve'
+
+export type ClipEditPatch = Omit<Partial<ClipEdits>, 'effects'> & { effects?: ClipEffectsPatch }
 
 export interface ClipEdits {
   trimStart: number

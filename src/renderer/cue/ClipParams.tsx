@@ -1,5 +1,5 @@
 import { GAIN_MAX_DB, GAIN_MIN_DB, MIN_CLIP_SRC, SPEED_MAX, SPEED_MIN } from '@shared/comp'
-import { clipSpeed, type ClipEdits, type CompClip } from '@shared/domain'
+import { clipSpeed, type ClipEditPatch, type ClipEdits, type CompClip } from '@shared/domain'
 import {
   DELAY_FEEDBACK_MAX,
   DELAY_FEEDBACK_MIN,
@@ -33,7 +33,7 @@ const FX_LABEL: Record<EffectName, string> = { reverb: 'Reverb', delay: 'Delay',
 interface Props {
   target: EffectsTarget | null
   emptyLabel: string
-  onEdit: (patch: Partial<ClipEdits>, commit: boolean) => void
+  onEdit: (patch: ClipEditPatch, commit: boolean) => void
   onTrim: (edge: 'start' | 'end', at: number, commit: boolean) => void
   onEffect: (which: EffectName) => void
   onEditAsComposition?: () => void
@@ -76,15 +76,15 @@ export function ClipParams({
 
   const setReverb = (patch: Partial<ReverbEffect>, commit: boolean): void => {
     if (!fx?.reverb) return
-    onEdit({ effects: { ...fx, reverb: { ...fx.reverb, ...patch } } }, commit)
+    onEdit({ effects: { reverb: patch } }, commit)
   }
   const setDelay = (patch: Partial<DelayEffect>, commit: boolean): void => {
     if (!fx?.delay) return
-    onEdit({ effects: { ...fx, delay: { ...fx.delay, ...patch } } }, commit)
+    onEdit({ effects: { delay: patch } }, commit)
   }
   const setPitch = (semitones: number, commit: boolean): void => {
     if (!fx?.pitch) return
-    onEdit({ effects: { ...fx, pitch: { semitones: Math.round(semitones / PITCH_STEP) * PITCH_STEP } } }, commit)
+    onEdit({ effects: { pitch: { semitones: Math.round(semitones / PITCH_STEP) * PITCH_STEP } } }, commit)
   }
 
   const missing = (['reverb', 'delay', 'pitch'] as EffectName[]).filter((k) => !fx?.[k])

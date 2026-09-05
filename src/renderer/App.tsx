@@ -11,7 +11,7 @@ import {
   liveTakes,
   normalizeOverride,
   resolveVoiceSettings,
-  type ClipEdits,
+  type ClipEditPatch,
   type Cue,
   type CueComp,
   type Project,
@@ -870,7 +870,7 @@ export default function App() {
     if (cue && !isEmptyComp(cue.comp)) selectSource({ kind: 'comp' })
   }, [timelineOpen, activeCueId, selectSource])
 
-  const onClipEdit = useCallback((patch: Partial<ClipEdits>, commit: boolean) => {
+  const onClipEdit = useCallback((patch: ClipEditPatch, commit: boolean) => {
     compRef.current?.editSelected(patch, commit)
   }, [])
 

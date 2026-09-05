@@ -30,8 +30,8 @@ import {
   splitClipAt,
   trimClipEdge,
 } from '@shared/comp'
-import { clipSpeed, type ClipEdits, type CompClip, type Cue, type CueComp, type Take } from '@shared/domain'
-import { toggleEffect } from '@shared/effects'
+import { clipSpeed, type ClipEditPatch, type ClipEdits, type CompClip, type Cue, type CueComp, type Take } from '@shared/domain'
+import { mergeEffects, toggleEffect } from '@shared/effects'
 import { audioUrl } from '../api'
 import { clipId } from '../audio/transport'
 import type { Peaks } from '../Waveform'
@@ -73,7 +73,7 @@ export interface CompApi {
   selection: () => ClipSelection | null
   promptFragment: () => boolean
   replaceSource: (clipId: string, takeId: string, duration: number) => boolean
-  editSelected: (patch: Partial<ClipEdits>, commit: boolean) => void
+  editSelected: (patch: ClipEditPatch, commit: boolean) => void
   trimSelected: (edge: 'start' | 'end', at: number, commit: boolean) => void
   toggleEffect: (which: EffectName) => void
   insertTake: (take: Take) => void
@@ -357,11 +357,14 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   )
 
   const editSelected = useCallback(
-    (patch: Partial<ClipEdits>, doCommit: boolean): void => {
+    (patch: ClipEditPatch, doCommit: boolean): void => {
       const base = shownComp()
       const id = refs.sel.current
       if (!base || !id) return
-      const next = setClipEdits(base, id, patch)
+      const clip = base.clips.find((c) => c.id === id)
+      const { effects, ...rest } = patch
+      const edits: Partial<ClipEdits> = effects ? { ...rest, effects: mergeEffects(clip?.edits.effects, effects) } : rest
+      const next = setClipEdits(base, id, edits)
       if (doCommit) {
         refs.pending.current = null
         commit(next, base)

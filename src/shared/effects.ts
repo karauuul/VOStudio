@@ -95,6 +95,20 @@ export function pitchActive(p: PitchEffect | undefined): boolean {
   return !!p && sanitizePitch(p).semitones !== 0
 }
 
+export interface ClipEffectsPatch {
+  reverb?: Partial<ReverbEffect>
+  delay?: Partial<DelayEffect>
+  pitch?: Partial<PitchEffect>
+}
+
+export function mergeEffects(current: ClipEffects | undefined, patch: ClipEffectsPatch): ClipEffects {
+  const next: ClipEffects = { ...current }
+  if (patch.reverb && current?.reverb) next.reverb = { ...current.reverb, ...patch.reverb }
+  if (patch.delay && current?.delay) next.delay = { ...current.delay, ...patch.delay }
+  if (patch.pitch && current?.pitch) next.pitch = { ...current.pitch, ...patch.pitch }
+  return next
+}
+
 export function toggleEffect(
   fx: ClipEffects | undefined,
   which: 'reverb' | 'delay' | 'pitch',
