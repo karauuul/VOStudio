@@ -38,8 +38,9 @@ import { WorkRoom } from './rooms/WorkRoom'
 import { ExportRoom } from './rooms/ExportRoom'
 import { useProjectSession, type StatusKind } from './useProjectSession'
 import type { EffectName, EffectsTarget } from './cue/ClipParams'
-import { Inspector, type InspectorTab } from './cue/Inspector'
+import { Inspector } from './cue/Inspector'
 import type { CompApi } from './work/TimelinePanel'
+import type { LibraryPanel } from './work/LibraryPanel'
 import { ProgramPanel, type ProgramApi } from './work/ProgramPanel'
 import { CueText } from './work/CueText'
 import { TimelinePanel } from './work/TimelinePanel'
@@ -57,14 +58,13 @@ import {
   cueDecision,
   initialPreviewSource,
   outputSource,
-  resolvePreview,
   sameSource,
   setFinalEligible,
   shouldSelectCandidate,
   type PreviewSource,
 } from '@shared/workspace-source'
 import { compDuration, isEmptyComp } from '@shared/comp'
-import { versionLabel } from '@shared/library'
+import { libraryRow, type LibraryRow } from '@shared/library'
 import type { ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
 import { buildPrompt } from '@shared/prompt'
 import {
@@ -77,7 +77,7 @@ import {
   type TextRange,
 } from '@shared/generation'
 import { reportTakeDuration } from './audio/duration-backfill'
-import { getPeaks } from './Waveform'
+import { getPeaks, sourceColor } from './Waveform'
 
 type CopyKind = 'source' | 'translation' | 'prompt'
 
@@ -102,7 +102,6 @@ export default function App() {
   const [tableOverlay, setTableOverlay] = useState(false)
   const [previewCueId, setPreviewCueId] = useState<string | undefined>(undefined)
   const [previewSource, setPreviewSource] = useState<PreviewSource>({ kind: 'none' })
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('take')
   const [effects, setEffects] = useState<EffectsTarget | null>(null)
   const [targetTrack, setTargetTrack] = useState<Record<string, string>>({})
   const [timelineView, setTimelineView] = useState<Record<string, TimelineViewState>>({})
@@ -302,12 +301,6 @@ export default function App() {
     setPreviewSource((prev) => (sameSource(prev, source) ? prev : source))
   }, [])
 
-  const preview = useMemo(
-    () => (activeCue ? resolvePreview(activeCue, previewSource) : { source: previewSource }),
-    [activeCue, previewSource]
-  )
-  const shownTake = preview.take
-  const output = useMemo(() => (activeCue ? outputSource(activeCue) : null), [activeCue])
 
   useEffect(() => {
     if (!project) return
@@ -432,23 +425,19 @@ export default function App() {
   }, [activeCue, previewSource, onSetFinal, onSetComp])
 
   const onDeleteTake = useCallback(
-    (takeId: string) => {
-      const cue = activeCue
+    (cueId: string, takeId: string) => {
+      const cue = projectRef.current?.cues.find((c) => c.id === cueId)
       if (!cue) return
-      if (takeId === cue.finalTakeId) {
-        pushStatus('err', 'The final take cannot be deleted')
-        return
-      }
       if (sourceTakeId === takeId) setSourceTakeId(null)
       if (previewSource.kind === 'take' && previewSource.takeId === takeId) {
         const rest = liveTakes(cue).filter((t) => t.id !== takeId)
         setPreviewSource(rest[0] ? { kind: 'take', takeId: rest[0].id } : { kind: 'none' })
       }
-      void dispatch({ type: 'cue.deleteTake', cueId: cue.id, takeId }).catch((e: unknown) =>
+      void dispatch({ type: 'cue.deleteTake', cueId, takeId }).catch((e: unknown) =>
         pushStatus('err', String(e))
       )
     },
-    [activeCue, previewSource, sourceTakeId, dispatch, pushStatus]
+    [projectRef, previewSource, sourceTakeId, dispatch, pushStatus]
   )
 
   const onVoiceChange = useCallback(
@@ -590,7 +579,12 @@ export default function App() {
   }, [activeCue, dispatch, pushStatus])
 
   const placeOnComp = useCallback(
-    async (cueId: string, take: Take, replaceClipId?: string): Promise<void> => {
+    async (
+      cueId: string,
+      take: Take,
+      replaceClipId?: string,
+      drop?: { trackId: string; at: number }
+    ): Promise<void> => {
       const peaks = await getPeaks(take.file.relPath)
       reportTakeDuration(cueId, take, peaks.duration)
       const duration = take.duration > 0 ? take.duration : peaks.duration
@@ -606,19 +600,49 @@ export default function App() {
         comp: cue.comp,
         takeId: take.id,
         duration,
-        targetTrackId: targetTrackRef.current[cueId],
-        playhead: isActiveCue(cueId)
-          ? (compRef.current?.playhead() ?? 0)
-          : state.clipId === clipId.comp(cueId)
-            ? state.pos
-            : 0,
+        targetTrackId: drop?.trackId ?? targetTrackRef.current[cueId],
+        playhead:
+          drop?.at ??
+          (isActiveCue(cueId)
+            ? (compRef.current?.playhead() ?? 0)
+            : state.clipId === clipId.comp(cueId)
+              ? state.pos
+              : 0),
         ...(replace ? { replaceClipId: replace } : {}),
       })
       setTargetTrack((m) => (m[cueId] === placed.trackId ? m : { ...m, [cueId]: placed.trackId }))
+      if (isActiveCue(cueId) && compRef.current) {
+        compRef.current.place(placed.comp)
+        selectSource({ kind: 'comp' })
+        return
+      }
       await dispatch({ type: 'cue.setComp', cueId, comp: placed.comp })
-      if (isActiveCue(cueId)) selectSource({ kind: 'comp' })
     },
     [projectRef, dispatch, isActiveCue, selectSource]
+  )
+
+  const pinTake = useCallback(
+    (cueId: string, takeId: string, pinned: boolean): Promise<void> =>
+      dispatch({ type: 'cue.setTakePinned', cueId, takeId, pinned }).catch((e: unknown) => {
+        pushStatus('err', String(e))
+        throw e
+      }),
+    [dispatch, pushStatus]
+  )
+
+  const insertSource = useCallback(
+    (row: LibraryRow, drop?: { trackId: string; at: number }) => {
+      const cueId = activeCueIdRef.current
+      if (!cueId) return
+      const pin =
+        row.cueId === cueId || row.take.pinned === true
+          ? Promise.resolve()
+          : pinTake(row.cueId, row.take.id, true)
+      void pin
+        .then(() => placeOnComp(cueId, row.take, undefined, drop))
+        .catch((e: unknown) => pushStatus('err', String(e)))
+    },
+    [pinTake, placeOnComp, pushStatus]
   )
 
   const submitTts = useCallback(
@@ -912,7 +936,12 @@ export default function App() {
       acceptSuggestion: onAcceptSuggestion,
       rejectSuggestion: onRejectSuggestion,
       toggleRecord: () => recRef.current?.(),
-      escape: () => escRef.current?.() ?? false,
+      escape: () => {
+        if (escRef.current?.()) return true
+        if (sourceTakeId === null) return false
+        setSourceTakeId(null)
+        return true
+      },
       focusText: () => focusTextRef.current?.(),
       copySource: () => onCopy('source'),
       copyTranslation: () => onCopy('translation'),
@@ -932,6 +961,7 @@ export default function App() {
       onAcceptSuggestion,
       onRejectSuggestion,
       onCopy,
+      sourceTakeId,
     ]
   )
 
@@ -1063,9 +1093,9 @@ export default function App() {
       }
     : null
 
-  const sourceTake = sourceTakeId
-    ? activeTakes.find((t) => t.id === sourceTakeId)
-    : undefined
+  const sourceRow =
+    activeCue && sourceTakeId ? libraryRow(activeCue, project, sourceTakeId) : undefined
+  const sourceTake = sourceRow?.take
   const compDur = activeCue?.comp ? compDuration(activeCue.comp) : 0
   const refDur = activeCue?.referenceDuration ?? 0
   const sourceVoice = sourceTake?.meta.voiceSettings ?? resolveVoiceSettings(activeCharacter, activeCue)
@@ -1081,7 +1111,7 @@ export default function App() {
       activeCue && sourceTake
         ? {
             takeId: sourceTake.id,
-            label: versionLabel(activeCue, project, sourceTake.id),
+            label: sourceRow?.label ?? '',
             duration: sourceTake.duration,
             relPath: sourceTake.file.relPath,
             text: sourceTake.meta.text?.trim() || activeCue.text,
@@ -1092,7 +1122,7 @@ export default function App() {
               toPercent(sourceVoice.style),
               sourceVoice.speed.toFixed(2),
             ].join(' · '),
-            color: '#3fb8a8',
+            color: sourceColor(sourceTake.kind),
             ...(sourceTake.words ? { words: sourceTake.words } : {}),
           }
         : null,
@@ -1135,17 +1165,26 @@ export default function App() {
     onEffectsTarget: setEffects,
     compRef,
     busyClipId: activeCueBusy ? (clipTarget?.clipId ?? null) : null,
+    onDropSource: (takeId, trackId, at) => {
+      const row = activeCue ? libraryRow(activeCue, project, takeId) : undefined
+      if (row) insertSource(row, { trackId, at })
+    },
+  }
+
+  const library: ComponentProps<typeof LibraryPanel> = {
+    cue: activeCue ?? null,
+    cues: project.cues,
+    selectedTakeId: sourceTakeId,
+    clipTakeId: effects?.clip.sourceTakeId ?? null,
+    onSelect: (row) => setSourceTakeId(row.take.id),
+    onInsert: (row) => insertSource(row),
+    onPin: (row, pinned) => {
+      void pinTake(row.cueId, row.take.id, pinned).catch(() => {})
+    },
+    onDelete: (row) => onDeleteTake(row.cueId, row.take.id),
   }
 
   const inspector: ComponentProps<typeof Inspector> = {
-    tab: inspectorTab,
-    onTab: setInspectorTab,
-    take: shownTake,
-    comp: preview.source.kind === 'comp' ? preview.comp : undefined,
-    isFinal: !!output && sameSource(output, preview.source),
-    canSetFinal: !!activeCue && setFinalEligible(activeCue, previewSource),
-    onSetFinal: makeFinal,
-    onDelete: () => shownTake && onDeleteTake(shownTake.id),
     effects,
     effectsLabel: 'Composition',
     onClipEdit,
@@ -1205,6 +1244,7 @@ export default function App() {
         cueText={cueText}
         program={program}
         timeline={timeline}
+        library={library}
         inspector={inspector}
       />
 

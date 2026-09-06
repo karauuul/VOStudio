@@ -417,6 +417,21 @@ describe('the new commands', () => {
     ).toThrow('is not in this cue')
   })
 
+  it('a take used by a clip of its own line cannot be deleted', () => {
+    const p = twoCues()
+    applyProjectCommand(p, {
+      type: 'cue.setComp',
+      cueId: 'c2',
+      comp: { clips: [{ id: 'cc2', sourceTakeId: 't2', srcIn: 0, srcOut: 2, start: 0, edits: emptyEdits() }] },
+    })
+    expect(() =>
+      applyProjectCommand(p, { type: 'cue.deleteTake', cueId: 'c2', takeId: 't2' })
+    ).toThrow('used by a clip on this line')
+    applyProjectCommand(p, { type: 'cue.setComp', cueId: 'c2', comp: null })
+    applyProjectCommand(p, { type: 'cue.deleteTake', cueId: 'c2', takeId: 't2' })
+    expect(p.cues[1].takes[0].deletedAt).toBeTruthy()
+  })
+
   it('a pinned take used on another line cannot be deleted or unpinned', () => {
     const p = twoCues()
     applyProjectCommand(p, { type: 'cue.setTakePinned', cueId: 'c2', takeId: 't2', pinned: true })

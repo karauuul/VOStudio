@@ -518,33 +518,6 @@
 .insp-h:first-child {
   margin-top: 0;
 }
-.kv {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-}
-.kv-k {
-  color: var(--tx3);
-  white-space: nowrap;
-}
-.kv-v {
-  font: 11px var(--mono);
-  color: var(--tx);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.insp-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-}
-.insp-actions .btn {
-  flex: 1;
-  justify-content: center;
-}
 
 .tl {
   display: grid;
@@ -1074,23 +1047,6 @@ input.tl-name:focus {
   height: 24px;
 }
 
-.prog-tab {
-  padding: 0 12px;
-  display: flex;
-  align-items: center;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--tx3);
-  font: 500 13px var(--sans);
-  cursor: pointer;
-}
-
-.prog-tab.on {
-  color: var(--ac);
-  border-color: var(--ac);
-}
-
 .frame {
   position: relative;
   min-height: 0;
@@ -1259,4 +1215,149 @@ input.tl-name:focus {
 
 .prog-full .frame {
   position: relative;
+}
+
+.work-right {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+}
+
+.lib {
+  min-height: 0;
+}
+
+.lib .phd .tabs {
+  margin-left: auto;
+}
+
+.lib .phd .ico.sm {
+  margin-left: 4px;
+}
+
+.lib-q {
+  width: 120px;
+  height: 24px;
+  margin-left: 4px;
+  padding: 0 8px;
+  border: 1px solid var(--ac);
+  border-radius: var(--r);
+  background: var(--bg);
+  color: var(--tx);
+  font: 12px var(--sans);
+  outline: none;
+}
+
+.lib-q::-webkit-search-cancel-button {
+  display: none;
+}
+
+.lib-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.lib .grp {
+  height: 30px;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--raise);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.lib .grp .lab {
+  flex: 1;
+  min-width: 0;
+  font: 600 12px var(--sans);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--tx2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lib .grp .pin {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 11px var(--mono);
+  color: var(--ac);
+}
+
+.lib .grp .lid {
+  flex: none;
+  font: 11px var(--mono);
+  color: var(--tx3);
+}
+
+.lib .it {
+  position: relative;
+  height: 40px;
+  display: grid;
+  grid-template-columns: 48px 1fr auto 24px;
+  gap: 10px;
+  align-items: center;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--line);
+  cursor: default;
+}
+
+.lib .it:hover {
+  background: var(--raise);
+}
+
+.lib .it .v {
+  font: 12px var(--mono);
+  color: var(--tx2);
+}
+
+.lib .it canvas {
+  display: block;
+  width: 100%;
+  height: 18px;
+}
+
+.lib .it .d {
+  font: 11px var(--mono);
+  color: var(--tx3);
+}
+
+.lib .it.hi {
+  background: var(--raise);
+}
+
+.lib .it.used::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--ok);
+}
+
+.lib .it.sel,
+.lib .it.sel:hover {
+  background: var(--ac-bg);
+}
+
+.lib .it.sel::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--ac);
+}
+
+.lib-menu {
+  position: fixed;
+  top: auto;
+  right: auto;
+  transform: translateX(-100%);
 }

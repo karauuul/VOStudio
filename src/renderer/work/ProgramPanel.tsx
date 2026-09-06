@@ -2,7 +2,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type MutableRefObject,
 } from 'react'
@@ -10,10 +9,9 @@ import type { WordTiming } from '@shared/domain'
 import { mapToOriginal, subtitleAt } from '@shared/subtitles'
 import { audioUrl } from '../api'
 import { clipId, transport, type TransportState } from '../audio/transport'
-import { drawWave } from '../cue/timeline-draw'
 import { useWire } from '../cue/useWire'
 import { playback } from '../playback'
-import { getPeaks, type Peaks } from '../Waveform'
+import { getPeaks, Wave, type Peaks } from '../Waveform'
 import { timecode } from './TimelinePanel'
 
 const STEP_SECONDS = 0.1
@@ -219,7 +217,7 @@ export function ProgramPanel({
         <div className="src">
           <div className="wave">
             <span className="src-io" />
-            <SourceWave peaks={peaks} duration={sourceDur} color={source.color} />
+            <Wave peaks={peaks} from={0} to={peaks?.duration || sourceDur} color={source.color} />
             <span
               className="tl-ph src-ph"
               style={{ left: `${total > 0 ? (pos / total) * 100 : 0}%` }}
@@ -251,10 +249,10 @@ export function ProgramPanel({
         </span>
         {source ? (
           <span className="tabs">
-            <button className={'prog-tab' + (onSource ? '' : ' on')} onClick={() => setTab('program')}>
+            <button className={onSource ? '' : 'on'} onClick={() => setTab('program')}>
               Program
             </button>
-            <button className={'prog-tab' + (onSource ? ' on' : '')} onClick={() => setTab('source')}>
+            <button className={onSource ? 'on' : ''} onClick={() => setTab('source')}>
               Source
             </button>
           </span>
@@ -402,20 +400,4 @@ export function ProgramPanel({
       )}
     </section>
   )
-}
-
-function SourceWave({
-  peaks,
-  duration,
-  color,
-}: {
-  peaks: Peaks | null
-  duration: number
-  color: string
-}) {
-  const ref = useRef<HTMLCanvasElement>(null)
-  useEffect(() => {
-    drawWave(ref.current, peaks, 0, peaks?.duration || duration, color)
-  })
-  return <canvas ref={ref} />
 }

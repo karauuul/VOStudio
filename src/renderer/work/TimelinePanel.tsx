@@ -64,10 +64,9 @@ import { tryResolveComp } from '../audio/comp-source'
 import { reportTakeDuration } from '../audio/duration-backfill'
 import { clipId, transport, type TransportState } from '../audio/transport'
 import { playback, type PlaybackOps } from '../playback'
-import { getPeaks, type Peaks } from '../Waveform'
+import { getPeaks, Wave, type Peaks } from '../Waveform'
 import type { EffectName, EffectsTarget } from '../cue/ClipParams'
 import { DragNumber } from '../cue/DragNumber'
-import { drawWave } from '../cue/timeline-draw'
 import {
   clampView,
   fitView,
@@ -109,6 +108,7 @@ export interface CompApi {
   setOut: () => void
   zoom: (factor: number) => void
   selectTool: () => void
+  place: (next: CueComp) => void
 }
 
 export type Tool = 'select' | 'razor' | 'trim' | 'fade' | 'slip'
@@ -125,6 +125,7 @@ const GAIN_GRAB = 6
 const DEFAULT_DUCK_DB = -12
 const TRACK_COLORS = ['var(--l1)', 'var(--l2)']
 const WAVE_COLORS = ['#3fb8a8', '#a58cf0']
+export const DRAG_TYPE = 'text/vo-source'
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
 
@@ -162,6 +163,7 @@ interface Props {
   onEffectsTarget: (target: EffectsTarget | null) => void
   compRef: MutableRefObject<CompApi | null>
   busyClipId?: string | null
+  onDropSource: (takeId: string, trackId: string, at: number) => void
 }
 
 export function TimelinePanel({
@@ -177,6 +179,7 @@ export function TimelinePanel({
   onEffectsTarget,
   compRef,
   busyClipId,
+  onDropSource,
 }: Props) {
   const lanesRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -859,6 +862,7 @@ export function TimelinePanel({
       },
       zoom: zoomBy,
       selectTool: () => setTool('select'),
+      place: (next) => commit(next),
     }),
     [editable, commit, edit, splitClip, editSelected, refDur, refPath, takeOf, peaks, zoomBy]
   )
@@ -1128,7 +1132,26 @@ export function TimelinePanel({
                 />
               </div>
             </div>
-            <div className="tl-body" data-track={track.id} onMouseDown={deselect}>
+            <div
+              className="tl-body"
+              data-track={track.id}
+              onMouseDown={deselect}
+              onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes(DRAG_TYPE)) return
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'copy'
+              }}
+              onDrop={(e) => {
+                const takeId = e.dataTransfer.getData(DRAG_TYPE)
+                if (!takeId) return
+                e.preventDefault()
+                onDropSource(
+                  takeId,
+                  track.id,
+                  Math.max(0, xToTime(viewRef.current, e.clientX - bodyLeft()))
+                )
+              }}
+            >
               {grid}
               {comp.clips
                 .filter((c) => clipTrackId(c) === track.id)
@@ -1257,24 +1280,6 @@ const TOOLS: { id: Tool; name: string; key: string; icon: JSX.Element }[] = [
     ),
   },
 ]
-
-function Wave({
-  peaks,
-  from,
-  to,
-  color,
-}: {
-  peaks: Peaks | null
-  from: number
-  to: number
-  color: string
-}) {
-  const ref = useRef<HTMLCanvasElement>(null)
-  useEffect(() => {
-    drawWave(ref.current, peaks, from, to, color)
-  })
-  return <canvas ref={ref} />
-}
 
 interface ClipProps {
   clip: CompClip
