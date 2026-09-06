@@ -807,7 +807,7 @@ function LineTab({
         />
         <div className="cp-num">
           <span className="cp-k">Done</span>
-          <span className="props-tg" {...(voiced ? {} : { 'data-hint': 'No voiced output' })}>
+          <span className="props-tg">
             <button
               className={done ? 'on' : ''}
               aria-pressed={done}

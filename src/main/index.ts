@@ -51,7 +51,7 @@ import * as migration from './migration'
 import { GENERATED_DIR } from './migration'
 import { syncCsv } from './csv-sync'
 import { importAudio, probeTakeDurations } from './audio-import'
-import { applyTakeDurations } from '@shared/library'
+import { applyTakeDurations, pendingTakeDurations } from '@shared/library'
 import { importTable } from './table-import'
 import {
   abortVideoExport,
@@ -283,7 +283,12 @@ async function autoAdopt(): Promise<void> {
 async function repairTakeDurations(repository: SerialProjectRepository): Promise<void> {
   const entries = await probeTakeDurations(repository.projectForMain())
   if (entries.length === 0) return
-  const { cues, applied } = applyTakeDurations(repository.projectForMain(), entries)
+  const current = repository.projectForMain()
+  const stillPending = new Set(pendingTakeDurations(current).map((e) => e.takeId))
+  const { cues, applied } = applyTakeDurations(
+    current,
+    entries.filter((e) => stillPending.has(e.takeId))
+  )
   if (cues.length === 0) return
   emit('project:changed', await repository.commit({ cues: structuredClone(cues) }))
   emit('takes:durations', applied)

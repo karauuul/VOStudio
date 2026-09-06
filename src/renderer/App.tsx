@@ -157,7 +157,7 @@ export default function App() {
   useEffect(() => {
     const onDown = (e: MouseEvent): void => {
       if (e.button !== 0) return
-      const target = e.target instanceof HTMLElement ? e.target : null
+      const target = e.target instanceof Element ? e.target : null
       const button = target?.closest('button')
       if (!button || button.disabled) return
       e.preventDefault()
@@ -1318,6 +1318,7 @@ export default function App() {
     scrollToIndex: activeIndex,
     searchRef: queueSearchRef,
     exported,
+    lookup: project,
     scope: reviewIds
       ? { label: `Selection · ${visible.length}`, onExit: () => setReviewIds(null) }
       : undefined,

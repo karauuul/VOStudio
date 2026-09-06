@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, type CSSProperties, type RefObject } from '
 import { GroupedVirtuoso, type GroupedVirtuosoHandle } from 'react-virtuoso'
 import type { Character, Cue } from '@shared/domain'
 import { lineDotColor } from '@shared/approval'
+import type { TakeLookup } from '@shared/library'
 import type { CueGroup } from '@shared/cue-filter'
 import { regionTimecode } from '@shared/sources'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
@@ -18,6 +19,7 @@ interface Props {
   searchRef?: RefObject<HTMLInputElement>
   scope?: { label: string; onExit: () => void }
   exported: ReadonlySet<string>
+  lookup?: TakeLookup
   menu?: (cue: Cue) => MenuEntry[]
 }
 
@@ -33,6 +35,7 @@ export function LinesPanel({
   searchRef,
   scope,
   exported,
+  lookup,
   menu,
 }: Props) {
   const vRef = useRef<GroupedVirtuosoHandle>(null)
@@ -93,7 +96,7 @@ export function LinesPanel({
         itemContent={(i) => {
           const cue = cues[i]
           if (!cue) return null
-          const color = lineDotColor(cue, exported.has(cue.id))
+          const color = lineDotColor(cue, exported.has(cue.id), lookup)
           return (
             <div
               className={'ln' + (cue.id === activeCueId ? ' sel' : '')}
