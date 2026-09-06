@@ -424,6 +424,11 @@ function registerHandlers(): void {
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
   })
 
+  typedHandle('shell:reveal', async (absPath: string) => {
+    if (!isAllowedPath(absPath)) throw new Error('Path is outside the allowlist')
+    shell.showItemInFolder(path.resolve(absPath))
+  })
+
   typedHandle('take:saveRecording', async (cueId, wav, durationSec, sampleRate, fragment) => {
     const parsed = recordingSchema.parse({ cueId, durationSec, sampleRate, fragment })
     const bytes =

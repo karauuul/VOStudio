@@ -17,6 +17,7 @@ import {
   type TextRange,
 } from '@shared/generation'
 import { DragNumber } from '../cue/DragNumber'
+import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 
 const SOURCE_LANG = 'EN'
 const TARGET_LANG = 'UK'
@@ -46,6 +47,8 @@ export interface TextPanelProps {
   deviceId?: string
   onDevice?: (deviceId: string | undefined) => void
   onRefreshDevices?: () => void
+  originalMenu?: () => MenuEntry[]
+  translationMenu?: (range: TextRange, el: HTMLTextAreaElement) => MenuEntry[]
 }
 
 const Caret = (): ReactNode => (
@@ -67,7 +70,16 @@ function Marked({ text, ranges }: { text: string; ranges: { start: number; end: 
   return <>{out}</>
 }
 
-function Original({ cue, terms }: { cue?: Cue; terms: Term[] }) {
+function Original({
+  cue,
+  terms,
+  menu,
+}: {
+  cue?: Cue
+  terms: Term[]
+  menu?: () => MenuEntry[]
+}) {
+  const pop = useContextMenu()
   const needles = useMemo(
     () =>
       cue ? matchTerms(terms, cue.sourceText, cue.text).map((t) => t.term) : [],
@@ -91,9 +103,15 @@ function Original({ cue, terms }: { cue?: Cue; terms: Term[] }) {
           </span>
         )}
       </div>
-      <div className="body">
+      <div
+        className="body"
+        onContextMenu={(e) => {
+          if (cue && menu) pop.open(e, menu())
+        }}
+      >
         {cue && <Marked text={cue.sourceText} ranges={ranges} />}
       </div>
+      {pop.node}
     </section>
   )
 }
@@ -106,11 +124,13 @@ function Translation({
   onSelection,
   onAcceptSuggestion,
   onRejectSuggestion,
+  menu,
 }: Pick<
   TextPanelProps,
   'cue' | 'textRef' | 'target' | 'onText' | 'onSelection' | 'onAcceptSuggestion' | 'onRejectSuggestion'
->) {
+> & { menu?: (range: TextRange, el: HTMLTextAreaElement) => MenuEntry[] }) {
   const mirrorRef = useRef<HTMLDivElement>(null)
+  const pop = useContextMenu()
   const text = cue?.text ?? ''
   const range = useMemo(
     () => (target ? targetRange(text, target) : null),
@@ -153,6 +173,10 @@ function Translation({
                     : null
                 )
               }}
+              onContextMenu={(e) => {
+                const el = e.currentTarget
+                if (menu) pop.open(e, menu({ start: el.selectionStart, end: el.selectionEnd }, el))
+              }}
             />
           </>
         )}
@@ -168,6 +192,7 @@ function Translation({
           </button>
         </div>
       )}
+      {pop.node}
     </section>
   )
 }
@@ -257,6 +282,8 @@ export function TextPanel({
   deviceId,
   onDevice,
   onRefreshDevices,
+  originalMenu,
+  translationMenu,
 }: TextPanelProps) {
   const off = !cue
   const settings = voice
@@ -264,7 +291,7 @@ export function TextPanel({
 
   return (
     <>
-      <Original cue={cue} terms={terms} />
+      <Original cue={cue} terms={terms} menu={originalMenu} />
       <Translation
         cue={cue}
         textRef={textRef}
@@ -273,6 +300,7 @@ export function TextPanel({
         onSelection={onSelection}
         onAcceptSuggestion={onAcceptSuggestion}
         onRejectSuggestion={onRejectSuggestion}
+        menu={translationMenu}
       />
 
       <div className={'gen' + (off ? ' dis' : '')}>
@@ -300,6 +328,7 @@ export function TextPanel({
           <span className="split">
             <button
               className="btn primary"
+              data-hk="generate"
               disabled={genOff}
               onClick={() => onGenerate?.(target?.kind ?? 'all')}
             >
@@ -319,6 +348,7 @@ export function TextPanel({
           <span className="lab">Record</span>
           <button
             className={'btn rec' + (recording ? ' on' : '')}
+            data-hk="toggleRecord"
             disabled={off || !!recordDisabled}
             onClick={() => onRecord?.()}
           >

@@ -1213,10 +1213,6 @@ input.tl-name:focus {
   display: flex;
 }
 
-.props-add .menu-pop {
-  top: calc(100% + 4px);
-}
-
 .props .row2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1608,9 +1604,3 @@ input.tl-name:focus {
   background: var(--ac);
 }
 
-.lib-menu {
-  position: fixed;
-  top: auto;
-  right: auto;
-  transform: translateX(-100%);
-}

@@ -2,6 +2,18 @@ import { useEffect, useRef, type ReactNode } from 'react'
 
 const stack: (() => void)[] = []
 
+export function pushDismiss(dismiss: () => void): () => void {
+  stack.push(dismiss)
+  return () => {
+    const i = stack.indexOf(dismiss)
+    if (i >= 0) stack.splice(i, 1)
+  }
+}
+
+export function isTopDismiss(dismiss: () => void): boolean {
+  return stack[stack.length - 1] === dismiss
+}
+
 interface OverlayProps {
   title: ReactNode
   label: string
@@ -27,7 +39,7 @@ export function Overlay({ title, label, onClose, children, busy, drawer, wide }:
     const dismiss = (): void => {
       if (!busyRef.current) closeRef.current()
     }
-    stack.push(dismiss)
+    const drop = pushDismiss(dismiss)
     const focusables = (): HTMLElement[] => {
       const root = rootRef.current
       if (!root) return []
@@ -44,7 +56,7 @@ export function Overlay({ title, label, onClose, children, busy, drawer, wide }:
       ;(first ?? root).focus()
     }
     const onKey = (e: KeyboardEvent): void => {
-      if (stack[stack.length - 1] !== dismiss) return
+      if (!isTopDismiss(dismiss)) return
       if (e.code === 'Tab') {
         const items = focusables()
         if (items.length === 0) return
@@ -67,8 +79,7 @@ export function Overlay({ title, label, onClose, children, busy, drawer, wide }:
     }
     window.addEventListener('keydown', onKey)
     return () => {
-      const i = stack.indexOf(dismiss)
-      if (i >= 0) stack.splice(i, 1)
+      drop()
       window.removeEventListener('keydown', onKey)
       const el = opener.current
       if (el instanceof HTMLElement && document.contains(el)) el.focus()

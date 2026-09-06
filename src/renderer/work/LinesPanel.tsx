@@ -3,6 +3,7 @@ import { GroupedVirtuoso, type GroupedVirtuosoHandle } from 'react-virtuoso'
 import type { Cue } from '@shared/domain'
 import { hasValidVoicedOutput } from '@shared/approval'
 import type { CueGroup } from '@shared/cue-filter'
+import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 
 interface Props {
   cues: Cue[]
@@ -15,6 +16,7 @@ interface Props {
   searchRef?: RefObject<HTMLInputElement>
   scope?: { label: string; onExit: () => void }
   exported: ReadonlySet<string>
+  menu?: (cue: Cue) => MenuEntry[]
 }
 
 function dotColor(cue: Cue, exported: ReadonlySet<string>): string | undefined {
@@ -33,8 +35,10 @@ export function LinesPanel({
   searchRef,
   scope,
   exported,
+  menu,
 }: Props) {
   const vRef = useRef<GroupedVirtuosoHandle>(null)
+  const pop = useContextMenu()
   const counts = useMemo(() => groups.map((g) => g.count), [groups])
 
   const absolute = useMemo(() => {
@@ -90,7 +94,24 @@ export function LinesPanel({
             <div
               className={'ln' + (cue.id === activeCueId ? ' sel' : '')}
               style={color ? ({ '--c': color } as CSSProperties) : undefined}
+              role="button"
+              tabIndex={0}
               onClick={() => onSelect(cue.id)}
+              onContextMenu={(e) => {
+                onSelect(cue.id)
+                if (menu) pop.open(e, menu(cue))
+              }}
+              onKeyDown={(e) => {
+                if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+                  e.preventDefault()
+                  onSelect(cue.id)
+                  return
+                }
+                if (e.code !== 'ArrowDown' && e.code !== 'ArrowUp') return
+                e.preventDefault()
+                const next = cues[i + (e.code === 'ArrowDown' ? 1 : -1)]
+                if (next) onSelect(next.id)
+              }}
             >
               <div>
                 <div className="t">{cue.sourceText || cue.text}</div>
@@ -103,6 +124,8 @@ export function LinesPanel({
           )
         }}
       />
+
+      {pop.node}
     </>
   )
 }

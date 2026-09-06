@@ -5,6 +5,7 @@ import {
   DEFAULT_TRACK_ID,
   newCompClipId,
   normalizeComp,
+  setClipEdits,
   splitClipAt,
 } from './comp'
 import {
@@ -248,9 +249,152 @@ export function splitClipByWord(
   return splitClipAt(comp, clipId, inside.length > 0 ? nearestPoint(inside, at) : at)
 }
 
+export function clipBoundaries(
+  comp: CueComp,
+  cue: Cue,
+  project: TakeLookup,
+  clipId: string
+): number[] {
+  const clip = comp.clips.find((c) => c.id === clipId)
+  const take = clip ? resolveTake(project, cue, clip.sourceTakeId)?.take : undefined
+  if (!clip || !take?.words) return []
+  const speed = clipSpeed(clip.edits)
+  const end = clipEnd(clip)
+  const out = clipWords(take, clip.srcIn, clip.srcOut).map((w) => clip.start + w.start / speed)
+  return [...new Set(out.filter((t) => t > clip.start + COMP_EPS && t < end - COMP_EPS))].sort(
+    (a, b) => a - b
+  )
+}
+
+export function splitClipIntoWords(
+  comp: CueComp,
+  cue: Cue,
+  project: TakeLookup,
+  clipId: string
+): CueComp {
+  let next = comp
+  for (const t of clipBoundaries(comp, cue, project, clipId).reverse()) {
+    next = splitClipAt(next, clipId, t)
+  }
+  return next
+}
+
+export function fitToLength(comp: CueComp, clipId: string, length: number): CueComp {
+  const clip = comp.clips.find((c) => c.id === clipId)
+  if (!clip || !Number.isFinite(length) || length <= 0) return comp
+  return setClipEdits(comp, clipId, { timeStretch: (clip.srcOut - clip.srcIn) / length })
+}
+
+const WORD_RE = /\S+/g
+
+const normalizeWord = (s: string): string =>
+  s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+
+export interface TextHit {
+  clipId: string
+  time: number
+}
+
+export function compWordIndex(
+  comp: CueComp,
+  cue: Cue,
+  project: TakeLookup
+): { word: string; clipId: string; time: number }[] {
+  const out: { word: string; clipId: string; time: number }[] = []
+  for (const clip of [...comp.clips].sort((a, b) => a.start - b.start)) {
+    const take = resolveTake(project, cue, clip.sourceTakeId)?.take
+    if (!take) continue
+    const speed = clipSpeed(clip.edits)
+    for (const w of clipWords(take, clip.srcIn, clip.srcOut)) {
+      const word = normalizeWord(w.text)
+      if (word) out.push({ word, clipId: clip.id, time: clip.start + w.start / speed })
+    }
+  }
+  return out
+}
+
+export function locateText(
+  comp: CueComp,
+  cue: Cue,
+  project: TakeLookup,
+  range: { start: number; end: number }
+): TextHit | null {
+  const text = cue.text
+  const tokens: { word: string; start: number; end: number }[] = []
+  WORD_RE.lastIndex = 0
+  for (let m = WORD_RE.exec(text); m; m = WORD_RE.exec(text)) {
+    const word = normalizeWord(m[0])
+    if (word) tokens.push({ word, start: m.index, end: m.index + m[0].length })
+  }
+  const lo = Math.min(range.start, range.end)
+  const hi = Math.max(range.start, range.end)
+  const needle =
+    hi > lo
+      ? tokens.filter((t) => t.end > lo && t.start < hi).map((t) => t.word)
+      : tokens.filter((t) => t.end >= lo).slice(0, 1).map((t) => t.word)
+  if (needle.length === 0) return null
+
+  const words = compWordIndex(comp, cue, project)
+  for (let i = 0; i + needle.length <= words.length; i++) {
+    if (needle.every((w, k) => words[i + k].word === w)) {
+      return { clipId: words[i].clipId, time: words[i].time }
+    }
+  }
+  return null
+}
+
 export function addTrack(comp: CueComp): CueComp {
   const tracks = compTracks(comp)
   return normalizeComp({ ...comp, tracks: [...tracks, freshTrack(tracks)] })
+}
+
+function withTracks(comp: CueComp, tracks: CompTrack[], clips = comp.clips): CueComp {
+  return normalizeComp({
+    ...comp,
+    tracks,
+    clips: clips.map((c) => ({ ...c, trackId: clipTrackId(c) })),
+  })
+}
+
+export function duplicateTrack(comp: CueComp, trackId: string): CueComp {
+  const tracks = compTracks(comp)
+  const i = tracks.findIndex((t) => t.id === trackId)
+  if (i < 0) return comp
+  const copy: CompTrack = { ...tracks[i], id: freshTrack(tracks).id, name: `${tracks[i].name} copy` }
+  const clips = comp.clips
+    .filter((c) => clipTrackId(c) === trackId)
+    .map((c) => ({ ...c, id: newCompClipId(), trackId: copy.id }))
+  return withTracks(comp, [...tracks.slice(0, i + 1), copy, ...tracks.slice(i + 1)], [
+    ...comp.clips,
+    ...clips,
+  ])
+}
+
+export function moveTrack(comp: CueComp, trackId: string, delta: number): CueComp {
+  const tracks = compTracks(comp)
+  const i = tracks.findIndex((t) => t.id === trackId)
+  const j = i + delta
+  if (i < 0 || j < 0 || j >= tracks.length) return comp
+  const next = [...tracks]
+  next.splice(j, 0, ...next.splice(i, 1))
+  return withTracks(comp, next)
+}
+
+export function canRemoveTrack(comp: CueComp, trackId: string): boolean {
+  const tracks = compTracks(comp)
+  return (
+    tracks.length > 1 &&
+    tracks.some((t) => t.id === trackId) &&
+    !comp.clips.some((c) => clipTrackId(c) === trackId)
+  )
+}
+
+export function removeTrack(comp: CueComp, trackId: string): CueComp {
+  if (!canRemoveTrack(comp, trackId)) return comp
+  return withTracks(
+    comp,
+    compTracks(comp).filter((t) => t.id !== trackId)
+  )
 }
 
 export function updateTrack(

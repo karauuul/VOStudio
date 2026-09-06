@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import type { Cue } from '@shared/domain'
 import { libraryGroups, projectLibrary, type LibraryGroup, type LibraryRow } from '@shared/library'
 import { fmt, getPeaks, sourceColor, Wave, type Peaks } from '../Waveform'
 import { DRAG_TYPE } from './TimelinePanel'
+import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 
 export interface LibraryPanelProps {
   cue: Cue | null
@@ -11,17 +12,10 @@ export interface LibraryPanelProps {
   clipTakeId: string | null
   onSelect: (row: LibraryRow) => void
   onInsert: (row: LibraryRow) => void
-  onPin: (row: LibraryRow, pinned: boolean) => void
-  onDelete: (row: LibraryRow) => void
+  menu?: (row: LibraryRow) => MenuEntry[]
 }
 
 type Tab = 'line' | 'project'
-
-interface Menu {
-  row: LibraryRow
-  x: number
-  y: number
-}
 
 export function LibraryPanel({
   cue,
@@ -30,14 +24,13 @@ export function LibraryPanel({
   clipTakeId,
   onSelect,
   onInsert,
-  onPin,
-  onDelete,
+  menu,
 }: LibraryPanelProps) {
   const [tab, setTab] = useState<Tab>('line')
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
   const [peaks, setPeaks] = useState<Record<string, Peaks>>({})
-  const [menu, setMenu] = useState<Menu | null>(null)
+  const pop = useContextMenu()
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const groups: LibraryGroup[] = cue
@@ -66,17 +59,6 @@ export function LibraryPanel({
     }
   }, [pathKey])
 
-  useEffect(() => {
-    if (!menu) return
-    const close = (): void => setMenu(null)
-    window.addEventListener('mousedown', close)
-    window.addEventListener('wheel', close)
-    return () => {
-      window.removeEventListener('mousedown', close)
-      window.removeEventListener('wheel', close)
-    }
-  }, [menu])
-
   const highlight = clipTakeId && clipTakeId !== selectedTakeId ? clipTakeId : null
   useEffect(() => {
     if (!highlight) return
@@ -84,11 +66,6 @@ export function LibraryPanel({
       ?.querySelector(`[data-take="${CSS.escape(highlight)}"]`)
       ?.scrollIntoView({ block: 'nearest' })
   }, [highlight, tab])
-
-  const openMenu = useCallback((row: LibraryRow, el: HTMLElement) => {
-    const box = el.getBoundingClientRect()
-    setMenu({ row, x: box.right, y: box.bottom + 2 })
-  }, [])
 
   return (
     <section className="panel lib">
@@ -147,35 +124,14 @@ export function LibraryPanel({
                 highlighted={row.take.id === highlight}
                 onSelect={onSelect}
                 onInsert={onInsert}
-                onMenu={openMenu}
+                onMenu={(row, e) => menu && pop.open(e, menu(row))}
               />
             ))}
           </div>
         ))}
       </div>
 
-      {menu && (
-        <div className="menu-pop lib-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
-          <button
-            className="menu-item"
-            onClick={() => {
-              onPin(menu.row, menu.row.take.pinned !== true)
-              setMenu(null)
-            }}
-          >
-            {menu.row.take.pinned === true ? 'Unpin' : 'Pin to all lines'}
-          </button>
-          <button
-            className="menu-item danger"
-            onClick={() => {
-              onDelete(menu.row)
-              setMenu(null)
-            }}
-          >
-            Delete
-          </button>
-        </div>
-      )}
+      {pop.node}
     </section>
   )
 }
@@ -203,7 +159,7 @@ function Row({
   highlighted: boolean
   onSelect: (row: LibraryRow) => void
   onInsert: (row: LibraryRow) => void
-  onMenu: (row: LibraryRow, el: HTMLElement) => void
+  onMenu: (row: LibraryRow, e: ReactMouseEvent) => void
 }) {
   const cls =
     'it' + (row.used ? ' used' : '') + (selected ? ' sel' : '') + (highlighted ? ' hi' : '')
@@ -211,6 +167,11 @@ function Row({
     <div
       className={cls}
       data-take={row.take.id}
+      tabIndex={-1}
+      onContextMenu={(e) => {
+        if (!selected) onSelect(row)
+        onMenu(row, e)
+      }}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.effectAllowed = 'copy'
@@ -236,7 +197,8 @@ function Row({
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation()
-          onMenu(row, e.currentTarget)
+          if (!selected) onSelect(row)
+          onMenu(row, e)
         }}
       >
         &#8942;

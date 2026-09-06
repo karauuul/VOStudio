@@ -274,6 +274,7 @@ export function ProgramPanel({
           <button
             className="ico"
             aria-label="Go to in"
+            data-hk="goIn"
             disabled={off}
             onClick={() => (onSource ? seekSource(0) : playback.goIn())}
           >
@@ -290,6 +291,7 @@ export function ProgramPanel({
           <button
             className="ico play"
             aria-label={playing ? 'Pause' : 'Play'}
+            data-hk="playPause"
             disabled={off}
             onClick={() => (onSource ? audition() : playback.toggle())}
           >
@@ -312,6 +314,7 @@ export function ProgramPanel({
           <button
             className="ico"
             aria-label="Go to out"
+            data-hk="goOut"
             disabled={off}
             onClick={() => (onSource ? seekSource(total) : playback.goOut())}
           >
@@ -344,10 +347,15 @@ export function ProgramPanel({
           </button>
           {onSource ? (
             <>
-              <button className="btn sm prog-place" onClick={onInsert}>
+              <button className="btn sm prog-place" data-hk="insertSource" onClick={onInsert}>
                 Insert
               </button>
-              <button className="btn sm prog-place" disabled={!canReplace} onClick={onReplace}>
+              <button
+                className="btn sm prog-place"
+                data-hk="replaceSource"
+                disabled={!canReplace}
+                onClick={onReplace}
+              >
                 Replace
               </button>
             </>

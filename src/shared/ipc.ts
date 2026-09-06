@@ -250,6 +250,8 @@ export interface IpcApi {
 
   'audio:readRef': (absPath: string) => Promise<ArrayBuffer>
 
+  'shell:reveal': (absPath: string) => Promise<void>
+
   'take:saveRecording': (
     cueId: string,
     wav: ArrayBuffer,
