@@ -13,10 +13,11 @@ export function resumeAt(pos: number, b: ResumeBounds, rewindAtEnd: boolean): nu
 
 export function playBounds(
   dur: number,
-  region?: { in: number; out: number } | null
+  region?: { in: number; out: number } | null,
+  tail = 0
 ): { from: number; until: number } {
   const d = Math.max(0, dur)
-  if (!region) return { from: 0, until: d }
+  if (!region) return { from: 0, until: d + Math.max(0, tail) }
   const from = Math.min(Math.max(0, region.in), d)
-  return { from, until: Math.min(Math.max(from, region.out), d) }
+  return { from, until: Math.max(from, region.out) }
 }

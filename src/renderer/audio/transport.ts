@@ -1,4 +1,4 @@
-import { compDuration, compHasPitch } from '@shared/comp'
+import { compDuration, compEffectsTail, compHasPitch } from '@shared/comp'
 import { emptyEdits, type CompTrack } from '@shared/domain'
 import {
   buildClipGraph,
@@ -577,14 +577,11 @@ export async function playComp(
   if (!(await pitchReady(sources))) return
   if (g !== gen) return
 
-  const dur = Math.max(
-    compDuration({ clips: sources.map((s) => s.clip) }),
-    ...originals.map((o) => originalVoiceEnd(o)),
-    0
-  )
+  const clips = sources.map((s) => s.clip)
+  const dur = Math.max(compDuration({ clips }), ...originals.map((o) => originalVoiceEnd(o)), 0)
   if (!(dur > 0)) return
 
-  const { from, until } = playBounds(dur, resolved.region)
+  const { from, until } = playBounds(dur, resolved.region, compEffectsTail(clips, resolved.tracks))
 
   mode = 'comp'
   cur = null
@@ -593,7 +590,7 @@ export async function playComp(
     sources,
     ...(resolved.tracks ? { tracks: resolved.tracks } : {}),
     ...(originals.length > 0 ? { originals } : {}),
-    dur,
+    dur: Math.max(dur, until),
     from,
     until,
     at: 0,

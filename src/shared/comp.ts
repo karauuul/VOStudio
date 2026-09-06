@@ -199,6 +199,19 @@ export function setOriginalStart(comp: CueComp, at: number): CueComp {
   return normalizeComp({ ...comp, originalStart: start })
 }
 
+export function originalRefRange(
+  comp: CueComp,
+  clip: CompClip,
+  originalDuration: number,
+  base: number
+): { from: number; to: number } | null {
+  const start = compOriginalStart(comp)
+  const lo = Math.max(clip.start, start)
+  const hi = Math.min(clipEnd(clip), start + Math.max(0, originalDuration))
+  if (!(hi > lo)) return null
+  return { from: base + lo - start, to: base + hi - start }
+}
+
 export function cutCandidate(
   comp: CueComp,
   at: number,
@@ -289,14 +302,14 @@ export function setRegionEdge(
   if (!Number.isFinite(t)) return comp
   const total = compDuration(comp)
   if (!(total > 0)) return comp
+  const content = Math.max(total, compOriginalStart(comp) + Math.max(0, originalDuration))
   const cur = comp.region
   if (edge === 'in') {
     const at = clamp(Math.max(0, t), 0, total)
-    const out = cur && cur.out > at ? cur.out : total
+    const out = cur && cur.out > at ? cur.out : content
     return setRegion(comp, { in: at, out })
   }
-  const ceiling = Math.max(total, originalDuration > 0 ? originalDuration : 0) + REGION_HEADROOM
-  const at = clamp(Math.max(0, t), 0, ceiling)
+  const at = clamp(Math.max(0, t), 0, content + REGION_HEADROOM)
   const from = cur && cur.in < at ? cur.in : 0
   return setRegion(comp, { in: from, out: at })
 }

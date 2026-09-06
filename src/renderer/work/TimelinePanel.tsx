@@ -18,6 +18,7 @@ import {
   GAIN_MIN_DB,
   compDuration,
   compOriginalStart,
+  compEffectsTail,
   compRegionBounds,
   cutCandidate,
   DEFAULT_CROSSFADE,
@@ -27,6 +28,7 @@ import {
   canHeal,
   maxCrossfade,
   moveClipTo,
+  originalRefRange,
   removeClip,
   trackIsFree,
   setClipEdits,
@@ -78,6 +80,7 @@ import {
 } from '@shared/domain'
 import { audioUrl } from '../api'
 import { tryResolveComp, type ResolvedOriginal } from '../audio/comp-source'
+import { playBounds } from '@shared/resume'
 import { reportTakeDuration } from '../audio/duration-backfill'
 import { clipId, transport, type TransportState } from '../audio/transport'
 import { playback, type PlaybackOps } from '../playback'
@@ -398,13 +401,6 @@ export function TimelinePanel({
   }, [])
 
   const fittedRef = useRef('')
-  useEffect(() => {
-    if (fittedRef.current === cueId || savedView || width <= 0 || !(contentDur > 0)) return
-    fittedRef.current = cueId
-    const v = fitView(contentDur * 1.04, width)
-    setPxPerSec(v.pxPerSec)
-    setScroll(0)
-  }, [cueId, contentDur, width, savedView])
 
   const takeOf = useCallback(
     (c: CompClip) => (cue ? resolveTake(project, cue, c.sourceTakeId)?.take : undefined),
@@ -514,9 +510,23 @@ export function TimelinePanel({
     return r ? { ...r, tracks: effective } : null
   }, [cue, project, comp, tracks, anyLaneSolo, anyTrackSolo, originals])
 
+  const tailDur = useMemo(
+    () => compEffectsTail(resolved?.clips.map((c) => c.clip) ?? comp.clips, tracks),
+    [resolved, comp, tracks]
+  )
+  const contentEnd = contentDur + tailDur
+
+  useEffect(() => {
+    if (fittedRef.current === cueId || savedView || width <= 0 || !(contentEnd > 0)) return
+    fittedRef.current = cueId
+    const v = fitView(contentEnd * 1.04, width)
+    setPxPerSec(v.pxPerSec)
+    setScroll(0)
+  }, [cueId, contentEnd, width, savedView])
+
   const region = comp.region
-  const { in: regionIn, out: regionOut } = compRegionBounds(comp, compDur > 0 ? compDur : refDur)
-  extentRef.current = Math.max(regionOut, contentDur)
+  const { in: regionIn, out: regionOut } = compRegionBounds(comp, contentDur)
+  extentRef.current = Math.max(regionOut, playBounds(contentDur, region, tailDur).until)
   const rawDelta = compDelta(comp.clips.length > 0 ? comp : undefined, refDur)
   const delta = rawDelta !== null && Math.abs(rawDelta) < COMP_EPS ? 0 : rawDelta
 
@@ -627,13 +637,13 @@ export function TimelinePanel({
 
   const applyView = useCallback(
     (next: TimelineView, save: boolean): void => {
-      const v = clampView(next, width, contentDur)
+      const v = clampView(next, width, contentEnd)
       viewRef.current = v
       setPxPerSec(v.pxPerSec)
       setScroll(v.scroll)
       if (save) onView({ pxPerSec: v.pxPerSec, scroll: v.scroll, ...(origGainDb !== 0 ? { originalGainDb: origGainDb } : {}) })
     },
-    [width, contentDur, onView, origGainDb]
+    [width, contentEnd, onView, origGainDb]
   )
 
   const zoomBy = useCallback(
@@ -1173,19 +1183,14 @@ export function TimelinePanel({
         const id = selId()
         const c = editable && id ? base.clips.find((x) => x.id === id) : null
         if (!c) return null
-        const to = Math.min(clipEnd(c), refDur)
+        const range = originalRefRange(base, c, refDur, regionBase)
         return {
           clipId: c.id,
           start: c.start,
           end: clipEnd(c),
           reference:
-            refPath && to > c.start
-              ? {
-                  id: clipId.original(refPath),
-                  url: audioUrl(refPath),
-                  from: regionBase + c.start,
-                  to: regionBase + to,
-                }
+            refPath && range
+              ? { id: clipId.original(refPath), url: audioUrl(refPath), ...range }
               : null,
         }
       },
@@ -1265,8 +1270,15 @@ export function TimelinePanel({
 
   const cutClip = useMemo(
     () =>
-      cutAt === null ? null : cutCandidate(comp, cutAt, resolveTargetTrack(comp, targetTrackId)),
-    [cutAt, comp, targetTrackId]
+      cutAt === null
+        ? null
+        : cutCandidate(
+            comp,
+            cutAt,
+            resolveTargetTrack(comp, targetTrackId),
+            selected[selected.length - 1]
+          ),
+    [cutAt, comp, targetTrackId, selected]
   )
 
   const ghostBox = useMemo<GhostPlacement | null>(() => {

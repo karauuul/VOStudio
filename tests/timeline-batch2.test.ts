@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import { describe, expect, it } from 'vitest'
 import {
   clipZone,
@@ -13,6 +15,7 @@ import {
   compRegionBounds,
   cutCandidate,
   normalizeComp,
+  originalRefRange,
   setOriginalStart,
   setRegionEdge,
 } from '../src/shared/comp'
@@ -81,18 +84,30 @@ describe('clipZone', () => {
 })
 
 describe('playBounds', () => {
-  it('stops at the content end when there is no region', () => {
+  it('runs through the effects tail when there is no region', () => {
     expect(playBounds(4.5)).toEqual({ from: 0, until: 4.5 })
     expect(playBounds(4.5, null)).toEqual({ from: 0, until: 4.5 })
+    expect(playBounds(4.5, null, 1.5)).toEqual({ from: 0, until: 6 })
+    expect(playBounds(4.5, undefined, -1)).toEqual({ from: 0, until: 4.5 })
   })
 
-  it('clamps a region into the content', () => {
-    expect(playBounds(4, { in: 1, out: 9 })).toEqual({ from: 1, until: 4 })
+  it('stops at out and ignores the tail with a region', () => {
+    expect(playBounds(4, { in: 1, out: 9 })).toEqual({ from: 1, until: 9 })
     expect(playBounds(4, { in: -2, out: 3 })).toEqual({ from: 0, until: 3 })
+    expect(playBounds(4, { in: 1, out: 3 }, 1.5)).toEqual({ from: 1, until: 3 })
   })
 
   it('never returns an inverted window', () => {
     expect(playBounds(4, { in: 3, out: 1 })).toEqual({ from: 3, until: 3 })
+  })
+
+  it('is the one stop bound for live and offline', () => {
+    const src = (rel: string): string => readFileSync(join(__dirname, '..', 'src', rel), 'utf-8')
+    for (const rel of ['renderer/audio/transport.ts', 'renderer/audio/offline-render.ts']) {
+      const text = src(rel)
+      expect(text).toMatch(/playBounds\([\s\S]*?compEffectsTail\(/)
+      expect(text).not.toMatch(/\+ compEffectsTail\(/)
+    }
   })
 })
 
@@ -109,6 +124,45 @@ describe('region bounds and markers', () => {
   it('setting only in keeps out at the content end', () => {
     const comp = setRegionEdge({ clips: [clip({ srcOut: 5 })] }, 'in', 2)
     expect(comp.region).toEqual({ in: 2, out: 5 })
+  })
+
+  it('reaches past the clips to the end of a moved original', () => {
+    const base: CueComp = { clips: [clip({ srcOut: 5 })], originalStart: 3 }
+    expect(setRegionEdge(base, 'in', 2, 4).region).toEqual({ in: 2, out: 7 })
+    expect(setRegionEdge(base, 'out', 7, 4).region).toEqual({ in: 0, out: 7 })
+    expect(setRegionEdge({ clips: [clip({ srcOut: 5 })] }, 'in', 2, 4).region).toEqual({
+      in: 2,
+      out: 5,
+    })
+  })
+})
+
+describe('originalRefRange', () => {
+  const refDur = 4
+
+  it('maps composition time to source time through the offset', () => {
+    const comp: CueComp = { clips: [clip({ start: 2, srcOut: 2 })], originalStart: 2 }
+    expect(originalRefRange(comp, comp.clips[0], refDur, 0)).toEqual({ from: 0, to: 2 })
+  })
+
+  it('intersects the clip with the shifted original', () => {
+    const comp: CueComp = { clips: [clip({ start: 1, srcOut: 5 })], originalStart: 2 }
+    expect(originalRefRange(comp, comp.clips[0], refDur, 0)).toEqual({ from: 0, to: 4 })
+  })
+
+  it('has no reference when the clip misses the original', () => {
+    const comp: CueComp = { clips: [clip({ start: 0, srcOut: 2 })], originalStart: 2 }
+    expect(originalRefRange(comp, comp.clips[0], refDur, 0)).toBeNull()
+  })
+
+  it('offsets by the source region base', () => {
+    const comp: CueComp = { clips: [clip({ start: 2, srcOut: 2 })], originalStart: 2 }
+    expect(originalRefRange(comp, comp.clips[0], refDur, 10)).toEqual({ from: 10, to: 12 })
+  })
+
+  it('is the plain clip span when the original was never moved', () => {
+    const comp: CueComp = { clips: [clip({ start: 1, srcOut: 2 })] }
+    expect(originalRefRange(comp, comp.clips[0], refDur, 0)).toEqual({ from: 1, to: 3 })
   })
 })
 

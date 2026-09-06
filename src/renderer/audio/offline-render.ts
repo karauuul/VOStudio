@@ -1,6 +1,7 @@
 import { compDuration, compEffectsTail, compHasPitch, compHasReverb } from '@shared/comp'
 import type { ClipEdits, CompTrack } from '@shared/domain'
 import { effectsTail, pitchActive } from '@shared/effects'
+import { playBounds } from '@shared/resume'
 import { ensurePitchModule } from './pitch-node'
 import {
   buildClipGraph,
@@ -96,8 +97,7 @@ export async function renderCompOffline(
   const clips = sources.map((s) => s.clip)
   const total = Math.max(compDuration({ clips }), ...originals.map((o) => originalVoiceEnd(o)), 0)
   if (!(total > 0)) throw new Error('Composition is empty — nothing to render')
-  const from = region ? Math.min(Math.max(0, region.in), total) : 0
-  const to = region ? Math.max(from, region.out) : total + compEffectsTail(clips, tracks)
+  const { from, until: to } = playBounds(total, region, compEffectsTail(clips, tracks))
   const dur = to - from
   if (!(dur > 0)) {
     throw new Error(
