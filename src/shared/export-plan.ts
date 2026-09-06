@@ -1,4 +1,4 @@
-import { compDuration, isEmptyComp, withSourceEffects } from './comp'
+import { compDuration, compOriginalStart, isEmptyComp, withSourceEffects } from './comp'
 import { clipSpeed, DEFAULT_DUCK_DB, type ClipEdits, type CompClip, type CompTrack, type Cue, type CueComp, type Project, type ProjectSource, type Take } from './domain'
 import { hasEffects } from './effects'
 import { hasValidVoicedOutput, usesCompOutput } from './approval'
@@ -78,6 +78,7 @@ export interface OriginalRef {
   offset: number
   duration: number
   duckDb?: number
+  start?: number
 }
 
 export function originalRef(
@@ -96,6 +97,8 @@ export function originalRef(
 
 export function originalRefs(cue: Cue, sources: ProjectSource[] | undefined): OriginalRef[] {
   if (!mixesOriginal(cue)) return []
+  const start = compOriginalStart(cue.comp)
+  const shift = start > 0 ? { start } : {}
   const stems = cue.stems
   if (stems && stems.length > 0) {
     const duration = originalLength(cue) ?? 0
@@ -107,12 +110,13 @@ export function originalRefs(cue: Cue, sources: ProjectSource[] | undefined): Or
         offset: 0,
         duration,
         ...(s.duckDb === undefined ? {} : { duckDb: s.duckDb }),
+        ...shift,
       }))
   }
   const base = originalRef(cue, sources)
   if (!base) return []
   const duckDb = cue.original?.duckDb
-  return [{ ...base, gainDb: 0, ...(duckDb === undefined ? {} : { duckDb }) }]
+  return [{ ...base, gainDb: 0, ...(duckDb === undefined ? {} : { duckDb }), ...shift }]
 }
 
 export function originalLength(cue: Cue): number | undefined {
@@ -237,7 +241,9 @@ export function takeLength(take: Take): number {
 export function contentLength(cue: Cue, take: Take, project: TakeLookup): number {
   const comp = outputComp(cue, project)
   const base = comp ? compDuration(comp) : takeLength(take)
-  return mixesOriginal(cue) ? Math.max(base, originalLength(cue) ?? 0) : base
+  return mixesOriginal(cue)
+    ? Math.max(base, compOriginalStart(cue.comp) + (originalLength(cue) ?? 0))
+    : base
 }
 
 export function renderWindow(

@@ -3,6 +3,7 @@ import {
   emptyEdits,
   envelopeDbAt,
   sanitizeCompTracks,
+  sanitizeOriginalStart,
   type CompTrack,
   type ClipEdits,
   type CompClip,
@@ -175,11 +176,63 @@ export function normalizeComp(comp: CueComp): CueComp {
     .sort((a, b) => a.start - b.start || a.id.localeCompare(b.id))
   const region = normalizeRegion(comp.region, compDuration({ clips }))
   const tracks = sanitizeCompTracks(comp.tracks)
+  const originalStart = sanitizeOriginalStart(comp.originalStart)
   return {
     clips,
     ...(region ? { region } : {}),
     ...(tracks ? { tracks } : {}),
+    ...(originalStart === undefined ? {} : { originalStart }),
   }
+}
+
+export function compOriginalStart(comp: CueComp | null | undefined): number {
+  return sanitizeOriginalStart(comp?.originalStart) ?? 0
+}
+
+export function setOriginalStart(comp: CueComp, at: number): CueComp {
+  const start = sanitizeOriginalStart(at)
+  if (start === undefined) {
+    if (comp.originalStart === undefined) return comp
+    const { originalStart: _drop, ...rest } = comp
+    return normalizeComp(rest)
+  }
+  return normalizeComp({ ...comp, originalStart: start })
+}
+
+export function originalRefRange(
+  comp: CueComp,
+  clip: CompClip,
+  originalDuration: number,
+  base: number
+): { from: number; to: number } | null {
+  const start = compOriginalStart(comp)
+  const lo = Math.max(clip.start, start)
+  const hi = Math.min(clipEnd(clip), start + Math.max(0, originalDuration))
+  if (!(hi > lo)) return null
+  return { from: base + lo - start, to: base + hi - start }
+}
+
+export function cutCandidate(
+  comp: CueComp,
+  at: number,
+  trackId: string,
+  selectedId?: string | null
+): CompClip | null {
+  const spans = (c: CompClip): boolean =>
+    at > c.start + COMP_EPS && at < clipEnd(c) - COMP_EPS
+  return (
+    comp.clips.find((c) => clipTrackId(c) === trackId && spans(c)) ??
+    (selectedId ? comp.clips.find((c) => c.id === selectedId && spans(c)) : undefined) ??
+    null
+  )
+}
+
+export function compRegionBounds(
+  comp: CueComp | null | undefined,
+  fallbackOut: number
+): CompRegion {
+  const r = comp?.region
+  return { in: r?.in ?? 0, out: r?.out ?? Math.max(0, fallbackOut) }
 }
 
 export function compProblem(comp: CueComp): string | null {
@@ -249,14 +302,14 @@ export function setRegionEdge(
   if (!Number.isFinite(t)) return comp
   const total = compDuration(comp)
   if (!(total > 0)) return comp
+  const content = Math.max(total, compOriginalStart(comp) + Math.max(0, originalDuration))
   const cur = comp.region
   if (edge === 'in') {
     const at = clamp(Math.max(0, t), 0, total)
-    const out = cur && cur.out > at ? cur.out : total
+    const out = cur && cur.out > at ? cur.out : content
     return setRegion(comp, { in: at, out })
   }
-  const ceiling = Math.max(total, originalDuration > 0 ? originalDuration : 0) + REGION_HEADROOM
-  const at = clamp(Math.max(0, t), 0, ceiling)
+  const at = clamp(Math.max(0, t), 0, content + REGION_HEADROOM)
   const from = cur && cur.in < at ? cur.in : 0
   return setRegion(comp, { in: from, out: at })
 }

@@ -212,6 +212,7 @@ export interface OriginalVoice {
   offset?: number
   duration?: number
   duckDb?: number
+  start?: number
 }
 
 export function originalVoiceLength(orig: OriginalVoice): number {
@@ -219,6 +220,10 @@ export function originalVoiceLength(orig: OriginalVoice): number {
   const available = Math.max(0, orig.buffer.duration - start)
   const wanted = orig.duration
   return wanted !== undefined && wanted > 0 ? Math.min(wanted, available) : available
+}
+
+export function originalVoiceEnd(orig: OriginalVoice): number {
+  return Math.max(0, orig.start ?? 0) + originalVoiceLength(orig)
 }
 
 export interface ScheduleCompOptions extends ClipGraphOptions {
@@ -282,16 +287,22 @@ export function scheduleComp(
     voices.push({ source: graph.source, output: graph.output, at, duration: graph.duration })
   }
 
-  let origLength = 0
+  let origEnd = 0
   for (const orig of opts.originals ?? []) {
     const length = originalVoiceLength(orig)
-    if (length > origLength) origLength = length
-    if (!(length > seek)) continue
+    const start = Math.max(0, orig.start ?? 0)
+    if (start + length > origEnd) origEnd = start + length
+    if (!(start + length > seek)) continue
+    const localSeek = Math.max(0, seek - start)
+    const at = when + Math.max(0, start - seek)
     const trimStart = Math.max(0, orig.offset ?? 0)
     const envelope =
       orig.duckDb === undefined
         ? []
-        : duckEnvelope(sources.map((s) => s.clip), orig.duckDb)
+        : duckEnvelope(sources.map((s) => s.clip), orig.duckDb).map((p) => ({
+            t: p.t - start,
+            db: p.db,
+          }))
     const graph = buildClipGraph(
       ctx,
       orig.buffer,
@@ -302,17 +313,17 @@ export function scheduleComp(
         trimEnd: Math.max(0, orig.buffer.duration - trimStart - length),
         ...(envelope.length > 0 ? { gainEnvelope: envelope } : {}),
       },
-      { when, seek }
+      { when: at, seek: localSeek }
     )
     if (graph.duration > 0) {
       graph.output.connect(destination)
-      graph.source.start(when, graph.offset)
-      graph.source.stop(when + graph.duration)
-      voices.push({ source: graph.source, output: graph.output, at: when, duration: graph.duration })
+      graph.source.start(at, graph.offset)
+      graph.source.stop(at + graph.duration)
+      voices.push({ source: graph.source, output: graph.output, at, duration: graph.duration })
     }
   }
 
   const clipEnd = compDuration({ clips: sources.map((s) => s.clip) })
-  const end = Math.max(clipEnd, origLength)
+  const end = Math.max(clipEnd, origEnd)
   return { voices, duration: Math.max(0, end - seek) }
 }
