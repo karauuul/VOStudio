@@ -4,10 +4,17 @@ import type { CueComp } from '@shared/domain'
 
 const LIMIT = 100
 
+interface Entry {
+  value: CueComp | null
+  at: number
+}
+
 export interface CompEdit {
   commit: (next: CueComp | null) => void
   undo: () => void
   redo: () => void
+  lastAt: (dir: 'undo' | 'redo') => number | null
+  dropRedo: () => void
   pending: () => CueComp | null | undefined
   canUndo: boolean
   canRedo: boolean
@@ -25,8 +32,8 @@ export function useCompEdit(
   onComp: (cueId: string, comp: CueComp | null) => Promise<boolean>,
   onProblem: (message: string) => void
 ): CompEdit {
-  const undoRef = useRef<(CueComp | null)[]>([])
-  const redoRef = useRef<(CueComp | null)[]>([])
+  const undoRef = useRef<Entry[]>([])
+  const redoRef = useRef<Entry[]>([])
   const inflightRef = useRef(0)
   const pendingRef = useRef<CueComp | null | undefined>(undefined)
   const genRef = useRef(0)
@@ -84,7 +91,7 @@ export function useCompEdit(
         }
       }
       const prev = current()
-      undoRef.current.push(prev)
+      undoRef.current.push({ value: prev, at: Date.now() })
       if (undoRef.current.length > LIMIT) undoRef.current.shift()
       redoRef.current = []
       sync()
@@ -94,24 +101,35 @@ export function useCompEdit(
   )
 
   const undo = useCallback(() => {
-    if (undoRef.current.length === 0) return
-    const prev = undoRef.current.pop() as CueComp | null
+    const entry = undoRef.current.pop()
+    if (!entry) return
     const cur = current()
-    redoRef.current.push(cur)
+    redoRef.current.push({ value: cur, at: entry.at })
     sync()
-    submit(prev)
+    submit(entry.value)
   }, [current, submit, sync])
 
   const redo = useCallback(() => {
-    if (redoRef.current.length === 0) return
-    const next = redoRef.current.pop() as CueComp | null
+    const entry = redoRef.current.pop()
+    if (!entry) return
     const cur = current()
-    undoRef.current.push(cur)
+    undoRef.current.push({ value: cur, at: entry.at })
     sync()
-    submit(next)
+    submit(entry.value)
   }, [current, submit, sync])
 
   const pending = useCallback(() => pendingRef.current, [])
 
-  return { commit, undo, redo, pending, canUndo: depth.u > 0, canRedo: depth.r > 0 }
+  const lastAt = useCallback((dir: 'undo' | 'redo'): number | null => {
+    const stack = dir === 'undo' ? undoRef.current : redoRef.current
+    return stack[stack.length - 1]?.at ?? null
+  }, [])
+
+  const dropRedo = useCallback(() => {
+    if (redoRef.current.length === 0) return
+    redoRef.current = []
+    sync()
+  }, [sync])
+
+  return { commit, undo, redo, lastAt, dropRedo, pending, canUndo: depth.u > 0, canRedo: depth.r > 0 }
 }

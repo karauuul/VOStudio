@@ -20,6 +20,9 @@ export interface PitchEffect {
 
 export type EffectKind = 'reverb' | 'delay' | 'pitch'
 
+export const EFFECT_KINDS: readonly EffectKind[] = ['reverb', 'delay', 'pitch']
+export const TRACK_EFFECT_KINDS: readonly EffectKind[] = ['reverb', 'delay']
+
 export function effectOn(effect: { enabled?: false } | undefined): boolean {
   return !!effect && effect.enabled !== false
 }
@@ -94,6 +97,18 @@ export function sanitizeEffects(fx: ClipEffects | undefined): ClipEffects | unde
     if (p.semitones !== 0) out.pitch = p
   }
   return out.reverb || out.delay || out.pitch ? out : undefined
+}
+
+export function pickEffects(
+  fx: ClipEffects | undefined,
+  kinds: readonly EffectKind[]
+): ClipEffects | undefined {
+  if (!fx) return undefined
+  const out: ClipEffects = {}
+  if (kinds.includes('reverb') && fx.reverb) out.reverb = fx.reverb
+  if (kinds.includes('delay') && fx.delay) out.delay = fx.delay
+  if (kinds.includes('pitch') && fx.pitch) out.pitch = fx.pitch
+  return sanitizeEffects(out)
 }
 
 export function hasEffects(fx: ClipEffects | undefined): boolean {

@@ -413,6 +413,28 @@ describe('focused controls', () => {
   })
 })
 
+describe('copy and paste effects', () => {
+  it('binds Ctrl+Shift+C and Ctrl+Shift+V in the Work scopes', () => {
+    for (const scope of ['workspace', 'timeline'] as Scope[]) {
+      expect(action({ code: 'KeyC', ctrlKey: true, shiftKey: true, scope })).toBe('copyEffects')
+      expect(action({ code: 'KeyV', ctrlKey: true, shiftKey: true, scope })).toBe('pasteEffects')
+    }
+  })
+
+  it('leaves the razor, the select tool and redo alone', () => {
+    expect(action({ code: 'KeyC', scope: 'timeline' })).toBe('splitClip')
+    expect(action({ code: 'KeyV', scope: 'timeline' })).toBe('toolSelect')
+    expect(action({ code: 'KeyZ', ctrlKey: true, shiftKey: true, scope: 'timeline' })).toBe('redo')
+  })
+
+  it('stays out of text fields and shows the combination in the shortcuts list', () => {
+    expect(action({ code: 'KeyC', ctrlKey: true, shiftKey: true, scope: 'text' })).toBeNull()
+    expect(action({ code: 'KeyV', ctrlKey: true, shiftKey: true, scope: 'text' })).toBeNull()
+    const copy = BINDINGS.find((b) => b.action === 'copyEffects')!
+    expect(keyText(copy)).toMatch(/\+Shift\+C$/)
+  })
+})
+
 describe('done and next', () => {
   it('binds Shift+A in the work scopes only', () => {
     expect(action({ code: 'KeyA', shiftKey: true })).toBe('doneNext')
