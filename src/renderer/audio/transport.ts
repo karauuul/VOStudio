@@ -46,6 +46,48 @@ let meter: AnalyserNode | null = null
 let meterFrame: Float32Array<ArrayBuffer> | null = null
 let monitorGain = 1
 let looping = false
+let sinkId = ''
+
+export interface SinkTarget {
+  setSinkId?: (id: string) => Promise<void>
+}
+
+export async function applySink(target: SinkTarget | AudioContext, id: string): Promise<string> {
+  const set = (target as SinkTarget).setSinkId
+  if (typeof set !== 'function') return ''
+  try {
+    await set.call(target, id)
+    return id
+  } catch {
+  }
+  if (id === '') return ''
+  try {
+    await set.call(target, '')
+  } catch {
+  }
+  return ''
+}
+
+export function outputDeviceId(): string {
+  return sinkId
+}
+
+export async function deviceIdForLabel(kind: MediaDeviceKind, label: string): Promise<string> {
+  const list = await navigator.mediaDevices.enumerateDevices().catch(() => [] as MediaDeviceInfo[])
+  return list.find((d) => d.kind === kind && d.label === label)?.deviceId ?? ''
+}
+
+let sinkRequest = 0
+
+export async function setOutputDevice(label: string): Promise<boolean> {
+  const request = ++sinkRequest
+  const id = label ? await deviceIdForLabel('audiooutput', label) : ''
+  if (request !== sinkRequest) return false
+  const applied = ctx ? await applySink(ctx, id) : id
+  if (request !== sinkRequest) return false
+  sinkId = applied
+  return label === '' || (id !== '' && sinkId === id)
+}
 
 export function monitorPeak(): number {
   if (!meter || !meterFrame) return 0
@@ -87,6 +129,7 @@ function ac(): AudioContext {
   monitor = m
   meter = a
   meterFrame = new Float32Array(a.fftSize)
+  void applySink(c, sinkId)
   void ensurePitchModule(c).catch(() => {})
   const wake = (): void => {
     void c.resume().catch(() => {})

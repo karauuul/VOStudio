@@ -20,6 +20,7 @@ interface Props {
   onKeySaved: () => void
   settings: AppSettings
   onSettings: (next: AppSettings) => void
+  outputApplied: boolean
   usage: UsageInfo | null
   updateStatus: UpdateStatus | null
   onUpdateStatus: (next: UpdateStatus) => void
@@ -33,6 +34,7 @@ export function SettingsDialog({
   onKeySaved,
   settings,
   onSettings,
+  outputApplied,
   usage,
   updateStatus,
   onUpdateStatus,
@@ -46,16 +48,37 @@ export function SettingsDialog({
 
   useEffect(() => {
     let alive = true
-    void navigator.mediaDevices
-      ?.enumerateDevices()
-      .then((list) => {
-        if (alive) setDevices(list.filter((d) => d.kind === 'audioinput'))
-      })
+    const media = navigator.mediaDevices
+    if (!media) return
+    const refresh = (): void => {
+      void media
+        .enumerateDevices()
+        .then((list) => {
+          if (alive) setDevices(list)
+        })
+        .catch(() => {})
+    }
+    void media
+      .getUserMedia({ audio: true })
+      .then((s) => s.getTracks().forEach((t) => t.stop()))
       .catch(() => {})
+      .then(refresh)
+    media.addEventListener('devicechange', refresh)
     return () => {
       alive = false
+      media.removeEventListener('devicechange', refresh)
     }
   }, [])
+
+  const inputs = devices.filter((d) => d.kind === 'audioinput')
+  const outputs = devices.filter((d) => d.kind === 'audiooutput')
+  const mic = inputs.some((d) => d.label === settings.micDeviceLabel)
+    ? (settings.micDeviceLabel ?? '')
+    : ''
+  const output =
+    outputApplied && outputs.some((d) => d.label === settings.outputDeviceLabel)
+      ? (settings.outputDeviceLabel ?? '')
+      : ''
 
   const saveKey = (): void => {
     const key = keyInput.trim()
@@ -106,23 +129,41 @@ export function SettingsDialog({
           </span>
         </div>
 
-        <div className="sec-h">Defaults</div>
+        <div className="sec-h">Audio</div>
         <label className="set-row">
           <span className="set-l">Microphone</span>
           <select
-            value={settings.micDeviceId ?? ''}
+            value={mic}
             onChange={(e) =>
-              onSettings({ ...settings, micDeviceId: e.target.value || undefined })
+              onSettings({ ...settings, micDeviceLabel: e.target.value || undefined, micDeviceId: undefined })
             }
           >
-            <option value="">Default microphone</option>
-            {devices.map((d, i) => (
-              <option key={d.deviceId || i} value={d.deviceId}>
+            <option value="">System default</option>
+            {inputs.map((d, i) => (
+              <option key={d.deviceId || i} value={d.label}>
                 {d.label || `Input ${i + 1}`}
               </option>
             ))}
           </select>
         </label>
+        <label className="set-row">
+          <span className="set-l">Output</span>
+          <select
+            value={output}
+            onChange={(e) =>
+              onSettings({ ...settings, outputDeviceLabel: e.target.value || undefined })
+            }
+          >
+            <option value="">System default</option>
+            {outputs.map((d, i) => (
+              <option key={d.deviceId || i} value={d.label}>
+                {d.label || `Output ${i + 1}`}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="sec-h">Defaults</div>
         <label className="set-row tgl">
           <input
             type="checkbox"

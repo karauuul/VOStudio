@@ -312,3 +312,11 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('project.setExport'), settings: exportSettingsSchema }),
   z.object({ type: z.literal('project.setExportTemplate'), template: z.string().min(1).max(400) }),
 ])
+
+export const appSettingsSchema = z.object({
+  micDeviceId: z.string().max(500).optional(),
+  micDeviceLabel: z.string().max(500).optional(),
+  outputDeviceLabel: z.string().max(500).optional(),
+  countIn: z.boolean(),
+  autoReference: z.boolean(),
+})

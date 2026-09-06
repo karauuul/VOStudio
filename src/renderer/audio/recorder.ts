@@ -9,7 +9,7 @@ import {
   type Ring,
 } from './ring'
 import { CAPTURE_PROCESSOR, CAPTURE_WORKLET_SOURCE } from '../worklets/capture.worklet'
-import { clipId, transport } from './transport'
+import { applySink, clipId, deviceIdForLabel, outputDeviceId, transport } from './transport'
 
 export type RecPhase =
   | 'idle'
@@ -32,7 +32,7 @@ export interface RecordedClip {
 }
 
 export interface StartOptions {
-  deviceId?: string
+  device?: string
   countIn: boolean
   autoReference: boolean
   referenceUrl?: string
@@ -47,12 +47,10 @@ export interface RecorderApi {
   level: number
   error: string | null
   clip: RecordedClip | null
-  devices: MediaDeviceInfo[]
   start: (opts: StartOptions) => void
   stop: () => void
   cancel: () => void
   discardClip: () => void
-  refreshDevices: () => void
   clearError: () => void
 }
 
@@ -99,7 +97,7 @@ interface Rig {
   source: MediaStreamAudioSourceNode
   sink: GainNode
   ring: Ring
-  deviceId?: string
+  device?: string
   disposed: boolean
 }
 
@@ -108,7 +106,8 @@ interface RigHandlers {
   onFlushed: (token: number, frame: number) => void
 }
 
-async function buildRig(deviceId: string | undefined, h: RigHandlers): Promise<Rig> {
+async function buildRig(device: string | undefined, h: RigHandlers): Promise<Rig> {
+  const deviceId = device ? (await deviceIdForLabel('audioinput', device)) || device : ''
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
       ...(deviceId ? { deviceId: { ideal: deviceId } } : {}),
@@ -136,6 +135,7 @@ async function buildRig(deviceId: string | undefined, h: RigHandlers): Promise<R
         channelCountMode: 'explicit',
         channelInterpretation: 'speakers',
       })
+      void applySink(ctx, outputDeviceId())
       const sink = ctx.createGain()
       sink.gain.value = 0
       source.connect(node)
@@ -149,7 +149,7 @@ async function buildRig(deviceId: string | undefined, h: RigHandlers): Promise<R
         source,
         sink,
         ring: createRingForRate(ctx.sampleRate),
-        deviceId,
+        device,
         disposed: false,
       }
 
@@ -232,7 +232,6 @@ export function useRecorder(): RecorderApi {
   const [level, setLevel] = useState(0)
   const [error, setErrorState] = useState<string | null>(null)
   const [clip, setClip] = useState<RecordedClip | null>(null)
-  const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
 
   const errorRef = useRef<string | null>(null)
   const setError = useCallback((e: string | null) => {
@@ -262,17 +261,6 @@ export function useRecorder(): RecorderApi {
     if (aliveRef.current) setMicState(m)
   }, [])
 
-  const refreshDevices = useCallback(() => {
-    void navigator.mediaDevices
-      ?.enumerateDevices()
-      .then((list) => {
-        if (aliveRef.current) setDevices(list.filter((d) => d.kind === 'audioinput'))
-      })
-      .catch(() => {})
-  }, [])
-
-  useEffect(refreshDevices, [refreshDevices])
-
   const discardClip = useCallback(() => {
     const c = clipRef.current
     if (c) URL.revokeObjectURL(c.url)
@@ -280,7 +268,7 @@ export function useRecorder(): RecorderApi {
     if (aliveRef.current) setClip(null)
   }, [])
 
-  const ensureCue = useCallback((): CueOut | null => {
+  const ensureCue = useCallback(async (): Promise<CueOut | null> => {
     let c = cueRef.current
     if (!c || c.ctx.state === 'closed') {
       try {
@@ -294,6 +282,7 @@ export function useRecorder(): RecorderApi {
         return null
       }
     }
+    await applySink(c.ctx, outputDeviceId())
     void c.ctx.resume().catch(() => {})
     return c
   }, [])
@@ -375,10 +364,10 @@ export function useRecorder(): RecorderApi {
   }, [])
 
   const warm = useCallback(
-    (deviceId?: string): Promise<Rig> => {
+    (device?: string): Promise<Rig> => {
       const cur = rigRef.current
-      if (cur && !cur.disposed && cur.deviceId === deviceId) return Promise.resolve(cur)
-      if (warmPromise.current && warmDevice.current === deviceId) return warmPromise.current
+      if (cur && !cur.disposed && cur.device === device) return Promise.resolve(cur)
+      if (warmPromise.current && warmDevice.current === device) return warmPromise.current
       if (!navigator.mediaDevices?.getUserMedia) {
         const msg = 'Microphone is not available in this environment'
         setError(msg)
@@ -387,12 +376,12 @@ export function useRecorder(): RecorderApi {
       }
 
       const gen = ++warmGen.current
-      warmDevice.current = deviceId
+      warmDevice.current = device
       disposeRig(rigRef.current)
       rigRef.current = null
       setMic('warming')
 
-      const p = buildRig(deviceId, {
+      const p = buildRig(device, {
         onRms: (v) => {
           levelRef.current = v
         },
@@ -406,7 +395,6 @@ export function useRecorder(): RecorderApi {
           rigRef.current = built
           warmPromise.current = null
           setMic('ready')
-          refreshDevices()
           return built
         },
         (err: unknown) => {
@@ -421,7 +409,7 @@ export function useRecorder(): RecorderApi {
       warmPromise.current = p
       return p
     },
-    [onFlushed, refreshDevices, setError, setMic]
+    [onFlushed, setError, setMic]
   )
 
   const cancel = useCallback(() => {
@@ -470,7 +458,7 @@ export function useRecorder(): RecorderApi {
       const t = newTake(++takeGen.current)
       takeRef.current = t
 
-      const rigPromise = warm(opts.deviceId)
+      const rigPromise = warm(opts.device)
       rigPromise.catch(() => {
       })
 
@@ -487,7 +475,7 @@ export function useRecorder(): RecorderApi {
           }
 
           if (opts.countIn) {
-            const c = ensureCue()
+            const c = await ensureCue()
             if (c) {
               const now = c.ctx.currentTime
               try {
@@ -522,7 +510,7 @@ export function useRecorder(): RecorderApi {
 
           if (perfNow > t.startAtMs - LATE_MARGIN_MS) {
             const atMs = Math.max(perfNow + LEAD_IN * 1000, t.startAtMs + BEEP_GAP * 1000)
-            const c = ensureCue()
+            const c = await ensureCue()
             if (c) beep(c.ctx, c.gain, c.ctx.currentTime + (atMs - performance.now()) / 1000, true)
             t.beeps++
             t.startAtMs = atMs
@@ -600,12 +588,10 @@ export function useRecorder(): RecorderApi {
     level,
     error,
     clip,
-    devices,
     start,
     stop,
     cancel,
     discardClip,
-    refreshDevices,
     clearError,
   }
 }
