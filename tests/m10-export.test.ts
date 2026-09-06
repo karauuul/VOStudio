@@ -22,6 +22,7 @@ import {
   resolveCompClips,
   toClipPlan,
 } from '../src/shared/export-plan'
+import { approveCue } from '../src/shared/approval'
 import { matchesLineFilter, readinessRows, statusWords, summarize } from '../src/shared/readiness'
 import { exportedLines, mergeExported } from '../src/shared/deliver'
 import { applyChangeSet, applyProjectCommand } from '../src/shared/project-commands'
@@ -345,7 +346,7 @@ describe('readiness', () => {
       ready: 1,
       changed: 0,
       unchanged: 1,
-      done: 1,
+      done: 0,
       notReady: 4,
       noAudio: 1,
       longer: 1,
@@ -353,6 +354,14 @@ describe('readiness', () => {
       excluded: 1,
     })
     expect(s.bytes).toBe(estimateBytes(3, undefined))
+  })
+
+  it('done counts the lines whose approval is current, not the exported ones', () => {
+    const p = project([approveCue(ready, '2026-01-01T00:00:00.000Z', project([ready])), noAudio])
+    const r = readinessRows(p)
+    expect(r.find((row) => row.cueKey === 'ready')!.done).toBe(true)
+    expect(r.find((row) => row.cueKey === 'quiet')!.done).toBe(false)
+    expect(summarize(p, r).done).toBe(1)
   })
 })
 

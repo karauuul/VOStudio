@@ -40,7 +40,8 @@ import {
   toggleEffect,
   type EffectKind,
 } from '@shared/effects'
-import { clipText, libraryRow, lineLabel, resolveTake, versionLabel } from '@shared/library'
+import { hasValidVoicedOutput, isDone } from '@shared/approval'
+import { clipText, libraryRow, lineLabel, resolveTake, versionLabel, type TakeLookup } from '@shared/library'
 import { toPercent } from '@shared/generation'
 import { DragNumber } from '../cue/DragNumber'
 import type { CompApi, TimelineSelection } from './TimelinePanel'
@@ -61,6 +62,7 @@ export interface PropertiesPanelProps {
   onPinSource: (takeId: string, pinned: boolean) => void
   onDeleteSource: (takeId: string) => void
   onOpenLine: (cueId: string) => void
+  onDone: (done: boolean) => void
 }
 
 type Tab = 'clip' | 'track' | 'line' | 'source'
@@ -96,6 +98,7 @@ export function PropertiesPanel({
   onPinSource,
   onDeleteSource,
   onOpenLine,
+  onDone,
 }: PropertiesPanelProps) {
   const project = useMemo(() => ({ cues }), [cues])
   const sourceRow = cue && sourceTakeId ? libraryRow(cue, project, sourceTakeId) : undefined
@@ -190,6 +193,7 @@ export function PropertiesPanel({
         {active === 'line' && (
           <LineTab
             cue={cue}
+            project={project}
             characters={characters}
             original={original}
             exportName={exportName}
@@ -197,6 +201,7 @@ export function PropertiesPanel({
             compRef={compRef}
             onCharacter={onCharacter}
             onOriginal={onOriginal}
+            onDone={onDone}
           />
         )}
       </div>
@@ -756,6 +761,7 @@ function TrackTab({
 
 function LineTab({
   cue,
+  project,
   characters,
   original,
   exportName,
@@ -763,8 +769,10 @@ function LineTab({
   compRef,
   onCharacter,
   onOriginal,
+  onDone,
 }: {
   cue: Cue
+  project: TakeLookup
   characters: Character[]
   original: OriginalLane | undefined
   exportName: string
@@ -772,10 +780,13 @@ function LineTab({
   compRef: MutableRefObject<CompApi | null>
   onCharacter: (characterId: string) => void
   onOriginal: (patch: Partial<OriginalLane>) => void
+  onDone: (done: boolean) => void
 }) {
   const id = lineLabel(cue)
   const duration = Math.max(cue.referenceDuration ?? 0, region.out)
   const split = (cue.stems?.length ?? 0) > 0
+  const done = isDone(cue, project)
+  const voiced = hasValidVoicedOutput(cue, project)
 
   return (
     <>
@@ -794,6 +805,19 @@ function LineTab({
           value={cue.characterId}
           onChange={onCharacter}
         />
+        <div className="cp-num">
+          <span className="cp-k">Done</span>
+          <span className="props-tg">
+            <button
+              className={done ? 'on' : ''}
+              aria-pressed={done}
+              disabled={!voiced}
+              onClick={() => onDone(!done)}
+            >
+              {done ? 'On' : 'Off'}
+            </button>
+          </span>
+        </div>
       </Row2>
 
       <Sec>Original</Sec>

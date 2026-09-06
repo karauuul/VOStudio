@@ -53,6 +53,42 @@ export function resolveTake(
   return undefined
 }
 
+export interface TakeDurationEntry {
+  cueId: string
+  takeId: string
+  duration: number
+}
+
+export function pendingTakeDurations(project: TakeLookup): { cueId: string; takeId: string; file: string }[] {
+  const out: { cueId: string; takeId: string; file: string }[] = []
+  for (const cue of project.cues) {
+    for (const take of cue.takes) {
+      if (take.deletedAt || take.duration > 0) continue
+      out.push({ cueId: cue.id, takeId: take.id, file: take.file.relPath })
+    }
+  }
+  return out
+}
+
+export function applyTakeDurations(
+  project: TakeLookup,
+  entries: TakeDurationEntry[]
+): { cues: Cue[]; applied: TakeDurationEntry[] } {
+  const byCue = new Map(project.cues.map((c) => [c.id, c]))
+  const changed = new Set<Cue>()
+  const applied: TakeDurationEntry[] = []
+  for (const entry of entries) {
+    if (!(entry.duration > 0)) continue
+    const cue = byCue.get(entry.cueId)
+    const take = cue?.takes.find((t) => t.id === entry.takeId)
+    if (!cue || !take || Math.abs(take.duration - entry.duration) < 0.005) continue
+    take.duration = entry.duration
+    changed.add(cue)
+    applied.push(entry)
+  }
+  return { cues: [...changed], applied }
+}
+
 export function referencedByOtherComp(
   project: TakeLookup,
   cueId: string,

@@ -7,6 +7,9 @@ import {
   changeCueText,
   changeCompOutput,
   changeTakeOutput,
+  isDone,
+  lineDotColor,
+  removeApproval,
   sanitizeApproval,
   sanitizeCueOutput,
   usesCompOutput,
@@ -157,5 +160,28 @@ describe('optional persisted fields', () => {
   it('keeps old comp JSON byte-identical through the existing schema', () => {
     const old = comp()
     expect(JSON.stringify(compSchema.parse(JSON.parse(JSON.stringify(old))))).toBe(JSON.stringify(old))
+  })
+})
+
+describe('the done state of a line', () => {
+  it('is done only while the approval matches the current revisions', () => {
+    const done = approvedTakeCue()
+    expect(isDone(done)).toBe(true)
+    expect(isDone(changeCueText(done, 'Changed'))).toBe(false)
+    expect(isDone(removeApproval(done))).toBe(false)
+    expect(isDone(cue())).toBe(false)
+  })
+
+  it('paints done green, voiced yellow and everything else nothing', () => {
+    expect(lineDotColor(approvedTakeCue(), false)).toBe('var(--ok)')
+    expect(lineDotColor(cue(), false)).toBe('var(--warn)')
+    expect(lineDotColor(cue({ takes: [], finalTakeId: undefined }), false)).toBeUndefined()
+  })
+
+  it('lets done win over a voiced line and keeps exported green', () => {
+    const voiced = cue()
+    expect(lineDotColor(voiced, false)).toBe('var(--warn)')
+    expect(lineDotColor(voiced, true)).toBe('var(--ok)')
+    expect(lineDotColor(approveCue(voiced), false)).toBe('var(--ok)')
   })
 })

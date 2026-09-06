@@ -412,3 +412,19 @@ describe('focused controls', () => {
     }
   })
 })
+
+describe('done and next', () => {
+  it('binds Shift+A in the work scopes only', () => {
+    expect(action({ code: 'KeyA', shiftKey: true })).toBe('doneNext')
+    expect(action({ code: 'KeyA', shiftKey: true, scope: 'timeline' })).toBe('doneNext')
+    expect(action({ code: 'KeyA', shiftKey: true, scope: 'text' })).toBeNull()
+    expect(action({ code: 'KeyA', shiftKey: true, scope: 'grid' })).toBeNull()
+  })
+
+  it('does not collide with the plain or Ctrl variants of A', () => {
+    expect(action({ code: 'KeyA' })).toBeNull()
+    expect(action({ code: 'KeyA', ctrlKey: true })).toBeNull()
+    expect(action({ code: 'KeyA', ctrlKey: true, scope: 'grid' })).toBe('gridSelectAll')
+    expect(action({ code: 'KeyA', ctrlKey: true, shiftKey: true, scope: 'grid' })).toBeNull()
+  })
+})

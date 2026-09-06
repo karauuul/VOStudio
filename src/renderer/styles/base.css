@@ -4,6 +4,16 @@
   padding: 0;
 }
 
+:focus:not(:focus-visible),
+[tabindex='-1']:focus-visible {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ac);
+  outline-offset: 1px;
+}
+
 html,
 body,
 #root {

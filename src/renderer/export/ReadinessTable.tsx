@@ -118,6 +118,7 @@ export function ReadinessTable({
               <th style={{ width: 80 }}>Original</th>
               <th style={{ width: 80 }}>Output</th>
               <th style={{ width: 190 }}>Status</th>
+              <th style={{ width: 60 }}>Done</th>
               <th style={{ width: 90 }}>Exported</th>
             </tr>
           )}
@@ -140,6 +141,7 @@ export function ReadinessTable({
                   {statusWords(row)}
                 </span>
               </td>
+              <td className="mono">{row.done ? '✓' : '—'}</td>
               <td className="mono">
                 {row.exportedVersion === undefined ? '—' : `v${row.exportedVersion}`}
               </td>
