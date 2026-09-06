@@ -1,0 +1,281 @@
+<!doctype html><meta charset="utf-8"><title>VO Studio · import</title>
+<style>
+:root{
+--bg:#191b1e;--panel:#222428;--raise:#2b2e33;--raise2:#34383e;--line:#35383e;--line2:#42464d;
+--tx:#e3e6eb;--tx2:#a3aab5;--tx3:#6f7680;
+--ac:#82acec;--ac-bg:#243247;--err:#e5655f;--ok:#46c98c;
+--orig:#8f97a8;--l1:#3fb8a8;--l2:#a58cf0;--rec:#a58cf0;
+--mono:"Cascadia Mono",Consolas,monospace;--sans:"Segoe UI",system-ui,sans-serif;
+--ctl:28px;--hd:36px;--r:4px}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;width:1920px;height:1080px;background:var(--bg);color:var(--tx);font:13px/1.35 var(--sans);overflow:hidden;-webkit-font-smoothing:antialiased}
+svg{display:block;flex:none}
+.sp{flex:1}
+.app{display:grid;grid-template-rows:44px 1fr;height:100%}
+/* top */
+.top{display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;padding-right:12px;border-right:1px solid var(--line);height:28px}
+.brand img{display:block}
+.pname{font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px;color:var(--tx)}
+.pname svg{color:var(--tx3)}
+.field{height:var(--ctl);display:inline-flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--line2);border-radius:var(--r);background:var(--bg);color:var(--tx)}
+.field.mono{font:12px var(--mono)}
+.btn{height:var(--ctl);display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:0 12px;border:1px solid var(--line2);border-radius:var(--r);background:var(--raise);color:var(--tx);white-space:nowrap;font-size:13px}
+.btn.pri{background:var(--ac);border-color:var(--ac);color:#0f1622;font-weight:600}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--tx2)}
+.btn.sm{height:24px;padding:0 10px;font-size:12px}
+.rooms{margin-left:auto;margin-right:auto;display:flex;border:1px solid var(--line2);border-radius:var(--r);overflow:hidden}
+.rooms span{height:28px;padding:0 24px;display:flex;align-items:center;color:var(--tx2);border-right:1px solid var(--line2)}
+.rooms span:last-child{border-right:0}.rooms span.on{background:var(--ac-bg);color:var(--ac)}
+.top .ico{color:var(--tx2)}
+.avatar{width:28px;height:28px;border-radius:50%;background:var(--ac-bg);color:var(--ac);display:grid;place-items:center;font-size:11px;font-weight:600}
+/* frame */
+.main{display:grid;grid-template-columns:280px 8px 1fr 8px 380px;min-height:0;padding:8px;background:var(--bg)}
+.vl{background:var(--bg)}
+.hl{height:8px;background:var(--bg)}
+.panel{display:flex;flex-direction:column;min-height:0;background:var(--panel);overflow:hidden;border-radius:6px}
+.phd{height:var(--hd);flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--line);font-size:13px;font-weight:600;color:var(--tx)}
+.phd .n{font:12px var(--mono);font-weight:400;color:var(--tx3)}
+.phd .tabs{display:flex;margin-left:auto;height:100%}
+.phd .tabs span{padding:0 12px;display:flex;align-items:center;font-weight:500;color:var(--tx3);border-bottom:2px solid transparent}
+.phd .tabs span.on{color:var(--ac);border-color:var(--ac)}
+.ico{width:28px;height:28px;border-radius:var(--r);display:grid;place-items:center;color:var(--tx2);flex:none}
+.ico.on{background:var(--ac-bg);color:var(--ac)}
+.ico.sm{width:24px;height:24px}
+.lab{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--tx3)}
+/* lines */
+.search{margin:12px 16px;height:var(--ctl);flex:none;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--line2);border-radius:var(--r);background:var(--bg);color:var(--tx3)}
+.scroll{flex:1;min-height:0;overflow:hidden}
+.grp{height:26px;display:flex;align-items:center;padding:0 16px;gap:8px}
+.lib .grp{height:30px;border-bottom:1px solid var(--line);background:var(--raise)}
+.lib .grp .lab{text-transform:none;letter-spacing:0;font-size:12px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.lib .grp .pin{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font:11px var(--mono);color:var(--ac)}
+.ln{height:52px;display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:0 16px;position:relative}
+.ln .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+.ln .id{font:11px var(--mono);color:var(--tx3);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ln .d{font:11px var(--mono);color:var(--tx3)}
+.ln::before{content:"";position:absolute;left:8px;top:22px;width:5px;height:5px;border-radius:50%;background:var(--c,transparent)}
+.ln.sel{background:var(--ac-bg)}.ln.sel::after{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ac)}
+/* center */
+.center{display:grid;grid-template-rows:410px 8px 1fr;min-height:0}
+.upper{display:grid;grid-template-columns:1fr 8px 620px;min-height:0}
+.text{display:grid;grid-template-rows:var(--hd) 1fr 1fr auto;min-height:0}
+.blk{display:flex;flex-direction:column;min-height:0;padding:12px 16px}
+.blk .lh{display:flex;align-items:center;gap:8px;height:20px}
+.blk .lh .k{width:8px;height:8px;border-radius:2px}
+.blk .lh .r{margin-left:auto;font:12px var(--mono);color:var(--tx3)}
+.blk .body{flex:1;margin-top:8px;font-size:17px;line-height:1.5;overflow:hidden}
+.blk.o .k{background:var(--orig)}.blk.o .body{color:var(--tx2)}
+.blk.t{border-top:1px solid var(--line)}.blk.t .k{background:var(--l1)}
+.blk.t .body mark{background:transparent;color:var(--tx);box-shadow:inset 0 -2px 0 var(--ac);padding:0 1px}
+.gen{display:grid;grid-template-columns:repeat(4,1fr);gap:12px 16px;padding:12px 16px 14px;border-top:1px solid var(--line)}
+.gen .field,.gen .btn,.gen .split{width:100%}
+.gen .split .btn:first-child{width:auto;flex:1}.gen .split .btn:last-child{width:32px;flex:none}
+.gen .g{display:flex;flex-direction:column;gap:6px}
+.split{display:inline-flex}.split .btn:first-child{border-radius:var(--r) 0 0 var(--r)}.split .btn:last-child{border-radius:0 var(--r) var(--r) 0;border-left:1px solid rgba(0,0,0,.25);padding:0 8px}
+.btn.rec{color:var(--tx)}.btn.rec::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--err)}
+.params{grid-column:1/-1;display:flex;align-items:center;gap:20px;height:var(--ctl)}
+.num{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--tx2)}
+.num b{font:12px var(--mono);font-weight:400;color:var(--tx);height:var(--ctl);min-width:52px;padding:0 8px;display:inline-flex;align-items:center;border:1px solid var(--line2);border-radius:var(--r);background:var(--bg)}
+/* program */
+.prog{display:grid;grid-template-rows:var(--hd) 1fr 44px;min-height:0}
+.frame{position:relative;background:#000;overflow:hidden}
+.sub{position:absolute;left:0;right:0;bottom:22px;text-align:center;padding:0 48px;font-size:19px;line-height:1.35;color:#fff}
+.sub small{display:block;margin-top:6px;font-size:15px;color:#9fe3bf}
+.trn{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 12px;border-top:1px solid var(--line)}
+.trn .tc{font:13px var(--mono)}.trn .tc span{color:var(--tx3)}
+.tb{display:flex;align-items:center;gap:2px}
+.tb .ico.play{width:40px;color:var(--tx)}
+.trn .rt{display:flex;justify-content:flex-end;gap:2px}
+/* timeline */
+.tl{display:grid;grid-template-rows:var(--hd) 26px 1fr 40px;min-height:0}
+.tl .phd .m{font:12px var(--mono);font-weight:400;color:var(--tx2);display:flex;gap:10px}
+.tl .phd .m span{color:var(--tx3)}
+.tl .phd .zoom{margin-left:auto;display:flex;align-items:center;gap:8px}
+.zoom .r{width:100px;height:3px;background:var(--line2);border-radius:2px;position:relative}
+.zoom .r::after{content:"";position:absolute;left:46px;top:-4px;width:11px;height:11px;border-radius:50%;background:var(--tx)}
+.rul{display:grid;grid-template-columns:190px 1fr;border-bottom:1px solid var(--line)}
+.ruler{position:relative;overflow:hidden;font:10px var(--mono);color:var(--tx3)}
+.ruler i{position:absolute;top:7px;font-style:normal;transform:translateX(4px)}
+.ruler i::after{content:"";position:absolute;left:-4px;top:11px;height:7px;width:1px;background:var(--line2)}
+.ruler .io{position:absolute;top:0;height:100%;border-left:2px solid var(--ac);border-right:2px solid var(--ac);background:rgba(130,172,236,.06)}
+.lanes{position:relative;display:grid;grid-template-rows:1fr 1fr 1fr;min-height:0;overflow:hidden}
+.lane{display:grid;grid-template-columns:190px 1fr;min-height:0;border-bottom:1px solid var(--line)}
+.lhd{position:relative;padding:12px 12px 12px 16px;border-right:1px solid var(--line);display:grid;grid-template-rows:var(--ctl);grid-auto-rows:24px;align-content:start;gap:4px;background:var(--panel)}
+.lhd::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--c)}
+.lhd .r1{display:flex;align-items:center;gap:6px}
+.lhd .badge{width:20px;height:20px;border-radius:3px;border:1px solid var(--line2);display:grid;place-items:center;font:11px var(--mono);color:var(--tx3);flex:none}
+.lhd .badge.on{background:var(--ac);border-color:var(--ac);color:#0f1622;font-weight:700}
+.lhd .nm{font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lhd .ms{display:flex;gap:3px}
+.lhd .ms span{width:22px;height:22px;border:1px solid var(--line2);border-radius:3px;font:11px var(--mono);display:grid;place-items:center;color:var(--tx3)}
+.lhd .ms span.on{background:var(--raise2);color:var(--tx)}
+.lhd .kv{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--tx2)}
+.lhd .kv b{font:12px var(--mono);font-weight:400;color:var(--tx);margin-left:auto}
+.lhd .kv .tg{margin-left:auto;display:inline-flex;border:1px solid var(--line2);border-radius:3px;overflow:hidden;height:20px}
+.lhd .kv .tg span{padding:0 8px;display:flex;align-items:center;font-size:11px;color:var(--tx3)}
+.lhd .kv .tg span.on{background:var(--raise2);color:var(--tx)}
+.lhd .file{font:10px var(--mono);color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lb{position:relative;overflow:hidden;background:var(--bg)}
+.grid{position:absolute;inset:0;background-image:linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:100px 100%;opacity:.5}
+.clip{position:absolute;top:8px;bottom:8px;border-radius:var(--r);overflow:hidden;background:var(--raise);border:1px solid var(--line2)}
+.clip .cn{position:absolute;left:0;right:0;top:0;height:22px;padding:0 8px;display:flex;align-items:center;gap:8px;font-size:12px;z-index:2;color:var(--tx)}
+.clip .cn i{font:10px var(--mono);font-style:normal;color:var(--tx3)}
+.clip .cn .w{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.clip .dur{position:absolute;right:8px;bottom:4px;font:10px var(--mono);color:var(--tx3);z-index:2}
+.clip.sel{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac)}
+.clip canvas{position:absolute;inset:0;width:100%;height:100%}
+.clip .vch{margin-left:auto;display:inline-flex;gap:2px;font:10px var(--mono)}
+.clip .vch span{padding:1px 5px;border-radius:2px;color:var(--tx3);border:1px solid transparent}
+.clip .vch span.on{background:var(--ac-bg);color:var(--ac)}
+.clip .fi,.clip .fo{position:absolute;top:0;bottom:0;z-index:2}
+.clip .fi{left:0;width:56px;background:linear-gradient(to bottom right,rgba(0,0,0,.5) 50%,transparent 50%)}
+.clip .fo{right:0;width:80px;background:linear-gradient(to bottom left,rgba(0,0,0,.5) 50%,transparent 50%)}
+.clip .fi::after,.clip .fo::after{content:"";position:absolute;top:0;width:8px;height:8px;border-radius:50%;background:#fff}
+.clip .fi::after{left:52px}.clip .fo::after{left:0}
+.clip .gl{position:absolute;left:0;right:0;top:40%;height:1px;background:#f0c674;z-index:2;opacity:.9}
+.ph{position:absolute;top:0;bottom:0;width:1px;background:#fff;z-index:5;pointer-events:none}
+.ph::before{content:"";position:absolute;top:0;left:-5px;border:5px solid transparent;border-top:8px solid #fff}
+.tools{display:flex;align-items:center;gap:4px;padding:0 12px;border-top:1px solid var(--line)}
+.tools .sep{width:1px;height:18px;background:var(--line2);margin:0 8px}
+.tools .btn{height:28px}
+/* library */
+.lib .it{height:40px;display:grid;grid-template-columns:48px 1fr auto 24px;gap:10px;align-items:center;padding:0 12px 0 16px;border-bottom:1px solid var(--line);position:relative}
+.lib .it .v{font:12px var(--mono);color:var(--tx2)}
+.lib .it .tx{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lib .it canvas{display:block;width:100%;height:18px}
+.lib .it .d{font:11px var(--mono);color:var(--tx3)}
+.lib .it.used::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--l1)}
+/* properties */
+.props{flex:none;display:flex;flex-direction:column}
+.props .phd{font-size:15px}
+.props .head{padding:12px 16px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:1fr auto;gap:2px 12px;align-items:center}
+.props .head .t{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.props .head .s{font:12px var(--mono);color:var(--tx3);grid-column:1}
+.props .head .d{font:12px var(--mono);color:var(--tx2);grid-row:1;grid-column:2}
+.sec{height:30px;display:flex;align-items:center;gap:8px;padding:0 16px;font-size:13px;font-weight:600;border-bottom:1px solid var(--line)}
+.sec .ico{margin-left:auto;width:22px;height:22px;border:1px solid var(--line2)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;padding:6px 16px}
+.f{display:grid;grid-template-columns:64px 1fr;align-items:center;gap:8px;height:34px;font-size:12px;color:var(--tx2)}
+.f b{font:12px var(--mono);font-weight:400;color:var(--tx);height:var(--ctl);padding:0 8px;display:flex;align-items:center;justify-content:space-between;border:1px solid var(--line2);border-radius:var(--r);background:var(--bg)}
+.f b u{text-decoration:none;color:var(--tx3);font-size:11px}
+.fx{display:grid;grid-template-columns:16px 1fr 16px;align-items:center;gap:10px;height:32px;padding:0 16px;font-size:13px}
+.fx .cb{width:14px;height:14px;border-radius:3px;border:1px solid var(--line2)}
+.fx .cb.on{background:var(--ac);border-color:var(--ac)}
+.fx .c{color:var(--tx3);text-align:right}
+.fxp{display:grid;gap:4px;padding:0 16px 8px 42px}
+.fxp .p{display:grid;grid-template-columns:48px 1fr 64px;align-items:center;gap:12px;height:28px;font-size:12px;color:var(--tx2)}
+.fxp .p .r{height:3px;background:var(--line2);border-radius:2px;position:relative}
+.fxp .p .r::before{content:"";position:absolute;left:0;top:0;height:100%;width:var(--p);background:var(--ac);border-radius:2px}
+.fxp .p .r::after{content:"";position:absolute;top:-4px;width:11px;height:11px;border-radius:50%;background:var(--tx);left:calc(var(--p) - 5px)}
+.fxp .p b{font:12px var(--mono);font-weight:400;color:var(--tx);height:24px;padding:0 8px;display:flex;align-items:center;justify-content:space-between;border:1px solid var(--line2);border-radius:var(--r);background:var(--bg)}
+.fxp .p b u{text-decoration:none;color:var(--tx3);font-size:11px}
+
+.main.imp{grid-template-columns:320px 8px 1fr 8px 360px}
+.drop{margin:12px 16px;height:72px;border:1px dashed var(--line2);border-radius:6px;display:flex;align-items:center;justify-content:center;gap:8px;color:var(--tx2)}
+.drop .btn{height:26px}
+.src{height:44px;display:grid;grid-template-columns:20px 1fr auto;gap:10px;align-items:center;padding:0 16px;border-top:1px solid var(--line)}
+.src .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+.src .sb{font:11px var(--mono);color:var(--tx3);margin-top:2px}
+.src .k{width:16px;height:16px;border-radius:3px;display:grid;place-items:center;color:var(--tx3)}
+.src .m{font:11px var(--mono);color:var(--tx3);text-align:right;line-height:1.5}
+.tbar{height:44px;display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:1px solid var(--line)}
+.tbar .sep{width:1px;height:20px;background:var(--line2);margin:0 4px}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th{height:30px;text-align:left;padding:0 10px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--tx3);border-bottom:1px solid var(--line);white-space:nowrap;background:var(--panel);position:sticky;top:0}
+td{height:34px;padding:0 10px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0;color:var(--tx)}
+td.mono{font:11px var(--mono);color:var(--tx3)}
+td.dim{color:var(--tx3)}
+td.tr{color:var(--tx2)}
+td.tr.miss{color:var(--tx3);font-style:italic}
+tr.sel td{background:var(--ac-bg)}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:8px;vertical-align:middle}
+.ch{height:52px;display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:0 16px;border-top:1px solid var(--line)}
+.ch .nm{font-weight:600}
+.ch .sb{font:11px var(--mono);color:var(--tx3);margin-top:2px}
+.ch .field{height:26px;font-size:12px;width:150px}
+.kvp{height:36px;display:grid;grid-template-columns:96px 1fr;align-items:center;gap:8px;padding:0 16px;font-size:12px;color:var(--tx2)}
+.kvp .field{height:26px;font-size:12px;width:100%}
+.foot{height:44px;display:flex;align-items:center;gap:12px;padding:0 16px;border-top:1px solid var(--line);font:12px var(--mono);color:var(--tx3)}
+.foot b{color:var(--tx);font-weight:400}
+</style>
+<div class="app">
+<div class="top">
+  <span class="brand"><img src="logo.svg" width="26" height="26" alt="">VO Studio</span>
+  <span class="pname">Satisfactory ADA <svg width="8" height="12" viewBox="0 0 8 12"><path d="M2 1l4 5-4 5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></span>
+  <span class="field mono">v12 <svg width="8" height="8" viewBox="0 0 8 8"><path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></span>
+  <span class="btn ghost">Save version</span>
+  <div class="rooms"><span class="on">Import</span><span>Work</span><span>Export</span></div>
+  <span class="ico"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M6.6 1h2.8l.4 2 1.6.9 1.9-.7 1.4 2.4-1.5 1.3v1.9l1.5 1.3-1.4 2.4-1.9-.7-1.6.9-.4 2H6.6l-.4-2-1.6-.9-1.9.7L1.3 10l1.5-1.3V6.8L1.3 5.5l1.4-2.4 1.9.7 1.6-.9z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><circle cx="8" cy="7.8" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></span>
+</div>
+<div class="main imp">
+ <div class="panel">
+  <div class="phd">Sources <span class="n">782</span></div>
+  <div class="drop"><span class="btn"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 1h5l3 3v9H3z" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 1v3h3" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>Files</span><span class="btn"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M1 3h4l1.5 1.5H13v8H1z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>Folder</span></div>
+  <div class="scroll">
+   <div class="src"><span class="k"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M1 3h4l1.5 1.5H13v8H1z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></span><div><div class="nm">original_audio</div><div class="sb">780 files · wav · 1h 12m</div></div><span class="m">780 lines</span></div>
+   <div class="src"><span class="k"><svg width="14" height="14" viewBox="0 0 14 14"><rect x="1" y="3" width="9" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M10 6l3-2v6l-3-2z" fill="currentColor"/></svg></span><div><div class="nm">interview_cut_v3.mp4</div><div class="sb">12:40 · 1080p · stereo</div></div><span class="m">312 lines</span></div>
+   <div class="src"><span class="k"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 3h10M2 7h10M2 11h6" stroke="currentColor" stroke-width="1.3"/></svg></span><div><div class="nm">ADA_lines_EN.csv</div><div class="sb">780 rows · id, text, character</div></div><span class="m">780 matched</span></div>
+   <div class="src"><span class="k"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 3h10M2 7h10M2 11h6" stroke="currentColor" stroke-width="1.3"/></svg></span><div><div class="nm">ADA_lines_UK.csv</div><div class="sb">635 rows · id, text</div></div><span class="m">635 matched<br><span style="color:var(--err)">2 unmatched</span></span></div>
+  </div>
+  <div class="foot">EN → UK</div>
+ </div>
+ <div class="vl"></div>
+ <div class="panel">
+  <div class="phd">Lines <span class="n">1,092</span><span class="tabs"><span class="on">All</span><span>No transcript 2</span><span>No translation 145</span><span>Unmatched 2</span></span></div>
+  <div class="tbar"><span class="search" style="margin:0;width:260px"><svg width="13" height="13" viewBox="0 0 13 13"><circle cx="5.5" cy="5.5" r="4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8.5 8.5l3.5 3.5" stroke="currentColor" stroke-width="1.4"/></svg>Search</span><span class="sp"></span><span class="btn">Detect lines <svg width="8" height="8" viewBox="0 0 8 8"><path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></span><span class="btn">Transcribe <svg width="8" height="8" viewBox="0 0 8 8"><path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></span><span class="btn">Translate <svg width="8" height="8" viewBox="0 0 8 8"><path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></span><span class="sep"></span><span class="btn"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 3h10M2 7h10M2 11h6" stroke="currentColor" stroke-width="1.3"/></svg>Import text</span></div>
+  <div class="scroll"><table><thead><tr><th style="width:56px">#</th><th style="width:250px">Source</th><th style="width:64px">Length</th><th>Original · EN</th><th>Translation · UK</th><th style="width:110px">Character</th></tr></thead><tbody><tr><td class="mono"><span class="dot" style="background:#46c98c;border:1px solid transparent"></span>1</td><td class="mono" style="color:var(--tx2)">VO_ADA_Pelevator_Emergency_09</td><td class="mono">3.64s</td><td>Pushing the button without due cause is a punishable offense.</td><td class="tr">Натискання цієї кнопки без причини карається законом.</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:#46c98c;border:1px solid transparent"></span>2</td><td class="mono" style="color:var(--tx2)">VO_ADA_Pelevator_Ride_09</td><td class="mono">3.60s</td><td>Having legs seems wonderful. Enjoy them for me.</td><td class="tr">Схоже, мати ноги — це чудово. Насолодіться ними.</td><td class="dim">ADA</td></tr>
+<tr class="sel"><td class="mono"><span class="dot" style="background:#e6a23c;border:1px solid transparent"></span>3</td><td class="mono" style="color:var(--tx2)">Play_VO_Onboarding_HUB_Upgrade3</td><td class="mono">8.20s</td><td>HUB upgrade two is complete. Power and shell modules are now available for construction.</td><td class="tr">Оновлення ГАБу-2 завершено. Модулі живлення та оболонки тепер доступні для будівництва.</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:#46c98c;border:1px solid transparent"></span>4</td><td class="mono" style="color:var(--tx2)">VO_ADA_Pelevator_Emergency_04</td><td class="mono">4.02s</td><td>An engineer is on the way to repair the button.</td><td class="tr">До вас прямує інженер, який полагодить кнопку.</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:transparent;border:1px solid var(--line2)"></span>5</td><td class="mono" style="color:var(--tx2)">Play_VO_ADA_MILESTONE_1_2_1</td><td class="mono">7.10s</td><td>The Productivity Display will help you measure your efficiency.</td><td class="tr miss">—</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:transparent;border:1px solid var(--line2)"></span>6</td><td class="mono" style="color:var(--tx2)">Play_VO_ADA_DROPPOD_TEST</td><td class="mono">2.70s</td><td>Please remain seated during the full procedure.</td><td class="tr miss">—</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:#46c98c;border:1px solid transparent"></span>7</td><td class="mono" style="color:var(--tx2)">Play_VO_FICSMAS_MAM_Lights</td><td class="mono">13.6s</td><td>I am sure all the kittens, puppies and even the…</td><td class="tr">Я впевнена, що всі кошенята, цуценята і навіть…</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:#e6a23c;border:1px solid transparent"></span>8</td><td class="mono" style="color:var(--tx2)">Play_VO_Slugs_Blue</td><td class="mono">25.5s</td><td>This semi-slug, now called the Power Slug, has been…</td><td class="tr">Цей напівслимак, якого тепер називають електросли…</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:#46c98c;border:1px solid transparent"></span>9</td><td class="mono" style="color:var(--tx2)">VO_PlayerAction_Death_14</td><td class="mono">2.10s</td><td>That is disappointing, but not surprising.</td><td class="tr">Це розчаровує, але не дивує.</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:#46c98c;border:1px solid transparent"></span>10</td><td class="mono" style="color:var(--tx2)">VO_PlayerAction_Kill_Bean_07</td><td class="mono">2.80s</td><td>Most people have far more productive preferences.</td><td class="tr">Більшість людей мають значно продуктивніші вподобання.</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:transparent;border:1px solid var(--line2)"></span>11</td><td class="mono" style="color:var(--tx2)">Play_SamOre_Whispers_01</td><td class="mono">4.70s</td><td>Play for us. Play for us.</td><td class="tr miss">—</td><td class="dim">Прибулець</td></tr>
+<tr><td class="mono"><span class="dot" style="background:transparent;border:1px solid var(--line2)"></span>12</td><td class="mono" style="color:var(--tx2)">Play_SamOre_Whispers_02</td><td class="mono">6.10s</td><td>Keep the father of the temples, keep the mother…</td><td class="tr miss">—</td><td class="dim">Прибулець</td></tr>
+<tr><td class="mono"><span class="dot" style="background:transparent;border:1px solid var(--line2)"></span>13</td><td class="mono" style="color:var(--tx2)">Play_SamOre_Whispers_03</td><td class="mono">5.70s</td><td>You have crushed our faces and you want to see our tide.</td><td class="tr miss">—</td><td class="dim">Прибулець</td></tr>
+<tr><td class="mono"><span class="dot" style="background:transparent;border:1px solid var(--line2)"></span>14</td><td class="mono" style="color:var(--tx2)">Play_MAM_FicsmusPart04</td><td class="mono">9.50s</td><td>You better watch out. Ficsmas is coming to town.</td><td class="tr miss">—</td><td class="dim">MAM</td></tr>
+<tr><td class="mono"><span class="dot" style="background:transparent;border:1px solid var(--line2)"></span>15</td><td class="mono" style="color:var(--tx2)">Play_MAM_FicsmusPart02</td><td class="mono">7.80s</td><td>We're making a list, we're checking it twice.</td><td class="tr miss">—</td><td class="dim">MAM</td></tr>
+<tr><td class="mono"><span class="dot" style="background:transparent;border:1px solid var(--line2)"></span>16</td><td class="mono" style="color:var(--tx2)">Play_MAM_FicsmusPart03</td><td class="mono">6.40s</td><td class="tr miss">no transcript</td><td class="tr miss">—</td><td class="dim"></td></tr>
+<tr><td class="mono"><span class="dot" style="background:transparent;border:1px solid var(--line2)"></span>17</td><td class="mono" style="color:var(--tx2)">Play_MAM_FicsmusPart05</td><td class="mono">5.90s</td><td class="tr miss">no transcript</td><td class="tr miss">—</td><td class="dim"></td></tr>
+<tr><td class="mono"><span class="dot" style="background:#46c98c;border:1px solid transparent"></span>18</td><td class="mono" style="color:var(--tx2)">VO_ADA_Tutorial_Intro_01</td><td class="mono">5.30s</td><td>Welcome, pioneer. Your mission begins now.</td><td class="tr">Вітаю, піонере. Ваша місія починається зараз.</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:#46c98c;border:1px solid transparent"></span>19</td><td class="mono" style="color:var(--tx2)">VO_ADA_Tutorial_Intro_02</td><td class="mono">3.10s</td><td>Locate the drop pod and begin construction.</td><td class="tr">Знайдіть капсулу і почніть будівництво.</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:transparent;border:1px solid var(--line2)"></span>20</td><td class="mono" style="color:var(--tx2)">VO_ADA_Tutorial_Intro_03</td><td class="mono">4.40s</td><td>The HUB is your base of operations.</td><td class="tr miss">—</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:#46c98c;border:1px solid transparent"></span>21</td><td class="mono" style="color:var(--tx2)">VO_ADA_Warning_Power_01</td><td class="mono">2.90s</td><td>Power levels are critical.</td><td class="tr">Рівень живлення критичний.</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:#e6a23c;border:1px solid transparent"></span>22</td><td class="mono" style="color:var(--tx2)">VO_ADA_Warning_Power_02</td><td class="mono">3.70s</td><td>Consider expanding your power grid.</td><td class="tr">Варто розширити енергомережу.</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:#46c98c;border:1px solid transparent"></span>23</td><td class="mono" style="color:var(--tx2)">VO_ADA_Milestone_Complete</td><td class="mono">2.40s</td><td>Milestone complete.</td><td class="tr">Етап завершено.</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:transparent;border:1px solid var(--line2)"></span>24</td><td class="mono" style="color:var(--tx2)">VO_ADA_Research_New</td><td class="mono">3.30s</td><td>New research is available in the MAM.</td><td class="tr miss">—</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:#46c98c;border:1px solid transparent"></span>25</td><td class="mono" style="color:var(--tx2)">VO_ADA_Elevator_Ready</td><td class="mono">2.80s</td><td>The space elevator is ready.</td><td class="tr">Космічний ліфт готовий.</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:transparent;border:1px solid var(--line2)"></span>26</td><td class="mono" style="color:var(--tx2)">VO_PlayerAction_Death_02</td><td class="mono">1.90s</td><td>Unfortunate.</td><td class="tr miss">—</td><td class="dim">ADA</td></tr>
+<tr><td class="mono"><span class="dot" style="background:#46c98c;border:1px solid transparent"></span>27</td><td class="mono" style="color:var(--tx2)">VO_PlayerAction_Death_07</td><td class="mono">2.60s</td><td>A pioneer has been lost. Please try again.</td><td class="tr">Піонера втрачено. Спробуйте ще раз.</td><td class="dim">ADA</td></tr>
+</tbody></table></div>
+  <div class="foot"><b>1,092</b> lines · <b>1,090</b> transcribed · <b>947</b> translated · <b>2</b> unmatched<span class="sp"></span><span class="btn pri" style="height:28px">Open in Work</span></div>
+ </div>
+ <div class="vl"></div>
+ <div style="display:grid;grid-template-rows:auto 8px 1fr;min-height:0">
+  <div class="panel">
+   <div class="phd">Project</div>
+   <div class="kvp">Languages<span class="field">EN → UK <svg style="margin-left:auto" width="8" height="8" viewBox="0 0 8 8"><path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></span></div>
+   <div class="kvp">Match by<span class="field">file name = id <svg style="margin-left:auto" width="8" height="8" viewBox="0 0 8 8"><path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></span></div>
+   <div class="kvp">Output name<span class="field mono">{id}.wav</span></div>
+   <div style="height:8px"></div>
+  </div>
+  <div class="hl"></div>
+  <div class="panel">
+   <div class="phd">Characters <span class="n">4</span><span class="tabs"><span class="ico sm">+</span></span></div>
+   <div class="scroll">
+    <div class="ch"><div><div class="nm">ADA</div><div class="sb">1,018 lines</div></div><span class="field">Rachel <svg style="margin-left:auto" width="8" height="8" viewBox="0 0 8 8"><path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></span></div>
+    <div class="ch"><div><div class="nm">Прибулець</div><div class="sb">41 lines</div></div><span class="field">Antoni <svg style="margin-left:auto" width="8" height="8" viewBox="0 0 8 8"><path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></span></div>
+    <div class="ch"><div><div class="nm">MAM</div><div class="sb">31 lines</div></div><span class="field" style="color:var(--tx3)">— <svg style="margin-left:auto" width="8" height="8" viewBox="0 0 8 8"><path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></span></div>
+    <div class="ch"><div><div class="nm" style="color:var(--tx3)">no character</div><div class="sb">2 lines</div></div><span class="field" style="color:var(--tx3)">— <svg style="margin-left:auto" width="8" height="8" viewBox="0 0 8 8"><path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></span></div>
+   </div>
+  </div>
+ </div>
+</div>
+</div>
+<script>function rnd(seed){return()=>{seed=(seed*16807)%2147483647;return seed/2147483647}}
+document.querySelectorAll('canvas').forEach(c=>{const r=rnd(+c.dataset.seed*97+13);const w=c.width=c.offsetWidth*2,h=c.height=c.offsetHeight*2;const x=c.getContext('2d');x.fillStyle=c.dataset.col;let env=0;for(let i=0;i<w;i+=3){const t=i/w;const word=Math.sin(t*23+r()*.3)>-.2?1:.12;env=env*.8+.2*(r()*word*(t<.06||t>.94?.15:1));const a=env*h*.42;x.fillRect(i,h/2-a,2,a*2)}});
+</script>
