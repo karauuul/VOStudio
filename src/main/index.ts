@@ -10,6 +10,7 @@ import {
   projectCommandSchema,
   projectDirSchema,
   projectNameSchema,
+  batchExportSchema,
   saveVersionSchema,
   stsSchema,
   templateDirSchema,
@@ -49,9 +50,8 @@ import {
   copyJob,
   encodeJob,
   finishExport,
-  lastExport,
   planBatchExport,
-  preflightExport,
+  exportInfo,
 } from './export'
 import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
@@ -121,10 +121,16 @@ function flushPersist(): Promise<void> {
   return projectRepository?.flush() ?? Promise.resolve()
 }
 
-const batchExportSchema = z.object({
-  scope: z.enum(['approved', 'all-final']),
-  collisionStrategy: z.record(z.enum(['suffix-wemid', 'skip', 'reuse'])).optional(),
-})
+async function stampVersion(): Promise<number> {
+  await flushPersist()
+  const before = store.getProject()?.versions?.length ?? 0
+  const n = await store.ensureVersion()
+  const versions = store.getProject()?.versions
+  if (versions && versions.length !== before && projectRepository) {
+    emit('project:changed', await projectRepository.commit({ versions }))
+  }
+  return n
+}
 
 const filePath = z.string().min(1).max(4096).refine((p) => path.isAbsolute(p), {
   message: 'Path must be absolute',
@@ -742,13 +748,23 @@ function registerHandlers(): void {
   typedHandle('csv:sync', () => syncCsv())
 
   typedHandle('export:planBatch', async (req) => planBatchExport(batchExportSchema.parse(req)))
-  typedHandle('export:preflight', async (req) => preflightExport(batchExportSchema.parse(req)))
+  typedHandle('export:info', () => exportInfo())
+  typedHandle('export:pickDir', async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: 'Export folder',
+      properties: ['openDirectory', 'createDirectory'],
+    }
+    const win = BrowserWindow.getFocusedWindow()
+    const picked = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    return picked.canceled || picked.filePaths.length === 0 ? null : picked.filePaths[0]
+  })
   typedHandle('export:copy', (outPath: string) => copyJob(z.string().min(1).parse(outPath)))
   typedHandle('export:encode', (outPath, wav) => encodeJob(z.string().min(1).parse(outPath), wav))
-  typedHandle('export:finish', (token, summary) =>
-    finishExport(z.string().uuid().parse(token), exportSummarySchema.parse(summary))
-  )
-  typedHandle('export:last', () => lastExport())
+  typedHandle('export:finish', async (token, summary) => {
+    const parsed = exportSummarySchema.parse(summary)
+    const version = parsed.exported.length > 0 ? await stampVersion() : undefined
+    return finishExport(z.string().uuid().parse(token), parsed, version)
+  })
 
   typedHandle('settings:get', () => store.getSettings())
   typedHandle('settings:set', async (s: AppSettings) => {

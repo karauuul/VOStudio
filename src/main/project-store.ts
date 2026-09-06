@@ -246,6 +246,34 @@ export async function saveVersion(name?: string): Promise<ProjectVersion[]> {
   return current.versions
 }
 
+function withoutVersions(raw: string): string {
+  const parsed = JSON.parse(raw) as Record<string, unknown>
+  delete parsed['versions']
+  return JSON.stringify(parsed)
+}
+
+async function matchesVersionFile(n: number): Promise<boolean> {
+  if (!projectDir) return false
+  try {
+    const [live, saved] = await Promise.all([
+      fs.readFile(path.join(projectDir, 'project.json'), 'utf-8'),
+      fs.readFile(path.join(projectDir, 'versions', `v${n}.json`), 'utf-8'),
+    ])
+    return withoutVersions(live) === withoutVersions(saved)
+  } catch {
+    return false
+  }
+}
+
+export async function ensureVersion(): Promise<number> {
+  if (!current || !projectDir) throw new Error('No project is open')
+  const previous = current.versions ?? []
+  const last = previous[previous.length - 1]
+  if (last && (await matchesVersionFile(last.n))) return last.n
+  const versions = await saveVersion()
+  return versions[versions.length - 1].n
+}
+
 export async function writeTakeFile(cueId: string, fileName: string, data: Buffer): Promise<string> {
   if (!projectDir) throw new Error('No project is open')
   const dir = path.join(projectDir, 'audio', 'takes', cueId)

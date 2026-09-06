@@ -23,6 +23,7 @@ import {
   type VoiceSettings,
 } from './domain'
 import { referencedByOtherComp, resolveTake } from './library'
+import { sanitizeExportSettings, type ExportSettings } from './export-settings'
 
 export type ProjectCommand =
   | { type: 'cue.saveText'; cueId: string; text: string }
@@ -51,6 +52,13 @@ export type ProjectCommand =
 export interface ChangeSet {
   name?: string
   languages?: ProjectLanguages | null
+  | { type: 'project.setExport'; settings: ExportSettings | null }
+  | { type: 'project.setExportTemplate'; template: string }
+
+export interface ChangeSet {
+  name?: string
+  export?: ExportSettings | null
+  exportTemplate?: string
   versions?: ProjectVersion[]
   cues?: Cue[]
   characters?: Project['characters']
@@ -173,6 +181,17 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
     if (languages) project.languages = languages
     else delete project.languages
     return { languages: languages ?? null }
+  if (command.type === 'project.setExportTemplate') {
+    const template = command.template.trim()
+    if (!template) throw new Error('Output name cannot be empty')
+    project.exportTemplate = template
+    return { exportTemplate: template }
+  }
+  if (command.type === 'project.setExport') {
+    const settings = command.settings === null ? undefined : sanitizeExportSettings(command.settings)
+    if (settings) project.export = settings
+    else delete project.export
+    return { export: settings ?? null }
   }
   const cue = cueById(project, command.cueId)
   switch (command.type) {
@@ -307,6 +326,11 @@ export function applyChangeSet(project: Project, changes: ChangeSet): Project {
       const { languages: _drop, ...rest } = next
       next = rest
     } else next = { ...next, languages: changes.languages }
+  if (changes.export !== undefined) {
+    if (changes.export === null) {
+      const { export: _dropped, ...rest } = next
+      next = rest as Project
+    } else next = { ...next, export: structuredClone(changes.export) }
   }
   if (changes.versions) next = { ...next, versions: structuredClone(changes.versions) }
   if (changes.cues) {
@@ -326,6 +350,7 @@ export function applyChangeSet(project: Project, changes: ChangeSet): Project {
       next = { ...next, characters: next.characters.map((character) => replacements.get(character.id) ?? character) }
     }
   }
+  if (changes.exportTemplate !== undefined) next = { ...next, exportTemplate: changes.exportTemplate }
   if (changes.pronunciationRules !== undefined) next = { ...next, pronunciationRules: changes.pronunciationRules }
   return next
 }

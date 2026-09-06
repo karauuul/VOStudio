@@ -110,22 +110,43 @@ describe('buildReport', () => {
   it('carries the package fields and every entry list', () => {
     const report = buildReport(
       'Pack',
-      'all-final',
       {
-        exported: [{ cueId: 'a1', exportName: 'ADA_a1', file: 'audio/ADA_a1.mp3', bytes: 12, sha256: 'ab' }],
+        exported: [
+          {
+            cueId: 'a1',
+            exportName: 'ADA_a1',
+            file: 'audio/ADA_a1.mp3',
+            bytes: 12,
+            sha256: 'ab',
+            revision: 3,
+            version: 11,
+          },
+        ],
         failed: [{ cueId: 'a2', exportName: 'ADA_a2', file: 'audio/ADA_a2.mp3', reason: 'render failed' }],
-        skipped: [{ cueId: 'a3', reason: 'collision:skip' }],
+        skipped: [],
       },
+      11,
       '2026-09-04T10:00:00.000Z'
     )
     expect(report).toEqual({
       formatVersion: 1,
       project: 'Pack',
       createdAt: '2026-09-04T10:00:00.000Z',
-      scope: 'all-final',
-      exported: [{ cueId: 'a1', exportName: 'ADA_a1', file: 'audio/ADA_a1.mp3', bytes: 12, sha256: 'ab' }],
+      scope: 'selected',
+      version: 11,
+      exported: [
+        {
+          cueId: 'a1',
+          exportName: 'ADA_a1',
+          file: 'audio/ADA_a1.mp3',
+          bytes: 12,
+          sha256: 'ab',
+          revision: 3,
+          version: 11,
+        },
+      ],
       failed: [{ cueId: 'a2', exportName: 'ADA_a2', file: 'audio/ADA_a2.mp3', reason: 'render failed' }],
-      skipped: [{ cueId: 'a3', reason: 'collision:skip' }],
+      skipped: [],
     })
   })
 })

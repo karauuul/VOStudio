@@ -44,11 +44,11 @@ const channelMap: Record<IpcChannel, true> = {
   'csv:sync': true,
 
   'export:planBatch': true,
-  'export:preflight': true,
+  'export:info': true,
+  'export:pickDir': true,
   'export:copy': true,
   'export:encode': true,
   'export:finish': true,
-  'export:last': true,
 
   'settings:get': true,
   'settings:set': true,

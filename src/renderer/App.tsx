@@ -33,7 +33,6 @@ import {
 import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues, groupByCharacter } from '@shared/cue-filter'
 import { LinesPanel } from './work/LinesPanel'
 import type { TextPanelProps } from './work/TextPanel'
-import { DeliverScreen } from './DeliverScreen'
 import { ImportRoom } from './rooms/ImportRoom'
 import type { GridApi } from './import/LinesTable'
 import { WorkRoom } from './rooms/WorkRoom'
@@ -57,7 +56,6 @@ import { ShortcutsDialog } from './ShortcutsDialog'
 import { JobsDrawer } from './JobsDrawer'
 import { useKeyboard, type KeyboardHandlers } from './keyboard'
 import {
-  cueDecision,
   initialPreviewSource,
   outputSource,
   sameSource,
@@ -158,8 +156,8 @@ export default function App() {
   }, [])
 
   const refreshExported = useCallback(() => {
-    void api['export:last']().then(
-      (last) => setExported(new Set(last?.cueIds ?? [])),
+    void api['export:info']().then(
+      (info) => setExported(new Set(info.last?.cueIds ?? [])),
       () => setExported(new Set())
     )
   }, [])
@@ -343,43 +341,6 @@ export default function App() {
     },
     [activeCueId, sessionText, refuseWhileExporting]
   )
-
-  const onApprove = useCallback(
-    (approvedNow: boolean): Promise<boolean> => {
-      const cue = activeCue
-      if (!cue) return Promise.resolve(false)
-      if (approvedNow) {
-        const decision = cueDecision(cue, previewSource)
-        if (decision === 'approved') return Promise.resolve(false)
-        if (decision !== 'approve') {
-          pushStatus('err', 'Approval requires the previewed source to be the final output')
-          return Promise.resolve(false)
-        }
-      }
-      return flushText().then((saved) => {
-        if (!saved) return false
-        return dispatch({ type: 'cue.approve', cueId: cue.id, approved: approvedNow }).then(
-          () => true,
-          (e: unknown) => {
-            pushStatus('err', String(e))
-            return false
-          }
-        )
-      })
-    },
-    [activeCue, previewSource, pushStatus, flushText, dispatch]
-  )
-
-  const onApproveNext = useCallback(() => {
-    const cue = activeCue
-    if (!cue || cueDecision(cue, previewSource) !== 'approve') return
-    const targetId = visible[activeIndex + 1]?.id
-    void onApprove(true).then((ok) => {
-      if (!ok) return
-      if (targetId === undefined) pushStatus('ok', 'Queue complete')
-      else void selectCue(targetId)
-    })
-  }, [activeCue, previewSource, visible, activeIndex, onApprove, selectCue, pushStatus])
 
   const onSetFinal = useCallback(
     (takeId: string) => {
@@ -817,6 +778,13 @@ export default function App() {
     [goRoute]
   )
 
+  const runCommand = useCallback(
+    (command: ProjectCommand) => {
+      void dispatch(command).catch((e: unknown) => pushStatus('err', String(e)))
+    },
+    [dispatch, pushStatus]
+  )
+
   const openCue = useCallback(
     (cueId: string) => {
       void selectCue(cueId).then((ok) => {
@@ -933,8 +901,6 @@ export default function App() {
       next: () => move(1),
       prev: () => move(-1),
       generate: () => generate(genTarget.kind),
-      approve: () => void onApprove(true),
-      approveNext: onApproveNext,
       playPause: () => {
         if (!programRef.current?.toggle()) playback.toggle()
       },
@@ -993,8 +959,6 @@ export default function App() {
       move,
       generate,
       genTarget,
-      onApprove,
-      onApproveNext,
       activeTakes,
       selectSource,
       makeFinal,
@@ -1441,13 +1405,6 @@ export default function App() {
     onOpenLine: openCue,
   }
 
-  const deliver: Omit<ComponentProps<typeof DeliverScreen>, 'hidden'> = {
-    project,
-    onStatus: pushStatus,
-    onOpenFilter: openFilter,
-    onOpenCue: openCue,
-    beginExport,
-    endExport,
   }
 
   return (
@@ -1500,7 +1457,15 @@ export default function App() {
         properties={properties}
       />
 
-      <ExportRoom hidden={route !== 'export'} deliver={deliver} />
+      <ExportRoom
+        hidden={route !== 'export'}
+        project={project}
+        onStatus={pushStatus}
+        onOpenCue={openCue}
+        onCommand={runCommand}
+        beginExport={beginExport}
+        endExport={endExport}
+      />
 
       {toastUi}
 

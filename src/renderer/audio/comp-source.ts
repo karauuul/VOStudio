@@ -1,6 +1,7 @@
-import { isEmptyComp, withSourceEffects } from '@shared/comp'
+import { isEmptyComp } from '@shared/comp'
 import type { CompClip, CompRegion, CompTrack, Cue, CueComp } from '@shared/domain'
-import { resolveTake, type TakeLookup } from '@shared/library'
+import { resolveCompClips } from '@shared/export-plan'
+import type { TakeLookup } from '@shared/library'
 import { audioUrl } from '../api'
 
 export interface ResolvedCompClip {
@@ -22,11 +23,10 @@ export function resolveComp(
   original?: { url: string; gainDb: number }
 ): ResolvedComp | null {
   if (isEmptyComp(comp ?? undefined)) return original ? { clips: [], original } : null
-  const clips = comp!.clips.map((clip) => {
-    const found = resolveTake(project, cue, clip.sourceTakeId)
-    if (!found) throw new Error(`Composition clip "${clip.id}": take ${clip.sourceTakeId} is gone`)
-    return { clip: withSourceEffects(clip, found.take), url: audioUrl(found.take.file.relPath) }
-  })
+  const clips = resolveCompClips(project, cue, comp!).map((c) => ({
+    clip: c.clip,
+    url: audioUrl(c.relPath),
+  }))
   return {
     clips,
     ...(comp!.region ? { region: comp!.region } : {}),

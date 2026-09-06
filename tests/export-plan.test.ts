@@ -7,9 +7,6 @@ import {
   hasEdits,
   isFastPath,
   planBatch,
-  resolvePlan,
-  withWemIdSuffix,
-  type PlannedTake,
 } from '../src/shared/export-plan'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 
@@ -94,28 +91,19 @@ describe('exportName', () => {
   it('placeholders are substituted', () => {
     const c = cue('12345')
     const p = project([c], '{EventName}__{WemId}.{ext}')
-    expect(exportName(p, c, c.takes[0])).toBe('Event_12345__12345.mp3')
+    expect(exportName(p, c, c.takes[0])).toBe('Event_12345__12345.wav')
   })
 
-  it('the extension comes from the take file format', () => {
+  it('the extension comes from the chosen format', () => {
     const t = take('t1', 'wav')
     const c = cue('9', { takes: [t], finalTakeId: t.id })
-    expect(exportName(project([c]), c, t)).toBe('Event_9.wav')
+    const p = { ...project([c]), export: { format: 'mp3-192' as const } }
+    expect(exportName(p, c, t)).toBe('Event_9.mp3')
   })
 
   it('without EventName falls back to key', () => {
     const c = cue('77', { fields: {} })
-    expect(exportName(project([c]), c, c.takes[0])).toBe('77.mp3')
-  })
-})
-
-describe('withWemIdSuffix', () => {
-  it('the suffix goes BEFORE the extension', () => {
-    expect(withWemIdSuffix('Event.mp3', '123')).toBe('Event__123.mp3')
-  })
-
-  it('no extension — just appended at the end', () => {
-    expect(withWemIdSuffix('Event', '123')).toBe('Event__123')
+    expect(exportName(project([c]), c, c.takes[0])).toBe('77.wav')
   })
 })
 
@@ -157,112 +145,57 @@ describe('isFastPath — byte copy or render', () => {
   })
 })
 
-describe('planBatch — scope', () => {
+describe('planBatch', () => {
   const approved = cue('1')
   const generated = cue('2', { status: 'generated' })
   const noFinal = cue('3', { finalTakeId: undefined, output: undefined, approval: undefined })
-  const p = project([approved, generated, noFinal])
+  const excluded = cue('4', { status: 'excluded' })
+  const p = project([approved, generated, noFinal, excluded])
 
-  it('approved takes only the approved ones', () => {
-    expect(planBatch(p, 'approved').map((x) => x.cue.key)).toEqual(['1'])
-  })
-
-  it('keeps a valid legacy approved cue in approved exports', () => {
-    const legacy = cue('legacy', { output: undefined, approval: undefined })
-    expect(planBatch(project([legacy]), 'approved').map((x) => x.cue.key)).toEqual(['legacy'])
-  })
-
-  it('all-final takes everything with a final take', () => {
-    expect(planBatch(p, 'all-final').map((x) => x.cue.key)).toEqual(['1', '2'])
+  it('takes everything with a valid voiced output', () => {
+    expect(planBatch(p).map((x) => x.cue.key)).toEqual(['1', '2'])
   })
 
   it('a cue without finalTakeId ends up nowhere', () => {
-    expect(planBatch(p, 'all-final').some((x) => x.cue.key === '3')).toBe(false)
+    expect(planBatch(p).some((x) => x.cue.key === '3')).toBe(false)
   })
 
-  it('approved composition can use its first source when there is no final take', () => {
+  it('an excluded cue is never exported', () => {
+    expect(planBatch(p).some((x) => x.cue.key === '4')).toBe(false)
+  })
+
+  it('a composition can use its first source when there is no final take', () => {
     const t = take('source')
     const c = cue('comp', {
       takes: [t],
       finalTakeId: undefined,
       comp: { clips: [{ id: 'clip', sourceTakeId: t.id, srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits() }] },
       output: { kind: 'comp', revision: 2 },
-      approval: { textRevision: 0, outputRevision: 2, approvedAt: '2026-01-01T00:00:00.000Z' },
     })
-    expect(planBatch(project([c]), 'approved').map((x) => x.take.id)).toEqual(['source'])
+    expect(planBatch(project([c])).map((x) => x.take.id)).toEqual(['source'])
   })
 })
 
-describe('collisions and strategies', () => {
+describe('collisions', () => {
   const a = cue('100', { fields: { EventName: 'Same' } })
   const b = cue('200', { fields: { EventName: 'Same' } })
   const c = cue('300', { fields: { EventName: 'Unique' } })
-  const planned: PlannedTake[] = planBatch(project([a, b, c]), 'approved')
 
   it('finds exactly one collision with both keys', () => {
-    const coll = findCollisions(planned)
+    const coll = findCollisions(planBatch(project([a, b, c])))
     expect(coll).toHaveLength(1)
-    expect(coll[0].name).toBe('Same.mp3')
+    expect(coll[0].name).toBe('Same.wav')
     expect(coll[0].cueKeys).toEqual(['100', '200'])
-  })
-
-  it('without a strategy — we write NOTHING, not even the conflict-free ones', () => {
-    const r = resolvePlan(planned, {})
-    expect(r.jobs).toHaveLength(0)
-    expect(r.uncovered).toHaveLength(1)
-  })
-
-  it('suffix-wemid: both are kept with a suffix', () => {
-    const r = resolvePlan(planned, { 'Same.mp3': 'suffix-wemid' })
-    expect(r.uncovered).toHaveLength(0)
-    expect(r.jobs.map((j) => j.name).sort()).toEqual([
-      'Same__100.mp3',
-      'Same__200.mp3',
-      'Unique.mp3',
-    ])
-    expect(r.skipped).toBe(0)
-  })
-
-  it('skip: the conflicting ones are dropped, the rest is written', () => {
-    const r = resolvePlan(planned, { 'Same.mp3': 'skip' })
-    expect(r.jobs.map((j) => j.name)).toEqual(['Unique.mp3'])
-    expect(r.skipped).toBe(2)
-    expect(r.skippedCues).toEqual([
-      { cueId: '100', reason: 'collision:skip' },
-      { cueId: '200', reason: 'collision:skip' },
-    ])
-  })
-
-  it('reuse: the LAST one stays, the rest counts as skipped', () => {
-    const r = resolvePlan(planned, { 'Same.mp3': 'reuse' })
-    expect(r.jobs).toHaveLength(2)
-    expect(r.jobs.find((j) => j.name === 'Same.mp3')?.cue.key).toBe('200')
-    expect(r.skipped).toBe(1)
-    expect(r.skippedCues).toEqual([{ cueId: '100', reason: 'collision:reuse' }])
   })
 
   it('names differing only in case collide — the filesystem would overwrite one', () => {
     const upper = cue('400', { fields: { EventName: 'SAME' } })
-    const mixed = planBatch(project([a, upper, c]), 'approved')
-    const coll = findCollisions(mixed)
+    const coll = findCollisions(planBatch(project([a, upper, c])))
     expect(coll).toHaveLength(1)
     expect(coll[0].cueKeys).toEqual(['100', '400'])
   })
 
-  it('a case-differing strategy key still resolves its collision', () => {
-    const upper = cue('400', { fields: { EventName: 'SAME' } })
-    const mixed = planBatch(project([a, upper, c]), 'approved')
-    const r = resolvePlan(mixed, { 'same.MP3': 'skip' })
-    expect(r.uncovered).toHaveLength(0)
-    expect(r.jobs.map((j) => j.name)).toEqual(['Unique.mp3'])
-    expect(r.skipped).toBe(2)
-  })
-
-  it('a plan without collisions passes straight through', () => {
-    const only = planBatch(project([c]), 'approved')
-    const r = resolvePlan(only)
-    expect(r.jobs).toHaveLength(1)
-    expect(r.uncovered).toHaveLength(0)
-    expect(r.skipped).toBe(0)
+  it('a plan without collisions is clean', () => {
+    expect(findCollisions(planBatch(project([c])))).toHaveLength(0)
   })
 })

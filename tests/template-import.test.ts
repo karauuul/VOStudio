@@ -372,7 +372,7 @@ describe('CSV row → cue mapping', () => {
     const project = { ...base, id: 'p', schemaVersion: 1, createdAt: '' } as Project
     const cue = project.cues[0]
     const take = { file: { format: 'mp3' } } as Parameters<typeof exportName>[2]
-    expect(exportName(project, cue, take)).toBe('VO_ADA_001.mp3')
+    expect(exportName(project, cue, take)).toBe('VO_ADA_001.wav')
   })
 })
 
