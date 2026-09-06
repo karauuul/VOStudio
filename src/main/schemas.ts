@@ -33,6 +33,14 @@ export const projectNameSchema = z
   .transform((s) => s.trim())
   .refine(isValidProjectName, { message: 'Invalid project name' })
 
+const providerModeSchema = z
+  .object({ model: z.string().min(1).max(120).optional(), language: z.string().min(1).max(20).optional() })
+  .strict()
+
+const providerSettingsSchema = z
+  .object({ tts: providerModeSchema.optional(), sts: providerModeSchema.optional() })
+  .strict()
+
 export const projectFileSchema = z
   .object({
     id: z.string().min(1),
@@ -49,6 +57,7 @@ export const projectFileSchema = z
     export: z.unknown().optional(),
     terms: z.array(z.unknown()).optional(),
     languages: z.object({ source: z.string(), target: z.string() }).optional(),
+    provider: z.unknown().optional(),
     alienMigrated: z.literal(true).optional(),
   })
   .passthrough()
@@ -310,6 +319,7 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
       .nullable(),
   }),
   z.object({ type: z.literal('project.setExport'), settings: exportSettingsSchema }),
+  z.object({ type: z.literal('project.setProvider'), provider: providerSettingsSchema.nullable() }),
   z.object({ type: z.literal('project.setExportTemplate'), template: z.string().min(1).max(400) }),
 ])
 

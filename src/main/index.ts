@@ -27,6 +27,7 @@ import { setApiKey, hasApiKey } from './secrets'
 import { runFfmpeg } from './ffmpeg'
 import { parseCsv } from '@shared/csv'
 import { applyRules } from '@shared/pronunciation'
+import { NO_LANGUAGE_CODE_MODEL } from '@shared/provider-models'
 import { changeCueSourceText, changeTakeOutput } from '@shared/approval'
 import {
   cueVoiceUnchanged,
@@ -665,10 +666,13 @@ function registerHandlers(): void {
     }
     const voiceId = character.provider.voiceId
     const processed = applyRules(parsed.text, project.pronunciationRules)
+    const mode = project.provider?.tts
+    const model = mode?.model ?? character.provider.ttsModel
     const { audio, words } = await eleven.ttsWithTimestamps({
       text: processed,
       voiceId,
-      model: character.provider.ttsModel,
+      model,
+      ...(mode?.language && model !== NO_LANGUAGE_CODE_MODEL ? { language: mode.language } : {}),
       settings: parsed.voiceSettings,
     })
     const fileName = `t_${stamp()}_tts.mp3`
@@ -716,7 +720,7 @@ function registerHandlers(): void {
     }
 
     const audio = await fs.readFile(source.file.relPath)
-    const model = character.provider.stsModel
+    const model = project.provider?.sts?.model ?? character.provider.stsModel
     const voiceId = character.provider.voiceId
     const mp3 = await eleven.sts({
       audio,
@@ -786,6 +790,7 @@ function registerHandlers(): void {
   })
 
   typedHandle('provider:voices', () => eleven.voices())
+  typedHandle('provider:models', () => eleven.models())
 
   typedHandle('provider:testVoice', async (characterId: string) => {
     const id = z.string().min(1).max(200).parse(characterId)

@@ -1,5 +1,6 @@
 import { sanitizeEffects, type ClipEffects } from './effects'
 import type { ExportSettings } from './export-settings'
+import type { GenMode } from './provider-models'
 
 export type { ClipEffects, DelayEffect, ReverbEffect } from './effects'
 
@@ -472,8 +473,13 @@ export interface UiSessionState {
   search: string
   scrollIndex?: number
   matchBy?: MatchRule
+  genMode?: GenMode
   targetTrack?: Record<string, string>
   timeline?: Record<string, TimelineViewState>
+}
+
+export function sanitizeGenMode(value: unknown): GenMode | undefined {
+  return value === 'tts' || value === 'sts' ? value : undefined
 }
 
 export const TIMELINE_PX_MIN = 2
@@ -543,6 +549,42 @@ export function sanitizeLanguages(value: unknown): ProjectLanguages | undefined 
   return source && target ? { source, target } : undefined
 }
 
+export interface ProviderModeSettings {
+  model?: string
+  language?: string
+}
+
+export interface ProviderSettings {
+  tts?: ProviderModeSettings
+  sts?: ProviderModeSettings
+}
+
+function sanitizeProviderMode(value: unknown): ProviderModeSettings | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const row = value as Partial<ProviderModeSettings>
+  const model = nonEmptyString(row.model)?.slice(0, 120)
+  const language = nonEmptyString(row.language)?.slice(0, 20)
+  if (!model && !language) return undefined
+  return { ...(model ? { model } : {}), ...(language ? { language } : {}) }
+}
+
+export function sanitizeProviderSettings(value: unknown): ProviderSettings | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const row = value as Partial<ProviderSettings>
+  const tts = sanitizeProviderMode(row.tts)
+  const sts = sanitizeProviderMode(row.sts)
+  if (!tts && !sts) return undefined
+  return { ...(tts ? { tts } : {}), ...(sts ? { sts } : {}) }
+}
+
+export function nextProviderSettings(
+  current: ProviderSettings | undefined,
+  mode: GenMode,
+  patch: ProviderModeSettings
+): ProviderSettings | undefined {
+  return sanitizeProviderSettings({ ...current, [mode]: { ...current?.[mode], ...patch } })
+}
+
 export interface Project {
   id: string
   schemaVersion: number
@@ -563,6 +605,7 @@ export interface Project {
   export?: ExportSettings
   terms?: Term[]
   languages?: ProjectLanguages
+  provider?: ProviderSettings
   alienMigrated?: true
   ui: UiSessionState
 }
