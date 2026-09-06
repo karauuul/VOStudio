@@ -1,7 +1,7 @@
 node_modules/
 out/
 dist/
-release/
+release*/
 *.log
 .env
 .DS_Store
