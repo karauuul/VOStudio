@@ -8,6 +8,7 @@ import {
   type OriginalVoice,
 } from './clip-graph'
 import type { ResolvedComp } from './comp-source'
+import { END_EPS, resumeAt } from '@shared/resume'
 import { Lru } from './lru'
 import { ensurePitchModule } from './pitch-node'
 
@@ -36,7 +37,6 @@ export const clipId = {
 const FADE_IN = 0.005
 const FADE_OUT = 0.012
 const LEAD_IN = 0.06
-const END_EPS = 0.02
 const SCRUB_SEEK_MS = 60
 
 let ctx: AudioContext | null = null
@@ -46,17 +46,6 @@ let meter: AnalyserNode | null = null
 let meterFrame: Float32Array<ArrayBuffer> | null = null
 let monitorGain = 1
 let looping = false
-
-export interface ResumeBounds {
-  dur: number
-  end: number
-  from: number
-}
-
-export function resumeAt(pos: number, b: ResumeBounds, rewindAtEnd: boolean): number {
-  const p = Math.max(0, Math.min(b.dur, pos))
-  return rewindAtEnd && p >= b.end - END_EPS ? b.from : p
-}
 
 export function monitorPeak(): number {
   if (!meter || !meterFrame) return 0

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resumeAt } from '../src/renderer/audio/transport'
+import { resumeAt } from '../src/shared/resume'
 
 const clip = (dur: number) => ({ dur, end: dur, from: 0 })
 
