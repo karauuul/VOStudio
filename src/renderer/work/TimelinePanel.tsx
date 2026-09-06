@@ -13,6 +13,7 @@ import {
   clipTrackId,
   compDelta,
   COMP_EPS,
+  duckEnvelope,
   GAIN_MAX_DB,
   GAIN_MIN_DB,
   compDuration,
@@ -31,6 +32,7 @@ import {
   slipClip,
   splitClipAt,
   switchClipVersion,
+  trackClips,
   trimClipEdge,
 } from '@shared/comp'
 import {
@@ -67,10 +69,11 @@ import {
   type CueComp,
   type OriginalLane,
   type ProjectSource,
+  type Stem,
   type TimelineViewState,
 } from '@shared/domain'
 import { audioUrl } from '../api'
-import { tryResolveComp } from '../audio/comp-source'
+import { tryResolveComp, type ResolvedOriginal } from '../audio/comp-source'
 import { reportTakeDuration } from '../audio/duration-backfill'
 import { clipId, transport, type TransportState } from '../audio/transport'
 import { playback, type PlaybackOps } from '../playback'
@@ -128,6 +131,7 @@ export interface CompApi {
   moveSelected: (start: number, commit: boolean) => void
   trimSelected: (edge: 'start' | 'end', at: number, commit: boolean) => void
   editTrack: (trackId: string, patch: Partial<Omit<CompTrack, 'id'>>, commit: boolean) => void
+  fit: (scope: 'clip' | 'track') => void
   setIn: () => void
   setOut: () => void
   setRegion: (edge: 'in' | 'out', at: number) => void
@@ -147,6 +151,7 @@ const EDGE_PX = 6
 const FADE_GRAB = 10
 const GAIN_SPAN = 24
 const GAIN_GRAB = 6
+const NO_STEMS: Stem[] = []
 const TRACK_COLORS = ['var(--l1)', 'var(--l2)']
 const WAVE_COLORS = ['#3fb8a8', '#a58cf0']
 export const DRAG_TYPE = 'text/vo-source'
@@ -179,6 +184,21 @@ const sliderToZoom = (v: number): number =>
 
 type Gesture = 'move' | 'trimStart' | 'trimEnd' | 'fadeIn' | 'fadeOut' | 'gain' | 'slip' | 'split'
 
+interface LaneUi {
+  solo?: boolean
+  muted?: boolean
+  noPreview?: boolean
+  gainDb?: number
+}
+
+interface OriginalRow {
+  key: string
+  badge: string
+  name: string
+  path: string
+  stem: Stem | null
+}
+
 interface Props {
   cue: Cue | null
   cues: Cue[]
@@ -190,6 +210,8 @@ interface Props {
   onView: (view: TimelineViewState) => void
   onComp: (cueId: string, comp: CueComp | null) => Promise<boolean>
   onOriginal: (original: OriginalLane) => void
+  onStems: (stems: Stem[] | null) => void
+  onSplitStems: () => Promise<void>
   onStatus: (kind: 'ok' | 'err' | 'info', text: string) => void
   onSelect: (selection: TimelineSelection | null) => void
   compRef: MutableRefObject<CompApi | null>
@@ -211,6 +233,8 @@ export function TimelinePanel({
   onView,
   onComp,
   onOriginal,
+  onStems,
+  onSplitStems,
   onStatus,
   onSelect,
   compRef,
@@ -237,8 +261,9 @@ export function TimelinePanel({
   const [pxPerSec, setPxPerSec] = useState(savedView?.pxPerSec ?? 100)
   const [scroll, setScroll] = useState(savedView?.scroll ?? 0)
   const [origGainDb, setOrigGainDb] = useState(savedView?.originalGainDb ?? 0)
-  const [origMuted, setOrigMuted] = useState(false)
-  const [origSolo, setOrigSolo] = useState(false)
+  const [laneUi, setLaneUi] = useState<Record<string, LaneUi>>({})
+  const [armSplit, setArmSplit] = useState(false)
+  const [splitting, setSplitting] = useState(false)
   const [peaks, setPeaks] = useState<Record<string, Peaks>>({})
   const [gainDrag, setGainDrag] = useState<{ id: string; db: number } | null>(null)
   const [pickedTrack, setPickedTrack] = useState<string | null>(null)
@@ -254,8 +279,8 @@ export function TimelinePanel({
     setPxPerSec(savedView?.pxPerSec ?? 100)
     setScroll(savedView?.scroll ?? 0)
     setOrigGainDb(savedView?.originalGainDb ?? 0)
-    setOrigMuted(false)
-    setOrigSolo(false)
+    setLaneUi({})
+    setArmSplit(false)
     setUnits(cue?.region ? 'timecode' : 'seconds')
   }
 
@@ -316,6 +341,7 @@ export function TimelinePanel({
   useEffect(() => {
     const paths = new Set<string>()
     if (refPath) paths.add(refPath)
+    for (const stem of cue?.stems ?? NO_STEMS) paths.add(stem.file.relPath)
     for (const c of comp.clips) {
       const found = cue ? resolveTake(project, cue, c.sourceTakeId) : undefined
       if (found) paths.add(found.take.file.relPath)
@@ -389,45 +415,68 @@ export function TimelinePanel({
     paintHead(0)
   }, [cueId, paintHead])
 
+  const stems = cue?.stems ?? NO_STEMS
+
+  const originalRows = useMemo<OriginalRow[]>(
+    () =>
+      stems.length > 0
+        ? stems.map((stem, i) => ({
+            key: stem.id,
+            badge: `0${String.fromCharCode(97 + i)}`,
+            name: stem.name,
+            path: stem.file.relPath,
+            stem,
+          }))
+        : [{ key: 'original', badge: '0', name: 'Original', path: refPath ?? '', stem: null }],
+    [stems, refPath]
+  )
+
   const anyTrackSolo = tracks.some((t) => t.solo)
-  const origAudible =
-    !!refPath && original?.previewMuted !== true && !origMuted && (!anyTrackSolo || origSolo)
+  const anyLaneSolo = originalRows.some((row) => laneUi[row.key]?.solo === true)
+
+  const laneDuck = useCallback(
+    (row: OriginalRow): number | undefined => {
+      const lane = row.stem ?? original
+      return lane?.exportMode === 'on' ? lane.duckDb : undefined
+    },
+    [original]
+  )
+
+  const originals = useMemo<ResolvedOriginal[]>(() => {
+    const soloed = anyTrackSolo || anyLaneSolo
+    const out: ResolvedOriginal[] = []
+    for (const row of originalRows) {
+      const ui = laneUi[row.key] ?? {}
+      const audible =
+        !!row.path &&
+        (row.stem ? ui.noPreview !== true : original?.previewMuted !== true) &&
+        ui.muted !== true &&
+        (!soloed || ui.solo === true)
+      if (!audible) continue
+      const duckDb = laneDuck(row)
+      out.push({
+        url: audioUrl(row.path),
+        gainDb: row.stem ? (ui.gainDb ?? 0) : origGainDb,
+        ...(!row.stem && srcRegion ? { offset: srcRegion.in, duration: refDur } : {}),
+        ...(duckDb === undefined ? {} : { duckDb }),
+      })
+    }
+    return out
+  }, [originalRows, laneUi, anyTrackSolo, anyLaneSolo, original, laneDuck, origGainDb, srcRegion, refDur])
 
   const resolved = useMemo(() => {
     if (!cue) return null
     const effective: CompTrack[] =
-      origSolo && !anyTrackSolo ? tracks.map((t) => ({ ...t, muted: true })) : tracks
-    const r = tryResolveComp(
-      project,
-      cue,
-      comp.clips.length > 0 ? comp : null,
-      origAudible && refPath
-        ? {
-            url: audioUrl(refPath),
-            gainDb: origGainDb,
-            ...(srcRegion ? { offset: srcRegion.in, duration: refDur } : {}),
-          }
-        : undefined
-    )
+      anyLaneSolo && !anyTrackSolo ? tracks.map((t) => ({ ...t, muted: true })) : tracks
+    const r = tryResolveComp(project, cue, comp.clips.length > 0 ? comp : null, originals)
     return r ? { ...r, tracks: effective } : null
-  }, [
-    cue,
-    project,
-    comp,
-    tracks,
-    origSolo,
-    anyTrackSolo,
-    origAudible,
-    refPath,
-    origGainDb,
-    srcRegion,
-    refDur,
-  ])
+  }, [cue, project, comp, tracks, anyLaneSolo, anyTrackSolo, originals])
 
   const region = comp.region
   const regionIn = region?.in ?? 0
   const regionOut = region?.out ?? (compDur > 0 ? compDur : refDur)
-  const delta = compDelta(comp.clips.length > 0 ? comp : undefined, refDur)
+  const rawDelta = compDelta(comp.clips.length > 0 ? comp : undefined, refDur)
+  const delta = rawDelta !== null && Math.abs(rawDelta) < COMP_EPS ? 0 : rawDelta
 
   const seek = useCallback(
     (t: number, exact: boolean): void => {
@@ -491,7 +540,7 @@ export function TimelinePanel({
     () =>
       JSON.stringify([
         tracks.map((t) => [t.id, t.gainDb, t.muted, t.solo, t.effects ?? null]),
-        [origAudible, origGainDb, origSolo, origMuted],
+        originals,
         live.clips.map((c) => [
           c.id,
           c.start,
@@ -504,7 +553,7 @@ export function TimelinePanel({
         ]),
         live.region ?? null,
       ]),
-    [tracks, origAudible, origGainDb, origSolo, origMuted, live]
+    [tracks, originals, live]
   )
 
   const sigRef = useRef(audioSig)
@@ -838,6 +887,29 @@ export function TimelinePanel({
     [commit]
   )
 
+  const originalLength = cue?.region ? cue.region.out - cue.region.in : refDur
+
+  const doFit = useCallback(
+    (clipIds: string[]): void => {
+      const result = fitToLength(compRefLive.current, clipIds, originalLength)
+      if ('refused' in result) onStatus('err', result.refused)
+      else commit(result.comp)
+    },
+    [originalLength, onStatus, commit]
+  )
+
+  const runSplit = useCallback((): void => {
+    if (!armSplit) {
+      setArmSplit(true)
+      return
+    }
+    setArmSplit(false)
+    setSplitting(true)
+    void onSplitStems()
+      .catch((e: unknown) => onStatus('err', e instanceof Error ? e.message : String(e)))
+      .finally(() => setSplitting(false))
+  }, [armSplit, onSplitStems, onStatus])
+
   const api = useMemo<CompApi>(
     () => ({
       selectClip: (id) => {
@@ -945,6 +1017,13 @@ export function TimelinePanel({
         else setPending(next)
       },
       editTrack,
+      fit: (scope) => {
+        const base = compRefLive.current
+        const id = selRef.current
+        const c = id ? base.clips.find((x) => x.id === id) : null
+        if (!c) return
+        doFit(scope === 'track' ? trackClips(base, clipTrackId(c)).map((x) => x.id) : [c.id])
+      },
       setIn: () => {
         const base = compRefLive.current
         commit(setRegionEdge(base, 'in', posRef.current, refDur))
@@ -967,6 +1046,7 @@ export function TimelinePanel({
       splitClip,
       editSelected,
       editTrack,
+      doFit,
       refDur,
       refPath,
       regionBase,
@@ -979,8 +1059,6 @@ export function TimelinePanel({
   useWire(compRef, api)
 
   const menu = useContextMenu()
-
-  const originalLength = cue?.region ? cue.region.out - cue.region.in : refDur
 
   const clipMenu = useCallback(
     (c: CompClip): MenuEntry[] => {
@@ -1028,7 +1106,7 @@ export function TimelinePanel({
         {
           label: 'Fit to original length',
           disabled: !(originalLength > 0),
-          onClick: () => commit(fitToLength(comp, c.id, originalLength)),
+          onClick: () => doFit([c.id]),
         },
         {
           label: 'Reset fades and gain',
@@ -1095,6 +1173,7 @@ export function TimelinePanel({
       switchVersion,
       splitClip,
       commit,
+      doFit,
       originalLength,
     ]
   )
@@ -1121,6 +1200,11 @@ export function TimelinePanel({
       },
       { sep: true },
       { label: 'Track effects…', onClick: () => setPickedTrack(track.id) },
+      {
+        label: 'Fit to original length',
+        disabled: !(originalLength > 0) || trackClips(comp, track.id).length === 0,
+        onClick: () => doFit(trackClips(comp, track.id).map((c) => c.id)),
+      },
       { label: 'Duplicate track', onClick: () => commit(duplicateTrack(comp, track.id)) },
       {
         label: 'Move up',
@@ -1140,7 +1224,7 @@ export function TimelinePanel({
         onClick: () => commit(removeTrack(comp, track.id)),
       },
     ],
-    [comp, tracks, targetTrackId, onTargetTrack, editTrack, commit]
+    [comp, tracks, targetTrackId, onTargetTrack, editTrack, commit, doFit, originalLength]
   )
 
   const step = tickStep(pxPerSec)
@@ -1344,127 +1428,187 @@ export function TimelinePanel({
       </div>
 
       <div className="tl-lanes" ref={lanesRef}>
-        <div className="tl-lane" style={{ ['--c' as string]: 'var(--orig)', height: ORIG_H }}>
-          <div className="tl-strip">
-            <div className="r1">
-              <span className="tl-badge">0</span>
-              <span className="tl-nm">Original</span>
-              <span className="tl-ms">
-                <button
-                  className={'tl-sm' + (origSolo ? ' on' : '')}
-                  onClick={() => setOrigSolo((v) => !v)}
-                  aria-pressed={origSolo}
-                >
-                  S
-                </button>
-                <button
-                  className={'tl-sm' + (origMuted ? ' on' : '')}
-                  onClick={() => setOrigMuted((v) => !v)}
-                  aria-pressed={origMuted}
-                >
-                  M
-                </button>
-              </span>
-              <button
-                className={'ico sm' + (original?.previewMuted === true ? '' : ' on')}
-                aria-label="Preview the original"
-                aria-pressed={original?.previewMuted !== true}
-                onClick={() =>
-                  setOriginal({
-                    previewMuted: original?.previewMuted === true ? undefined : true,
-                  })
+        {originalRows.map((row, i) => {
+          const ui = laneUi[row.key] ?? {}
+          const stem = row.stem
+          const setUi = (patch: LaneUi): void =>
+            setLaneUi((m) => ({ ...m, [row.key]: { ...(m[row.key] ?? {}), ...patch } }))
+          const setStem = (patch: Partial<Stem>): void => {
+            if (stem) onStems(stems.map((x) => (x.id === stem.id ? { ...x, ...patch } : x)))
+          }
+          const mode = stem ? stem.exportMode : (original?.exportMode ?? 'off')
+          const previewOn = stem ? ui.noPreview !== true : original?.previewMuted !== true
+          const duckDb = laneDuck(row)
+          const curve = duckDb === undefined ? [] : duckEnvelope(comp.clips, duckDb)
+          const lanePeaks = row.path ? (peaks[row.path] ?? null) : null
+          const laneDur = stem ? (lanePeaks?.duration ?? refDur) : refDur
+          const laneFrom = stem ? 0 : regionBase
+          return (
+            <div
+              key={row.key}
+              className="tl-lane"
+              style={{ ['--c' as string]: 'var(--orig)', height: ORIG_H }}
+            >
+              <div
+                className="tl-strip"
+                onContextMenu={(e) =>
+                  menu.open(e, [
+                    { label: 'Merge', disabled: stems.length === 0, onClick: () => onStems(null) },
+                  ])
                 }
               >
-                <svg width="13" height="12" viewBox="0 0 14 13">
-                  <path d="M1 9V7a6 6 0 0 1 12 0v2" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                  <rect x="1" y="8" width="3" height="5" rx="1" fill="currentColor" />
-                  <rect x="10" y="8" width="3" height="5" rx="1" fill="currentColor" />
-                </svg>
-              </button>
-            </div>
-            <div className="tl-kv">
-              <span>Gain</span>
-              <DragNumber
-                label=""
-                value={origGainDb}
-                min={TRACK_GAIN_MIN_DB}
-                max={TRACK_GAIN_MAX_DB}
-                perPx={0.2}
-                decimals={1}
-                unit="dB"
-                onInput={setOrigGainDb}
-                onCommit={(v) => {
-                  setOrigGainDb(v)
-                  persist({ originalGainDb: v })
-                }}
-              />
-            </div>
-            <div className="tl-kv">
-              <span>Export</span>
-              <span className="tl-tg">
-                {(['off', 'on'] as const).map((mode) => (
+                <div className="r1">
+                  <span className="tl-badge">{row.badge}</span>
+                  <span className="tl-nm">{row.name}</span>
+                  <span className="tl-ms">
+                    <button
+                      className={'tl-sm' + (ui.solo === true ? ' on' : '')}
+                      onClick={() => setUi({ solo: ui.solo !== true })}
+                      aria-pressed={ui.solo === true}
+                    >
+                      S
+                    </button>
+                    <button
+                      className={'tl-sm' + (ui.muted === true ? ' on' : '')}
+                      onClick={() => setUi({ muted: ui.muted !== true })}
+                      aria-pressed={ui.muted === true}
+                    >
+                      M
+                    </button>
+                  </span>
                   <button
-                    key={mode}
-                    className={original?.exportMode === mode || (!original && mode === 'off') ? 'on' : ''}
-                    disabled={!cue}
+                    className={'ico sm' + (previewOn ? ' on' : '')}
+                    aria-label={`Preview ${row.name}`}
+                    aria-pressed={previewOn}
                     onClick={() =>
-                      setOriginal(
-                        mode === 'on' && original?.duckDb === undefined
-                          ? { exportMode: mode, duckDb: DEFAULT_DUCK_DB }
-                          : { exportMode: mode }
-                      )
+                      stem
+                        ? setUi({ noPreview: ui.noPreview !== true })
+                        : setOriginal({
+                            previewMuted: original?.previewMuted === true ? undefined : true,
+                          })
                     }
                   >
-                    {mode === 'off' ? 'Off' : 'On'}
+                    <svg width="13" height="12" viewBox="0 0 14 13">
+                      <path
+                        d="M1 9V7a6 6 0 0 1 12 0v2"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                      />
+                      <rect x="1" y="8" width="3" height="5" rx="1" fill="currentColor" />
+                      <rect x="10" y="8" width="3" height="5" rx="1" fill="currentColor" />
+                    </svg>
                   </button>
-                ))}
-              </span>
-            </div>
-            <div className="tl-kv">
-              <span>Duck</span>
-              <DragNumber
-                label=""
-                value={original?.duckDb ?? DEFAULT_DUCK_DB}
-                min={DUCK_MIN_DB}
-                max={DUCK_MAX_DB}
-                perPx={0.2}
-                decimals={0}
-                unit="dB"
-                disabled={!cue || original?.exportMode !== 'on'}
-                onInput={() => {}}
-                onCommit={(v) => setOriginal({ duckDb: v })}
-              />
-            </div>
-            <div className="tl-kv">
-              <span>Stems</span>
-              <button className="btn sm" disabled>
-                Split
-              </button>
-            </div>
-          </div>
-          <div className="tl-body" ref={bodyRef} onMouseDown={startScrub}>
-            {grid}
-            {context}
-            {refPath && refDur > 0 && (
-              <div
-                className="tl-clip tl-orig"
-                style={{ left: xOf(0), width: Math.max(2, refDur * pxPerSec) }}
-              >
-                <span className="cn">
-                  <span className="w">{originalName}</span>
-                </span>
-                <Wave
-                  peaks={refPeaks}
-                  from={regionBase}
-                  to={regionBase + refDur}
-                  color="#8f97a8"
-                />
-                <span className="dur">{secs(refDur)}s</span>
+                </div>
+                <div className="tl-kv">
+                  <span>Gain</span>
+                  <DragNumber
+                    label=""
+                    value={stem ? (ui.gainDb ?? 0) : origGainDb}
+                    min={TRACK_GAIN_MIN_DB}
+                    max={TRACK_GAIN_MAX_DB}
+                    perPx={0.2}
+                    decimals={1}
+                    unit="dB"
+                    onInput={(v) => (stem ? setUi({ gainDb: v }) : setOrigGainDb(v))}
+                    onCommit={(v) => {
+                      if (stem) {
+                        setUi({ gainDb: v })
+                        return
+                      }
+                      setOrigGainDb(v)
+                      persist({ originalGainDb: v })
+                    }}
+                  />
+                </div>
+                <div className="tl-kv">
+                  <span>Export</span>
+                  <span className="tl-tg">
+                    {(['off', 'on'] as const).map((m) => (
+                      <button
+                        key={m}
+                        className={mode === m ? 'on' : ''}
+                        disabled={!cue}
+                        onClick={() => {
+                          const needsDuck =
+                            m === 'on' && (stem ? stem.duckDb : original?.duckDb) === undefined
+                          const patch = needsDuck
+                            ? { exportMode: m, duckDb: DEFAULT_DUCK_DB }
+                            : { exportMode: m }
+                          if (stem) setStem(patch)
+                          else setOriginal(patch)
+                        }}
+                      >
+                        {m === 'off' ? 'Off' : 'On'}
+                      </button>
+                    ))}
+                  </span>
+                </div>
+                <div className="tl-kv">
+                  <span>Duck</span>
+                  <DragNumber
+                    label=""
+                    value={(stem ? stem.duckDb : original?.duckDb) ?? DEFAULT_DUCK_DB}
+                    min={DUCK_MIN_DB}
+                    max={DUCK_MAX_DB}
+                    perPx={0.2}
+                    decimals={0}
+                    unit="dB"
+                    disabled={!cue || mode !== 'on'}
+                    onInput={() => {}}
+                    onCommit={(v) => (stem ? setStem({ duckDb: v }) : setOriginal({ duckDb: v }))}
+                  />
+                </div>
+                {stems.length === 0 && (
+                  <div className="tl-kv">
+                    <span>Stems</span>
+                    <button
+                      className="btn sm"
+                      disabled={!cue || !refPath || !(originalLength > 0) || splitting}
+                      onClick={runSplit}
+                    >
+                      {splitting
+                        ? 'Splitting…'
+                        : armSplit
+                          ? `Split ${secs(originalLength)}s`
+                          : 'Split'}
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
-            {regionShade}
-          </div>
-        </div>
+              <div
+                className="tl-body"
+                {...(i === 0 ? { ref: bodyRef } : {})}
+                onMouseDown={startScrub}
+              >
+                {grid}
+                {!stem && context}
+                {row.path && laneDur > 0 && (
+                  <div
+                    className="tl-clip tl-orig"
+                    style={{ left: xOf(0), width: Math.max(2, laneDur * pxPerSec) }}
+                  >
+                    <span className="cn">
+                      <span className="w">{stem ? stem.name : originalName}</span>
+                    </span>
+                    <Wave peaks={lanePeaks} from={laneFrom} to={laneFrom + laneDur} color="#8f97a8" />
+                    <span className="dur">{secs(laneDur)}s</span>
+                  </div>
+                )}
+                {curve.length > 0 && width > 0 && (
+                  <svg className="tl-duck" viewBox={`0 0 ${width} 100`} preserveAspectRatio="none">
+                    <polyline
+                      points={curve
+                        .map((pt) => `${xOf(pt.t).toFixed(2)},${gainTop(pt.db).toFixed(2)}`)
+                        .join(' ')}
+                    />
+                  </svg>
+                )}
+                {regionShade}
+              </div>
+            </div>
+          )
+        })}
 
         {tracks.map((track, i) => (
           <div

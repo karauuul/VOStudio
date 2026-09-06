@@ -274,11 +274,35 @@ export async function ensureVersion(): Promise<number> {
   return versions[versions.length - 1].n
 }
 
-export async function writeTakeFile(cueId: string, fileName: string, data: Buffer): Promise<string> {
+async function writeAudioFile(
+  kind: 'takes' | 'stems',
+  cueId: string,
+  fileName: string,
+  data: Buffer
+): Promise<string> {
   if (!projectDir) throw new Error('No project is open')
-  const dir = path.join(projectDir, 'audio', 'takes', cueId)
+  const dir = path.join(projectDir, 'audio', kind, cueId)
   await fs.mkdir(dir, { recursive: true })
   const abs = path.join(dir, fileName)
   await fs.writeFile(abs, data)
   return abs
+}
+
+export function writeTakeFile(cueId: string, fileName: string, data: Buffer): Promise<string> {
+  return writeAudioFile('takes', cueId, fileName, data)
+}
+
+export function writeStemFile(cueId: string, fileName: string, data: Buffer): Promise<string> {
+  return writeAudioFile('stems', cueId, fileName, data)
+}
+
+export async function dropUnusedStems(): Promise<void> {
+  if (!projectDir || !current) return
+  const root = path.join(projectDir, 'audio', 'stems')
+  const keep = new Set(current.cues.filter((c) => c.stems?.length).map((c) => c.id))
+  const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => [])
+  for (const entry of entries) {
+    if (!entry.isDirectory() || keep.has(entry.name)) continue
+    await fs.rm(path.join(root, entry.name), { recursive: true, force: true }).catch(() => undefined)
+  }
 }

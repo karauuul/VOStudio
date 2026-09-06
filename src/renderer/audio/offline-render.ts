@@ -82,6 +82,7 @@ export async function loadOriginal(o: ResolvedOriginal): Promise<OriginalVoice> 
     gainDb: o.gainDb,
     ...(o.offset === undefined ? {} : { offset: o.offset }),
     ...(o.duration === undefined ? {} : { duration: o.duration }),
+    ...(o.duckDb === undefined ? {} : { duckDb: o.duckDb }),
   }
 }
 
@@ -89,10 +90,14 @@ export async function renderCompOffline(
   sources: CompSource[],
   region?: { in: number; out: number },
   tracks?: CompTrack[],
-  original?: OriginalVoice
+  originals: OriginalVoice[] = []
 ): Promise<AudioBuffer> {
   const clips = sources.map((s) => s.clip)
-  const total = Math.max(compDuration({ clips }), original ? originalVoiceLength(original) : 0)
+  const total = Math.max(
+    compDuration({ clips }),
+    ...originals.map((o) => originalVoiceLength(o)),
+    0
+  )
   if (!(total > 0)) throw new Error('Composition is empty — nothing to render')
   const from = region ? Math.min(Math.max(0, region.in), total) : 0
   const to = region ? Math.max(from, region.out) : total + compEffectsTail(clips, tracks)
@@ -104,7 +109,7 @@ export async function renderCompOffline(
   }
   let sampleRate = 0
   let channels = 1
-  for (const s of [...sources, ...(original ? [{ buffer: original.buffer }] : [])]) {
+  for (const s of [...sources, ...originals]) {
     if (s.buffer.sampleRate > sampleRate) sampleRate = s.buffer.sampleRate
     if (s.buffer.numberOfChannels > channels) channels = s.buffer.numberOfChannels
   }
@@ -113,15 +118,15 @@ export async function renderCompOffline(
   const frames = Math.max(1, Math.ceil(dur * sampleRate))
   const ctx = new OfflineAudioContext(channels, frames, sampleRate)
   if (compHasPitch(clips)) await ensurePitchModule(ctx)
-  scheduleComp(ctx, sources, ctx.destination, { when: 0, seek: from, tracks, original })
+  scheduleComp(ctx, sources, ctx.destination, { when: 0, seek: from, tracks, originals })
   return ctx.startRendering()
 }
 
 export async function renderCompToWav(resolved: ResolvedComp): Promise<RenderedClip> {
   const sources = await loadCompSources(resolved)
-  const original = resolved.original ? await loadOriginal(resolved.original) : undefined
+  const originals = await Promise.all((resolved.originals ?? []).map(loadOriginal))
   try {
-    const rendered = await renderCompOffline(sources, resolved.region, resolved.tracks, original)
+    const rendered = await renderCompOffline(sources, resolved.region, resolved.tracks, originals)
     return {
       wav: encodeWavFloat32(channelsOf(rendered), rendered.sampleRate),
       duration: rendered.duration,
@@ -130,7 +135,7 @@ export async function renderCompToWav(resolved: ResolvedComp): Promise<RenderedC
     }
   } finally {
     const urls = new Set(resolved.clips.map((c) => c.url))
-    if (resolved.original) urls.add(resolved.original.url)
+    for (const o of resolved.originals ?? []) urls.add(o.url)
     for (const url of urls) release(url)
   }
 }

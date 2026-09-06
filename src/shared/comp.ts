@@ -625,6 +625,41 @@ export function switchClipVersion(
   return withClips(norm, clips)
 }
 
+export const DUCK_ATTACK = 0.12
+export const DUCK_RELEASE = 0.25
+
+export function duckEnvelope(
+  clips: readonly CompClip[],
+  duckDb: number,
+  attack = DUCK_ATTACK,
+  release = DUCK_RELEASE
+): Array<{ t: number; db: number }> {
+  if (!Number.isFinite(duckDb) || duckDb >= 0) return []
+  const a = Math.max(0, attack)
+  const r = Math.max(0, release)
+  const spans: Array<{ from: number; to: number }> = []
+  for (const c of clips) {
+    const tl = clipTimelineDuration(c)
+    if (!(tl > 0) || !Number.isFinite(c.start)) continue
+    spans.push({ from: Math.max(0, c.start - a), to: c.start + tl + r })
+  }
+  if (spans.length === 0) return []
+  spans.sort((x, y) => x.from - y.from)
+  const merged: { from: number; to: number }[] = []
+  for (const s of spans) {
+    const last = merged[merged.length - 1]
+    if (last && s.from <= last.to + COMP_EPS) last.to = Math.max(last.to, s.to)
+    else merged.push({ ...s })
+  }
+  const out: Array<{ t: number; db: number }> = []
+  for (const s of merged) {
+    const hold = Math.min(s.from + a, s.to)
+    const back = Math.max(s.to - r, hold)
+    out.push({ t: s.from, db: 0 }, { t: hold, db: duckDb }, { t: back, db: duckDb }, { t: s.to, db: 0 })
+  }
+  return out
+}
+
 export function compDelta(comp: CueComp | undefined, originalDuration: number): number | null {
   if (!comp || comp.clips.length === 0) return null
   if (!Number.isFinite(originalDuration) || originalDuration <= 0) return null

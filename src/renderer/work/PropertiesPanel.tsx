@@ -586,7 +586,15 @@ function ClipTab({
         />
       </Row2>
 
-      <Sec>Timing</Sec>
+      <Sec
+        action={
+          <button className="btn sm" onClick={() => compRef.current?.fit('clip')}>
+            Fit
+          </button>
+        }
+      >
+        Timing
+      </Sec>
       <Row2>
         <DragNumber
           label="Start"
@@ -767,6 +775,7 @@ function LineTab({
 }) {
   const id = lineLabel(cue)
   const duration = Math.max(cue.referenceDuration ?? 0, region.out)
+  const split = (cue.stems?.length ?? 0) > 0
 
   return (
     <>
@@ -796,6 +805,7 @@ function LineTab({
               <button
                 key={mode}
                 className={(original?.exportMode ?? 'off') === mode ? 'on' : ''}
+                disabled={split}
                 onClick={() => onOriginal({ exportMode: mode })}
               >
                 {mode === 'off' ? 'Off' : 'On'}
@@ -811,7 +821,7 @@ function LineTab({
           max={DUCK_MAX_DB}
           perPx={0.2}
           decimals={0}
-          disabled={original?.exportMode !== 'on'}
+          disabled={split || original?.exportMode !== 'on'}
           onInput={() => {}}
           onCommit={(v) => onOriginal({ duckDb: v })}
         />
@@ -821,6 +831,7 @@ function LineTab({
             className={'ico sm' + (original?.previewMuted === true ? '' : ' on')}
             aria-label="Preview the original"
             aria-pressed={original?.previewMuted !== true}
+            disabled={split}
             onClick={() =>
               onOriginal({ previewMuted: original?.previewMuted === true ? undefined : true })
             }

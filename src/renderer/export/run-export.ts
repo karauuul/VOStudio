@@ -47,14 +47,15 @@ function resolveJobComp(job: ExportJob, plan: CompPlan): ResolvedComp {
     })),
     ...(plan.region ? { region: plan.region } : {}),
     ...(plan.tracks ? { tracks: plan.tracks } : {}),
-    ...(plan.original
+    ...(plan.originals && plan.originals.length > 0
       ? {
-          original: {
-            url: audioUrl(plan.original.srcPath),
-            gainDb: plan.original.gainDb,
-            offset: plan.original.offset,
-            duration: plan.original.duration,
-          },
+          originals: plan.originals.map((o) => ({
+            url: audioUrl(o.srcPath),
+            gainDb: o.gainDb,
+            offset: o.offset,
+            duration: o.duration,
+            ...(o.duckDb === undefined ? {} : { duckDb: o.duckDb }),
+          })),
         }
       : {}),
   }

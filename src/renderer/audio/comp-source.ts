@@ -14,22 +14,25 @@ export interface ResolvedOriginal {
   gainDb: number
   offset?: number
   duration?: number
+  duckDb?: number
 }
 
 export interface ResolvedComp {
   clips: ResolvedCompClip[]
   region?: CompRegion
   tracks?: CompTrack[]
-  original?: ResolvedOriginal
+  originals?: ResolvedOriginal[]
 }
 
 export function resolveComp(
   project: TakeLookup | undefined,
   cue: Cue,
   comp: CueComp | null | undefined,
-  original?: ResolvedOriginal
+  originals: ResolvedOriginal[] = []
 ): ResolvedComp | null {
-  if (isEmptyComp(comp ?? undefined)) return original ? { clips: [], original } : null
+  if (isEmptyComp(comp ?? undefined)) {
+    return originals.length > 0 ? { clips: [], originals } : null
+  }
   const clips = resolveCompClips(project, cue, comp!).map((c) => ({
     clip: c.clip,
     url: audioUrl(c.relPath),
@@ -38,7 +41,7 @@ export function resolveComp(
     clips,
     ...(comp!.region ? { region: comp!.region } : {}),
     ...(comp!.tracks ? { tracks: comp!.tracks } : {}),
-    ...(original ? { original } : {}),
+    ...(originals.length > 0 ? { originals } : {}),
   }
 }
 
@@ -46,10 +49,10 @@ export function tryResolveComp(
   project: TakeLookup | undefined,
   cue: Cue,
   comp: CueComp | null | undefined,
-  original?: ResolvedOriginal
+  originals: ResolvedOriginal[] = []
 ): ResolvedComp | null {
   try {
-    return resolveComp(project, cue, comp, original)
+    return resolveComp(project, cue, comp, originals)
   } catch {
     return null
   }

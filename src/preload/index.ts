@@ -29,6 +29,9 @@ const channelMap: Record<IpcChannel, true> = {
   'take:saveRecording': true,
   'take:setDurations': true,
 
+  'stems:isolate': true,
+  'stems:save': true,
+
   'provider:tts': true,
   'provider:sts': true,
   'provider:transcribe': true,

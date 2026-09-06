@@ -14,6 +14,7 @@ import {
   batchExportSchema,
   detectSchema,
   saveVersionSchema,
+  stemsSchema,
   stsSchema,
   templateDirSchema,
   ttsSchema,
@@ -32,6 +33,7 @@ import {
   singleFlight,
   MAX_STS_SECONDS,
   type Cue,
+  type Stem,
   type Take,
   type UiSessionState,
 } from '@shared/domain'
@@ -115,6 +117,20 @@ const TEST_VOICE_TEXT = 'Voice test, one two three.'
 const testVoiceInFlight = new Set<string>()
 
 const MAX_RECORDING_BYTES = 100 * 1024 * 1024
+
+function wavBytes(wav: unknown): Buffer {
+  const bytes =
+    wav instanceof ArrayBuffer
+      ? Buffer.from(wav)
+      : ArrayBuffer.isView(wav)
+        ? Buffer.from((wav as ArrayBufferView).buffer as ArrayBuffer)
+        : null
+  if (!bytes || bytes.length === 0) throw new Error('Expected an ArrayBuffer with WAV data')
+  if (bytes.length > MAX_RECORDING_BYTES) {
+    throw new Error(`Audio is too large: ${(bytes.length / 1024 / 1024).toFixed(1)} MB`)
+  }
+  return bytes
+}
 
 const recordingSchema = z.object({
   cueId: z.string().min(1),
@@ -386,6 +402,7 @@ function registerHandlers(): void {
   typedHandle('project:close', () =>
     serialLifecycle(async () => {
       await detachCurrentRepository()
+      await store.dropUnusedStems()
       store.closeProject()
     })
   )
@@ -552,17 +569,7 @@ function registerHandlers(): void {
 
   typedHandle('take:saveRecording', async (cueId, wav, durationSec, sampleRate, fragment) => {
     const parsed = recordingSchema.parse({ cueId, durationSec, sampleRate, fragment })
-    const bytes =
-      wav instanceof ArrayBuffer
-        ? Buffer.from(wav)
-        : ArrayBuffer.isView(wav)
-          ? Buffer.from((wav as ArrayBufferView).buffer as ArrayBuffer)
-          : null
-    if (!bytes) throw new Error('Expected an ArrayBuffer with WAV data')
-    if (bytes.length === 0) throw new Error('Empty recording')
-    if (bytes.length > MAX_RECORDING_BYTES) {
-      throw new Error(`Recording is too large: ${(bytes.length / 1024 / 1024).toFixed(1)} MB`)
-    }
+    const bytes = wavBytes(wav)
 
     const project = requireProject()
     const cue = project.cues.find((c) => c.id === parsed.cueId)
@@ -609,6 +616,46 @@ function registerHandlers(): void {
       emit('takes:durations', applied)
     }
     return { updated: applied.length }
+  })
+
+  typedHandle('stems:isolate', async (cueId, wav) => {
+    const id = z.string().min(1).max(200).parse(cueId)
+    const bytes = wavBytes(wav)
+    const project = requireProject()
+    const cue = project.cues.find((c) => c.id === id)
+    if (!cue) throw new Error('Cue not found')
+    const isolated = await eleven.audioIsolation({ audio: bytes, filename: `${id}.wav` })
+    pushUsage()
+    return isolated.buffer.slice(
+      isolated.byteOffset,
+      isolated.byteOffset + isolated.byteLength
+    ) as ArrayBuffer
+  })
+
+  typedHandle('stems:save', async (cueId, voiceWav, restWav) => {
+    const id = z.string().min(1).max(200).parse(cueId)
+    const voice = wavBytes(voiceWav)
+    const rest = wavBytes(restWav)
+    const project = requireProject()
+    if (!project.cues.some((c) => c.id === id)) throw new Error('Cue not found')
+    const voicePath = await store.writeStemFile(id, 'voice.wav', voice)
+    const restPath = await store.writeStemFile(id, 'rest.wav', rest)
+    const stems: Stem[] = [
+      {
+        id: `${id}-voice`,
+        name: 'Voice',
+        file: { fileId: `${id}/voice.wav`, relPath: voicePath, format: 'wav' },
+        exportMode: 'off',
+      },
+      {
+        id: `${id}-rest`,
+        name: 'Music & SFX',
+        file: { fileId: `${id}/rest.wav`, relPath: restPath, format: 'wav' },
+        exportMode: 'on',
+        duckDb: 0,
+      },
+    ]
+    return stemsSchema.parse(stems) as Stem[]
   })
 
   typedHandle('provider:tts', async (req) => {

@@ -220,6 +220,38 @@ export function nextOriginal(
   return next
 }
 
+export interface Stem {
+  id: string
+  name: string
+  file: AudioRef
+  exportMode: 'off' | 'on'
+  duckDb?: number
+}
+
+export function sanitizeStems(rows: unknown): Stem[] | undefined {
+  if (!Array.isArray(rows)) return undefined
+  const out: Stem[] = []
+  const seen = new Set<string>()
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as Partial<Stem>
+    const id = nonEmptyString(row.id)
+    const file = sanitizeAudioRef(row.file)
+    if (!id || !file || seen.has(id)) continue
+    seen.add(id)
+    const duckDb =
+      typeof row.duckDb === 'number' && Number.isFinite(row.duckDb) ? row.duckDb : undefined
+    out.push({
+      id,
+      name: nonEmptyString(row.name) ?? id,
+      file,
+      exportMode: row.exportMode === 'on' ? 'on' : 'off',
+      ...(duckDb === undefined ? {} : { duckDb: clampTo(duckDb, DUCK_MIN_DB, DUCK_MAX_DB) }),
+    })
+  }
+  return out.length > 0 ? out : undefined
+}
+
 export interface CueRegion {
   sourceId: string
   in: number
@@ -361,6 +393,7 @@ export interface Cue {
   referenceAudio?: AudioRef
   referenceDuration?: number
   original?: OriginalLane
+  stems?: Stem[]
   region?: CueRegion
   takes: Take[]
   finalTakeId?: string
