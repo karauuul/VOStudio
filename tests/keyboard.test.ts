@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   BINDINGS,
   groupOf,
+  isEditor,
   keyScope,
   keyText,
   resolveKey,
@@ -347,5 +348,43 @@ describe('focused controls', () => {
     expect(keyScope({ code: 'Space', editor: true, native: false }, ctx({ grid: true }))).toBe(
       'gridText'
     )
+  })
+
+  it('treats only text-like fields as editors', () => {
+    for (const type of ['text', 'search', 'number', 'url', 'email', 'password', 'tel']) {
+      expect(isEditor({ tagName: 'INPUT', type })).toBe(true)
+    }
+    expect(isEditor({ tagName: 'INPUT' })).toBe(true)
+    expect(isEditor({ tagName: 'TEXTAREA' })).toBe(true)
+    expect(isEditor({ tagName: 'DIV', isContentEditable: true })).toBe(true)
+  })
+
+  it('leaves sliders, toggles, pickers, selects and buttons out of the editor scope', () => {
+    for (const type of ['range', 'checkbox', 'radio', 'color', 'file', 'button', 'submit']) {
+      expect(isEditor({ tagName: 'INPUT', type })).toBe(false)
+    }
+    expect(isEditor({ tagName: 'SELECT' })).toBe(false)
+    expect(isEditor({ tagName: 'BUTTON' })).toBe(false)
+    expect(isEditor({ tagName: 'DIV' })).toBe(false)
+    expect(isEditor(null)).toBe(false)
+  })
+
+  it('Space plays after touching a slider, a select or a button', () => {
+    for (const el of [
+      { tagName: 'INPUT', type: 'range' },
+      { tagName: 'SELECT' },
+      { tagName: 'BUTTON' },
+    ]) {
+      const scope = keyScope({ code: 'Space', editor: isEditor(el), native: true }, ctx())
+      expect(scope).toBe('workspace')
+      expect(action({ code: 'Space', scope: scope! })).toBe('playPause')
+    }
+  })
+
+  it('keeps arrow keys with a focused slider', () => {
+    const el = { tagName: 'INPUT', type: 'range' }
+    for (const code of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']) {
+      expect(keyScope({ code, editor: isEditor(el), native: true }, ctx())).toBeNull()
+    }
   })
 })

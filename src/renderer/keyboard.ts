@@ -291,7 +291,7 @@ export interface KeyboardScopes {
 }
 
 const LOCAL = '[role="menu"], [role="dialog"], .modal'
-const NATIVE = 'button, a[href], select, [role="separator"], [role="button"], summary'
+const NATIVE = 'button, a[href], select, input, [role="separator"], [role="button"], summary'
 const NATIVE_CODES = [
   'Enter',
   'NumpadEnter',
@@ -301,10 +301,20 @@ const NATIVE_CODES = [
   'ArrowRight',
 ]
 
-function isEditor(el: HTMLElement | null): boolean {
+const TEXT_INPUT_TYPES = ['text', 'search', 'number', 'url', 'email', 'password', 'tel']
+
+export interface EditorTarget {
+  tagName: string
+  type?: string
+  isContentEditable?: boolean
+}
+
+export function isEditor(el: EditorTarget | null): boolean {
   if (!el) return false
-  const tag = el.tagName
-  return tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT' || el.isContentEditable
+  if (el.isContentEditable) return true
+  if (el.tagName === 'TEXTAREA') return true
+  if (el.tagName !== 'INPUT') return false
+  return TEXT_INPUT_TYPES.includes(el.type ?? 'text')
 }
 
 export function keyScope(

@@ -42,8 +42,32 @@ const SCRUB_SEEK_MS = 60
 let ctx: AudioContext | null = null
 let fx: GainNode | null = null
 let monitor: GainNode | null = null
+let meter: AnalyserNode | null = null
+let meterFrame: Float32Array<ArrayBuffer> | null = null
 let monitorGain = 1
 let looping = false
+
+export interface ResumeBounds {
+  dur: number
+  end: number
+  from: number
+}
+
+export function resumeAt(pos: number, b: ResumeBounds, rewindAtEnd: boolean): number {
+  const p = Math.max(0, Math.min(b.dur, pos))
+  return rewindAtEnd && p >= b.end - END_EPS ? b.from : p
+}
+
+export function monitorPeak(): number {
+  if (!meter || !meterFrame) return 0
+  meter.getFloatTimeDomainData(meterFrame)
+  let peak = 0
+  for (const v of meterFrame) {
+    const a = Math.abs(v)
+    if (a > peak) peak = a
+  }
+  return peak
+}
 
 export function setMonitorGain(v: number): void {
   monitorGain = Math.min(1, Math.max(0, v))
@@ -66,9 +90,14 @@ function ac(): AudioContext {
   m.gain.value = monitorGain
   f.connect(m)
   m.connect(c.destination)
+  const a = c.createAnalyser()
+  a.fftSize = 2048
+  m.connect(a)
   ctx = c
   fx = f
   monitor = m
+  meter = a
+  meterFrame = new Float32Array(a.fftSize)
   void ensurePitchModule(c).catch(() => {})
   const wake = (): void => {
     void c.resume().catch(() => {})
@@ -407,8 +436,7 @@ function startClip(offset: number, rewindAtEnd: boolean): void {
     voice = null
   }
   const dur = cur.dur
-  let off = Math.max(0, Math.min(dur, offset))
-  if (rewindAtEnd && off >= dur - END_EPS) off = 0
+  const off = resumeAt(offset, { dur, end: dur, from: 0 }, rewindAtEnd)
   startOffset = off
   startedAt = c.currentTime
   const v = makeVoice(cur.buf, startedAt, off)
@@ -443,8 +471,7 @@ function startComp(pos: number, rewindAtEnd: boolean): void {
     killBus(s.bus)
     s.bus = null
   }
-  let p = Math.max(0, Math.min(s.dur, pos))
-  if (rewindAtEnd && p >= s.until - END_EPS) p = s.from
+  const p = resumeAt(pos, { dur: s.dur, end: s.until, from: s.from }, rewindAtEnd)
   const when = c.currentTime + LEAD_IN
   s.at = when
   s.startPos = p
@@ -713,4 +740,5 @@ export const transport = {
   setLoop,
   getLoop,
   setMonitorGain,
+  monitorPeak,
 }
