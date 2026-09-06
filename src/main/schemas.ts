@@ -245,6 +245,7 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   cueId.extend({ type: z.literal('cue.setVoiceOverride'), override: voiceSettingsSchema.partial().nullable() }),
   cueId.extend({ type: z.literal('cue.deleteTake'), takeId: z.string().min(1).max(200), deletedAt: z.string().min(1).optional() }),
   cueId.extend({ type: z.literal('cue.setCharacter'), characterId: z.string().max(200) }),
+  cueId.extend({ type: z.literal('cue.setExcluded'), excluded: z.boolean() }),
   characterId.extend({ type: z.literal('character.setVoiceSettings'), settings: voiceSettingsSchema }),
   z.object({ type: z.literal('character.create'), id: z.string().min(1).max(200), name: characterName }),
   characterId.extend({ type: z.literal('character.rename'), name: characterName }),

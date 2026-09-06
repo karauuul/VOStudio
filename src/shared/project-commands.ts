@@ -1,4 +1,4 @@
-import { approveCue, changeCompOutput, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval } from './approval'
+import { approveCue, changeCompOutput, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval, setExcluded } from './approval'
 import { compProblem, normalizeComp } from './comp'
 import { sanitizeEffects } from './effects'
 import {
@@ -36,6 +36,7 @@ export type ProjectCommand =
   | { type: 'cue.setVoiceOverride'; cueId: string; override: Partial<VoiceSettings> | null }
   | { type: 'cue.deleteTake'; cueId: string; takeId: string; deletedAt?: string }
   | { type: 'cue.setCharacter'; cueId: string; characterId: string }
+  | { type: 'cue.setExcluded'; cueId: string; excluded: boolean }
   | { type: 'character.setVoiceSettings'; characterId: string; settings: VoiceSettings }
   | { type: 'character.create'; id: string; name: string }
   | { type: 'character.rename'; characterId: string; name: string }
@@ -273,6 +274,9 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
       if (cue.status === 'generated' && !hasVoicedTake(cue)) cue.status = cue.text.trim() ? 'translated' : 'empty'
       break
     }
+    case 'cue.setExcluded':
+      Object.assign(cue, setExcluded(cue, command.excluded, project))
+      break
     case 'cue.setCharacter': {
       if (command.characterId) characterById(project, command.characterId)
       if (cue.characterId === command.characterId) break

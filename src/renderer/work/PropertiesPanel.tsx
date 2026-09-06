@@ -44,6 +44,7 @@ import { clipText, libraryRow, lineLabel, resolveTake, versionLabel } from '@sha
 import { toPercent } from '@shared/generation'
 import { DragNumber } from '../cue/DragNumber'
 import type { CompApi, TimelineSelection } from './TimelinePanel'
+import { useContextMenu } from '../shell/ContextMenu'
 
 export interface PropertiesPanelProps {
   cue: Cue | null
@@ -391,7 +392,7 @@ function EffectStack({
   action?: ReactNode
 }) {
   const [open, setOpen] = useState<EffectKind | null>(null)
-  const [menu, setMenu] = useState(false)
+  const pop = useContextMenu()
   const [draft, setDraft] = useState<ClipEffects | null>(null)
 
   const fx = draft ?? effects
@@ -412,29 +413,30 @@ function EffectStack({
           action ??
           (readOnly || missing.length === 0 ? undefined : (
             <span className="props-add">
-              <button className="ico sm" aria-label={`Add to ${title}`} onClick={() => setMenu((v) => !v)}>
+              <button
+                className="ico sm"
+                aria-label={`Add to ${title}`}
+                onClick={(e) => {
+                  const box = e.currentTarget.getBoundingClientRect()
+                  pop.openAt(
+                    box.right,
+                    box.bottom + 4,
+                    kinds.map((k) => ({
+                      label: FX_LABEL[k],
+                      disabled: !!fx?.[k],
+                      onClick: () => {
+                        setOpen(k)
+                        apply(toggleEffect(fx, k, true), true)
+                      },
+                    }))
+                  )
+                }}
+              >
                 <svg width="9" height="9" viewBox="0 0 10 10">
                   <path d="M5 0v10M0 5h10" stroke="currentColor" strokeWidth="1.6" />
                 </svg>
               </button>
-              {menu && (
-                <div className="menu-pop" role="menu">
-                  {kinds.map((k) => (
-                    <button
-                      key={k}
-                      className="menu-item"
-                      disabled={!!fx?.[k]}
-                      onClick={() => {
-                        setMenu(false)
-                        setOpen(k)
-                        apply(toggleEffect(fx, k, true), true)
-                      }}
-                    >
-                      {FX_LABEL[k]}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {pop.node}
             </span>
           ))
         }

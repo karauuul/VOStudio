@@ -24,6 +24,7 @@ import {
   maxCrossfade,
   moveClipTo,
   removeClip,
+  trackIsFree,
   setClipEdits,
   setCrossfade,
   setRegionEdge,
@@ -34,12 +35,19 @@ import {
 } from '@shared/comp'
 import {
   addTrack,
+  canRemoveTrack,
+  clipBoundaries,
   clipText,
   clipVersions,
   compTracks,
+  duplicateTrack,
+  fitToLength,
+  moveTrack,
+  removeTrack,
   resolveTake,
   resolveTargetTrack,
   splitClipByWord,
+  splitClipIntoWords,
   updateTrack,
   versionLabel,
   wordSnapPoints,
@@ -84,6 +92,8 @@ import {
 } from '../cue/timeline-math'
 import { useCompEdit, sameComp } from '../cue/useCompEdit'
 import { useWire } from '../cue/useWire'
+import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
+import { hotkeyText, type KeyAction } from '../keyboard'
 
 export interface ClipSelection {
   clipId: string
@@ -102,6 +112,10 @@ export interface TimelineSelection {
 
 export interface CompApi {
   deleteSelected: () => boolean
+  selectClip: (clipId: string) => void
+  splitAt: (clipId: string, at: number) => void
+  muteHovered: () => boolean
+  soloHovered: () => boolean
   split: () => void
   heal: () => void
   crossfade: () => void
@@ -173,6 +187,9 @@ interface Props {
   compRef: MutableRefObject<CompApi | null>
   busyClipId?: string | null
   onDropSource: (takeId: string, trackId: string, at: number) => void
+  onRegenerateClip: (clipId: string) => void
+  onPinSource: (takeId: string, pinned: boolean) => void
+  onShowInLibrary: (takeId: string) => void
 }
 
 export function TimelinePanel({
@@ -189,11 +206,15 @@ export function TimelinePanel({
   compRef,
   busyClipId,
   onDropSource,
+  onRegenerateClip,
+  onPinSource,
+  onShowInLibrary,
 }: Props) {
   const lanesRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const headRef = useRef<HTMLSpanElement>(null)
   const posRef = useRef(0)
+  const hoverTrackRef = useRef<string | null>(null)
   const scrubRef = useRef(false)
   const dragRef = useRef<(() => void) | null>(null)
 
@@ -701,6 +722,7 @@ export function TimelinePanel({
 
   const deselect = useCallback(
     (e: ReactMouseEvent): void => {
+      if (e.button !== 0) return
       setSelected(null)
       selRef.current = null
       startScrub(e)
@@ -784,6 +806,27 @@ export function TimelinePanel({
 
   const api = useMemo<CompApi>(
     () => ({
+      selectClip: (id) => {
+        if (!compRefLive.current.clips.some((c) => c.id === id)) return
+        setSelected(id)
+        selRef.current = id
+        setPickedTrack(null)
+      },
+      splitAt: (id, at) => splitClip(id, at),
+      muteHovered: () => {
+        const id = hoverTrackRef.current
+        const t = id ? compTracks(compRefLive.current).find((x) => x.id === id) : undefined
+        if (!t) return false
+        editTrack(t.id, { muted: !t.muted })
+        return true
+      },
+      soloHovered: () => {
+        const id = hoverTrackRef.current
+        const t = id ? compTracks(compRefLive.current).find((x) => x.id === id) : undefined
+        if (!t) return false
+        editTrack(t.id, { solo: !t.solo })
+        return true
+      },
       deleteSelected: () => {
         const id = selRef.current
         const base = compRefLive.current
@@ -883,6 +926,171 @@ export function TimelinePanel({
 
   useWire(compRef, api)
 
+  const menu = useContextMenu()
+
+  const originalLength = cue?.region ? cue.region.out - cue.region.in : refDur
+
+  const clipMenu = useCallback(
+    (c: CompClip): MenuEntry[] => {
+      const take = takeOf(c)
+      const versions = cue && take ? clipVersions(cue, project, take.id) : []
+      const at = posRef.current
+      const words = cue ? clipBoundaries(comp, cue, project, c.id) : []
+      const free = (t: CompTrack): boolean =>
+        t.id === clipTrackId(c) ||
+        trackIsFree(comp, t.id, c.start, clipEnd(c), c.id)
+      return [
+        { label: 'Play clip', hotkey: hotkeyText('playClip'), onClick: () => ops.playClip() },
+        {
+          label: 'Regenerate',
+          hotkey: hotkeyText('generate'),
+          onClick: () => onRegenerateClip(c.id),
+        },
+        {
+          label: 'Version',
+          disabled: versions.length === 0,
+          submenu: [
+            ...versions.map((v) => ({
+              label: v.label,
+              hotkey: `${v.duration.toFixed(2)}s`,
+              checked: v.current,
+              disabled: v.duration <= 0,
+              onClick: () => switchVersion(c, v.takeId, v.duration),
+            })),
+            { sep: true } as MenuEntry,
+            { label: 'New from text…', checked: false, onClick: () => onRegenerateClip(c.id) },
+          ],
+        },
+        { sep: true },
+        {
+          label: 'Split at playhead',
+          hotkey: hotkeyText('splitClip'),
+          disabled: !(at > c.start + COMP_EPS && at < clipEnd(c) - COMP_EPS),
+          onClick: () => splitClip(c.id, at),
+        },
+        {
+          label: 'Split by words',
+          disabled: words.length === 0,
+          onClick: () => cue && commit(splitClipIntoWords(comp, cue, project, c.id)),
+        },
+        {
+          label: 'Fit to original length',
+          disabled: !(originalLength > 0),
+          onClick: () => commit(fitToLength(comp, c.id, originalLength)),
+        },
+        {
+          label: 'Reset fades and gain',
+          onClick: () =>
+            commit(
+              setClipEdits(comp, c.id, {
+                gainDb: 0,
+                fadeIn: { ...c.edits.fadeIn, duration: 0 },
+                fadeOut: { ...c.edits.fadeOut, duration: 0 },
+              })
+            ),
+        },
+        { sep: true },
+        {
+          label: 'Move to track',
+          submenu: [
+            ...tracks.map((t) => ({
+              label: t.name,
+              checked: t.id === clipTrackId(c),
+              disabled: !free(t),
+              onClick: () => commit(moveClipTo(comp, c.id, c.start, t.id)),
+            })),
+            { sep: true } as MenuEntry,
+            {
+              label: 'New track',
+              checked: false,
+              onClick: () => {
+                const grown = addTrack(comp)
+                const added = compTracks(grown)[compTracks(grown).length - 1]
+                commit(moveClipTo(grown, c.id, c.start, added.id))
+              },
+            },
+          ],
+        },
+        {
+          label: take?.pinned === true ? 'Unpin source' : 'Pin source to all lines',
+          disabled: !take,
+          onClick: () => take && onPinSource(take.id, take.pinned !== true),
+        },
+        {
+          label: 'Show in Library',
+          disabled: !take,
+          onClick: () => take && onShowInLibrary(take.id),
+        },
+        { sep: true },
+        {
+          label: 'Delete',
+          hotkey: hotkeyText('deleteClip'),
+          danger: true,
+          onClick: () => commit(removeClip(comp, c.id)),
+        },
+      ]
+    },
+    [
+      cue,
+      project,
+      comp,
+      tracks,
+      takeOf,
+      ops,
+      onRegenerateClip,
+      onPinSource,
+      onShowInLibrary,
+      switchVersion,
+      splitClip,
+      commit,
+      originalLength,
+    ]
+  )
+
+  const trackMenu = useCallback(
+    (track: CompTrack, index: number): MenuEntry[] => [
+      {
+        label: 'Rename',
+        onClick: () =>
+          lanesRef.current
+            ?.querySelector<HTMLInputElement>(`[data-strip="${track.id}"] .tl-name`)
+            ?.select(),
+      },
+      { label: 'Set as target', onClick: () => onTargetTrack(track.id) },
+      {
+        label: 'Mute',
+        hotkey: hotkeyText('muteTrack'),
+        onClick: () => editTrack(track.id, { muted: !track.muted }),
+      },
+      {
+        label: 'Solo',
+        hotkey: hotkeyText('soloTrack'),
+        onClick: () => editTrack(track.id, { solo: !track.solo }),
+      },
+      { sep: true },
+      { label: 'Track effects…', onClick: () => setPickedTrack(track.id) },
+      { label: 'Duplicate track', onClick: () => commit(duplicateTrack(comp, track.id)) },
+      {
+        label: 'Move up',
+        disabled: index === 0,
+        onClick: () => commit(moveTrack(comp, track.id, -1)),
+      },
+      {
+        label: 'Move down',
+        disabled: index === tracks.length - 1,
+        onClick: () => commit(moveTrack(comp, track.id, 1)),
+      },
+      { sep: true },
+      {
+        label: 'Delete track',
+        danger: true,
+        disabled: !canRemoveTrack(comp, track.id),
+        onClick: () => commit(removeTrack(comp, track.id)),
+      },
+    ],
+    [comp, tracks, targetTrackId, onTargetTrack, editTrack, commit]
+  )
+
   const step = tickStep(pxPerSec)
   const rulerTicks = width > 0 ? ticks(view, width) : []
   const xOf = (t: number): number => timeToX(view, t)
@@ -921,7 +1129,7 @@ export function TimelinePanel({
           {delta === null ? '—' : `${delta >= 0 ? '+' : ''}${delta.toFixed(2)}`}
         </span>
         <span className="tl-zoom">
-          <button className="ico sm" onClick={() => zoomBy(1 / 1.5)} title="-" aria-label="Zoom out">
+          <button className="ico sm" onClick={() => zoomBy(1 / 1.5)} data-hk="zoomOut" aria-label="Zoom out">
             <svg width="12" height="12" viewBox="0 0 12 12">
               <circle cx="5" cy="5" r="3.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
               <path d="M8 8l3 3M3.5 5h3" stroke="currentColor" strokeWidth="1.3" />
@@ -939,7 +1147,7 @@ export function TimelinePanel({
             }
             onMouseUp={() => persist({})}
           />
-          <button className="ico sm" onClick={() => zoomBy(1.5)} title="=" aria-label="Zoom in">
+          <button className="ico sm" onClick={() => zoomBy(1.5)} data-hk="zoomIn" aria-label="Zoom in">
             <svg width="12" height="12" viewBox="0 0 12 12">
               <circle cx="5" cy="5" r="3.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
               <path d="M8 8l3 3M3.5 5h3M5 3.5v3" stroke="currentColor" strokeWidth="1.3" />
@@ -1100,7 +1308,21 @@ export function TimelinePanel({
           >
             <div
               className="tl-strip"
-              onMouseDown={() => {
+              data-strip={track.id}
+              onMouseEnter={() => {
+                hoverTrackRef.current = track.id
+              }}
+              onMouseLeave={() => {
+                if (hoverTrackRef.current === track.id) hoverTrackRef.current = null
+              }}
+              onContextMenu={(e) => {
+                setSelected(null)
+                selRef.current = null
+                setPickedTrack(track.id)
+                menu.open(e, trackMenu(track, i))
+              }}
+              onMouseDown={(e) => {
+                if (e.button !== 0) return
                 setSelected(null)
                 selRef.current = null
                 setPickedTrack(track.id)
@@ -1193,6 +1415,12 @@ export function TimelinePanel({
                     busy={busyClipId === c.id}
                     gainDrag={gainDrag && gainDrag.id === c.id ? gainDrag.db : null}
                     onDown={onClipDown}
+                    onContext={(e, clip) => {
+                      setSelected(clip.id)
+                      selRef.current = clip.id
+                      setPickedTrack(null)
+                      menu.open(e, clipMenu(clip))
+                    }}
                     onVersion={switchVersion}
                   />
                 ))}
@@ -1216,7 +1444,7 @@ export function TimelinePanel({
           <button
             key={t.id}
             className={'ico' + (tool === t.id ? ' on' : '')}
-            {...(t.key ? { title: t.key } : {})}
+            {...(t.hk ? { 'data-hk': t.hk } : {})}
             aria-label={t.name}
             aria-pressed={tool === t.id}
             onClick={() => setTool(t.id)}
@@ -1245,15 +1473,17 @@ export function TimelinePanel({
           <option value="off">Snap · off</option>
         </select>
       </div>
+
+      {menu.node}
     </section>
   )
 }
 
-const TOOLS: { id: Tool; name: string; key: string; icon: JSX.Element }[] = [
+const TOOLS: { id: Tool; name: string; hk?: KeyAction; icon: JSX.Element }[] = [
   {
     id: 'select',
     name: 'Select',
-    key: 'V',
+    hk: 'toolSelect',
     icon: (
       <svg width="14" height="14" viewBox="0 0 14 14">
         <path d="M2 1l10 8H7l-2 4z" fill="currentColor" />
@@ -1263,7 +1493,7 @@ const TOOLS: { id: Tool; name: string; key: string; icon: JSX.Element }[] = [
   {
     id: 'razor',
     name: 'Razor',
-    key: 'C',
+    hk: 'splitClip',
     icon: (
       <svg width="14" height="14" viewBox="0 0 14 14">
         <circle cx="3.5" cy="10.5" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
@@ -1275,7 +1505,6 @@ const TOOLS: { id: Tool; name: string; key: string; icon: JSX.Element }[] = [
   {
     id: 'trim',
     name: 'Trim',
-    key: '',
     icon: (
       <svg width="14" height="14" viewBox="0 0 14 14">
         <path d="M4 1v12M10 1v12" stroke="currentColor" strokeWidth="1.4" />
@@ -1286,7 +1515,6 @@ const TOOLS: { id: Tool; name: string; key: string; icon: JSX.Element }[] = [
   {
     id: 'fade',
     name: 'Fade',
-    key: '',
     icon: (
       <svg width="14" height="14" viewBox="0 0 14 14">
         <path d="M1 13L13 1v12z" fill="currentColor" />
@@ -1296,7 +1524,6 @@ const TOOLS: { id: Tool; name: string; key: string; icon: JSX.Element }[] = [
   {
     id: 'slip',
     name: 'Slip',
-    key: '',
     icon: (
       <svg width="14" height="14" viewBox="0 0 14 14">
         <path d="M1 7h12" stroke="currentColor" strokeWidth="1.4" />
@@ -1317,6 +1544,7 @@ interface ClipProps {
   busy: boolean
   gainDrag: number | null
   onDown: (e: ReactMouseEvent, clip: CompClip) => void
+  onContext: (e: ReactMouseEvent, clip: CompClip) => void
   onVersion: (clip: CompClip, takeId: string, duration: number) => void
 }
 
@@ -1331,6 +1559,7 @@ function Clip({
   busy,
   gainDrag,
   onDown,
+  onContext,
   onVersion,
 }: ClipProps) {
   const found = cue ? resolveTake(project, cue, clip.sourceTakeId) : undefined
@@ -1350,6 +1579,7 @@ function Clip({
       style={{ left, width }}
       data-clip={clip.id}
       onMouseDown={(e) => onDown(e, clip)}
+      onContextMenu={(e) => onContext(e, clip)}
     >
       <span className="cn">
         {label && <i>{label}</i>}

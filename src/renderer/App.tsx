@@ -16,7 +16,7 @@ import {
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
 import type { UpdateStatus } from '@shared/updater'
-import { api } from './api'
+import { api, audioUrl } from './api'
 import { clipId, transport } from './audio/transport'
 import { playback } from './playback'
 import {
@@ -48,6 +48,9 @@ import { CharactersDialog } from './CharactersDialog'
 import { RulesDialog } from './RulesPanel'
 import { ProjectHome } from './ProjectHome'
 import { TopBar, type MenuItem, type Route } from './shell/TopBar'
+import { HotkeyHint } from './shell/HotkeyHint'
+import type { MenuEntry } from './shell/ContextMenu'
+import { hotkeyText } from './keyboard'
 import { StatusToast, type Status } from './StatusToast'
 import { SettingsDialog } from './SettingsDialog'
 import { ShortcutsDialog } from './ShortcutsDialog'
@@ -64,7 +67,7 @@ import {
   type PreviewSource,
 } from '@shared/workspace-source'
 import { compDuration, isEmptyComp } from '@shared/comp'
-import { libraryRow, resolveTake, type LibraryRow } from '@shared/library'
+import { libraryRow, lineLabel, locateText, resolveTake, type LibraryRow } from '@shared/library'
 import type { ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
 import { buildPrompt } from '@shared/prompt'
 import {
@@ -553,8 +556,8 @@ export default function App() {
   }, [activeCue, flushText, pushStatus, dispatch])
 
   const onCopy = useCallback(
-    (kind: CopyKind) => {
-      const cue = activeCue
+    (kind: CopyKind, target?: Cue) => {
+      const cue = target ?? activeCue
       if (!cue || !project) return
       const text =
         kind === 'source'
@@ -568,6 +571,32 @@ export default function App() {
       )
     },
     [activeCue, project, pushStatus]
+  )
+
+  const revealFile = useCallback(
+    (absPath: string | undefined) => {
+      if (!absPath) return
+      void api['shell:reveal'](absPath).catch((e: unknown) => pushStatus('err', String(e)))
+    },
+    [pushStatus]
+  )
+
+  const deleteSelectedSource = useCallback((): boolean => {
+    const p = projectRef.current
+    const cue = p?.cues.find((c) => c.id === activeCueIdRef.current)
+    const row = cue && p && sourceTakeId ? libraryRow(cue, p, sourceTakeId) : undefined
+    if (!row) return false
+    onDeleteTake(row.cueId, row.take.id)
+    return true
+  }, [projectRef, sourceTakeId, onDeleteTake])
+
+  const setExcluded = useCallback(
+    (cueId: string, excluded: boolean) => {
+      void dispatch({ type: 'cue.setExcluded', cueId, excluded }).catch((e: unknown) =>
+        pushStatus('err', String(e))
+      )
+    },
+    [dispatch, pushStatus]
   )
 
   const onRejectSuggestion = useCallback(() => {
@@ -646,7 +675,13 @@ export default function App() {
   )
 
   const submitTts = useCallback(
-    (cueId: string, text: string, announce: boolean, target: GenTarget = { kind: 'all' }) => {
+    (
+      cueId: string,
+      text: string,
+      announce: boolean,
+      target: GenTarget = { kind: 'all' },
+      override?: VoiceSettings
+    ) => {
       submitJob({
         kind: 'tts',
         cueId,
@@ -656,7 +691,7 @@ export default function App() {
           const cue = project?.cues.find((c) => c.id === cueId)
           if (!project || !cue) throw new Error('Cue is no longer in the project')
           const character = project.characters.find((c) => c.id === cue.characterId)
-          const voiceSettings = resolveVoiceSettings(character, cue)
+          const voiceSettings = override ?? resolveVoiceSettings(character, cue)
           const take = await api['provider:tts']({
             cueId,
             text,
@@ -696,12 +731,15 @@ export default function App() {
   const genTarget = useMemo(() => deriveGenTarget(clipTarget, textSel), [clipTarget, textSel])
 
   const generate = useCallback(
-    (kind: GenTarget['kind']) => {
+    (kind: GenTarget['kind'], onClipId?: string) => {
       const cue = activeCue
       if (!cue) return
+      const clip = onClipId
+        ? { clipId: onClipId, text: clipTargetText(project ?? undefined, cue, onClipId) }
+        : clipTarget
       const target: GenTarget =
-        kind === 'clip' && clipTarget
-          ? { kind: 'clip', clipId: clipTarget.clipId, text: clipTarget.text }
+        kind === 'clip' && clip
+          ? { kind: 'clip', clipId: clip.clipId, text: clip.text }
           : kind === 'range' && textSel
             ? { kind: 'range', start: textSel.start, end: textSel.end }
             : { kind: 'all' }
@@ -714,6 +752,7 @@ export default function App() {
     },
     [
       activeCue,
+      project,
       clipTarget,
       textSel,
       flushText,
@@ -930,6 +969,8 @@ export default function App() {
       replaceSource: () => programRef.current?.replace(),
       makeFinal,
       deleteClip: () => {
+        const el = document.activeElement
+        if (el instanceof HTMLElement && el.closest('.panel.lib') && deleteSelectedSource()) return
         compRef.current?.deleteSelected()
       },
       splitClip: () => compRef.current?.split(),
@@ -947,6 +988,12 @@ export default function App() {
         return true
       },
       focusText: () => focusTextRef.current?.(),
+      muteTrack: () => {
+        compRef.current?.muteHovered()
+      },
+      soloTrack: () => {
+        if (!compRef.current?.soloHovered()) onCopy('source')
+      },
       copySource: () => onCopy('source'),
       copyTranslation: () => onCopy('translation'),
       copyPrompt: () => onCopy('prompt'),
@@ -966,6 +1013,7 @@ export default function App() {
       onRejectSuggestion,
       onCopy,
       sourceTakeId,
+      deleteSelectedSource,
     ]
   )
 
@@ -1042,6 +1090,203 @@ export default function App() {
     { label: 'Shortcuts', onClick: () => setShowShortcuts(true) },
   ]
 
+  const spliceTranslation = (el: HTMLTextAreaElement, insert: string): void => {
+    onText(el.value.slice(0, el.selectionStart) + insert + el.value.slice(el.selectionEnd))
+  }
+
+  const lineMenu = (cue: Cue): MenuEntry[] => [
+    { label: 'Open', hotkey: 'Enter', onClick: () => void selectCue(cue.id) },
+    {
+      label: 'Play original',
+      disabled: !cue.referenceAudio,
+      onClick: () => {
+        const rel = cue.referenceAudio?.relPath
+        if (rel) void transport.playClip({ id: clipId.original(rel), url: audioUrl(rel) })
+      },
+    },
+    {
+      label: 'Play translation',
+      disabled: isEmptyComp(cue.comp),
+      onClick: () =>
+        void selectCue(cue.id).then((ok) => {
+          if (ok) window.setTimeout(() => playback.restart(), 0)
+        }),
+    },
+    { sep: true },
+    {
+      label: 'Generate',
+      hotkey: hotkeyText('generate'),
+      onClick: () => void generateSelected([cue]),
+    },
+    {
+      label: 'Copy original',
+      hotkey: hotkeyText('copySource'),
+      onClick: () => onCopy('source', cue),
+    },
+    {
+      label: 'Copy translation',
+      hotkey: hotkeyText('copyTranslation'),
+      onClick: () => onCopy('translation', cue),
+    },
+    {
+      label: 'Copy as prompt',
+      hotkey: hotkeyText('copyPrompt'),
+      onClick: () => onCopy('prompt', cue),
+    },
+    { sep: true },
+    {
+      label: cue.status === 'excluded' ? 'Include in export' : 'Exclude from export',
+      onClick: () => setExcluded(cue.id, cue.status !== 'excluded'),
+    },
+    {
+      label: 'Reveal source file',
+      disabled: !cue.referenceAudio,
+      onClick: () => revealFile(cue.referenceAudio?.relPath),
+    },
+    { sep: true },
+    {
+      label: 'Reset line',
+      confirm: 'Reset line?',
+      danger: true,
+      disabled: isEmptyComp(cue.comp),
+      onClick: () => {
+        if (activeCueIdRef.current === cue.id && compRef.current) compRef.current.place({ clips: [] })
+        else void onSetComp(cue.id, null)
+      },
+    },
+  ]
+
+  const libraryMenu = (row: LibraryRow): MenuEntry[] => {
+    const take = row.take
+    const users = project.cues.filter((c) =>
+      (c.comp?.clips ?? []).some((clip) => clip.sourceTakeId === take.id)
+    )
+    return [
+      {
+        label: 'Audition',
+        hotkey: hotkeyText('playPause'),
+        onClick: () => {
+          if (programRef.current?.toggle()) return
+          void transport.playClip({ id: clipId.take(take.id), url: audioUrl(take.file.relPath) })
+        },
+      },
+      {
+        label: 'Insert at playhead',
+        hotkey: hotkeyText('insertSource'),
+        onClick: () => insertSource(row),
+      },
+      {
+        label: 'Replace selected clip',
+        hotkey: hotkeyText('replaceSource'),
+        disabled: !clipTarget,
+        onClick: () => {
+          const target = compRef.current?.selection()?.clipId
+          if (activeCue && target) {
+            void placeOnComp(activeCue.id, take, target).catch((e: unknown) =>
+              pushStatus('err', String(e))
+            )
+          }
+        },
+      },
+      { sep: true },
+      {
+        label: 'Regenerate with same settings',
+        disabled: !activeCue || !take.meta.text?.trim(),
+        onClick: () => {
+          const cue = activeCue
+          const text = take.meta.text?.trim()
+          if (!cue || !text) return
+          if (isCueBusyNow(cue.id) || refuseWhileExporting() || refuseWithoutKey()) return
+          noteSubmit(cue.id)
+          submitTts(cue.id, text, true, { kind: 'all' }, take.meta.voiceSettings)
+        },
+      },
+      {
+        label: take.pinned === true ? 'Unpin' : 'Pin to all lines',
+        onClick: () => {
+          void pinTake(row.cueId, take.id, take.pinned !== true).catch(() => {})
+        },
+      },
+      {
+        label: 'Show where used',
+        disabled: users.length === 0,
+        submenu: users.map((c) => ({ label: lineLabel(c), onClick: () => openCue(c.id) })),
+      },
+      { sep: true },
+      {
+        label: 'Copy text',
+        disabled: !take.meta.text?.trim(),
+        onClick: () => {
+          void navigator.clipboard.writeText(take.meta.text ?? '').then(
+            () => pushStatus('ok', 'Copied'),
+            (e: unknown) => pushStatus('err', String(e))
+          )
+        },
+      },
+      { label: 'Reveal file', onClick: () => revealFile(take.file.relPath) },
+      { sep: true },
+      {
+        label: 'Delete',
+        hotkey: hotkeyText('deleteClip'),
+        danger: true,
+        onClick: () => onDeleteTake(row.cueId, take.id),
+      },
+    ]
+  }
+
+  const originalMenu = (): MenuEntry[] => [
+    { label: 'Copy', hotkey: hotkeyText('copySource'), onClick: () => onCopy('source') },
+    { label: 'Copy as prompt', hotkey: hotkeyText('copyPrompt'), onClick: () => onCopy('prompt') },
+  ]
+
+  const translationMenu = (range: TextRange, el: HTMLTextAreaElement): MenuEntry[] => {
+    const comp = activeCue?.comp
+    const hit = comp && activeCue ? locateText(comp, activeCue, project, range) : null
+    const hasRange = range.end > range.start
+    const copySelection = (): void => {
+      void navigator.clipboard.writeText(el.value.slice(range.start, range.end))
+    }
+    return [
+      {
+        label: 'Generate selection',
+        hotkey: hotkeyText('generate'),
+        disabled: !hasRange,
+        onClick: () => generate('range'),
+      },
+      {
+        label: 'Find on timeline',
+        disabled: !hit,
+        onClick: () => hit && compRef.current?.selectClip(hit.clipId),
+      },
+      {
+        label: 'Split clip here',
+        disabled: !hit,
+        onClick: () => hit && compRef.current?.splitAt(hit.clipId, hit.time),
+      },
+      { sep: true },
+      {
+        label: 'Cut',
+        hotkey: 'Ctrl+X',
+        disabled: !hasRange,
+        onClick: () => {
+          copySelection()
+          spliceTranslation(el, '')
+        },
+      },
+      { label: 'Copy', hotkey: 'Ctrl+C', disabled: !hasRange, onClick: copySelection },
+      {
+        label: 'Paste',
+        onClick: () => {
+          void navigator.clipboard
+            .readText()
+            .then((t) => spliceTranslation(el, t))
+            .catch((e: unknown) => pushStatus('err', String(e)))
+        },
+        hotkey: 'Ctrl+V',
+      },
+    ]
+  }
+
   const lines: ComponentProps<typeof LinesPanel> = {
     cues: visible,
     groups: grouped.groups,
@@ -1055,6 +1300,7 @@ export default function App() {
     scope: reviewIds
       ? { label: `Selection · ${visible.length}`, onExit: () => setReviewIds(null) }
       : undefined,
+    menu: lineMenu,
   }
 
   const text: TextPanelProps = {
@@ -1071,6 +1317,8 @@ export default function App() {
     onVoiceChange,
     hasRange: !!textSel,
     hasClip: !!clipTarget,
+    originalMenu,
+    translationMenu,
   }
 
   const cueText: ComponentProps<typeof CueText> | null = activeCue
@@ -1173,6 +1421,12 @@ export default function App() {
       const row = activeCue ? libraryRow(activeCue, project, takeId) : undefined
       if (row) insertSource(row, { trackId, at })
     },
+    onRegenerateClip: (clipId) => generate('clip', clipId),
+    onPinSource: (takeId, pinned) => {
+      const row = activeCue ? libraryRow(activeCue, project, takeId) : undefined
+      if (row) void pinTake(row.cueId, takeId, pinned).catch(() => {})
+    },
+    onShowInLibrary: setSourceTakeId,
   }
 
   const library: ComponentProps<typeof LibraryPanel> = {
@@ -1182,10 +1436,7 @@ export default function App() {
     clipTakeId: selection?.clip?.sourceTakeId ?? null,
     onSelect: (row) => setSourceTakeId((id) => (id === row.take.id ? null : row.take.id)),
     onInsert: (row) => insertSource(row),
-    onPin: (row, pinned) => {
-      void pinTake(row.cueId, row.take.id, pinned).catch(() => {})
-    },
-    onDelete: (row) => onDeleteTake(row.cueId, row.take.id),
+    menu: libraryMenu,
   }
 
   const properties: ComponentProps<typeof PropertiesPanel> = {
@@ -1277,6 +1528,8 @@ export default function App() {
       <ExportRoom hidden={route !== 'export'} deliver={deliver} />
 
       {toastUi}
+
+      <HotkeyHint />
 
       {reimport.dialog}
 

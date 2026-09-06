@@ -136,6 +136,13 @@ export function invalidateVoicedOutput(cue: Cue, project?: TakeLookup): Cue {
   return { ...bumped, status: nonApprovedStatus(bumped, project) }
 }
 
+export function setExcluded(cue: Cue, excluded: boolean, project?: TakeLookup): Cue {
+  if (excluded) return cue.status === 'excluded' ? cue : { ...cue, status: 'excluded' }
+  if (cue.status !== 'excluded') return cue
+  const next: Cue = { ...cue, status: 'empty' }
+  return { ...next, status: nonApprovedStatus(next, project) }
+}
+
 export function removeApproval(cue: Cue, project?: TakeLookup): Cue {
   const { approval: _approval, ...next } = cue
   return { ...next, status: nonApprovedStatus(next, project) }

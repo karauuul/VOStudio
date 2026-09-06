@@ -263,6 +263,16 @@ describe('scope precedence', () => {
     }
   })
 
+  it('hovered-track mute and solo belong to the timeline scope', () => {
+    expect(action({ code: 'KeyM', scope: 'timeline' })).toBe('muteTrack')
+    expect(action({ code: 'KeyS', scope: 'timeline' })).toBe('soloTrack')
+    expect(action({ code: 'KeyM', scope: 'workspace' })).toBeNull()
+    expect(action({ code: 'KeyS', scope: 'workspace' })).toBe('copySource')
+    expect(keyText(of('muteTrack'))).toBe('M')
+    expect(keyText(of('soloTrack'))).toBe('S')
+    expect(groupOf(of('muteTrack'))).toBe('Timeline')
+  })
+
   it('timeline edits exist only in the timeline scope', () => {
     for (const code of ['KeyC', 'KeyH', 'KeyX', 'Delete', 'KeyI', 'KeyO', 'KeyV', 'Equal', 'Minus']) {
       expect(action({ code, scope: 'timeline' })).not.toBeNull()

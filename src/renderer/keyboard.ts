@@ -49,6 +49,8 @@ export type KeyAction =
   | 'rejectSuggestion'
   | 'toggleRecord'
   | 'focusText'
+  | 'muteTrack'
+  | 'soloTrack'
   | 'copySource'
   | 'copyTranslation'
   | 'copyPrompt'
@@ -157,6 +159,8 @@ export const BINDINGS: Binding[] = [
   { action: 'toggleRecord', codes: ['KeyR'], scopes: WORK, label: 'Record' },
   { action: 'acceptSuggestion', codes: ['KeyY'], scopes: WORK, label: 'Accept suggestion' },
   { action: 'rejectSuggestion', codes: ['KeyN'], scopes: WORK, label: 'Reject suggestion' },
+  { action: 'muteTrack', codes: ['KeyM'], scopes: TIMELINE, label: 'Mute hovered track' },
+  { action: 'soloTrack', codes: ['KeyS'], scopes: TIMELINE, label: 'Solo hovered track' },
   { action: 'copySource', codes: ['KeyS'], scopes: WORK, label: 'Copy source' },
   { action: 'copyTranslation', codes: ['KeyT'], scopes: WORK, label: 'Copy translation' },
   { action: 'copyPrompt', codes: ['KeyP'], scopes: WORK, label: 'Copy prompt' },
@@ -202,6 +206,11 @@ export function keyText(b: Binding): string {
   if (b.keys) return b.keys
   const code = b.codes.find((c) => !c.startsWith('Numpad')) ?? b.codes[0]
   return [b.mod ? MOD_LABEL : '', b.shift ? 'Shift' : '', codeName(code)].filter(Boolean).join('+')
+}
+
+export function hotkeyText(action: KeyAction): string {
+  const b = BINDINGS.find((x) => x.action === action && x.label)
+  return b ? keyText(b) : ''
 }
 
 export const SHORTCUT_GROUPS: { scope: Scope; title: string }[] = [
@@ -269,6 +278,8 @@ export interface KeyboardHandlers {
   rejectSuggestion: () => void
   toggleRecord: () => void
   focusText: () => void
+  muteTrack: () => void
+  soloTrack: () => void
   copySource: () => void
   copyTranslation: () => void
   copyPrompt: () => void

@@ -21,6 +21,8 @@ const channelMap: Record<IpcChannel, true> = {
 
   'audio:readRef': true,
 
+  'shell:reveal': true,
+
   'take:saveRecording': true,
   'take:setDurations': true,
 
