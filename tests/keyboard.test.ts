@@ -387,4 +387,11 @@ describe('focused controls', () => {
       expect(keyScope({ code, editor: isEditor(el), native: true }, ctx())).toBeNull()
     }
   })
+
+  it('select keeps every key except Space', () => {
+    expect(keyScope({ code: 'Space', editor: false, native: true, select: true }, ctx())).toBe('workspace')
+    for (const code of ['KeyF', 'Home', 'End', 'ArrowDown']) {
+      expect(keyScope({ code, editor: false, native: true, select: true }, ctx())).toBeNull()
+    }
+  })
 })

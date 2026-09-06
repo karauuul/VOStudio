@@ -318,12 +318,13 @@ export function isEditor(el: EditorTarget | null): boolean {
 }
 
 export function keyScope(
-  target: { code: string; editor: boolean; native: boolean },
+  target: { code: string; editor: boolean; native: boolean; select?: boolean },
   ctx: KeyboardScopes
 ): Scope | null {
   if (ctx.home) return 'home'
   if (ctx.deliver) return 'deliver'
   if (target.editor) return ctx.grid ? 'gridText' : 'text'
+  if (target.select && target.code !== 'Space') return null
   if (target.native && NATIVE_CODES.includes(target.code)) return null
   if (ctx.grid) return 'grid'
   return ctx.timeline ? 'timeline' : 'workspace'
@@ -345,7 +346,12 @@ export function useKeyboard(
       const el = e.target instanceof HTMLElement ? e.target : null
       if (el?.closest(LOCAL)) return
       const scope = keyScope(
-        { code: e.code, editor: isEditor(el), native: !!el?.closest(NATIVE) },
+        {
+          code: e.code,
+          editor: isEditor(el),
+          native: !!el?.closest(NATIVE),
+          select: el?.tagName === 'SELECT',
+        },
         scopeRef.current
       )
       if (!scope) return
