@@ -273,7 +273,6 @@ export function useRecorder(): RecorderApi {
     if (!c || c.ctx.state === 'closed') {
       try {
         const ctx = new AudioContext()
-        void applySink(ctx, outputDeviceId())
         const gain = ctx.createGain()
         gain.gain.value = 1
         gain.connect(ctx.destination)
@@ -283,6 +282,7 @@ export function useRecorder(): RecorderApi {
         return null
       }
     }
+    void applySink(c.ctx, outputDeviceId())
     void c.ctx.resume().catch(() => {})
     return c
   }, [])

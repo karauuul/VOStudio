@@ -46,14 +46,25 @@ export function SettingsDialog({
 
   useEffect(() => {
     let alive = true
-    void navigator.mediaDevices
-      ?.enumerateDevices()
-      .then((list) => {
-        if (alive) setDevices(list)
-      })
+    const media = navigator.mediaDevices
+    if (!media) return
+    const refresh = (): void => {
+      void media
+        .enumerateDevices()
+        .then((list) => {
+          if (alive) setDevices(list)
+        })
+        .catch(() => {})
+    }
+    void media
+      .getUserMedia({ audio: true })
+      .then((s) => s.getTracks().forEach((t) => t.stop()))
       .catch(() => {})
+      .then(refresh)
+    media.addEventListener('devicechange', refresh)
     return () => {
       alive = false
+      media.removeEventListener('devicechange', refresh)
     }
   }, [])
 

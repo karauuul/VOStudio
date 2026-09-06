@@ -240,10 +240,7 @@ export default function App() {
   useEffect(() => api.on('updater:status', setUpdateStatus), [])
 
   useEffect(() => {
-    const want = appSettings.outputDeviceLabel ?? ''
-    void setOutputDevice(want).then((applied) => {
-      if (!applied) setAppSettings((s) => ({ ...s, outputDeviceLabel: undefined }))
-    })
+    void setOutputDevice(appSettings.outputDeviceLabel ?? '')
   }, [appSettings.outputDeviceLabel])
 
   const onAppSettings = useCallback(
