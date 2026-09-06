@@ -8,7 +8,7 @@ import {
   type OriginalVoice,
 } from './clip-graph'
 import type { ResolvedComp } from './comp-source'
-import { END_EPS, resumeAt } from '@shared/resume'
+import { resumeAt } from '@shared/resume'
 import { Lru } from './lru'
 import { ensurePitchModule } from './pitch-node'
 
