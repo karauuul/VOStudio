@@ -223,6 +223,11 @@ button.field {
   background: var(--bg);
   border: 0;
   padding: 0;
+  transition: background 120ms ease;
+}
+
+.splitter:hover {
+  background: var(--line2);
 }
 
 .splitter.col {
