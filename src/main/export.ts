@@ -5,32 +5,37 @@ import { createHash, randomUUID } from 'crypto'
 import type {
   BatchExportRequest,
   DeliverPaths,
-  ExportCompClip,
+  ExportInfo,
   ExportJob,
   ExportPlan,
-  ExportPreflight,
   ExportResult,
   ExportSummary,
   LastExport,
 } from '@shared/ipc'
 import {
+  compPlanFor,
   containerOf,
   findCollisions,
   hasEdits,
   isFastPath,
   planBatch,
-  resolvePlan,
   type PlannedTake,
-  type SkippedCue,
 } from '@shared/export-plan'
-import { preflightPlan } from '@shared/export-preflight'
-import { buildReport, buildUpdatedIndex, indexBound, type DeliverReport, type DeliverSummary } from '@shared/deliver'
-import { isEmptyComp, withSourceEffects } from '@shared/comp'
-import { usesCompOutput } from '@shared/approval'
-import { compTracks, resolveTake } from '@shared/library'
-import type { Cue, Project } from '@shared/domain'
+import {
+  buildReport,
+  buildUpdatedIndex,
+  exportedLines,
+  indexBound,
+  mergeExported,
+  type DeliverExported,
+  type DeliverReport,
+  type DeliverSummary,
+} from '@shared/deliver'
+import { formatSpec, loudnessGainDb, loudnessMode, parseEbur128 } from '@shared/export-settings'
+import { sanitizeRevision } from '@shared/approval'
+import type { Project } from '@shared/domain'
 import * as store from './project-store'
-import { runFfmpeg } from './ffmpeg'
+import { ffmpegStderr, runFfmpeg } from './ffmpeg'
 
 const MAX_ENCODE_BYTES = 600 * 1024 * 1024
 
@@ -41,47 +46,32 @@ function ctx(): { project: Project; dir: string } {
   return { project, dir }
 }
 
+export function exportDir(project: Project, projectDir: string): string {
+  const chosen = project.export?.outDir
+  return chosen && path.isAbsolute(chosen) ? path.resolve(chosen) : path.join(projectDir, 'export')
+}
+
 let planned = new Map<string, ExportJob>()
 
 interface BatchPlan {
   token: string
   project: Project
   outDir: string
-  scope: BatchExportRequest['scope']
-  skippedCues: SkippedCue[]
+  stagingDir: string
 }
 
 let batchPlan: BatchPlan | null = null
 const STAGING_DIR = 'export.staging'
 
-function compJobClips(cue: Cue, project: Project): ExportCompClip[] | undefined {
-  if (!usesCompOutput(cue, project)) return undefined
-  if (isEmptyComp(cue.comp)) return undefined
-  return cue.comp!.clips.map((c) => {
-    const found = resolveTake(project, cue, c.sourceTakeId)
-    if (!found) {
-      throw new Error(`Cue "${cue.key}": composition clip "${c.id}" points at a missing take`)
-    }
-    return {
-      srcPath: found.take.file.relPath,
-      srcIn: c.srcIn,
-      srcOut: c.srcOut,
-      start: c.start,
-      edits: withSourceEffects(c, found.take).edits,
-      ...(c.crossfade === undefined ? {} : { crossfade: c.crossfade }),
-      ...(c.trackId === undefined ? {} : { trackId: c.trackId }),
-    }
-  })
-}
-
 function toJobs(items: PlannedTake[], outDir: string, project: Project): ExportJob[] {
+  const spec = formatSpec(project.export?.format)
+  const matchLoudness = loudnessMode(project.export) === 'match'
   return items.map((p) => {
     const outPath = path.join(outDir, p.name)
     const format = containerOf(p.name)
     if (!format) throw new Error(`Unsupported export container for "${p.name}" (mp3/wav/ogg only)`)
-    const comp = compJobClips(p.cue, project)
-    const region = comp ? p.cue.comp?.region : undefined
-    const tracks = comp && p.cue.comp?.tracks ? compTracks(p.cue.comp) : undefined
+    const plan = compPlanFor(p.cue, p.take, project)
+    const ref = p.cue.referenceAudio?.relPath
     return {
       cueId: p.cue.id,
       cueKey: p.cue.key,
@@ -90,90 +80,64 @@ function toJobs(items: PlannedTake[], outDir: string, project: Project): ExportJ
       outPath,
       srcPath: p.take.file.relPath,
       format,
-      fastPath: isFastPath(p.take, p.name, comp ? p.cue.comp : undefined),
+      formatArgs: spec.args,
+      fastPath: isFastPath(p.take, p.name, plan ? p.cue.comp : undefined, project.export, p.cue),
       hasEdits: hasEdits(p.take.edits),
       edits: p.take.edits,
-      ...(comp ? { comp } : {}),
-      ...(region ? { compRegion: { in: region.in, out: region.out } } : {}),
-      ...(tracks ? { compTracks: tracks } : {}),
+      ...(matchLoudness && ref ? { matchLoudnessRef: ref } : {}),
+      ...(plan ? { compPlan: plan } : {}),
     }
   })
 }
 
-function publish(
-  token: string,
-  jobs: ExportJob[],
-  skipped: number,
-  outDir: string,
-  collisions: ExportPlan['collisions']
-): ExportPlan {
-  planned = new Map(jobs.map((j) => [j.outPath, j]))
-  return { token, jobs, skipped, outDir, collisions }
-}
-
-async function readLastExport(outDir: string): Promise<LastExport | null> {
+async function readReport(outDir: string): Promise<DeliverReport | null> {
   try {
     const raw = await fs.readFile(path.join(outDir, 'report.json'), 'utf8')
-    const report = JSON.parse(raw) as Partial<DeliverReport>
-    return {
-      createdAt: typeof report.createdAt === 'string' ? report.createdAt : '',
-      scope: typeof report.scope === 'string' ? report.scope : '',
-      exported: report.exported?.length ?? 0,
-      failed: report.failed?.length ?? 0,
-      skipped: report.skipped?.length ?? 0,
-      cueIds: (report.exported ?? []).map((e) => e.cueId).filter((id) => typeof id === 'string'),
-    }
+    return JSON.parse(raw) as DeliverReport
   } catch {
     return null
   }
 }
 
-export function lastExport(): Promise<LastExport | null> {
-  return readLastExport(path.join(ctx().dir, 'export'))
+function toLastExport(report: DeliverReport | null): LastExport | null {
+  if (!report) return null
+  return {
+    createdAt: typeof report.createdAt === 'string' ? report.createdAt : '',
+    ...(typeof report.version === 'number' ? { version: report.version } : {}),
+    exported: report.exported?.length ?? 0,
+    failed: report.failed?.length ?? 0,
+    cueIds: (report.exported ?? []).map((e) => e.cueId).filter((id) => typeof id === 'string'),
+    lines: exportedLines(report),
+  }
 }
 
-export async function preflightExport(req: BatchExportRequest): Promise<ExportPreflight> {
+export async function exportInfo(): Promise<ExportInfo> {
   const { project, dir } = ctx()
-  const { sources, ...plan } = preflightPlan(project, req.scope, req.collisionStrategy ?? {})
-  const outDir = path.join(dir, 'export')
-  const seen = new Map<string, boolean>()
-  const missingFiles: ExportPreflight['missingFiles'] = []
-  for (const source of sources) {
-    let exists = seen.get(source.path)
-    if (exists === undefined) {
-      exists = await fs.stat(source.path).then(() => true, () => false)
-      seen.set(source.path, exists)
-    }
-    if (!exists) missingFiles.push(source)
-  }
+  const outDir = exportDir(project, dir)
   return {
-    ...plan,
     outDir,
-    missingFiles,
     writesIndex: indexBound(project),
-    last: await readLastExport(outDir),
+    last: toLastExport(await readReport(outDir)),
   }
 }
 
 export async function planBatchExport(req: BatchExportRequest): Promise<ExportPlan> {
   const { project, dir } = ctx()
-  const outDir = path.join(dir, 'export')
-  const items = planBatch(project, req.scope)
-  const resolved = resolvePlan(items, req.collisionStrategy ?? {})
+  const outDir = exportDir(project, dir)
+  const wanted = new Set(req.cueIds)
+  const items = planBatch(project).filter((p) => wanted.has(p.cue.id))
+  const collisions = findCollisions(items)
+  if (collisions.length > 0) {
+    throw new Error(`Name collision: ${collisions.map((c) => c.name).join(', ')}`)
+  }
   batchPlan = null
   const token = randomUUID()
-  if (resolved.uncovered.length > 0) return publish(token, [], 0, outDir, findCollisions(items))
   const stagingDir = path.join(dir, STAGING_DIR)
-  const jobs = toJobs(resolved.jobs, path.join(stagingDir, 'audio'), project)
+  const jobs = toJobs(items, path.join(stagingDir, 'audio'), project)
   await fs.rm(stagingDir, { recursive: true, force: true })
-  batchPlan = {
-    token,
-    project: structuredClone(project),
-    outDir,
-    scope: req.scope,
-    skippedCues: resolved.skippedCues,
-  }
-  return publish(token, jobs, resolved.skipped, outDir, [])
+  batchPlan = { token, project: structuredClone(project), outDir, stagingDir }
+  planned = new Map(jobs.map((j) => [j.outPath, j]))
+  return { token, jobs, outDir }
 }
 
 function jobFor(outPath: string): ExportJob {
@@ -201,12 +165,6 @@ export async function copyJob(outPath: string): Promise<ExportResult> {
   return { outPath, bytes: out.length, parityHash: outHash }
 }
 
-function codecArgs(format: ExportJob['format']): string[] {
-  if (format === 'mp3') return ['-c:a', 'libmp3lame', '-b:a', '192k']
-  if (format === 'ogg') return ['-c:a', 'libvorbis', '-q:a', '6']
-  return ['-c:a', 'pcm_s24le']
-}
-
 function toBuffer(wav: unknown): Buffer {
   if (wav instanceof ArrayBuffer) return Buffer.from(wav)
   if (ArrayBuffer.isView(wav)) {
@@ -214,6 +172,23 @@ function toBuffer(wav: unknown): Buffer {
     return Buffer.from(v.buffer as ArrayBuffer, v.byteOffset, v.byteLength)
   }
   throw new Error('Expected an ArrayBuffer with rendered WAV data')
+}
+
+async function measureLufs(file: string): Promise<number | null> {
+  try {
+    return parseEbur128(await ffmpegStderr(['-i', file, '-af', 'ebur128', '-f', 'null', '-']))
+  } catch {
+    return null
+  }
+}
+
+async function matchGainDb(job: ExportJob, rendered: string): Promise<number> {
+  if (!job.matchLoudnessRef) return 0
+  const [reference, actual] = await Promise.all([
+    measureLufs(job.matchLoudnessRef),
+    measureLufs(rendered),
+  ])
+  return loudnessGainDb(reference, actual)
 }
 
 export async function encodeJob(outPath: string, wav: unknown): Promise<ExportResult> {
@@ -228,7 +203,14 @@ export async function encodeJob(outPath: string, wav: unknown): Promise<ExportRe
   const tmp = path.join(os.tmpdir(), `vostudio-export-${randomUUID()}.wav`)
   try {
     await fs.writeFile(tmp, bytes)
-    await runFfmpeg(['-i', tmp, ...codecArgs(job.format), outPath])
+    const gain = await matchGainDb(job, tmp)
+    await runFfmpeg([
+      '-i',
+      tmp,
+      ...(gain === 0 ? [] : ['-af', `volume=${gain}dB`]),
+      ...job.formatArgs,
+      outPath,
+    ])
   } finally {
     await fs.rm(tmp, { force: true }).catch(() => undefined)
   }
@@ -236,47 +218,60 @@ export async function encodeJob(outPath: string, wav: unknown): Promise<ExportRe
   return { outPath, bytes: out.length, parityHash: sha256(out) }
 }
 
-export async function finishExport(token: string, summary: ExportSummary): Promise<DeliverPaths> {
+async function copyTree(from: string, to: string): Promise<void> {
+  await fs.mkdir(to, { recursive: true })
+  for (const entry of await fs.readdir(from, { withFileTypes: true })) {
+    const src = path.join(from, entry.name)
+    const dst = path.join(to, entry.name)
+    if (entry.isDirectory()) await copyTree(src, dst)
+    else await fs.copyFile(src, dst)
+  }
+}
+
+export async function finishExport(
+  token: string,
+  summary: ExportSummary,
+  version?: number
+): Promise<DeliverPaths> {
   if (!batchPlan || token !== batchPlan.token) throw new Error('This batch export plan is no longer current')
   if (ctx().project.id !== batchPlan.project.id) throw new Error('The exported project is no longer open')
-  const { project, outDir } = batchPlan
-  const stagingDir = path.join(path.dirname(outDir), STAGING_DIR)
+  const { project, outDir, stagingDir } = batchPlan
   for (const f of summary.failed) {
     const outPath = path.join(stagingDir, 'audio', f.name)
     if (planned.has(outPath)) await fs.rm(outPath, { force: true })
   }
+  const revisions = new Map(project.cues.map((c) => [c.key, sanitizeRevision(c.output?.revision)]))
+  const exported: DeliverExported[] = summary.exported.map((e) => ({
+    cueId: e.cueKey,
+    exportName: path.parse(e.name).name,
+    file: `audio/${e.name}`,
+    bytes: e.bytes,
+    sha256: e.sha256,
+    revision: revisions.get(e.cueKey) ?? 0,
+    ...(version === undefined ? {} : { version }),
+  }))
+  const previous = await readReport(outDir)
   const deliver: DeliverSummary = {
-    exported: summary.exported.map((e) => ({
-      cueId: e.cueKey,
-      exportName: path.parse(e.name).name,
-      file: `audio/${e.name}`,
-      bytes: e.bytes,
-      sha256: e.sha256,
-    })),
+    exported: mergeExported(previous?.exported ?? [], exported),
     failed: summary.failed.map((f) => ({
       cueId: f.cueKey,
       exportName: path.parse(f.name).name,
       file: `audio/${f.name}`,
       reason: f.reason,
     })),
-    skipped: batchPlan.skippedCues,
+    skipped: [],
   }
 
   await fs.mkdir(path.join(stagingDir, 'audio'), { recursive: true })
   const index = buildUpdatedIndex(project)
   if (index !== null) await fs.writeFile(path.join(stagingDir, 'index.updated.csv'), index)
-  const report = buildReport(project.name, batchPlan.scope, deliver)
+  const report = buildReport(project.name, deliver, version)
   await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
-  const previousDir = outDir + '.previous'
-  await fs.rm(previousDir, { recursive: true, force: true })
-  const hadPrevious = await fs.rename(outDir, previousDir).then(() => true, () => false)
-  try {
-    await fs.rename(stagingDir, outDir)
-  } catch (error) {
-    if (hadPrevious) await fs.rename(previousDir, outDir).catch(() => undefined)
-    throw error
+  await copyTree(stagingDir, outDir)
+  await fs.rm(stagingDir, { recursive: true, force: true })
+  return {
+    ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }),
+    reportPath: path.join(outDir, 'report.json'),
+    ...(version === undefined ? {} : { version }),
   }
-  await fs.rm(previousDir, { recursive: true, force: true })
-  const reportPath = path.join(outDir, 'report.json')
-  return { ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }), reportPath }
 }

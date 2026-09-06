@@ -6,6 +6,7 @@ import type {
   ExportResult,
   ExportSummary,
 } from '@shared/ipc'
+import type { CompPlan } from '@shared/export-plan'
 import { api, audioUrl } from '../api'
 import type { ResolvedComp } from '../audio/comp-source'
 import { renderClipToWav, renderCompToWav } from '../audio/offline-render'
@@ -21,30 +22,33 @@ function message(e: unknown): string {
   return String(e)
 }
 
-function resolveJobComp(job: ExportJob): ResolvedComp {
-  const clips = (job.comp ?? []).map((c, i) => ({
-    clip: {
-      id: `${job.cueId}#${i}`,
-      sourceTakeId: '',
-      srcIn: c.srcIn,
-      srcOut: c.srcOut,
-      start: c.start,
-      edits: c.edits,
-      ...(c.crossfade === undefined ? {} : { crossfade: c.crossfade }),
-      ...(c.trackId === undefined ? {} : { trackId: c.trackId }),
-    },
-    url: audioUrl(c.srcPath),
-  }))
+function resolveJobComp(job: ExportJob, plan: CompPlan): ResolvedComp {
   return {
-    clips,
-    ...(job.compRegion ? { region: job.compRegion } : {}),
-    ...(job.compTracks ? { tracks: job.compTracks } : {}),
+    clips: plan.clips.map((c, i) => ({
+      clip: {
+        id: `${job.cueId}#${i}`,
+        sourceTakeId: '',
+        srcIn: c.srcIn,
+        srcOut: c.srcOut,
+        start: c.start,
+        edits: c.edits,
+        ...(c.crossfade === undefined ? {} : { crossfade: c.crossfade }),
+        ...(c.trackId === undefined ? {} : { trackId: c.trackId }),
+      },
+      url: audioUrl(c.srcPath),
+    })),
+    ...(plan.region ? { region: plan.region } : {}),
+    ...(plan.tracks ? { tracks: plan.tracks } : {}),
+    ...(plan.original
+      ? { original: { url: audioUrl(plan.original.srcPath), gainDb: plan.original.gainDb } }
+      : {}),
   }
 }
 
 export async function runJob(job: ExportJob): Promise<ExportResult> {
-  if (job.comp && job.comp.length > 0) {
-    const { wav } = await renderCompToWav(resolveJobComp(job))
+  const plan = job.compPlan
+  if (plan && plan.clips.length > 0) {
+    const { wav } = await renderCompToWav(resolveJobComp(job, plan))
     return api['export:encode'](job.outPath, wav)
   }
   if (job.fastPath) return api['export:copy'](job.outPath)
@@ -76,12 +80,5 @@ export async function runPlan(
   }
   onProgress?.({ done: plan.jobs.length, total: plan.jobs.length, current: '' })
   const paths = await api['export:finish'](plan.token, summary)
-  return {
-    written: summary.exported.length,
-    skipped: plan.skipped,
-    failed,
-    collisions: [],
-    outDir: plan.outDir,
-    ...paths,
-  }
+  return { written: summary.exported.length, failed, outDir: plan.outDir, ...paths }
 }

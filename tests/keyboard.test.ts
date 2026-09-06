@@ -28,20 +28,19 @@ const action = (over: Partial<KeyInput> & { code: string }): string | null =>
 
 describe('exact modifier matching', () => {
   it('plain codes resolve without modifiers', () => {
-    expect(action({ code: 'KeyA' })).toBe('approve')
-    expect(action({ code: 'KeyA', shiftKey: true })).toBe('approveNext')
+    expect(action({ code: 'KeyF' })).toBe('makeFinal')
     expect(action({ code: 'Space' })).toBe('playPause')
     expect(action({ code: 'Space', shiftKey: true })).toBe('playClip')
   })
 
   it('rejects Alt and AltGr combinations', () => {
-    expect(action({ code: 'KeyA', altKey: true })).toBeNull()
+    expect(action({ code: 'KeyF', altKey: true })).toBeNull()
     expect(action({ code: 'KeyG', ctrlKey: true, altKey: true })).toBeNull()
     expect(action({ code: 'Space', ctrlKey: true, altKey: true })).toBeNull()
   })
 
   it('does not fire unmodified actions while Ctrl or Meta is held', () => {
-    expect(action({ code: 'KeyA', ctrlKey: true })).toBeNull()
+    expect(action({ code: 'KeyR', ctrlKey: true })).toBeNull()
     expect(action({ code: 'KeyS', metaKey: true })).toBeNull()
     expect(action({ code: 'Space', ctrlKey: true })).toBeNull()
   })
@@ -53,8 +52,8 @@ describe('exact modifier matching', () => {
 
   it('separates Shift variants of the same chord', () => {
     expect(action({ code: 'KeyG', ctrlKey: true })).toBe('generate')
-    expect(action({ code: 'KeyA' })).toBe('approve')
-    expect(action({ code: 'KeyA', shiftKey: true })).toBe('approveNext')
+    expect(action({ code: 'Space' })).toBe('playPause')
+    expect(action({ code: 'Space', shiftKey: true })).toBe('playClip')
     expect(action({ code: 'KeyZ', ctrlKey: true, scope: 'timeline' })).toBe('undo')
     expect(action({ code: 'KeyZ', ctrlKey: true, shiftKey: true, scope: 'timeline' })).toBe('redo')
   })
@@ -178,8 +177,8 @@ describe('shortcuts table', () => {
 
   it('renders physical codes as badges, numpad duplicates excluded', () => {
     const of = (action: string): Binding => BINDINGS.find((b) => b.action === action)!
-    expect(keyText(of('approve'))).toBe('A')
-    expect(keyText(of('approveNext'))).toBe('Shift+A')
+    expect(keyText(of('makeFinal'))).toBe('F')
+    expect(keyText(of('playClip'))).toBe('Shift+Space')
     expect(keyText(of('generate'))).toBe('Ctrl+G')
     expect(keyText(of('settings'))).toBe('Ctrl+,')
     expect(keyText(of('shortcuts'))).toBe('F1')
@@ -196,7 +195,7 @@ describe('shortcuts table', () => {
       expect(titles).toContain(groupOf(b))
     }
     expect(groupOf(of('settings'))).toBe('App')
-    expect(groupOf(of('approve'))).toBe('Work')
+    expect(groupOf(of('makeFinal'))).toBe('Work')
     expect(groupOf(of('gridToggle'))).toBe('Import')
     expect(groupOf(of('healClip'))).toBe('Timeline')
   })
@@ -297,10 +296,10 @@ describe('scope precedence', () => {
 
 describe('physical layout independence', () => {
   it('resolves by code when the layout produces another character', () => {
-    const cyrillic = { ...key({ code: 'KeyA' }), key: 'ф' }
-    expect(resolveKey(cyrillic)?.action).toBe('approve')
-    const withShift = { ...key({ code: 'KeyA', shiftKey: true }), key: 'Ф' }
-    expect(resolveKey(withShift)?.action).toBe('approveNext')
+    const cyrillic = { ...key({ code: 'KeyF' }), key: 'а' }
+    expect(resolveKey(cyrillic)?.action).toBe('makeFinal')
+    const withShift = { ...key({ code: 'Space', shiftKey: true }), key: ' ' }
+    expect(resolveKey(withShift)?.action).toBe('playClip')
     const record = { ...key({ code: 'KeyR' }), key: 'к' }
     expect(resolveKey(record)?.action).toBe('toggleRecord')
   })

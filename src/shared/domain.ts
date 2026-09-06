@@ -1,4 +1,5 @@
 import { sanitizeEffects, type ClipEffects } from './effects'
+import type { ExportSettings } from './export-settings'
 
 export type { ClipEffects, DelayEffect, ReverbEffect } from './effects'
 
@@ -502,6 +503,7 @@ export interface Project {
   pronunciationRules: string
   csvBinding?: CsvBinding
   exportTemplate: string
+  export?: ExportSettings
   terms?: Term[]
   languages?: ProjectLanguages
   alienMigrated?: true

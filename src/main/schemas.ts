@@ -46,11 +46,21 @@ export const projectFileSchema = z
     versions: z.array(z.unknown()).optional(),
     pronunciationRules: z.string(),
     exportTemplate: z.string(),
+    export: z.unknown().optional(),
     terms: z.array(z.unknown()).optional(),
     languages: z.object({ source: z.string(), target: z.string() }).optional(),
     alienMigrated: z.literal(true).optional(),
   })
   .passthrough()
+
+export const exportSettingsSchema = z
+  .object({
+    outDir: z.string().min(1).max(4096).optional(),
+    format: z.enum(['source', 'wav-48-24', 'wav-44-16', 'mp3-192', 'ogg']).optional(),
+    loudness: z.enum(['match', 'off']).optional(),
+    length: z.enum(['trim', 'pad', 'asis']).optional(),
+  })
+  .nullable()
 
 export const templateMetaSchema = z.object({
   formatVersion: z.literal(1),
@@ -60,6 +70,10 @@ export const templateMetaSchema = z.object({
 })
 
 export const templateDirSchema = z.string().min(1).max(4096)
+
+export const batchExportSchema = z.object({
+  cueIds: z.array(z.string().min(1).max(200)).max(100_000),
+})
 
 const exportedCue = z.object({ cueKey: z.string().min(1).max(4096), name: z.string().min(1).max(4096) })
 
@@ -265,4 +279,6 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
       .object({ source: z.string().min(1).max(20), target: z.string().min(1).max(20) })
       .nullable(),
   }),
+  z.object({ type: z.literal('project.setExport'), settings: exportSettingsSchema }),
+  z.object({ type: z.literal('project.setExportTemplate'), template: z.string().min(1).max(400) }),
 ])

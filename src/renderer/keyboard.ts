@@ -25,8 +25,6 @@ export type KeyAction =
   | 'next'
   | 'prev'
   | 'generate'
-  | 'approve'
-  | 'approveNext'
   | 'playPause'
   | 'playClip'
   | 'restartActive'
@@ -153,8 +151,6 @@ export const BINDINGS: Binding[] = [
   },
   { action: 'toolSelect', codes: ['KeyV'], scopes: TIMELINE, label: 'Select tool' },
   { action: 'makeFinal', codes: ['KeyF'], scopes: WORK, label: 'Set final' },
-  { action: 'approve', codes: ['KeyA'], scopes: WORK, label: 'Approve' },
-  { action: 'approveNext', codes: ['KeyA'], shift: true, scopes: WORK, label: 'Approve & next' },
   { action: 'focusText', codes: ['KeyE'], scopes: WORK, label: 'Focus translation' },
   { action: 'toggleRecord', codes: ['KeyR'], scopes: WORK, label: 'Record' },
   { action: 'acceptSuggestion', codes: ['KeyY'], scopes: WORK, label: 'Accept suggestion' },
@@ -254,8 +250,6 @@ export interface KeyboardHandlers {
   next: () => void
   prev: () => void
   generate: () => void
-  approve: () => void
-  approveNext: () => void
   playPause: () => void
   playClip: () => void
   restartActive: () => void

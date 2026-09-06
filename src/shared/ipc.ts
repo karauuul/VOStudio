@@ -9,8 +9,8 @@ import type {
   UiSessionState,
 } from './domain'
 import type { TableMapping } from './import-table'
-import type { ExportFormat } from './export-plan'
-import type { PreflightPlan, PreflightSource } from './export-preflight'
+import type { CompPlan, ExportFormat } from './export-plan'
+import type { ExportedLines } from './readiness'
 import type { UpdateStatus } from './updater'
 import type { CommandResult, ProjectCommand, ProjectSnapshot } from './project-commands'
 import type { ProjectSummary } from './project-summary'
@@ -75,14 +75,8 @@ export interface CsvSyncResult {
   path: string
 }
 
-export interface BatchExportCollision {
-  name: string
-  cueKeys: string[]
-}
-
 export interface BatchExportRequest {
-  scope: 'approved' | 'all-final'
-  collisionStrategy?: Record<string, 'suffix-wemid' | 'skip' | 'reuse'>
+  cueIds: string[]
 }
 
 export interface BatchExportFailure {
@@ -93,12 +87,11 @@ export interface BatchExportFailure {
 
 export interface BatchExportResult {
   written: number
-  skipped: number
   failed: BatchExportFailure[]
-  collisions: BatchExportCollision[]
   outDir: string
   indexPath?: string
   reportPath?: string
+  version?: number
 }
 
 export interface ExportSummary {
@@ -108,16 +101,15 @@ export interface ExportSummary {
 
 export interface LastExport {
   createdAt: string
-  scope: string
+  version?: number
   exported: number
   failed: number
-  skipped: number
   cueIds: string[]
+  lines: ExportedLines
 }
 
-export interface ExportPreflight extends Omit<PreflightPlan, 'sources'> {
+export interface ExportInfo {
   outDir: string
-  missingFiles: PreflightSource[]
   writesIndex: boolean
   last: LastExport | null
 }
@@ -125,16 +117,7 @@ export interface ExportPreflight extends Omit<PreflightPlan, 'sources'> {
 export interface DeliverPaths {
   indexPath?: string
   reportPath: string
-}
-
-export interface ExportCompClip {
-  srcPath: string
-  srcIn: number
-  srcOut: number
-  start: number
-  edits: ClipEdits
-  crossfade?: number
-  trackId?: string
+  version?: number
 }
 
 export interface ExportJob {
@@ -145,19 +128,17 @@ export interface ExportJob {
   outPath: string
   srcPath: string
   format: ExportFormat
+  formatArgs: string[]
   fastPath: boolean
   hasEdits: boolean
   edits: ClipEdits
-  comp?: ExportCompClip[]
-  compRegion?: { in: number; out: number }
-  compTracks?: CompTrack[]
+  matchLoudnessRef?: string
+  compPlan?: CompPlan
 }
 
 export interface ExportPlan {
   token: string
   jobs: ExportJob[]
-  collisions: BatchExportCollision[]
-  skipped: number
   outDir: string
 }
 
@@ -300,11 +281,11 @@ export interface IpcApi {
   'csv:sync': () => Promise<CsvSyncResult>
 
   'export:planBatch': (req: BatchExportRequest) => Promise<ExportPlan>
-  'export:preflight': (req: BatchExportRequest) => Promise<ExportPreflight>
+  'export:info': () => Promise<ExportInfo>
+  'export:pickDir': () => Promise<string | null>
   'export:copy': (outPath: string) => Promise<ExportResult>
   'export:encode': (outPath: string, wav: ArrayBuffer) => Promise<ExportResult>
   'export:finish': (token: string, summary: ExportSummary) => Promise<DeliverPaths>
-  'export:last': () => Promise<LastExport | null>
 
   'settings:get': () => Promise<AppSettings>
   'settings:set': (settings: AppSettings) => Promise<void>

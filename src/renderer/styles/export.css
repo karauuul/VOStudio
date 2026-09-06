@@ -1,0 +1,267 @@
+.main.exp {
+  grid-template-columns: 340px 8px minmax(0, 1fr) 8px 380px;
+}
+
+.exp-kvp {
+  height: 36px;
+  flex: none;
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.exp-kvp .field,
+.exp-kvp select,
+.exp-kvp input {
+  height: 26px;
+  width: 100%;
+  font-size: 12px;
+}
+
+.exp-kvp input.mono,
+.exp-kvp .field.mono {
+  font: 12px var(--mono);
+}
+
+.exp-kvp .field {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  display: block;
+  line-height: 24px;
+  text-align: left;
+}
+
+.exp-sec {
+  height: 36px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.exp-foot {
+  height: 44px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  border-top: 1px solid var(--line);
+  font: 12px var(--mono);
+  color: var(--tx3);
+}
+
+.exp-foot b {
+  color: var(--tx);
+  font-weight: 400;
+}
+
+.exp-tbar {
+  height: 44px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.exp-tbar .search {
+  margin: 0;
+  width: 260px;
+}
+
+.exp-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.exp-scroll table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+  table-layout: fixed;
+}
+
+.exp-scroll th {
+  height: 30px;
+  text-align: left;
+  padding: 0 10px;
+  font: 600 11px var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tx3);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  background: var(--panel);
+}
+
+.exp-scroll td {
+  height: 34px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--tx);
+}
+
+.exp-scroll td.mono {
+  font: 11px var(--mono);
+  color: var(--tx3);
+}
+
+.exp-scroll td.exp-id {
+  font: 11px var(--mono);
+  color: var(--tx2);
+}
+
+.exp-scroll td.exp-hi {
+  color: var(--tx);
+}
+
+.exp-scroll tr.on td {
+  background: var(--ac-bg);
+}
+
+.exp-scroll tbody tr:hover td {
+  background: var(--raise);
+}
+
+.exp-st {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.exp-st::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c);
+}
+
+.exp-prog {
+  flex: none;
+  padding: 14px 16px 6px;
+  display: grid;
+  gap: 10px;
+}
+
+.exp-pr {
+  display: grid;
+  grid-template-columns: 90px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.exp-pr .bar {
+  height: 6px;
+  background: var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.exp-pr .bar i {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+
+.exp-pr b {
+  font: 12px var(--mono);
+  font-weight: 400;
+  color: var(--tx);
+}
+
+.exp-sum {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  padding: 0 16px;
+  height: 32px;
+  font-size: 13px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--tx);
+  text-align: left;
+}
+
+.exp-sum b {
+  font: 12px var(--mono);
+  font-weight: 400;
+  color: var(--tx);
+}
+
+.exp-sum.h {
+  font-weight: 600;
+  border-top: 0;
+  height: 36px;
+}
+
+.exp-sum.top {
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+}
+
+.exp-sum.dim {
+  color: var(--tx2);
+  padding-left: 28px;
+  height: 28px;
+  border-top: 0;
+}
+
+.exp-sum.dim b {
+  color: var(--tx2);
+}
+
+button.exp-sum {
+  cursor: pointer;
+}
+
+button.exp-sum:hover {
+  color: var(--tx);
+}
+
+button.exp-sum:hover b {
+  color: var(--ac);
+}
+
+.exp-actions {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  padding: 4px 16px 12px;
+}
+
+.exp-actions .btn {
+  flex: 1;
+  height: 40px;
+  justify-content: center;
+  font-size: 14px;
+}
+
+.exp-run {
+  flex: none;
+  padding: 0 16px 8px;
+  font: 12px var(--mono);
+  color: var(--tx2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

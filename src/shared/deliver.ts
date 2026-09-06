@@ -8,6 +8,8 @@ export interface DeliverExported {
   file: string
   bytes: number
   sha256: string
+  revision?: number
+  version?: number
 }
 
 export interface DeliverFailed {
@@ -32,7 +34,8 @@ export interface DeliverReport extends DeliverSummary {
   formatVersion: 1
   project: string
   createdAt: string
-  scope: 'approved' | 'all-final'
+  scope: string
+  version?: number
 }
 
 function statusCell(cue: Cue): string {
@@ -70,11 +73,43 @@ export function buildUpdatedIndex(project: Project): string | null {
   })
 }
 
+export const EXPORT_SCOPE = 'selected'
+
 export function buildReport(
   project: string,
-  scope: DeliverReport['scope'],
   summary: DeliverSummary,
+  version?: number,
   createdAt: string = new Date().toISOString()
 ): DeliverReport {
-  return { formatVersion: 1, project, createdAt, scope, ...summary }
+  return {
+    formatVersion: 1,
+    project,
+    createdAt,
+    scope: EXPORT_SCOPE,
+    ...(version === undefined ? {} : { version }),
+    ...summary,
+  }
+}
+
+export function mergeExported(
+  previous: DeliverExported[],
+  current: DeliverExported[]
+): DeliverExported[] {
+  const fresh = new Set(current.map((e) => e.file.toLowerCase()))
+  return [...previous.filter((e) => !fresh.has(e.file.toLowerCase())), ...current]
+}
+
+export function exportedLines(report: Pick<DeliverReport, 'exported'>): Record<
+  string,
+  { revision: number; version?: number }
+> {
+  const out: Record<string, { revision: number; version?: number }> = {}
+  for (const e of report.exported ?? []) {
+    if (typeof e.cueId !== 'string' || !e.cueId) continue
+    out[e.cueId] = {
+      revision: typeof e.revision === 'number' ? e.revision : 0,
+      ...(typeof e.version === 'number' ? { version: e.version } : {}),
+    }
+  }
+  return out
 }
