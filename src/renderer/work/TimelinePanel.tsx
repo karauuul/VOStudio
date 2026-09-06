@@ -133,7 +133,6 @@ export interface CompApi {
   muteHovered: () => boolean
   soloHovered: () => boolean
   split: () => void
-  splitAtPlayhead: () => void
   heal: () => void
   crossfade: () => void
   undo: () => void
@@ -1145,18 +1144,6 @@ export function TimelinePanel({
         const c =
           base.clips.find((x) => x.id === id && at > x.start && at < clipEnd(x)) ??
           base.clips.find((x) => at > x.start && at < clipEnd(x))
-        if (c) splitClip(c.id, at)
-      },
-      splitAtPlayhead: () => {
-        const base = compRefLive.current
-        const at = posRef.current
-        const spans = (c: CompClip): boolean =>
-          at > c.start + COMP_EPS && at < clipEnd(c) - COMP_EPS
-        const target = resolveTargetTrack(base, targetTrackId)
-        const id = selId()
-        const c =
-          base.clips.find((x) => clipTrackId(x) === target && spans(x)) ??
-          base.clips.find((x) => x.id === id && spans(x))
         if (c) splitClip(c.id, at)
       },
       heal: () => {
