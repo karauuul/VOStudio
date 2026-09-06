@@ -1,5 +1,6 @@
 import { isEmptyComp } from '@shared/comp'
-import type { CompClip, CompRegion, Cue, CueComp } from '@shared/domain'
+import type { CompClip, CompRegion, CompTrack, Cue, CueComp } from '@shared/domain'
+import { resolveTake, type TakeLookup } from '@shared/library'
 import { audioUrl } from '../api'
 
 export interface ResolvedCompClip {
@@ -10,23 +11,34 @@ export interface ResolvedCompClip {
 export interface ResolvedComp {
   clips: ResolvedCompClip[]
   region?: CompRegion
+  tracks?: CompTrack[]
 }
 
-export function resolveComp(cue: Cue, comp: CueComp | null | undefined): ResolvedComp | null {
+export function resolveComp(
+  project: TakeLookup | undefined,
+  cue: Cue,
+  comp: CueComp | null | undefined
+): ResolvedComp | null {
   if (isEmptyComp(comp ?? undefined)) return null
-  const byId = new Map(cue.takes.map((t) => [t.id, t]))
   const clips = comp!.clips.map((clip) => {
-    const take = byId.get(clip.sourceTakeId)
-    if (!take) throw new Error(`Composition clip "${clip.id}": take ${clip.sourceTakeId} is gone`)
-    return { clip, url: audioUrl(take.file.relPath) }
+    const found = resolveTake(project, cue, clip.sourceTakeId)
+    if (!found) throw new Error(`Composition clip "${clip.id}": take ${clip.sourceTakeId} is gone`)
+    return { clip, url: audioUrl(found.take.file.relPath) }
   })
-  const region = comp!.region
-  return region ? { clips, region } : { clips }
+  return {
+    clips,
+    ...(comp!.region ? { region: comp!.region } : {}),
+    ...(comp!.tracks ? { tracks: comp!.tracks } : {}),
+  }
 }
 
-export function tryResolveComp(cue: Cue, comp: CueComp | null | undefined): ResolvedComp | null {
+export function tryResolveComp(
+  project: TakeLookup | undefined,
+  cue: Cue,
+  comp: CueComp | null | undefined
+): ResolvedComp | null {
   try {
-    return resolveComp(cue, comp)
+    return resolveComp(project, cue, comp)
   } catch {
     return null
   }

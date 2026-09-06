@@ -39,6 +39,7 @@ export type { ClipSelection, CompApi } from './TimelineEditor'
 
 interface Props {
   cue: Cue
+  cues: Cue[]
   preview: ResolvedPreview
   sourceHeader: ReactNode
   insertMenu: ReactNode
@@ -54,6 +55,7 @@ interface Props {
 
 export function WaveLanes({
   cue,
+  cues,
   preview,
   sourceHeader,
   insertMenu,
@@ -98,7 +100,10 @@ export function WaveLanes({
     () => resolvePreview(cue, preview.source, takeDur).comp ?? null,
     [cue.comp, cue.takes, preview.source, takeDur]
   )
-  const resolved = useMemo(() => tryResolveComp(cue, displayComp), [cue.takes, displayComp])
+  const resolved = useMemo(
+    () => tryResolveComp({ cues }, cue, displayComp),
+    [cues, cue, displayComp]
+  )
 
   const editable =
     timelineOpen &&

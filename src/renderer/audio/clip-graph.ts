@@ -1,5 +1,18 @@
-import { clipSpeed, envelopeDbAt, type ClipEdits, type CompClip, type FadeShape } from '@shared/domain'
-import { clipTimelineDuration, compClipEdits, compDuration, compRenderPlan } from '@shared/comp'
+import {
+  clipSpeed,
+  envelopeDbAt,
+  type ClipEdits,
+  type CompClip,
+  type CompTrack,
+  type FadeShape,
+} from '@shared/domain'
+import {
+  clipTimelineDuration,
+  clipTrackId,
+  compClipEdits,
+  compDuration,
+  compRenderPlan,
+} from '@shared/comp'
 import { connectEffects } from './effects-graph'
 import { connectPitch } from './pitch-node'
 
@@ -191,16 +204,42 @@ export interface ScheduledComp {
   duration: number
 }
 
+export interface ScheduleCompOptions extends ClipGraphOptions {
+  tracks?: CompTrack[]
+}
+
+function trackBuses(
+  ctx: BaseAudioContext,
+  destination: AudioNode,
+  tracks: CompTrack[] | undefined
+): (trackId: string) => AudioNode {
+  if (!tracks) return () => destination
+  const soloed = tracks.some((t) => t.solo)
+  const buses = new Map<string, AudioNode>()
+  return (trackId: string): AudioNode => {
+    const hit = buses.get(trackId)
+    if (hit) return hit
+    const track = tracks.find((t) => t.id === trackId)
+    const gain = ctx.createGain()
+    const audible = !track || (!track.muted && (!soloed || track.solo))
+    gain.gain.value = audible ? dbToGain(track?.gainDb ?? 0) : 0
+    connectEffects(ctx, gain, track?.effects).connect(destination)
+    buses.set(trackId, gain)
+    return gain
+  }
+}
+
 export function scheduleComp(
   ctx: BaseAudioContext,
   sources: CompSource[],
   destination: AudioNode,
-  opts: ClipGraphOptions = {}
+  opts: ScheduleCompOptions = {}
 ): ScheduledComp {
   const when = opts.when ?? 0
   const seek = Math.max(0, opts.seek ?? 0)
   const voices: ScheduledVoice[] = []
   const plan = compRenderPlan(sources.map((s) => s.clip))
+  const busFor = trackBuses(ctx, destination, opts.tracks)
 
   for (let i = 0; i < sources.length; i++) {
     const s = sources[i]
@@ -219,7 +258,7 @@ export function scheduleComp(
       crossfadeOut: plan[i].crossfadeOut,
     })
     if (!(graph.duration > 0)) continue
-    graph.output.connect(destination)
+    graph.output.connect(busFor(clipTrackId(c)))
     graph.source.start(at, graph.offset)
     graph.source.stop(at + graph.duration)
     voices.push({ source: graph.source, output: graph.output, at, duration: graph.duration })

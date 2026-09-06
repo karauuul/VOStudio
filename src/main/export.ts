@@ -27,6 +27,7 @@ import { preflightPlan } from '@shared/export-preflight'
 import { buildReport, buildUpdatedIndex, indexBound, type DeliverReport, type DeliverSummary } from '@shared/deliver'
 import { isEmptyComp } from '@shared/comp'
 import { usesCompOutput } from '@shared/approval'
+import { compTracks, resolveTake } from '@shared/library'
 import type { Cue, Project } from '@shared/domain'
 import * as store from './project-store'
 import { runFfmpeg } from './ffmpeg'
@@ -53,32 +54,34 @@ interface BatchPlan {
 let batchPlan: BatchPlan | null = null
 const STAGING_DIR = 'export.staging'
 
-function compJobClips(cue: Cue): ExportCompClip[] | undefined {
-  if (!usesCompOutput(cue)) return undefined
+function compJobClips(cue: Cue, project: Project): ExportCompClip[] | undefined {
+  if (!usesCompOutput(cue, project)) return undefined
   if (isEmptyComp(cue.comp)) return undefined
   return cue.comp!.clips.map((c) => {
-    const take = cue.takes.find((t) => t.id === c.sourceTakeId)
-    if (!take) {
+    const found = resolveTake(project, cue, c.sourceTakeId)
+    if (!found) {
       throw new Error(`Cue "${cue.key}": composition clip "${c.id}" points at a missing take`)
     }
     return {
-      srcPath: take.file.relPath,
+      srcPath: found.take.file.relPath,
       srcIn: c.srcIn,
       srcOut: c.srcOut,
       start: c.start,
       edits: c.edits,
       ...(c.crossfade === undefined ? {} : { crossfade: c.crossfade }),
+      ...(c.trackId === undefined ? {} : { trackId: c.trackId }),
     }
   })
 }
 
-function toJobs(items: PlannedTake[], outDir: string): ExportJob[] {
+function toJobs(items: PlannedTake[], outDir: string, project: Project): ExportJob[] {
   return items.map((p) => {
     const outPath = path.join(outDir, p.name)
     const format = containerOf(p.name)
     if (!format) throw new Error(`Unsupported export container for "${p.name}" (mp3/wav/ogg only)`)
-    const comp = compJobClips(p.cue)
+    const comp = compJobClips(p.cue, project)
     const region = comp ? p.cue.comp?.region : undefined
+    const tracks = comp && p.cue.comp?.tracks ? compTracks(p.cue.comp) : undefined
     return {
       cueId: p.cue.id,
       cueKey: p.cue.key,
@@ -92,6 +95,7 @@ function toJobs(items: PlannedTake[], outDir: string): ExportJob[] {
       edits: p.take.edits,
       ...(comp ? { comp } : {}),
       ...(region ? { compRegion: { in: region.in, out: region.out } } : {}),
+      ...(tracks ? { compTracks: tracks } : {}),
     }
   })
 }
@@ -155,7 +159,7 @@ export async function planBatchExport(req: BatchExportRequest): Promise<ExportPl
   const token = randomUUID()
   if (resolved.uncovered.length > 0) return publish(token, [], 0, outDir, findCollisions(items))
   const stagingDir = path.join(dir, STAGING_DIR)
-  const jobs = toJobs(resolved.jobs, path.join(stagingDir, 'audio'))
+  const jobs = toJobs(resolved.jobs, path.join(stagingDir, 'audio'), project)
   await fs.rm(stagingDir, { recursive: true, force: true })
   batchPlan = {
     token,

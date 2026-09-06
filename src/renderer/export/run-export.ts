@@ -31,10 +31,15 @@ function resolveJobComp(job: ExportJob): ResolvedComp {
       start: c.start,
       edits: c.edits,
       ...(c.crossfade === undefined ? {} : { crossfade: c.crossfade }),
+      ...(c.trackId === undefined ? {} : { trackId: c.trackId }),
     },
     url: audioUrl(c.srcPath),
   }))
-  return job.compRegion ? { clips, region: job.compRegion } : { clips }
+  return {
+    clips,
+    ...(job.compRegion ? { region: job.compRegion } : {}),
+    ...(job.compTracks ? { tracks: job.compTracks } : {}),
+  }
 }
 
 export async function runJob(job: ExportJob): Promise<ExportResult> {

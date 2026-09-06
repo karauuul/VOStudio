@@ -932,6 +932,7 @@ export default function App() {
   const editor: ComponentProps<typeof CueEditor> | null = activeCue
     ? {
         cue: activeCue,
+        cues: project.cues,
         character: activeCharacter,
         characters: project.characters,
         onCharacter: onCueCharacter,

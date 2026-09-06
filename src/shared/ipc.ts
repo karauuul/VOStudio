@@ -1,5 +1,7 @@
 import type {
   ClipEdits,
+  CompTrack,
+  ProjectVersion,
   Take,
   UsageInfo,
   VoiceSettings,
@@ -129,6 +131,7 @@ export interface ExportCompClip {
   start: number
   edits: ClipEdits
   crossfade?: number
+  trackId?: string
 }
 
 export interface ExportJob {
@@ -144,6 +147,7 @@ export interface ExportJob {
   edits: ClipEdits
   comp?: ExportCompClip[]
   compRegion?: { in: number; out: number }
+  compTracks?: CompTrack[]
 }
 
 export interface ExportPlan {
@@ -236,6 +240,7 @@ export interface IpcApi {
   'project:previewReimport': (dir: string) => Promise<ReimportPreview>
   'project:applyReimport': (dir: string) => Promise<ReimportResult>
   'project:command': (command: ProjectCommand) => Promise<CommandResult>
+  'project:saveVersion': (req: { name?: string }) => Promise<ProjectVersion[]>
   'ui:save': (ui: UiSessionState) => Promise<void>
 
   'suggestions:load': () => Promise<SuggestionsLoadResult>

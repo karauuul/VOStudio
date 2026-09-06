@@ -2,6 +2,8 @@ import {
   clipSpeed,
   emptyEdits,
   envelopeDbAt,
+  sanitizeCompTracks,
+  type CompTrack,
   type ClipEdits,
   type CompClip,
   type CompRegion,
@@ -17,6 +19,23 @@ export const MIN_CLIP_SRC = 0.001
 export const MIN_CROSSFADE = 0.001
 
 export const DEFAULT_CROSSFADE = 0.08
+
+export const DEFAULT_TRACK_ID = 'track-1'
+
+export function clipTrackId(clip: CompClip): string {
+  return clip.trackId ?? DEFAULT_TRACK_ID
+}
+
+function groupByTrack(clips: readonly CompClip[]): Map<string, number[]> {
+  const groups = new Map<string, number[]>()
+  for (let i = 0; i < clips.length; i++) {
+    const key = clipTrackId(clips[i])
+    const list = groups.get(key)
+    if (list) list.push(i)
+    else groups.set(key, [i])
+  }
+  return groups
+}
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
 
@@ -43,11 +62,14 @@ export function isEmptyComp(comp: CueComp | undefined): boolean {
   return !comp || comp.clips.length === 0
 }
 
-export function compEffectsTail(clips: readonly CompClip[]): number {
+const trackOf = (tracks: readonly CompTrack[] | undefined, clip: CompClip): CompTrack | undefined =>
+  tracks?.find((t) => t.id === clipTrackId(clip))
+
+export function compEffectsTail(clips: readonly CompClip[], tracks?: readonly CompTrack[]): number {
   const total = compDuration({ clips: [...clips] })
   let end = total
   for (const c of clips) {
-    const tail = effectsTail(c.edits.effects)
+    const tail = effectsTail(c.edits.effects) + effectsTail(trackOf(tracks, c)?.effects)
     if (tail <= 0) continue
     const e = clipEnd(c) + tail
     if (e > end) end = e
@@ -55,8 +77,8 @@ export function compEffectsTail(clips: readonly CompClip[]): number {
   return Math.max(0, end - total)
 }
 
-export function compHasReverb(clips: readonly CompClip[]): boolean {
-  return clips.some((c) => !!c.edits.effects?.reverb)
+export function compHasReverb(clips: readonly CompClip[], tracks?: readonly CompTrack[]): boolean {
+  return clips.some((c) => !!c.edits.effects?.reverb || !!trackOf(tracks, c)?.effects?.reverb)
 }
 
 export function compHasPitch(clips: readonly CompClip[]): boolean {
@@ -114,7 +136,7 @@ function normalizeRegion(region: CompRegion | undefined, total: number): CompReg
 }
 
 function withClips(comp: CueComp, clips: CompClip[]): CueComp {
-  return normalizeComp(comp.region ? { clips, region: comp.region } : { clips })
+  return normalizeComp({ ...comp, clips })
 }
 
 export function normalizeComp(comp: CueComp): CueComp {
@@ -123,7 +145,12 @@ export function normalizeComp(comp: CueComp): CueComp {
     .map((c) => ({ ...c, start: Math.max(0, c.start) }))
     .sort((a, b) => a.start - b.start || a.id.localeCompare(b.id))
   const region = normalizeRegion(comp.region, compDuration({ clips }))
-  return region ? { clips, region } : { clips }
+  const tracks = sanitizeCompTracks(comp.tracks)
+  return {
+    clips,
+    ...(region ? { region } : {}),
+    ...(tracks ? { tracks } : {}),
+  }
 }
 
 export function compProblem(comp: CueComp): string | null {
@@ -141,10 +168,25 @@ export function compProblem(comp: CueComp): string | null {
     if (seen.has(c.id)) return `duplicate clip id "${c.id}"`
     seen.add(c.id)
   }
-  const sorted = [...comp.clips].sort((a, b) => a.start - b.start)
-  for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i].start < clipEnd(sorted[i - 1]) - COMP_EPS) {
-      return `clips "${sorted[i - 1].id}" and "${sorted[i].id}" overlap`
+  if (comp.tracks) {
+    const trackIds = new Set<string>()
+    for (const t of comp.tracks) {
+      if (!t.id) return 'a track has no id'
+      if (trackIds.has(t.id)) return `duplicate track id "${t.id}"`
+      trackIds.add(t.id)
+    }
+    for (const c of comp.clips) {
+      if (!trackIds.has(clipTrackId(c))) {
+        return `clip "${c.id}" points at unknown track "${clipTrackId(c)}"`
+      }
+    }
+  }
+  for (const indices of groupByTrack(comp.clips).values()) {
+    const sorted = indices.map((i) => comp.clips[i]).sort((a, b) => a.start - b.start)
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].start < clipEnd(sorted[i - 1]) - COMP_EPS) {
+        return `clips "${sorted[i - 1].id}" and "${sorted[i].id}" overlap`
+      }
     }
   }
   const r = comp.region
@@ -159,11 +201,12 @@ export function compProblem(comp: CueComp): string | null {
 export function setRegion(comp: CueComp, region: CompRegion | null): CueComp {
   if (!region) {
     if (!comp.region) return comp
-    return normalizeComp({ clips: comp.clips })
+    const { region: _drop, ...rest } = comp
+    return normalizeComp(rest)
   }
   const lo = Math.min(region.in, region.out)
   const hi = Math.max(region.in, region.out)
-  return normalizeComp({ clips: comp.clips, region: { in: lo, out: hi } })
+  return normalizeComp({ ...comp, region: { in: lo, out: hi } })
 }
 
 export function setRegionEdge(comp: CueComp, edge: 'in' | 'out', t: number): CueComp {
@@ -231,24 +274,25 @@ export interface CompRenderClip {
 
 export function compRenderPlan(clips: readonly CompClip[]): CompRenderClip[] {
   const n = clips.length
-  const order = Array.from({ length: n }, (_, i) => i).sort(
-    (a, b) => clips[a].start - clips[b].start || clips[a].id.localeCompare(clips[b].id)
-  )
   const outXf = new Array<number>(n).fill(0)
-  for (let k = 0; k + 1 < n; k++) {
-    outXf[order[k]] = effectiveCrossfade(clips[order[k]], clips[order[k + 1]])
+  const inXf = new Array<number>(n).fill(0)
+  for (const indices of groupByTrack(clips).values()) {
+    const order = indices.sort(
+      (a, b) => clips[a].start - clips[b].start || clips[a].id.localeCompare(clips[b].id)
+    )
+    for (let k = 0; k + 1 < order.length; k++) {
+      outXf[order[k]] = effectiveCrossfade(clips[order[k]], clips[order[k + 1]])
+    }
+    for (let k = 1; k < order.length; k++) inXf[order[k]] = outXf[order[k - 1]]
   }
   const plan = new Array<CompRenderClip>(n)
-  for (let k = 0; k < n; k++) {
-    const i = order[k]
+  for (let i = 0; i < n; i++) {
     const c = clips[i]
-    const inXf = k > 0 ? outXf[order[k - 1]] : 0
+    const xin = inXf[i]
     plan[i] = {
       clip:
-        inXf > 0
-          ? { ...c, start: c.start - inXf, srcIn: c.srcIn - inXf * clipSpeed(c.edits) }
-          : c,
-      crossfadeIn: inXf,
+        xin > 0 ? { ...c, start: c.start - xin, srcIn: c.srcIn - xin * clipSpeed(c.edits) } : c,
+      crossfadeIn: xin,
       crossfadeOut: outXf[i],
     }
   }
