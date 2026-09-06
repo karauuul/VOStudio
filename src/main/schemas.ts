@@ -74,21 +74,26 @@ export const exportSummarySchema = z.object({
   failed: z.array(exportedCue.extend({ reason: z.string().max(2000) })).max(100_000),
 })
 
+const bypass = z.literal(false).optional()
+
 const reverbSchema = z.object({
   mix: finite.min(MIX_MIN).max(MIX_MAX),
   size: finite.min(REVERB_SIZE_MIN).max(REVERB_SIZE_MAX),
   decay: finite.min(REVERB_DECAY_MIN).max(REVERB_DECAY_MAX),
   preDelay: finite.min(REVERB_PREDELAY_MIN).max(REVERB_PREDELAY_MAX).optional(),
+  enabled: bypass,
 })
 
 const delaySchema = z.object({
   time: finite.min(DELAY_TIME_MIN).max(DELAY_TIME_MAX),
   feedback: finite.min(DELAY_FEEDBACK_MIN).max(DELAY_FEEDBACK_MAX),
   mix: finite.min(MIX_MIN).max(MIX_MAX),
+  enabled: bypass,
 })
 
 const pitchSchema = z.object({
   semitones: finite.min(PITCH_SEMITONES_MIN).max(PITCH_SEMITONES_MAX),
+  enabled: bypass,
 })
 
 export const clipEffectsSchema = z.object({
@@ -105,7 +110,7 @@ export const clipEditsSchema = z.object({
   fadeOut: z.object({ duration: finite.min(0).max(3600), shape: z.enum(['linear', 'equalPower', 'sCurve']) }),
   timeStretch: finite.min(0.1).max(10).optional(),
   gainEnvelope: z.array(z.object({ t: finite.min(0), db: finite.min(-96).max(24) })).max(500).optional(),
-  effects: clipEffectsSchema.omit({ pitch: true }).optional(),
+  effects: clipEffectsSchema.optional(),
 })
 
 const trackId = z.string().min(1).max(200)
@@ -117,7 +122,7 @@ export const compTrackSchema = z.object({
   gainDb: finite.min(TRACK_GAIN_MIN_DB).max(TRACK_GAIN_MAX_DB),
   muted: z.boolean(),
   solo: z.boolean(),
-  effects: clipEffectsSchema.optional(),
+  effects: clipEffectsSchema.omit({ pitch: true }).optional(),
 })
 
 export const compSchema = z
@@ -228,6 +233,11 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('cue.setTakePinned'),
     takeId: z.string().min(1).max(200),
     pinned: z.boolean(),
+  }),
+  cueId.extend({
+    type: z.literal('cue.setTakeEffects'),
+    takeId: z.string().min(1).max(200),
+    effects: clipEffectsSchema.nullable(),
   }),
   cueId.extend({ type: z.literal('cue.setRegion'), region: cueRegionSchema }),
   cueId.extend({ type: z.literal('cue.acceptSuggestion') }),

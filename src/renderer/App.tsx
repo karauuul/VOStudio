@@ -4,7 +4,8 @@ import {
   liveTakes,
   normalizeOverride,
   resolveVoiceSettings,
-  type ClipEditPatch,
+  nextOriginal,
+  type ClipEffects,
   type Cue,
   type CueComp,
   type Project,
@@ -37,9 +38,8 @@ import { ImportRoom } from './rooms/ImportRoom'
 import { WorkRoom } from './rooms/WorkRoom'
 import { ExportRoom } from './rooms/ExportRoom'
 import { useProjectSession, type StatusKind } from './useProjectSession'
-import type { EffectName, EffectsTarget } from './cue/ClipParams'
-import { Inspector } from './cue/Inspector'
-import type { CompApi } from './work/TimelinePanel'
+import { PropertiesPanel } from './work/PropertiesPanel'
+import type { CompApi, TimelineSelection } from './work/TimelinePanel'
 import type { LibraryPanel } from './work/LibraryPanel'
 import { ProgramPanel, type ProgramApi } from './work/ProgramPanel'
 import { CueText } from './work/CueText'
@@ -64,7 +64,7 @@ import {
   type PreviewSource,
 } from '@shared/workspace-source'
 import { compDuration, isEmptyComp } from '@shared/comp'
-import { libraryRow, type LibraryRow } from '@shared/library'
+import { libraryRow, resolveTake, type LibraryRow } from '@shared/library'
 import type { ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
 import { buildPrompt } from '@shared/prompt'
 import {
@@ -102,7 +102,7 @@ export default function App() {
   const [tableOverlay, setTableOverlay] = useState(false)
   const [previewCueId, setPreviewCueId] = useState<string | undefined>(undefined)
   const [previewSource, setPreviewSource] = useState<PreviewSource>({ kind: 'none' })
-  const [effects, setEffects] = useState<EffectsTarget | null>(null)
+  const [selection, setSelection] = useState<TimelineSelection | null>(null)
   const [targetTrack, setTargetTrack] = useState<Record<string, string>>({})
   const [timelineView, setTimelineView] = useState<Record<string, TimelineViewState>>({})
   const [exported, setExported] = useState<ReadonlySet<string>>(() => new Set())
@@ -680,7 +680,7 @@ export default function App() {
     return true
   }, [hasKey, pushStatus])
 
-  const selectedClipId = effects?.clip.id
+  const selectedClipId = selection?.clip?.id
 
   const clipTarget = useMemo(
     () =>
@@ -806,7 +806,7 @@ export default function App() {
   const leaveProject = useCallback(async () => {
     if (!(await session.close())) return
     setActiveCueId(undefined)
-    setEffects(null)
+    setSelection(null)
     setTargetTrack({})
     setTimelineView({})
     setExported(new Set())
@@ -863,17 +863,21 @@ export default function App() {
     void api['provider:usage']().then(setUsage)
   }, [])
 
-  const onClipEdit = useCallback((patch: ClipEditPatch, commit: boolean) => {
-    compRef.current?.editSelected(patch, commit)
-  }, [])
-
-  const onClipTrim = useCallback((edge: 'start' | 'end', at: number, commit: boolean) => {
-    compRef.current?.trimSelected(edge, at, commit)
-  }, [])
-
-  const onClipEffect = useCallback((which: EffectName) => {
-    compRef.current?.toggleEffect(which)
-  }, [])
+  const onTakeEffects = useCallback(
+    (takeId: string, effects: ClipEffects | undefined) => {
+      const p = projectRef.current
+      const cue = p?.cues.find((c) => c.id === activeCueIdRef.current)
+      const owner = cue && p ? resolveTake(p, cue, takeId)?.cue : undefined
+      if (!owner) return
+      void dispatch({
+        type: 'cue.setTakeEffects',
+        cueId: owner.id,
+        takeId,
+        effects: effects ?? null,
+      }).catch((e: unknown) => pushStatus('err', String(e)))
+    },
+    [projectRef, dispatch, pushStatus]
+  )
 
   const move = useCallback(
     (delta: number) => {
@@ -1162,7 +1166,7 @@ export default function App() {
       )
     },
     onStatus: pushStatus,
-    onEffectsTarget: setEffects,
+    onSelect: setSelection,
     compRef,
     busyClipId: activeCueBusy ? (clipTarget?.clipId ?? null) : null,
     onDropSource: (takeId, trackId, at) => {
@@ -1175,8 +1179,8 @@ export default function App() {
     cue: activeCue ?? null,
     cues: project.cues,
     selectedTakeId: sourceTakeId,
-    clipTakeId: effects?.clip.sourceTakeId ?? null,
-    onSelect: (row) => setSourceTakeId(row.take.id),
+    clipTakeId: selection?.clip?.sourceTakeId ?? null,
+    onSelect: (row) => setSourceTakeId((id) => (id === row.take.id ? null : row.take.id)),
     onInsert: (row) => insertSource(row),
     onPin: (row, pinned) => {
       void pinTake(row.cueId, row.take.id, pinned).catch(() => {})
@@ -1184,12 +1188,34 @@ export default function App() {
     onDelete: (row) => onDeleteTake(row.cueId, row.take.id),
   }
 
-  const inspector: ComponentProps<typeof Inspector> = {
-    effects,
-    effectsLabel: 'Composition',
-    onClipEdit,
-    onClipTrim,
-    onClipEffect,
+  const properties: ComponentProps<typeof PropertiesPanel> = {
+    cue: activeCue ?? null,
+    cues: project.cues,
+    characters: project.characters,
+    selection,
+    sourceTakeId,
+    original: activeCue?.original,
+    exportName: activeCue ? activeCue.fields['exportName'] || activeCue.key : '',
+    compRef,
+    onCharacter: onCueCharacter,
+    onOriginal: (patch) => {
+      if (!activeCueId) return
+      void dispatch({
+        type: 'cue.setOriginal',
+        cueId: activeCueId,
+        original: nextOriginal(activeCue?.original, patch),
+      }).catch((e: unknown) => pushStatus('err', String(e)))
+    },
+    onTakeEffects,
+    onPinSource: (takeId, pinned) => {
+      const row = activeCue ? libraryRow(activeCue, project, takeId) : undefined
+      if (row) void pinTake(row.cueId, takeId, pinned).catch(() => {})
+    },
+    onDeleteSource: (takeId) => {
+      const row = activeCue ? libraryRow(activeCue, project, takeId) : undefined
+      if (row) onDeleteTake(row.cueId, takeId)
+    },
+    onOpenLine: openCue,
   }
 
   const table: Omit<ComponentProps<typeof ProjectTable>, 'hidden'> = {
@@ -1245,7 +1271,7 @@ export default function App() {
         program={program}
         timeline={timeline}
         library={library}
-        inspector={inspector}
+        properties={properties}
       />
 
       <ExportRoom hidden={route !== 'export'} deliver={deliver} />

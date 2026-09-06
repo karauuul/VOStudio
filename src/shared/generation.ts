@@ -1,5 +1,5 @@
 import { emptyEdits, type Cue, type CueComp } from './domain'
-import { clipText, compTracks, placeClip, resolveTake, type TakeLookup } from './library'
+import { clipText, placeClip, resolveTake, resolveTargetTrack, type TakeLookup } from './library'
 
 export type GenTarget =
   | { kind: 'all' }
@@ -82,11 +82,9 @@ export function placeTake(req: PlaceTakeRequest): {
   trackId: string
 } {
   const comp = req.comp ?? { clips: [] }
-  const tracks = compTracks(comp)
-  const known = req.targetTrackId && tracks.some((t) => t.id === req.targetTrackId)
   return placeClip(comp, {
     duration: req.duration,
-    targetTrackId: known ? (req.targetTrackId as string) : tracks[0].id,
+    targetTrackId: resolveTargetTrack(comp, req.targetTrackId),
     playhead: req.playhead,
     sourceTakeId: req.takeId,
     edits: emptyEdits(),

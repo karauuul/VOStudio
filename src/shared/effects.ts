@@ -3,16 +3,25 @@ export interface ReverbEffect {
   size: number
   decay: number
   preDelay?: number
+  enabled?: false
 }
 
 export interface DelayEffect {
   time: number
   feedback: number
   mix: number
+  enabled?: false
 }
 
 export interface PitchEffect {
   semitones: number
+  enabled?: false
+}
+
+export type EffectKind = 'reverb' | 'delay' | 'pitch'
+
+export function effectOn(effect: { enabled?: false } | undefined): boolean {
+  return !!effect && effect.enabled !== false
 }
 
 export interface ClipEffects {
@@ -46,6 +55,9 @@ const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > 
 const num = (v: unknown, lo: number, hi: number, fallback: number): number =>
   typeof v === 'number' && Number.isFinite(v) ? clamp(v, lo, hi) : fallback
 
+const bypass = (effect: { enabled?: false }): { enabled?: false } =>
+  effect.enabled === false ? { enabled: false } : {}
+
 export function sanitizeReverb(r: ReverbEffect): ReverbEffect {
   const out: ReverbEffect = {
     mix: num(r.mix, MIX_MIN, MIX_MAX, DEFAULT_REVERB.mix),
@@ -55,7 +67,7 @@ export function sanitizeReverb(r: ReverbEffect): ReverbEffect {
   if (r.preDelay !== undefined) {
     out.preDelay = num(r.preDelay, REVERB_PREDELAY_MIN, REVERB_PREDELAY_MAX, 0)
   }
-  return out
+  return { ...out, ...bypass(r) }
 }
 
 export function sanitizeDelay(d: DelayEffect): DelayEffect {
@@ -63,12 +75,13 @@ export function sanitizeDelay(d: DelayEffect): DelayEffect {
     time: num(d.time, DELAY_TIME_MIN, DELAY_TIME_MAX, DEFAULT_DELAY.time),
     feedback: num(d.feedback, DELAY_FEEDBACK_MIN, DELAY_FEEDBACK_MAX, DEFAULT_DELAY.feedback),
     mix: num(d.mix, MIX_MIN, MIX_MAX, DEFAULT_DELAY.mix),
+    ...bypass(d),
   }
 }
 
 export function sanitizePitch(p: PitchEffect): PitchEffect {
   const s = num(p.semitones, PITCH_SEMITONES_MIN, PITCH_SEMITONES_MAX, 0)
-  return { semitones: Math.round(s / PITCH_STEP) * PITCH_STEP }
+  return { semitones: Math.round(s / PITCH_STEP) * PITCH_STEP, ...bypass(p) }
 }
 
 export function sanitizeEffects(fx: ClipEffects | undefined): ClipEffects | undefined {
@@ -84,34 +97,34 @@ export function sanitizeEffects(fx: ClipEffects | undefined): ClipEffects | unde
 }
 
 export function hasEffects(fx: ClipEffects | undefined): boolean {
-  return !!fx && (!!fx.reverb || !!fx.delay || !!fx.pitch)
+  return !!fx && (effectOn(fx.reverb) || effectOn(fx.delay) || pitchActive(fx.pitch))
 }
 
 export function hasSends(fx: ClipEffects | undefined): boolean {
-  return !!fx && (!!fx.reverb || !!fx.delay)
+  return !!fx && (effectOn(fx.reverb) || effectOn(fx.delay))
 }
 
 export function pitchActive(p: PitchEffect | undefined): boolean {
-  return !!p && sanitizePitch(p).semitones !== 0
+  return effectOn(p) && sanitizePitch(p!).semitones !== 0
 }
 
-export interface ClipEffectsPatch {
-  reverb?: Partial<ReverbEffect>
-  delay?: Partial<DelayEffect>
-  pitch?: Partial<PitchEffect>
-}
-
-export function mergeEffects(current: ClipEffects | undefined, patch: ClipEffectsPatch): ClipEffects {
-  const next: ClipEffects = { ...current }
-  if (patch.reverb && current?.reverb) next.reverb = { ...current.reverb, ...patch.reverb }
-  if (patch.delay && current?.delay) next.delay = { ...current.delay, ...patch.delay }
-  if (patch.pitch && current?.pitch) next.pitch = { ...current.pitch, ...patch.pitch }
-  return next
+export function setEffectEnabled(
+  fx: ClipEffects | undefined,
+  which: EffectKind,
+  on: boolean
+): ClipEffects | undefined {
+  if (!fx) return fx
+  const next: ClipEffects = { ...fx }
+  const flag = on ? undefined : (false as const)
+  if (which === 'reverb' && next.reverb) next.reverb = { ...next.reverb, enabled: flag }
+  if (which === 'delay' && next.delay) next.delay = { ...next.delay, enabled: flag }
+  if (which === 'pitch' && next.pitch) next.pitch = { ...next.pitch, enabled: flag }
+  return sanitizeEffects(next)
 }
 
 export function toggleEffect(
   fx: ClipEffects | undefined,
-  which: 'reverb' | 'delay' | 'pitch',
+  which: EffectKind,
   on: boolean
 ): ClipEffects | undefined {
   const base = sanitizeEffects(fx) ?? {}
@@ -147,7 +160,7 @@ export function delayTail(d: DelayEffect): number {
 export function effectsTail(fx: ClipEffects | undefined): number {
   if (!fx) return 0
   let t = 0
-  if (fx.reverb) t = Math.max(t, reverbTail(fx.reverb))
-  if (fx.delay) t = Math.max(t, delayTail(fx.delay))
+  if (effectOn(fx.reverb)) t = Math.max(t, reverbTail(fx.reverb!))
+  if (effectOn(fx.delay)) t = Math.max(t, delayTail(fx.delay!))
   return Math.min(t, MAX_EFFECT_TAIL)
 }

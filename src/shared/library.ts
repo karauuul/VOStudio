@@ -29,6 +29,11 @@ export function compTracks(comp: CueComp): CompTrack[] {
   return comp.tracks ?? [{ id: DEFAULT_TRACK_ID, name: 'Track 1', gainDb: 0, muted: false, solo: false }]
 }
 
+export function resolveTargetTrack(comp: CueComp | undefined, trackId: string | undefined): string {
+  const tracks = compTracks(comp ?? { clips: [] })
+  return tracks.some((t) => t.id === trackId) ? (trackId as string) : tracks[0].id
+}
+
 export function resolveTake(
   project: TakeLookup | undefined,
   cue: Cue,

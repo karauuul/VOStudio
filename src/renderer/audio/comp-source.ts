@@ -1,4 +1,4 @@
-import { isEmptyComp } from '@shared/comp'
+import { isEmptyComp, withSourceEffects } from '@shared/comp'
 import type { CompClip, CompRegion, CompTrack, Cue, CueComp } from '@shared/domain'
 import { resolveTake, type TakeLookup } from '@shared/library'
 import { audioUrl } from '../api'
@@ -25,7 +25,7 @@ export function resolveComp(
   const clips = comp!.clips.map((clip) => {
     const found = resolveTake(project, cue, clip.sourceTakeId)
     if (!found) throw new Error(`Composition clip "${clip.id}": take ${clip.sourceTakeId} is gone`)
-    return { clip, url: audioUrl(found.take.file.relPath) }
+    return { clip: withSourceEffects(clip, found.take), url: audioUrl(found.take.file.relPath) }
   })
   return {
     clips,

@@ -25,7 +25,7 @@ import {
 } from '@shared/export-plan'
 import { preflightPlan } from '@shared/export-preflight'
 import { buildReport, buildUpdatedIndex, indexBound, type DeliverReport, type DeliverSummary } from '@shared/deliver'
-import { isEmptyComp } from '@shared/comp'
+import { isEmptyComp, withSourceEffects } from '@shared/comp'
 import { usesCompOutput } from '@shared/approval'
 import { compTracks, resolveTake } from '@shared/library'
 import type { Cue, Project } from '@shared/domain'
@@ -67,7 +67,7 @@ function compJobClips(cue: Cue, project: Project): ExportCompClip[] | undefined 
       srcIn: c.srcIn,
       srcOut: c.srcOut,
       start: c.start,
-      edits: c.edits,
+      edits: withSourceEffects(c, found.take).edits,
       ...(c.crossfade === undefined ? {} : { crossfade: c.crossfade }),
       ...(c.trackId === undefined ? {} : { trackId: c.trackId }),
     }

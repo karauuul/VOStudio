@@ -289,11 +289,25 @@ describe('zod mirrors carry the new fields', () => {
           gainDb: -3,
           muted: false,
           solo: true,
-          effects: { pitch: { semitones: 2 } },
+          effects: { delay: { time: 0.25, feedback: 0.35, mix: 0.3 } },
         },
       ],
     }
     expect(JSON.stringify(compSchema.parse(comp))).toBe(JSON.stringify(comp))
+  })
+
+  it('a track carries no pitch, a clip does', () => {
+    const track = { id: 'track-2', name: 'Track 2', gainDb: 0, muted: false, solo: false }
+    const pitch = { pitch: { semitones: 2 } }
+    expect(
+      compSchema.parse({
+        clips: [{ ...clip, edits: { ...emptyEdits(), effects: pitch } }],
+        tracks: [track],
+      })?.clips[0].edits.effects
+    ).toEqual(pitch)
+    expect(
+      compSchema.parse({ clips: [clip], tracks: [{ ...track, effects: pitch }] })?.tracks?.[0].effects
+    ).toEqual({})
   })
 
   it('compSchema rejects a track gain outside the model bounds', () => {

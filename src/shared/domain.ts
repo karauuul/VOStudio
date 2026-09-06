@@ -1,7 +1,6 @@
 import { sanitizeEffects, type ClipEffects } from './effects'
 
 export type { ClipEffects, DelayEffect, ReverbEffect } from './effects'
-import type { ClipEffectsPatch } from './effects'
 
 const clampTo = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
 
@@ -38,8 +37,6 @@ export interface Character {
 export type CueStatus = 'empty' | 'translated' | 'generated' | 'approved' | 'excluded'
 export type TakeKind = 'tts' | 'sts' | 'recording' | 'imported' | 'composite'
 export type FadeShape = 'linear' | 'equalPower' | 'sCurve'
-
-export type ClipEditPatch = Omit<Partial<ClipEdits>, 'effects'> & { effects?: ClipEffectsPatch }
 
 export interface ClipEdits {
   trimStart: number
@@ -192,6 +189,7 @@ export interface CueComp {
 
 export const DUCK_MIN_DB = -60
 export const DUCK_MAX_DB = 0
+export const DEFAULT_DUCK_DB = -12
 
 export interface OriginalLane {
   exportMode: 'off' | 'on'
@@ -208,6 +206,17 @@ export function sanitizeOriginal(value: unknown): OriginalLane | undefined {
     ...(duckDb === undefined ? {} : { duckDb: clampTo(duckDb, DUCK_MIN_DB, DUCK_MAX_DB) }),
     ...(row.previewMuted === true ? { previewMuted: true as const } : {}),
   }
+}
+
+export function nextOriginal(
+  current: OriginalLane | undefined,
+  patch: Partial<OriginalLane>
+): OriginalLane {
+  const base: OriginalLane = current ?? { exportMode: 'off' }
+  const next: OriginalLane = { ...base, ...patch }
+  if (patch.exportMode === 'on' && next.duckDb === undefined) next.duckDb = DEFAULT_DUCK_DB
+  if (next.previewMuted !== true) delete next.previewMuted
+  return next
 }
 
 export interface CueRegion {
