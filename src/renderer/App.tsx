@@ -974,6 +974,7 @@ export default function App() {
         compRef.current?.deleteSelected()
       },
       splitClip: () => compRef.current?.split(),
+      splitAtPlayhead: () => compRef.current?.splitAtPlayhead(),
       healClip: () => compRef.current?.heal(),
       crossfadeClip: () => compRef.current?.crossfade(),
       undo: () => compRef.current?.undo(),
@@ -992,7 +993,7 @@ export default function App() {
         compRef.current?.muteHovered()
       },
       soloTrack: () => {
-        if (!compRef.current?.soloHovered()) onCopy('source')
+        compRef.current?.soloHovered()
       },
       copySource: () => onCopy('source'),
       copyTranslation: () => onCopy('translation'),
@@ -1100,21 +1101,9 @@ export default function App() {
       hotkey: hotkeyText('generate'),
       onClick: () => void generateSelected([cue]),
     },
-    {
-      label: 'Copy original',
-      hotkey: hotkeyText('copySource'),
-      onClick: () => onCopy('source', cue),
-    },
-    {
-      label: 'Copy translation',
-      hotkey: hotkeyText('copyTranslation'),
-      onClick: () => onCopy('translation', cue),
-    },
-    {
-      label: 'Copy as prompt',
-      hotkey: hotkeyText('copyPrompt'),
-      onClick: () => onCopy('prompt', cue),
-    },
+    { label: 'Copy original', onClick: () => onCopy('source', cue) },
+    { label: 'Copy translation', onClick: () => onCopy('translation', cue) },
+    { label: 'Copy as prompt', onClick: () => onCopy('prompt', cue) },
     { sep: true },
     {
       label: cue.status === 'excluded' ? 'Include in export' : 'Exclude from export',
@@ -1217,8 +1206,8 @@ export default function App() {
   }
 
   const originalMenu = (): MenuEntry[] => [
-    { label: 'Copy', hotkey: hotkeyText('copySource'), onClick: () => onCopy('source') },
-    { label: 'Copy as prompt', hotkey: hotkeyText('copyPrompt'), onClick: () => onCopy('prompt') },
+    { label: 'Copy', onClick: () => onCopy('source') },
+    { label: 'Copy as prompt', onClick: () => onCopy('prompt') },
   ]
 
   const translationMenu = (range: TextRange, el: HTMLTextAreaElement): MenuEntry[] => {

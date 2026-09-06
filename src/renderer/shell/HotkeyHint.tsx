@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { hintPosition, type HintAnchor } from '@shared/hint-position'
 import { bindingOf, keyText, type KeyAction } from '../keyboard'
 
 const DELAY = 200
@@ -7,12 +8,12 @@ const DELAY = 200
 interface Hint {
   label: string
   keys: string
-  left: number
-  top: number
+  anchor: HintAnchor
 }
 
 export function HotkeyHint() {
   const [hint, setHint] = useState<Hint | null>(null)
+  const ref = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
     let timer = 0
@@ -36,8 +37,7 @@ export function HotkeyHint() {
         setHint({
           label,
           keys: b ? keyText(b) : '',
-          left: box.left + box.width / 2,
-          top: box.bottom + 4,
+          anchor: { left: box.left, right: box.right, top: box.top, bottom: box.bottom },
         })
       }, DELAY)
     }
@@ -52,9 +52,23 @@ export function HotkeyHint() {
     }
   }, [])
 
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!hint || !el) return
+    const at = hintPosition(
+      hint.anchor,
+      el.offsetWidth,
+      el.offsetHeight,
+      window.innerWidth,
+      window.innerHeight
+    )
+    el.style.left = `${at.left}px`
+    el.style.top = `${at.top}px`
+  }, [hint])
+
   if (!hint) return null
   return createPortal(
-    <span className="hk-hint" style={{ left: hint.left, top: hint.top, transform: 'translateX(-50%)' }}>
+    <span ref={ref} className="hk-hint" style={{ left: 0, top: 0 }}>
       {hint.label}
       {hint.keys && <b>{hint.keys}</b>}
     </span>,
