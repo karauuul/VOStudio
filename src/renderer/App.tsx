@@ -5,7 +5,6 @@ import {
   ELEVENLABS_TTS_MODEL,
   liveTakes,
   normalizeOverride,
-  nextProviderSettings,
   resolveVoiceSettings,
   nextOriginal,
   type ClipEffects,
@@ -80,7 +79,12 @@ import {
   type GenTarget,
   type TextRange,
 } from '@shared/generation'
-import { estimateChars, type GenMode, type ProviderModel } from '@shared/provider-models'
+import {
+  estimateChars,
+  nextProviderSettings,
+  type GenMode,
+  type ProviderModel,
+} from '@shared/provider-models'
 import { originalRef } from '@shared/export-plan'
 import { splitStems } from './audio/stems'
 import { reportTakeDuration } from './audio/duration-backfill'
@@ -101,7 +105,8 @@ export default function App() {
   const [bulk, setBulk] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [matchBy, setMatchBy] = useState<MatchRule>('id')
-  const [genMode, setGenMode] = useState<GenMode>('tts')
+  const [genMode, setGenMode] = useState<GenMode | undefined>(undefined)
+  const mode: GenMode = genMode ?? 'tts'
   const [providerModels, setProviderModels] = useState<ProviderModel[]>([])
   const [showRules, setShowRules] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -159,7 +164,7 @@ export default function App() {
     setFilter(p.ui.filter || DEFAULT_FILTER)
     setSearch(p.ui.search ?? '')
     setMatchBy(p.ui.matchBy ?? 'id')
-    setGenMode(p.ui.genMode ?? 'tts')
+    setGenMode(p.ui.genMode)
     setTargetTrack(p.ui.targetTrack ?? {})
     setTimelineView(p.ui.timeline ?? {})
     setActiveCueId(p.ui.activeCueId)
@@ -491,13 +496,18 @@ export default function App() {
   const setProviderMode = useCallback(
     (patch: ProviderModeSettings) => {
       if (refuseWhileExporting()) return
-      const next = nextProviderSettings(projectRef.current?.provider, genMode, patch)
+      const next = nextProviderSettings(projectRef.current?.provider, mode, patch, providerModels)
       void dispatch({ type: 'project.setProvider', provider: next ?? null }).catch((e: unknown) =>
         pushStatus('err', String(e))
       )
     },
-    [projectRef, genMode, dispatch, pushStatus, refuseWhileExporting]
+    [projectRef, mode, providerModels, dispatch, pushStatus, refuseWhileExporting]
   )
+
+  const goGenMode = useCallback((next: GenMode) => {
+    if (guardRef.current?.(() => setGenMode(next))) return
+    setGenMode(next)
+  }, [])
 
   const onCharacterProvider = useCallback(
     (characterId: string, patch: { voiceId?: string; ttsModel?: string; stsModel?: string }) => {
@@ -683,7 +693,8 @@ export default function App() {
       text: string,
       announce: boolean,
       target: GenTarget = { kind: 'all' },
-      override?: VoiceSettings
+      override?: VoiceSettings,
+      model?: string
     ) => {
       submitJob({
         kind: 'tts',
@@ -700,6 +711,7 @@ export default function App() {
             text,
             voiceSettings,
             selectOutput: false,
+            ...(model ? { model } : {}),
             ...(target.kind === 'all' ? {} : { fragment: true }),
           })
           onTakeAdded(cueId, take)
@@ -1169,7 +1181,7 @@ export default function App() {
           if (!cue || !text) return
           if (isCueBusyNow(cue.id) || refuseWhileExporting() || refuseWithoutKey()) return
           noteSubmit(cue.id)
-          submitTts(cue.id, text, true, { kind: 'all' }, take.meta.voiceSettings)
+          submitTts(cue.id, text, true, { kind: 'all' }, take.meta.voiceSettings, take.meta.model)
         },
       },
       {
@@ -1276,9 +1288,9 @@ export default function App() {
   }
 
   const modelId =
-    project.provider?.[genMode]?.model ??
-    (genMode === 'tts' ? activeCharacter?.provider.ttsModel : activeCharacter?.provider.stsModel) ??
-    (genMode === 'tts' ? ELEVENLABS_TTS_MODEL : ELEVENLABS_STS_MODEL)
+    project.provider?.[mode]?.model ??
+    (mode === 'tts' ? activeCharacter?.provider.ttsModel : activeCharacter?.provider.stsModel) ??
+    (mode === 'tts' ? ELEVENLABS_TTS_MODEL : ELEVENLABS_STS_MODEL)
   const genModel =
     providerModels.find((m) => m.id === modelId) ??
     ({ id: modelId, name: modelId, tts: true, sts: true, style: true, boost: true, languages: [], costMultiplier: 1 } as ProviderModel)
@@ -1300,13 +1312,13 @@ export default function App() {
     originalMenu,
     translationMenu,
     onCopy,
-    mode: genMode,
-    onMode: setGenMode,
+    mode,
+    onMode: goGenMode,
     models: providerModels,
     model: genModel,
     onProvider: setProviderMode,
-    ...(project.provider?.[genMode]?.language
-      ? { language: project.provider[genMode]?.language }
+    ...(project.provider?.[mode]?.language
+      ? { language: project.provider[mode]?.language }
       : {}),
     ...(activeCue
       ? { cost: estimateChars(activeCue.text, genTarget, project.pronunciationRules, genModel) }

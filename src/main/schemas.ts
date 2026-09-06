@@ -251,6 +251,7 @@ export const ttsSchema = z.object({
   cueId: z.string().min(1),
   text: z.string().min(1).max(5000),
   voiceSettings: voiceSettingsSchema,
+  model: z.string().min(1).max(120).optional(),
   fragment: z.boolean().optional(),
   selectOutput: z.boolean().optional(),
 })

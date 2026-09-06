@@ -1,3 +1,8 @@
+import {
+  sanitizeProviderSettings,
+  type ProviderModeSettings,
+  type ProviderSettings,
+} from './domain'
 import { targetText, type GenTarget } from './generation'
 import { applyRules } from './pronunciation'
 
@@ -80,6 +85,21 @@ export const supportsLanguageCode = (
   model: ProviderModel | undefined,
   mode: GenMode
 ): boolean => mode === 'tts' && !!model && model.id !== NO_LANGUAGE_CODE_MODEL && model.languages.length > 0
+
+export function nextProviderSettings(
+  current: ProviderSettings | undefined,
+  mode: GenMode,
+  patch: ProviderModeSettings,
+  models: ProviderModel[] = []
+): ProviderSettings | undefined {
+  const merged: ProviderModeSettings = { ...current?.[mode], ...patch }
+  if (patch.model !== undefined && patch.language === undefined && merged.language) {
+    const model = models.find((m) => m.id === patch.model)
+    if (!supportsLanguageCode(model, mode) || !model?.languages.includes(merged.language))
+      merged.language = undefined
+  }
+  return sanitizeProviderSettings({ ...current, [mode]: merged })
+}
 
 export function estimateChars(
   cueText: string,

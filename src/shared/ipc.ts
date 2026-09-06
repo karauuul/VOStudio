@@ -26,6 +26,7 @@ export interface TtsRequest {
   cueId: string
   text: string
   voiceSettings: VoiceSettings
+  model?: string
   fragment?: boolean
   selectOutput?: boolean
 }

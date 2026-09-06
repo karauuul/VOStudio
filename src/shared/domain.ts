@@ -577,14 +577,6 @@ export function sanitizeProviderSettings(value: unknown): ProviderSettings | und
   return { ...(tts ? { tts } : {}), ...(sts ? { sts } : {}) }
 }
 
-export function nextProviderSettings(
-  current: ProviderSettings | undefined,
-  mode: GenMode,
-  patch: ProviderModeSettings
-): ProviderSettings | undefined {
-  return sanitizeProviderSettings({ ...current, [mode]: { ...current?.[mode], ...patch } })
-}
-
 export interface Project {
   id: string
   schemaVersion: number

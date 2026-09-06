@@ -673,12 +673,15 @@ function registerHandlers(): void {
     const voiceId = character.provider.voiceId
     const processed = applyRules(parsed.text, project.pronunciationRules)
     const mode = project.provider?.tts
-    const model = mode?.model ?? character.provider.ttsModel
+    const projectModel = mode?.model ?? character.provider.ttsModel
+    const model = parsed.model ?? projectModel
     const { audio, words } = await eleven.ttsWithTimestamps({
       text: processed,
       voiceId,
       model,
-      ...(mode?.language && model !== NO_LANGUAGE_CODE_MODEL ? { language: mode.language } : {}),
+      ...(mode?.language && model === projectModel && model !== NO_LANGUAGE_CODE_MODEL
+        ? { language: mode.language }
+        : {}),
       settings: parsed.voiceSettings,
     })
     const fileName = `t_${stamp()}_tts.mp3`
@@ -689,7 +692,7 @@ function registerHandlers(): void {
       createdAt: new Date().toISOString(),
       file: { fileId: `${target.id}/${fileName}`, relPath: abs, format: 'mp3' },
       duration: 0,
-      meta: { text: processed, voiceSettings: parsed.voiceSettings, provider: 'elevenlabs' },
+      meta: { text: processed, voiceSettings: parsed.voiceSettings, provider: 'elevenlabs', model },
       edits: emptyEdits(),
       ...(words ? { words } : {}),
       ...(parsed.fragment ? { fragment: true as const } : {}),

@@ -5,12 +5,13 @@ import {
   insertTag,
   isV3,
   modelsFor,
+  nextProviderSettings,
   parseModels,
   supportedSettings,
   supportsLanguageCode,
 } from '../src/shared/provider-models'
 import {
-  nextProviderSettings,
+  emptyEdits,
   sanitizeGenMode,
   sanitizeProviderSettings,
   type Project,
@@ -233,6 +234,31 @@ describe('provider settings on the project', () => {
     })
   })
 
+  it('a model change drops a language the new model does not list', () => {
+    const withLang = { tts: { model: 'eleven_v3', language: 'en' } }
+    expect(nextProviderSettings(withLang, 'tts', { model: 'eleven_flash_v2_5' }, models)).toEqual({
+      tts: { model: 'eleven_flash_v2_5', language: 'en' },
+    })
+    expect(
+      nextProviderSettings(withLang, 'tts', { model: 'eleven_multilingual_v2' }, models)
+    ).toEqual({ tts: { model: 'eleven_multilingual_v2' } })
+    expect(nextProviderSettings(withLang, 'tts', { model: 'unknown_model' }, models)).toEqual({
+      tts: { model: 'unknown_model' },
+    })
+    expect(
+      nextProviderSettings({ tts: { model: 'eleven_v3', language: 'uk' } }, 'tts', { model: 'eleven_v3' }, models)
+    ).toEqual({ tts: { model: 'eleven_v3' } })
+  })
+
+  it('keeps a language the patch sets itself and never touches the other mode', () => {
+    expect(
+      nextProviderSettings({ tts: { model: 'eleven_v3', language: 'en' } }, 'tts', { model: 'eleven_multilingual_v2', language: 'uk' }, models)
+    ).toEqual({ tts: { model: 'eleven_multilingual_v2', language: 'uk' } })
+    expect(
+      nextProviderSettings({ tts: { model: 'eleven_v3', language: 'en' }, sts: { model: 'eleven_multilingual_sts_v2' } }, 'sts', { model: 'x' }, models)
+    ).toEqual({ tts: { model: 'eleven_v3', language: 'en' }, sts: { model: 'x' } })
+  })
+
   it('the zod mirror keeps the field and never refuses a hand-edited project', () => {
     const parsed = projectFileSchema.parse({
       id: 'p',
@@ -302,5 +328,62 @@ describe('genMode in ui.json', () => {
     expect(sanitizeGenMode('sts')).toBe('sts')
     expect(sanitizeGenMode('record')).toBeUndefined()
     expect(sanitizeGenMode(undefined)).toBeUndefined()
+  })
+})
+
+const takeProject = (meta: Record<string, unknown>): Record<string, unknown> => ({
+  id: 'p',
+  schemaVersion: 1,
+  name: 'n',
+  media: { referenceDir: '', referencePattern: '' },
+  characters: [],
+  cues: [
+    {
+      id: 'c',
+      characterId: 'ch',
+      key: 'K1',
+      fields: {},
+      sourceText: 'Hello',
+      text: 'Привіт',
+      status: 'generated',
+      notes: '',
+      takes: [
+        {
+          id: 't1',
+          kind: 'tts',
+          createdAt: '2026-01-01T00:00:01.000Z',
+          file: { fileId: 'c/t1.mp3', relPath: 'c/t1.mp3', format: 'mp3' },
+          duration: 2,
+          meta,
+          edits: emptyEdits(),
+        },
+      ],
+    },
+  ],
+  sessions: [],
+  pronunciationRules: '',
+  exportTemplate: '',
+})
+
+describe('the model stored on a tts take', () => {
+  const takeOf = (p: unknown) =>
+    ((p as { cues: { takes: { meta: { model?: string } }[] }[] }).cues[0]!.takes[0]!)
+
+  it('an old take without the field stays byte-identical', () => {
+    const before = JSON.stringify(takeProject({ text: 'Привіт', provider: 'elevenlabs' }), null, 2)
+    const parsed = projectFileSchema.parse(JSON.parse(before))
+    expect(JSON.stringify(parsed, null, 2)).toBe(before)
+    expect(takeOf(parsed).meta.model).toBeUndefined()
+  })
+
+  it('a stored model round trips through the file schema', () => {
+    const before = JSON.stringify(
+      takeProject({ text: 'Привіт', provider: 'elevenlabs', model: 'eleven_v3' }),
+      null,
+      2
+    )
+    const parsed = projectFileSchema.parse(JSON.parse(before))
+    expect(JSON.stringify(parsed, null, 2)).toBe(before)
+    expect(takeOf(parsed).meta.model).toBe('eleven_v3')
   })
 })
