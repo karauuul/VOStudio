@@ -12,11 +12,13 @@ export interface Peaks {
 }
 
 const BUCKETS = 1024
+const BUCKETS_PER_SECOND = 100
 const peakCache = new Lru<Promise<Peaks>>({ maxEntries: 256 })
 
 function computePeaks(audio: AudioBuffer): Peaks {
   const d = audio.getChannelData(0)
-  const step = Math.max(1, Math.floor(d.length / BUCKETS))
+  const buckets = Math.max(BUCKETS, Math.ceil(audio.duration * BUCKETS_PER_SECOND))
+  const step = Math.max(1, Math.floor(d.length / buckets))
   const n = Math.max(1, Math.floor(d.length / step))
   const min = new Float32Array(n)
   const max = new Float32Array(n)

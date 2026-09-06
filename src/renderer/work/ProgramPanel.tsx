@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type MutableRefObject,
 } from 'react'
@@ -28,6 +29,13 @@ export interface ProgramSourceView {
   words?: WordTiming[]
 }
 
+export interface ProgramVideo {
+  url: string
+  base: number
+  duration: number
+  aspect: string
+}
+
 export interface ProgramApi {
   toggle: () => boolean
   insert: () => void
@@ -41,6 +49,7 @@ export interface ProgramPanelProps {
   referenceDuration: number
   compDuration: number
   monitorId: string | null
+  video: ProgramVideo | null
   source: ProgramSourceView | null
   onInsert: () => void
   onReplace: () => void
@@ -64,6 +73,7 @@ export function ProgramPanel({
   referenceDuration,
   compDuration,
   monitorId,
+  video,
   source,
   onInsert,
   onReplace,
@@ -79,6 +89,9 @@ export function ProgramPanel({
   const [gainOpen, setGainOpen] = useState(false)
   const [full, setFull] = useState(false)
   const [peaks, setPeaks] = useState<Peaks | null>(null)
+  const [fill, setFill] = useState(false)
+  const [aspect, setAspect] = useState('source')
+  const videoRef = useRef<HTMLVideoElement>(null)
 
   const sourceId = source?.takeId ?? null
   if (shownSource !== sourceId) {
@@ -208,11 +221,71 @@ export function ProgramPanel({
     return subtitleAt(sourceText, text, mapToOriginal(pos, played, referenceDuration), referenceDuration)
   }, [onSource, sourceText, text, pos, compDuration, referenceDuration])
 
+  const showVideo = !!video && !onSource
+  const videoBase = video?.base ?? 0
+  const videoAt = video ? videoBase + pos : 0
+
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el || !showVideo || playing) return
+    if (Math.abs(el.currentTime - videoAt) > 0.04) el.currentTime = videoAt
+  }, [showVideo, playing, videoAt])
+
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el || !showVideo) return
+    if (!playing) {
+      el.pause()
+      return
+    }
+    el.currentTime = videoBase + playback.getPos()
+    void el.play().catch(() => {})
+    let raf = 0
+    let frame = 0
+    const withFrames = (
+      el as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }
+    ).requestVideoFrameCallback?.bind(el)
+    const loop = (): void => {
+      const want = videoBase + playback.getPos()
+      if (Math.abs(el.currentTime - want) > 0.04) el.currentTime = want
+      if (withFrames) frame = withFrames(loop)
+      else raf = window.requestAnimationFrame(loop)
+    }
+    loop()
+    return () => {
+      el.pause()
+      if (raf) window.cancelAnimationFrame(raf)
+      const cancel = (
+        el as HTMLVideoElement & { cancelVideoFrameCallback?: (h: number) => void }
+      ).cancelVideoFrameCallback?.bind(el)
+      if (frame && cancel) cancel(frame)
+    }
+  }, [showVideo, playing, videoBase])
+
   const off = onSource ? false : !(total > 0)
 
   const frame = (
     <div className="frame">
-     <div className="frame-in">
+     <div
+       className="frame-in"
+       style={{
+         aspectRatio:
+           aspect === 'source' ? (video ? video.aspect.replace(':', ' / ') : '16 / 9') : aspect,
+       }}
+     >
+      {showVideo && video && (
+        <>
+          <video
+            ref={videoRef}
+            className={'prog-video' + (fill ? ' fill' : '')}
+            src={video.url}
+            muted
+            playsInline
+            preload="metadata"
+          />
+          <span className="prog-tc">{timecode(videoAt)}</span>
+        </>
+      )}
       {onSource && source ? (
         <div className="src">
           <div className="wave">
@@ -245,7 +318,11 @@ export function ProgramPanel({
       <div className="phd">
         {onSource ? 'Source' : 'Program'}
         <span className="n">
-          {onSource && source ? `${source.label} · ${sourceDur.toFixed(2)}s` : 'no video'}
+          {onSource && source
+            ? `${source.label} · ${sourceDur.toFixed(2)}s`
+            : video
+              ? timecode(videoAt)
+              : 'no video'}
         </span>
         {source ? (
           <span className="tabs">
@@ -258,8 +335,26 @@ export function ProgramPanel({
           </span>
         ) : (
           <span className="tabs prog-aspect">
-            <span className="field mono">Fit</span>
-            <span className="field mono">16:9</span>
+            <select
+              className="field mono"
+              aria-label="Frame fit"
+              value={fill ? 'fill' : 'fit'}
+              onChange={(e) => setFill(e.target.value === 'fill')}
+            >
+              <option value="fit">Fit</option>
+              <option value="fill">Fill</option>
+            </select>
+            <select
+              className="field mono"
+              aria-label="Aspect"
+              value={aspect}
+              onChange={(e) => setAspect(e.target.value)}
+            >
+              <option value="source">{video ? video.aspect : '16:9'}</option>
+              <option value="16 / 9">16:9</option>
+              <option value="4 / 3">4:3</option>
+              <option value="1 / 1">1:1</option>
+            </select>
           </span>
         )}
       </div>
@@ -268,7 +363,8 @@ export function ProgramPanel({
 
       <div className="trn">
         <span className="tc">
-          {timecode(pos)} <span>/ {timecode(total)}</span>
+          {timecode(video ? videoAt : pos)}{' '}
+          <span>/ {timecode(video ? video.duration : total)}</span>
         </span>
         <div className="tb">
           <button

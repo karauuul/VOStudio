@@ -205,9 +205,23 @@ export interface ScheduledComp {
   duration: number
 }
 
+export interface OriginalVoice {
+  buffer: AudioBuffer
+  gainDb: number
+  offset?: number
+  duration?: number
+}
+
+export function originalVoiceLength(orig: OriginalVoice): number {
+  const start = Math.max(0, orig.offset ?? 0)
+  const available = Math.max(0, orig.buffer.duration - start)
+  const wanted = orig.duration
+  return wanted !== undefined && wanted > 0 ? Math.min(wanted, available) : available
+}
+
 export interface ScheduleCompOptions extends ClipGraphOptions {
   tracks?: CompTrack[]
-  original?: { buffer: AudioBuffer; gainDb: number }
+  original?: OriginalVoice
 }
 
 function trackBuses(
@@ -267,11 +281,20 @@ export function scheduleComp(
   }
 
   const orig = opts.original
-  if (orig && orig.buffer.duration > seek) {
-    const graph = buildClipGraph(ctx, orig.buffer, { ...emptyEdits(), gainDb: orig.gainDb }, {
-      when,
-      seek,
-    })
+  const origLength = orig ? originalVoiceLength(orig) : 0
+  if (orig && origLength > seek) {
+    const trimStart = Math.max(0, orig.offset ?? 0)
+    const graph = buildClipGraph(
+      ctx,
+      orig.buffer,
+      {
+        ...emptyEdits(),
+        gainDb: orig.gainDb,
+        trimStart,
+        trimEnd: Math.max(0, orig.buffer.duration - trimStart - origLength),
+      },
+      { when, seek }
+    )
     if (graph.duration > 0) {
       graph.output.connect(destination)
       graph.source.start(when, graph.offset)
@@ -281,6 +304,6 @@ export function scheduleComp(
   }
 
   const clipEnd = compDuration({ clips: sources.map((s) => s.clip) })
-  const end = Math.max(clipEnd, orig ? orig.buffer.duration : 0)
+  const end = Math.max(clipEnd, origLength)
   return { voices, duration: Math.max(0, end - seek) }
 }

@@ -9,18 +9,25 @@ export interface ResolvedCompClip {
   url: string
 }
 
+export interface ResolvedOriginal {
+  url: string
+  gainDb: number
+  offset?: number
+  duration?: number
+}
+
 export interface ResolvedComp {
   clips: ResolvedCompClip[]
   region?: CompRegion
   tracks?: CompTrack[]
-  original?: { url: string; gainDb: number }
+  original?: ResolvedOriginal
 }
 
 export function resolveComp(
   project: TakeLookup | undefined,
   cue: Cue,
   comp: CueComp | null | undefined,
-  original?: { url: string; gainDb: number }
+  original?: ResolvedOriginal
 ): ResolvedComp | null {
   if (isEmptyComp(comp ?? undefined)) return original ? { clips: [], original } : null
   const clips = resolveCompClips(project, cue, comp!).map((c) => ({
@@ -39,7 +46,7 @@ export function tryResolveComp(
   project: TakeLookup | undefined,
   cue: Cue,
   comp: CueComp | null | undefined,
-  original?: { url: string; gainDb: number }
+  original?: ResolvedOriginal
 ): ResolvedComp | null {
   try {
     return resolveComp(project, cue, comp, original)

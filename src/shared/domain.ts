@@ -243,6 +243,10 @@ export interface ProjectSource {
   kind: 'audio' | 'video'
   file: AudioRef
   duration: number
+  media?: string
+  width?: number
+  height?: number
+  channels?: number
 }
 
 function sanitizeAudioRef(value: unknown): AudioRef | undefined {
@@ -277,15 +281,35 @@ export function sanitizeProjectSources(rows: unknown): ProjectSource[] | undefin
     const file = sanitizeAudioRef(row.file)
     if (!file) continue
     seen.add(id)
+    const media = nonEmptyString(row.media)
+    const width = Math.round(finiteOr(row.width, 0))
+    const height = Math.round(finiteOr(row.height, 0))
+    const channels = Math.round(finiteOr(row.channels, 0))
     out.push({
       id,
       name: nonEmptyString(row.name) ?? id,
       kind: row.kind === 'video' ? 'video' : 'audio',
       file,
       duration: Math.max(0, finiteOr(row.duration, 0)),
+      ...(media ? { media } : {}),
+      ...(width > 0 ? { width } : {}),
+      ...(height > 0 ? { height } : {}),
+      ...(channels > 0 ? { channels } : {}),
     })
   }
   return out.length > 0 ? out : undefined
+}
+
+export function sourceLabel(source: ProjectSource): string {
+  const total = Math.round(source.duration)
+  const clock = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+  const channels = source.channels ?? source.file.channels
+  const parts = [clock]
+  if (source.height && source.height > 0) parts.push(`${source.height}p`)
+  if (channels === 1) parts.push('mono')
+  else if (channels === 2) parts.push('stereo')
+  else if (channels && channels > 2) parts.push(`${channels} ch`)
+  return parts.join(' · ')
 }
 
 export interface ProjectVersion {

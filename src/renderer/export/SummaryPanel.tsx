@@ -4,7 +4,7 @@ import { formatBytes } from '@shared/export-settings'
 interface Props {
   summary: ReadinessSummary
   lastVersion?: number
-  videos: number
+  videos: { id: string; name: string; out: string; lines: number }[]
   busy: boolean
   progress: { done: number; total: number; current: string } | null
   error: string
@@ -80,10 +80,18 @@ export function SummaryPanel({
         <b>{summary.collision}</b>
       </button>
 
-      {videos > 0 && (
-        <div className="exp-sum h">
-          Video<b>{videos}</b>
-        </div>
+      {videos.length > 0 && (
+        <>
+          <div className="exp-sum h">
+            Video<b>{videos.length}</b>
+          </div>
+          {videos.map((v) => (
+            <div className="exp-sum dim" key={v.id}>
+              {v.out}
+              <b>{v.lines}</b>
+            </div>
+          ))}
+        </>
       )}
 
       <div className="sp" />

@@ -1,12 +1,42 @@
 export type ExportFormatId = 'source' | 'wav-48-24' | 'wav-44-16' | 'mp3-192' | 'ogg'
 export type LoudnessMode = 'match' | 'off'
 export type LengthMode = 'trim' | 'pad' | 'asis'
+export type VideoMode = 'copy' | 'audio'
 
 export interface ExportSettings {
   outDir?: string
   format?: ExportFormatId
   loudness?: LoudnessMode
   length?: LengthMode
+  video?: VideoMode
+  videoName?: string
+}
+
+export const VIDEO_MODES: { id: VideoMode; label: string }[] = [
+  { id: 'copy', label: 'Copy video, replace audio' },
+  { id: 'audio', label: 'Audio only' },
+]
+
+export const DEFAULT_VIDEO_NAME = '{name}_{lang}.mp4'
+
+export function videoMode(settings: ExportSettings | undefined): VideoMode {
+  return settings?.video === 'audio' ? 'audio' : 'copy'
+}
+
+export function videoName(
+  settings: ExportSettings | undefined,
+  sourceName: string,
+  lang: string,
+  mode: VideoMode
+): string {
+  const pattern = settings?.videoName?.trim() || DEFAULT_VIDEO_NAME
+  const base = sourceName.replace(/\.[^.]+$/, '')
+  const named = pattern
+    .replace(/\{name\}/g, base)
+    .replace(/\{lang\}/g, lang)
+    .replace(/[_-]+(?=\.[^.]*$|$)/, '')
+  if (mode === 'audio') return named.replace(/\.[^.]+$/, '') + '.wav'
+  return /\.[^.]+$/.test(named) ? named : named + '.mp4'
 }
 
 export interface ExportFormatSpec {
@@ -68,6 +98,8 @@ export function sanitizeExportSettings(value: unknown): ExportSettings | undefin
   if (EXPORT_FORMATS.some((f) => f.id === row.format)) out.format = row.format
   if (row.loudness === 'match' || row.loudness === 'off') out.loudness = row.loudness
   if (row.length === 'trim' || row.length === 'pad' || row.length === 'asis') out.length = row.length
+  if (row.video === 'copy' || row.video === 'audio') out.video = row.video
+  if (typeof row.videoName === 'string' && row.videoName.trim()) out.videoName = row.videoName.trim()
   return Object.keys(out).length > 0 ? out : undefined
 }
 

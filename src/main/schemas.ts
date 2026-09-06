@@ -59,6 +59,8 @@ export const exportSettingsSchema = z
     format: z.enum(['source', 'wav-48-24', 'wav-44-16', 'mp3-192', 'ogg']).optional(),
     loudness: z.enum(['match', 'off']).optional(),
     length: z.enum(['trim', 'pad', 'asis']).optional(),
+    video: z.enum(['copy', 'audio']).optional(),
+    videoName: z.string().min(1).max(400).optional(),
   })
   .nullable()
 
@@ -183,6 +185,11 @@ export const cueRegionSchema = z
   })
   .refine((r) => r.out > r.in, { message: 'region out must be greater than in' })
   .nullable()
+
+export const detectSchema = z.object({
+  sourceId: z.string().min(1).max(200),
+  mode: z.enum(['silence', 'transcribe']),
+})
 
 export const saveVersionSchema = z.object({ name: z.string().max(200).optional() })
 

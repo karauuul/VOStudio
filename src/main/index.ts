@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, protocol, session, shell } from 'electron'
 import path from 'path'
-import { promises as fs } from 'fs'
+import { createReadStream, promises as fs } from 'fs'
+import { Readable } from 'stream'
 import { randomUUID } from 'crypto'
 import { z } from 'zod'
 import { typedHandle } from './typed-ipc'
@@ -11,6 +12,7 @@ import {
   projectDirSchema,
   projectNameSchema,
   batchExportSchema,
+  detectSchema,
   saveVersionSchema,
   stsSchema,
   templateDirSchema,
@@ -47,12 +49,17 @@ import { syncCsv } from './csv-sync'
 import { importAudio } from './audio-import'
 import { importTable } from './table-import'
 import {
+  abortVideoExport,
+  appendVideoChunk,
   copyJob,
   encodeJob,
   finishExport,
+  finishVideoExport,
   planBatchExport,
+  planVideoExport,
   exportInfo,
 } from './export'
+import { detectLines, importSources, splitMediaPaths } from './sources'
 import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
@@ -64,11 +71,20 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 const REFERENCE_DIR_ENV = process.env['VOSTUDIO_REFERENCE_DIR']
+const RANGE_RE = /^bytes=(\d*)-(\d*)$/
+
+function fileStream(abs: string, start?: number, end?: number): ReadableStream<Uint8Array> {
+  const options = start === undefined ? {} : { start, ...(end === undefined ? {} : { end }) }
+  return Readable.toWeb(createReadStream(abs, options)) as ReadableStream<Uint8Array>
+}
 
 function isAllowedPath(abs: string): boolean {
   const roots = [store.getProjectDir(), REFERENCE_DIR_ENV, GENERATED_DIR].filter(Boolean) as string[]
-  const norm = path.resolve(abs)
-  return roots.some((r) => norm.toLowerCase().startsWith(path.resolve(r).toLowerCase() + path.sep))
+  const norm = path.resolve(abs).toLowerCase()
+  if (roots.some((r) => norm.startsWith(path.resolve(r).toLowerCase() + path.sep))) return true
+  return (store.getProject()?.sources ?? []).some(
+    (source) => source.media !== undefined && path.resolve(source.media).toLowerCase() === norm
+  )
 }
 
 function createWindow(): void {
@@ -415,7 +431,9 @@ function registerHandlers(): void {
           : {
               title: 'Import audio files',
               properties: ['openFile', 'multiSelections'],
-              filters: [{ name: 'Audio', extensions: ['wav', 'mp3', 'ogg'] }],
+              filters: [
+                { name: 'Media', extensions: ['wav', 'mp3', 'ogg', 'm4a', 'mp4', 'mov', 'mkv'] },
+              ],
             }
     const win = BrowserWindow.getFocusedWindow()
     const picked = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
@@ -428,14 +446,22 @@ function registerHandlers(): void {
       const repository = projectRepository
       const projectDir = store.getProjectDir()
       if (!repository || !projectDir) throw new Error('No project is open')
+      const { media, rest } = await splitMediaPaths(parsed.paths)
+      const sources = await importSources(repository.projectForMain(), projectDir, media)
+      if (sources.added.length > 0) {
+        emit('project:changed', await repository.commit(sources.changes))
+      }
+      if (rest.length === 0) {
+        return { added: 0, updated: 0, files: sources.added.length }
+      }
       const { result, changes } = await importAudio(
         repository.projectForMain(),
         projectDir,
-        parsed.paths,
+        rest,
         parsed.rule
       )
       emit('project:changed', await repository.commit(changes))
-      return result
+      return { ...result, files: result.files + sources.added.length }
     })
   )
 
@@ -450,6 +476,21 @@ function registerHandlers(): void {
         parsed.rule,
         parsed.mapping,
         parsed.replaceTranslations === true
+      )
+      emit('project:changed', await repository.commit(changes))
+      return result
+    })
+  )
+
+  typedHandle('source:detect', (req) =>
+    serialLifecycle(async () => {
+      const parsed = detectSchema.parse(req)
+      const repository = projectRepository
+      if (!repository) throw new Error('No project is open')
+      const { result, changes } = await detectLines(
+        repository.projectForMain(),
+        parsed.sourceId,
+        parsed.mode
       )
       emit('project:changed', await repository.commit(changes))
       return result
@@ -766,6 +807,24 @@ function registerHandlers(): void {
     return finishExport(z.string().uuid().parse(token), parsed, version)
   })
 
+  typedHandle('export:videoPlan', (sourceId: string) =>
+    planVideoExport(z.string().min(1).max(200).parse(sourceId))
+  )
+  typedHandle('export:videoChunk', (token, pcm, sampleRate, channels) =>
+    appendVideoChunk(
+      z.string().uuid().parse(token),
+      pcm,
+      z.number().int().min(8000).max(384000).parse(sampleRate),
+      z.number().int().min(1).max(8).parse(channels)
+    )
+  )
+  typedHandle('export:videoFinish', (token: string) =>
+    finishVideoExport(z.string().uuid().parse(token))
+  )
+  typedHandle('export:videoAbort', (token: string) =>
+    abortVideoExport(z.string().uuid().parse(token))
+  )
+
   typedHandle('settings:get', () => store.getSettings())
   typedHandle('settings:set', async (s: AppSettings) => {
     await store.setSettings(settingsSchema.parse(s))
@@ -784,6 +843,9 @@ const AUDIO_MIME: Record<string, string> = {
   '.m4a': 'audio/mp4',
   '.aac': 'audio/aac',
   '.webm': 'audio/webm',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
 }
 
 void app.whenReady().then(() => {
@@ -806,10 +868,9 @@ void app.whenReady().then(() => {
       return new Response('Not found', { status: 404 })
     }
 
-    const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get('Range')?.trim() ?? '')
+    const m = RANGE_RE.exec(req.headers.get('Range')?.trim() ?? '')
     if (!m) {
-      const body = await fs.readFile(abs)
-      return new Response(new Uint8Array(body), {
+      return new Response(fileStream(abs), {
         headers: {
           'Content-Type': type,
           'Content-Length': String(size),
@@ -835,22 +896,15 @@ void app.whenReady().then(() => {
       })
     }
 
-    const fh = await fs.open(abs, 'r')
-    try {
-      const buf = Buffer.allocUnsafe(end - start + 1)
-      const { bytesRead } = await fh.read(buf, 0, buf.length, start)
-      return new Response(new Uint8Array(buf.subarray(0, bytesRead)), {
-        status: 206,
-        headers: {
-          'Content-Type': type,
-          'Content-Length': String(bytesRead),
-          'Content-Range': `bytes ${start}-${start + bytesRead - 1}/${size}`,
-          'Accept-Ranges': 'bytes',
-        },
-      })
-    } finally {
-      await fh.close()
-    }
+    return new Response(fileStream(abs, start, end), {
+      status: 206,
+      headers: {
+        'Content-Type': type,
+        'Content-Length': String(end - start + 1),
+        'Content-Range': `bytes ${start}-${end}/${size}`,
+        'Accept-Ranges': 'bytes',
+      },
+    })
   })
 
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {

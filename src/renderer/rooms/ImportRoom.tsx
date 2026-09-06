@@ -163,6 +163,23 @@ export function ImportRoom({
     [hasKey, submitJob, onStatus]
   )
 
+  const detect = useCallback(
+    (sourceId: string, mode: 'silence' | 'transcribe') => {
+      if (mode === 'transcribe' && !hasKey) {
+        onStatus('err', 'API key missing — open Settings')
+        return
+      }
+      run(async () => {
+        const r = await api['source:detect']({ sourceId, mode })
+        onStatus(
+          'ok',
+          `${r.added} lines detected · ${r.kept} kept · ${r.removed} replaced`
+        )
+      })
+    },
+    [run, hasKey, onStatus]
+  )
+
   const menu = useCallback(
     (cues: Cue[]): MenuEntry[] => {
       const ids = cues.map((c) => c.id)
@@ -218,6 +235,7 @@ export function ImportRoom({
         onMapping={(mapping) => table && importTable(table.path, mapping)}
         onImportText={pickTable}
         onTranscribe={transcribe}
+        onDetect={detect}
         onOpenCue={onOpenCue}
         menu={menu}
       />

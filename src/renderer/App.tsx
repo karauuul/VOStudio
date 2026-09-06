@@ -30,7 +30,7 @@ import {
   useJobFailed,
   useJobsStore,
 } from './jobs/store'
-import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues, groupByCharacter } from '@shared/cue-filter'
+import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues, groupLines } from '@shared/cue-filter'
 import { LinesPanel } from './work/LinesPanel'
 import type { TextPanelProps } from './work/TextPanel'
 import { ImportRoom } from './rooms/ImportRoom'
@@ -257,9 +257,9 @@ export default function App() {
     if (reviewIds) {
       const byId = new Map(project.cues.map((c) => [c.id, c]))
       const picked = reviewIds.flatMap((id) => byId.get(id) ?? [])
-      return groupByCharacter(picked, project.characters)
+      return groupLines(picked, project.characters)
     }
-    return groupByCharacter(
+    return groupLines(
       filterCues(project.cues, filter, search, liveCharacterFilter),
       project.characters
     )
@@ -281,6 +281,21 @@ export default function App() {
   )
 
   const activeTakes = useMemo(() => (activeCue ? liveTakes(activeCue) : []), [activeCue])
+
+  const aspectRatio = (width?: number, height?: number): string => {
+    if (!width || !height) return '16:9'
+    const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b))
+    const d = gcd(width, height) || 1
+    return `${Math.round(width / d)}:${Math.round(height / d)}`
+  }
+
+  const activeSource = useMemo(
+    () =>
+      activeCue?.region
+        ? project?.sources?.find((s) => s.id === activeCue.region!.sourceId)
+        : undefined,
+    [activeCue, project]
+  )
 
   if (previewCueId !== activeCue?.id) {
     setPreviewCueId(activeCue?.id)
@@ -1225,6 +1240,7 @@ export default function App() {
 
   const lines: ComponentProps<typeof LinesPanel> = {
     cues: visible,
+    characters: project.characters,
     groups: grouped.groups,
     activeCueId,
     search,
@@ -1295,6 +1311,15 @@ export default function App() {
     referenceDuration: refDur,
     compDuration: compDur,
     monitorId: activeCueId ? clipId.comp(activeCueId) : null,
+    video:
+      activeSource && activeSource.kind === 'video' && activeSource.media && activeCue?.region
+        ? {
+            url: audioUrl(activeSource.media),
+            base: activeCue.region.in,
+            duration: activeSource.duration,
+            aspect: aspectRatio(activeSource.width, activeSource.height),
+          }
+        : null,
     source:
       activeCue && sourceTake
         ? {
@@ -1334,6 +1359,8 @@ export default function App() {
   const timeline: ComponentProps<typeof TimelinePanel> = {
     cue: activeCue ?? null,
     cues: project.cues,
+    source: activeSource ?? null,
+    onSelectLine: (cueId) => void selectCue(cueId),
     targetTrackId: activeCueId ? targetTrack[activeCueId] : undefined,
     onTargetTrack: (trackId) => {
       if (activeCueId) setTargetTrack((m) => ({ ...m, [activeCueId]: trackId }))
@@ -1447,6 +1474,7 @@ export default function App() {
         hidden={route !== 'work'}
         lines={lines}
         total={project.cues.length}
+        source={activeSource ?? null}
         text={text}
         cueText={cueText}
         program={program}

@@ -1,9 +1,10 @@
 import { compDuration, isEmptyComp, withSourceEffects } from './comp'
-import { clipSpeed, type ClipEdits, type CompClip, type CompTrack, type Cue, type CueComp, type Project, type Take } from './domain'
+import { clipSpeed, DEFAULT_DUCK_DB, type ClipEdits, type CompClip, type CompTrack, type Cue, type CueComp, type Project, type ProjectSource, type Take } from './domain'
 import { hasEffects } from './effects'
 import { hasValidVoicedOutput, usesCompOutput } from './approval'
 import { compTracks, resolveTake, type TakeLookup } from './library'
 import { formatSpec, lengthMode, loudnessMode, type ExportSettings } from './export-settings'
+import type { VideoLineComp } from './sources'
 
 export type ExportFormat = 'mp3' | 'wav' | 'ogg'
 
@@ -65,7 +66,28 @@ export function exportName(project: Project, cue: Cue, take: Take): string {
 }
 
 export function mixesOriginal(cue: Cue): boolean {
-  return cue.original?.exportMode === 'on' && !!cue.referenceAudio
+  return cue.original?.exportMode === 'on' && (!!cue.referenceAudio || !!cue.region)
+}
+
+export interface OriginalRef {
+  srcPath: string
+  gainDb: number
+  offset: number
+  duration: number
+}
+
+export function originalRef(
+  cue: Cue,
+  sources: ProjectSource[] | undefined
+): Omit<OriginalRef, 'gainDb'> | undefined {
+  const region = cue.region
+  if (region) {
+    const source = sources?.find((s) => s.id === region.sourceId)
+    if (!source) return undefined
+    return { srcPath: source.file.relPath, offset: region.in, duration: region.out - region.in }
+  }
+  if (!cue.referenceAudio) return undefined
+  return { srcPath: cue.referenceAudio.relPath, offset: 0, duration: cue.referenceDuration ?? 0 }
 }
 
 export function originalLength(cue: Cue): number | undefined {
@@ -143,7 +165,7 @@ export interface CompPlan {
   clips: CompClipPlan[]
   region?: { in: number; out: number }
   tracks?: CompTrack[]
-  original?: { srcPath: string; gainDb: number }
+  original?: OriginalRef
 }
 
 export interface ResolvedCompClip {
@@ -216,7 +238,8 @@ export function renderLength(cue: Cue, take: Take, project: Project): number {
 
 export function compPlanFor(cue: Cue, take: Take, project: Project): CompPlan | undefined {
   const comp = outputComp(cue, project)
-  const mixed = mixesOriginal(cue)
+  const original = originalRef(cue, project.sources)
+  const mixed = mixesOriginal(cue) && !!original
   const window = renderWindow(cue, take, project)
   if (!comp && !mixed && !window) return undefined
   const known = take.duration > 0 ? take.duration : (originalLength(cue) ?? 0)
@@ -238,8 +261,47 @@ export function compPlanFor(cue: Cue, take: Take, project: Project): CompPlan | 
     clips,
     ...(window ? { region: window } : {}),
     ...(tracks ? { tracks } : {}),
-    ...(mixed
-      ? { original: { srcPath: cue.referenceAudio!.relPath, gainDb: cue.original?.duckDb ?? 0 } }
+    ...(mixed && original
+      ? { original: { ...original, gainDb: cue.original?.duckDb ?? 0 } }
       : {}),
   }
+}
+
+export function videoLines(project: Project, sourceId: string): VideoLineComp[] {
+  const out: VideoLineComp[] = []
+  for (const cue of project.cues) {
+    const region = cue.region
+    if (!region || region.sourceId !== sourceId || cue.status === 'excluded') continue
+    if (!hasValidVoicedOutput(cue, project)) continue
+    const take = outputTakeOf(cue, project)
+    if (!take) continue
+    const comp = outputComp(cue, project)
+    const srcIn = Math.max(0, take.edits.trimStart)
+    const known = take.duration > 0 ? take.duration : (originalLength(cue) ?? 0)
+    const clips: CompClipPlan[] = comp
+      ? resolveCompClips(project, cue, comp).map(toClipPlan)
+      : known > 0
+        ? [
+            {
+              srcPath: take.file.relPath,
+              srcIn,
+              srcOut: Math.max(srcIn + 0.001, known - Math.max(0, take.edits.trimEnd)),
+              start: 0,
+              edits: { ...take.edits, trimStart: 0, trimEnd: 0 },
+            },
+          ]
+        : []
+    if (clips.length === 0) continue
+    const tracks = comp?.tracks ? compTracks(comp) : undefined
+    out.push({
+      cueId: cue.id,
+      in: region.in,
+      out: region.out,
+      clips,
+      ...(tracks ? { tracks } : {}),
+      originalMode: cue.original?.exportMode === 'on' ? 'on' : 'off',
+      duckDb: cue.original?.duckDb ?? DEFAULT_DUCK_DB,
+    })
+  }
+  return out.sort((a, b) => a.in - b.in)
 }

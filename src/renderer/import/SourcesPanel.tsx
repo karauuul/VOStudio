@@ -1,5 +1,5 @@
 import { useMemo, useState, type DragEvent } from 'react'
-import type { Project } from '@shared/domain'
+import { sourceLabel, type Project } from '@shared/domain'
 import { audioSources } from '@shared/import-table'
 import { api } from '../api'
 import type { TableSource } from './LinesTable'
@@ -38,11 +38,6 @@ export function spanText(seconds: number): string {
   if (h > 0) return `${h}h ${m}m`
   if (m > 0) return `${m}m ${s}s`
   return `${s}s`
-}
-
-const clock = (seconds: number): string => {
-  const total = Math.round(seconds)
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
 const nnn = (n: number): string => n.toLocaleString('en-US')
@@ -126,7 +121,7 @@ export function SourcesPanel({ project, tables, onPick, onDrop, busy }: Props) {
             <div>
               <div className="nm">{source.name}</div>
               <div className="sb">
-                {clock(source.duration)} · {source.kind}
+                {sourceLabel(source)}
               </div>
             </div>
             <span className="m">{nnn(regions.get(source.id) ?? 0)} lines</span>

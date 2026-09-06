@@ -1,6 +1,12 @@
 import { compDuration, compEffectsTail, compHasPitch } from '@shared/comp'
 import { emptyEdits, type CompTrack } from '@shared/domain'
-import { buildClipGraph, scheduleComp, type CompSource } from './clip-graph'
+import {
+  buildClipGraph,
+  originalVoiceLength,
+  scheduleComp,
+  type CompSource,
+  type OriginalVoice,
+} from './clip-graph'
 import type { ResolvedComp } from './comp-source'
 import { Lru } from './lru'
 import { ensurePitchModule } from './pitch-node'
@@ -134,7 +140,7 @@ interface CompState {
   id: string
   sources: CompSource[]
   tracks?: CompTrack[]
-  original?: { buffer: AudioBuffer; gainDb: number }
+  original?: OriginalVoice
   dur: number
   from: number
   until: number
@@ -219,7 +225,7 @@ function makeCompBus(
   seek: number,
   until = Infinity,
   tracks?: CompTrack[],
-  original?: { buffer: AudioBuffer; gainDb: number }
+  original?: OriginalVoice
 ): Bus {
   const c = ac()
   const gain = c.createGain()
@@ -490,13 +496,15 @@ export async function playComp(
   const urls = compUrls(resolved)
   pin(resolved.original ? [...urls, resolved.original.url] : urls)
   let sources: CompSource[]
-  let original: { buffer: AudioBuffer; gainDb: number } | undefined
+  let original: OriginalVoice | undefined
   try {
     sources = await loadCompSources(resolved)
     if (resolved.original) {
       original = {
         buffer: await getBuffer(resolved.original.url),
         gainDb: resolved.original.gainDb,
+        ...(resolved.original.offset === undefined ? {} : { offset: resolved.original.offset }),
+        ...(resolved.original.duration === undefined ? {} : { duration: resolved.original.duration }),
       }
     }
   } catch (e) {
@@ -509,7 +517,7 @@ export async function playComp(
 
   const dur = Math.max(
     compDuration({ clips: sources.map((s) => s.clip) }),
-    original?.buffer.duration ?? 0
+    original ? originalVoiceLength(original) : 0
   )
   if (!(dur > 0)) return
 

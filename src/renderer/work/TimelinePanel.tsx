@@ -66,6 +66,7 @@ import {
   type Cue,
   type CueComp,
   type OriginalLane,
+  type ProjectSource,
   type TimelineViewState,
 } from '@shared/domain'
 import { audioUrl } from '../api'
@@ -158,6 +159,11 @@ export function timecode(sec: number): string {
   return `${String(m).padStart(2, '0')}:${(s - m * 60).toFixed(2).padStart(5, '0')}`
 }
 
+const clockOf = (sec: number): string => {
+  const total = Math.round(Number.isFinite(sec) && sec > 0 ? sec : 0)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
 const secs = (sec: number): string => (Number.isFinite(sec) && sec > 0 ? sec.toFixed(2) : '0.00')
 
 const gainTop = (db: number): number => clamp(50 - (db / GAIN_SPAN) * 46, 3, 97)
@@ -176,6 +182,8 @@ type Gesture = 'move' | 'trimStart' | 'trimEnd' | 'fadeIn' | 'fadeOut' | 'gain' 
 interface Props {
   cue: Cue | null
   cues: Cue[]
+  source: ProjectSource | null
+  onSelectLine: (cueId: string) => void
   targetTrackId?: string
   onTargetTrack: (trackId: string) => void
   view?: TimelineViewState
@@ -195,6 +203,8 @@ interface Props {
 export function TimelinePanel({
   cue,
   cues,
+  source,
+  onSelectLine,
   targetTrackId,
   onTargetTrack,
   view: savedView,
@@ -223,7 +233,7 @@ export function TimelinePanel({
   const [pending, setPending] = useState<CueComp | null>(null)
   const [tool, setTool] = useState<Tool>('select')
   const [snapUnit, setSnapUnit] = useState<'words' | 'off'>('words')
-  const [units, setUnits] = useState<'seconds' | 'timecode'>('seconds')
+  const [units, setUnits] = useState<'seconds' | 'timecode'>(cue?.region ? 'timecode' : 'seconds')
   const [pxPerSec, setPxPerSec] = useState(savedView?.pxPerSec ?? 100)
   const [scroll, setScroll] = useState(savedView?.scroll ?? 0)
   const [origGainDb, setOrigGainDb] = useState(savedView?.originalGainDb ?? 0)
@@ -246,6 +256,7 @@ export function TimelinePanel({
     setOrigGainDb(savedView?.originalGainDb ?? 0)
     setOrigMuted(false)
     setOrigSolo(false)
+    setUnits(cue?.region ? 'timecode' : 'seconds')
   }
 
   const project = useMemo(() => ({ cues }), [cues])
@@ -271,9 +282,14 @@ export function TimelinePanel({
   const selRef = useRef<string | null>(null)
   selRef.current = selected
 
-  const refPath = cue?.referenceAudio?.relPath
+  const srcRegion = cue?.region ?? null
+  const lineSource = srcRegion && source && source.id === srcRegion.sourceId ? source : null
+  const refPath = lineSource ? lineSource.file.relPath : cue?.referenceAudio?.relPath
   const refPeaks = refPath ? (peaks[refPath] ?? null) : null
-  const refDur = refPeaks?.duration ?? cue?.referenceDuration ?? 0
+  const regionBase = srcRegion ? srcRegion.in : 0
+  const refDur = srcRegion
+    ? srcRegion.out - srcRegion.in
+    : (refPeaks?.duration ?? cue?.referenceDuration ?? 0)
   const compDur = compDuration(comp)
   const contentDur = Math.max(refDur, compDur)
 
@@ -385,14 +401,32 @@ export function TimelinePanel({
       project,
       cue,
       comp.clips.length > 0 ? comp : null,
-      origAudible && refPath ? { url: audioUrl(refPath), gainDb: origGainDb } : undefined
+      origAudible && refPath
+        ? {
+            url: audioUrl(refPath),
+            gainDb: origGainDb,
+            ...(srcRegion ? { offset: srcRegion.in, duration: refDur } : {}),
+          }
+        : undefined
     )
     return r ? { ...r, tracks: effective } : null
-  }, [cue, project, comp, tracks, origSolo, anyTrackSolo, origAudible, refPath, origGainDb])
+  }, [
+    cue,
+    project,
+    comp,
+    tracks,
+    origSolo,
+    anyTrackSolo,
+    origAudible,
+    refPath,
+    origGainDb,
+    srcRegion,
+    refDur,
+  ])
 
   const region = comp.region
   const regionIn = region?.in ?? 0
-  const regionOut = region?.out ?? compDur
+  const regionOut = region?.out ?? (compDur > 0 ? compDur : refDur)
   const delta = compDelta(comp.clips.length > 0 ? comp : undefined, refDur)
 
   const seek = useCallback(
@@ -879,7 +913,12 @@ export function TimelinePanel({
           end: clipEnd(c),
           reference:
             refPath && to > c.start
-              ? { id: clipId.original(refPath), url: audioUrl(refPath), from: c.start, to }
+              ? {
+                  id: clipId.original(refPath),
+                  url: audioUrl(refPath),
+                  from: regionBase + c.start,
+                  to: regionBase + to,
+                }
               : null,
         }
       },
@@ -921,7 +960,20 @@ export function TimelinePanel({
       selectTool: () => setTool('select'),
       place: (next) => commit(next),
     }),
-    [editable, commit, edit, splitClip, editSelected, editTrack, refDur, refPath, takeOf, peaks, zoomBy]
+    [
+      editable,
+      commit,
+      edit,
+      splitClip,
+      editSelected,
+      editTrack,
+      refDur,
+      refPath,
+      regionBase,
+      takeOf,
+      peaks,
+      zoomBy,
+    ]
   )
 
   useWire(compRef, api)
@@ -1109,6 +1161,116 @@ export function TimelinePanel({
     return b > a ? <span className="tl-shade" style={{ left: a, width: b - a }} /> : null
   }
 
+  const originalName = lineSource
+    ? `${lineSource.name} · ${timecode(regionBase)} – ${timecode(regionBase + refDur)}`
+    : (refPath ?? '').split(/[/\\]/).pop()
+
+  const visibleFrom = Math.max(0, regionBase + scroll)
+  const visibleTo = lineSource
+    ? Math.min(lineSource.duration, regionBase + scroll + (width > 0 ? width / pxPerSec : 0))
+    : 0
+  const context =
+    lineSource && visibleTo > visibleFrom ? (
+      <div
+        className="tl-ctx"
+        style={{
+          left: xOf(visibleFrom - regionBase),
+          width: Math.max(2, (visibleTo - visibleFrom) * pxPerSec),
+        }}
+      >
+        <Wave peaks={refPeaks} from={visibleFrom} to={visibleTo} color="#8f97a8" />
+      </div>
+    ) : null
+
+  const navRegions = useMemo(
+    () =>
+      lineSource
+        ? cues
+            .filter((c) => c.region?.sourceId === lineSource.id)
+            .sort((a, b) => (a.region?.in ?? 0) - (b.region?.in ?? 0))
+        : [],
+    [cues, lineSource]
+  )
+
+  const navRef = useRef<HTMLDivElement>(null)
+
+  const navScroll = useCallback(
+    (dx: number): void => {
+      const el = navRef.current
+      if (!el || !lineSource) return
+      applyView(
+        {
+          ...viewRef.current,
+          scroll: viewRef.current.scroll + (dx / el.clientWidth) * lineSource.duration,
+        },
+        true
+      )
+    },
+    [applyView, lineSource]
+  )
+
+  const navigator =
+    lineSource && lineSource.duration > 0 ? (
+      <div className="tl-nav">
+        <div className="n">{`${lineSource.name} · ${clockOf(lineSource.duration)}`}</div>
+        <div
+          className="bar"
+          ref={navRef}
+          onMouseDown={(e) => {
+            if (e.button !== 0) return
+            e.preventDefault()
+            let last = e.clientX
+            let moved = false
+            startDrag(
+              (ev) => {
+                if (Math.abs(ev.clientX - last) < 1) return
+                moved = true
+                navScroll(ev.clientX - last)
+                last = ev.clientX
+              },
+              (ev) => {
+                if (moved) return
+                const el = navRef.current
+                if (!el) return
+                const at =
+                  ((ev.clientX - el.getBoundingClientRect().left) / el.clientWidth) *
+                  lineSource.duration
+                const hit =
+                  navRegions.find((c) => at >= (c.region?.in ?? 0) && at <= (c.region?.out ?? 0)) ??
+                  navRegions.reduce<Cue | null>(
+                    (best, c) =>
+                      best === null ||
+                      Math.abs((c.region?.in ?? 0) - at) < Math.abs((best.region?.in ?? 0) - at)
+                        ? c
+                        : best,
+                    null
+                  )
+                if (hit) onSelectLine(hit.id)
+              }
+            )
+          }}
+        >
+          {navRegions.map((c) => (
+            <i
+              key={c.id}
+              className={c.id === cueId ? 'cur' : ''}
+              style={{
+                left: `${((c.region?.in ?? 0) / lineSource.duration) * 100}%`,
+                width: `${Math.max(0.15, ((c.region?.out ?? 0) - (c.region?.in ?? 0)) / lineSource.duration * 100)}%`,
+              }}
+            />
+          ))}
+          <span
+            className="vp"
+            style={{
+              left: `${(Math.max(0, visibleFrom) / lineSource.duration) * 100}%`,
+              width: `${Math.max(0.4, ((visibleTo - visibleFrom) / lineSource.duration) * 100)}%`,
+            }}
+          />
+        </div>
+      </div>
+    ) : null
+
   const regionShade = region ? (
     <>
       {shade(0, region.in)}
@@ -1117,14 +1279,14 @@ export function TimelinePanel({
   ) : null
 
   return (
-    <section className="panel tl">
+    <section className={'panel tl' + (navigator ? ' tl-hasnav' : '')}>
       <div className="phd">
         Timeline
         <span className="tl-m">
           <span>in</span>
-          {timecode(regionIn)}
+          {timecode(regionBase + regionIn)}
           <span>out</span>
-          {timecode(regionOut)}
+          {timecode(regionBase + regionOut)}
           <span>Δ</span>
           {delta === null ? '—' : `${delta >= 0 ? '+' : ''}${delta.toFixed(2)}`}
         </span>
@@ -1165,12 +1327,14 @@ export function TimelinePanel({
         </span>
       </div>
 
+      {navigator}
+
       <div className="tl-rul">
         <div />
         <div className="tl-ruler" onMouseDown={onRulerDown}>
           {rulerTicks.map((t) => (
             <i key={t} style={{ left: xOf(t) }}>
-              {units === 'timecode' ? timecode(t) : tickLabel(t, step)}
+              {units === 'timecode' ? timecode(regionBase + t) : tickLabel(t, step)}
             </i>
           ))}
           {region && (
@@ -1280,15 +1444,21 @@ export function TimelinePanel({
           </div>
           <div className="tl-body" ref={bodyRef} onMouseDown={startScrub}>
             {grid}
+            {context}
             {refPath && refDur > 0 && (
               <div
                 className="tl-clip tl-orig"
                 style={{ left: xOf(0), width: Math.max(2, refDur * pxPerSec) }}
               >
                 <span className="cn">
-                  <span className="w">{refPath.split(/[\\/]/).pop()}</span>
+                  <span className="w">{originalName}</span>
                 </span>
-                <Wave peaks={refPeaks} from={0} to={refDur} color="#8f97a8" />
+                <Wave
+                  peaks={refPeaks}
+                  from={regionBase}
+                  to={regionBase + refDur}
+                  color="#8f97a8"
+                />
                 <span className="dur">{secs(refDur)}s</span>
               </div>
             )}

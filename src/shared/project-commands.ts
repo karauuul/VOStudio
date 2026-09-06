@@ -19,6 +19,7 @@ import {
   type OriginalLane,
   type Project,
   type ProjectLanguages,
+  type ProjectSource,
   type ProjectVersion,
   type VoiceSettings,
 } from './domain'
@@ -58,6 +59,8 @@ export interface ChangeSet {
   exportTemplate?: string
   versions?: ProjectVersion[]
   cues?: Cue[]
+  removedCueIds?: string[]
+  sources?: ProjectSource[]
   characters?: Project['characters']
   charactersReplace?: boolean
   pronunciationRules?: string
@@ -332,6 +335,11 @@ export function applyChangeSet(project: Project, changes: ChangeSet): Project {
     } else next = { ...next, export: structuredClone(changes.export) }
   }
   if (changes.versions) next = { ...next, versions: structuredClone(changes.versions) }
+  if (changes.sources) next = { ...next, sources: structuredClone(changes.sources) }
+  if (changes.removedCueIds && changes.removedCueIds.length > 0) {
+    const gone = new Set(changes.removedCueIds)
+    next = { ...next, cues: next.cues.filter((cue) => !gone.has(cue.id)) }
+  }
   if (changes.cues) {
     const replacements = new Map(changes.cues.map((cue) => [cue.id, cue]))
     const known = new Set(next.cues.map((cue) => cue.id))
