@@ -77,6 +77,37 @@ export function filterCounts(
   return counts
 }
 
+export interface CueGroup {
+  name: string
+  count: number
+}
+
+export interface GroupedCues {
+  cues: Cue[]
+  groups: CueGroup[]
+}
+
+export function groupByCharacter(
+  cues: Cue[],
+  characters: Pick<Character, 'id' | 'name'>[]
+): GroupedCues {
+  const names = new Map(characters.map((c) => [c.id, c.name]))
+  const buckets = new Map<string, Cue[]>()
+  for (const cue of cues) {
+    const name = names.get(cue.characterId) ?? cue.characterId ?? ''
+    const bucket = buckets.get(name)
+    if (bucket) bucket.push(cue)
+    else buckets.set(name, [cue])
+  }
+  const groups: CueGroup[] = []
+  const ordered: Cue[] = []
+  for (const [name, bucket] of buckets) {
+    groups.push({ name: name || 'No character', count: bucket.length })
+    ordered.push(...bucket)
+  }
+  return { cues: ordered, groups }
+}
+
 export type ReviewLabel =
   | 'Approved'
   | 'Needs review'

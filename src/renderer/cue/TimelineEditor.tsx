@@ -35,7 +35,6 @@ import { audioUrl } from '../api'
 import { clipId } from '../audio/transport'
 import type { Peaks } from '../Waveform'
 import type { EffectName } from './ClipParams'
-import { FragmentPrompt } from './FragmentPrompt'
 import { takeDrag, type TakeDrag } from './take-drag'
 import type { DrawGhost } from './timeline-draw'
 import {
@@ -70,7 +69,6 @@ export interface CompApi {
   undo: () => void
   redo: () => void
   selection: () => ClipSelection | null
-  promptFragment: () => boolean
   replaceSource: (clipId: string, takeId: string, duration: number) => boolean
   editSelected: (patch: ClipEditPatch, commit: boolean) => void
   trimSelected: (edge: 'start' | 'end', at: number, commit: boolean) => void
@@ -112,8 +110,6 @@ interface Ctx {
 export interface TimelineEditorApi {
   api: CompApi
   selectedClip: CompClip | null
-  prompt: boolean
-  closePrompt: () => void
   onRulerDown: (e: ReactMouseEvent) => void
   onRulerDouble: (e: ReactMouseEvent) => void
   onCompDown: (e: ReactMouseEvent) => void
@@ -134,8 +130,6 @@ export interface TimelineEditorApi {
     canUndo: boolean
     onRedo: () => void
     canRedo: boolean
-    onFragment: () => void
-    canFragment: boolean
     onSetIn: () => void
     onSetOut: () => void
     onClearRegion: () => void
@@ -162,7 +156,6 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
     onStatus,
   } = ctx
 
-  const [prompt, setPrompt] = useState(false)
 
   const onProblem = useCallback(
     (p: string) => onStatus('err', `Composition rejected: ${p}`),
@@ -556,14 +549,6 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
     }
   }, [refs])
 
-  const promptFragment = useCallback((): boolean => {
-    if (!selection()) return false
-    setPrompt(true)
-    return true
-  }, [selection])
-
-  useEffect(() => setPrompt(false), [cue.id, selected])
-
   const replaceSource = useCallback(
     (targetId: string, takeId: string, duration: number): boolean => {
       const hasClip = (c: CueComp | null | undefined): c is CueComp =>
@@ -614,7 +599,6 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
         if (refs.editable.current) redo()
       },
       selection,
-      promptFragment,
       replaceSource,
       editSelected,
       trimSelected,
@@ -630,7 +614,6 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
       undo,
       redo,
       selection,
-      promptFragment,
       replaceSource,
       editSelected,
       trimSelected,
@@ -644,8 +627,6 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
   return {
     api,
     selectedClip,
-    prompt,
-    closePrompt: useCallback(() => setPrompt(false), []),
     onRulerDown,
     onRulerDouble,
     onCompDown,
@@ -666,8 +647,6 @@ export function useTimelineEditor(ctx: Ctx): TimelineEditorApi {
       canUndo: editable && edit.canUndo,
       onRedo: redo,
       canRedo: editable && edit.canRedo,
-      onFragment: promptFragment,
-      canFragment: editable && !!selectedClip,
       onSetIn: () => regionEdge('in'),
       onSetOut: () => regionEdge('out'),
       onClearRegion: clearRegion,
@@ -687,8 +666,6 @@ interface EditorProps {
   onZoomOut: () => void
   canZoomOut: boolean
   onFit: () => void
-  busy: boolean
-  onFragmentText: (text: string) => void
 }
 
 export function TimelineEditor({
@@ -701,14 +678,11 @@ export function TimelineEditor({
   onZoomOut,
   canZoomOut,
   onFit,
-  busy,
-  onFragmentText,
 }: EditorProps) {
   return (
     <div className="tl-tools">
       <TimelineBar
         {...editor.bar}
-        canFragment={editor.bar.canFragment && !busy}
         insert={insert}
         snap={snapOn}
         onSnap={onSnap}
@@ -718,9 +692,6 @@ export function TimelineEditor({
         canZoomOut={canZoomOut}
         onFit={onFit}
       />
-      {editor.prompt && editor.selectedClip && (
-        <FragmentPrompt onSubmit={onFragmentText} onClose={editor.closePrompt} />
-      )}
     </div>
   )
 }

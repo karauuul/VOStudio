@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from 'react'
-import { CueList } from '../CueList'
+import { LinesPanel } from '../work/LinesPanel'
+import { TextPanel, type TextPanelProps } from '../work/TextPanel'
 import { CueEditor } from '../CueEditor'
 import { Inspector } from '../cue/Inspector'
 
@@ -19,12 +20,14 @@ function storedWidth({ key, def, min, max }: typeof LINES): number {
 
 interface Props {
   hidden: boolean
-  queue: ComponentProps<typeof CueList>
+  lines: ComponentProps<typeof LinesPanel>
+  total: number
+  text: TextPanelProps
   editor: ComponentProps<typeof CueEditor> | null
   inspector: ComponentProps<typeof Inspector>
 }
 
-export function WorkRoom({ hidden, queue, editor, inspector }: Props) {
+export function WorkRoom({ hidden, lines, total, text, editor, inspector }: Props) {
   const [linesW, setLinesW] = useState(() => storedWidth(LINES))
   const [propsW, setPropsW] = useState(() => storedWidth(PROPS))
 
@@ -59,7 +62,7 @@ export function WorkRoom({ hidden, queue, editor, inspector }: Props) {
     [linesW, propsW]
   )
 
-  const cue = editor?.cue
+  const cue = text.cue
 
   return (
     <div
@@ -69,18 +72,24 @@ export function WorkRoom({ hidden, queue, editor, inspector }: Props) {
     >
       <section className="panel">
         <div className="phd">
-          Lines <span className="n">{queue.cues.length}</span>
+          Lines <span className="n">{total}</span>
         </div>
-        <CueList {...queue} />
+        <LinesPanel {...lines} />
       </section>
 
       <div className="splitter col" onMouseDown={startDrag('left')} />
 
-      <section className="panel">
+      <section className="panel text">
         <div className="phd">
           Text {cue && <span className="n">{cue.fields['EventName'] || cue.key}</span>}
         </div>
-        {editor && <CueEditor {...editor} />}
+        {editor ? (
+          <CueEditor {...editor} />
+        ) : (
+          <div className="ed-script lonely">
+            <TextPanel {...text} />
+          </div>
+        )}
       </section>
 
       <div className="splitter col" onMouseDown={startDrag('right')} />

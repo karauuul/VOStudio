@@ -121,10 +121,15 @@ async function readLastExport(outDir: string): Promise<LastExport | null> {
       exported: report.exported?.length ?? 0,
       failed: report.failed?.length ?? 0,
       skipped: report.skipped?.length ?? 0,
+      cueIds: (report.exported ?? []).map((e) => e.cueId).filter((id) => typeof id === 'string'),
     }
   } catch {
     return null
   }
+}
+
+export function lastExport(): Promise<LastExport | null> {
+  return readLastExport(path.join(ctx().dir, 'export'))
 }
 
 export async function preflightExport(req: BatchExportRequest): Promise<ExportPreflight> {

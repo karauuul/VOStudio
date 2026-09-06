@@ -53,9 +53,8 @@ describe('exact modifier matching', () => {
 
   it('separates Shift variants of the same chord', () => {
     expect(action({ code: 'KeyG', ctrlKey: true })).toBe('generate')
-    expect(action({ code: 'KeyG', ctrlKey: true, shiftKey: true, scope: 'timeline' })).toBe(
-      'promptFragment'
-    )
+    expect(action({ code: 'KeyA' })).toBe('approve')
+    expect(action({ code: 'KeyA', shiftKey: true })).toBe('approveNext')
     expect(action({ code: 'KeyZ', ctrlKey: true, scope: 'timeline' })).toBe('undo')
     expect(action({ code: 'KeyZ', ctrlKey: true, shiftKey: true, scope: 'timeline' })).toBe('redo')
   })
@@ -97,9 +96,9 @@ describe('routes', () => {
     }
   })
 
-  it('keeps route keys out of a blocking decision and away from unmodified keys', () => {
-    expect(action({ code: 'Digit1', ctrlKey: true, scope: 'decision' })).toBeNull()
-    expect(action({ code: 'KeyF', ctrlKey: true, scope: 'decision' })).toBeNull()
+  it('keeps route keys out of a popover and away from unmodified keys', () => {
+    expect(action({ code: 'Digit1', ctrlKey: true, scope: 'popover' })).toBeNull()
+    expect(action({ code: 'KeyF', ctrlKey: true, scope: 'popover' })).toBeNull()
     expect(action({ code: 'Digit1' })).toBe('selectTake')
     expect(action({ code: 'KeyF' })).toBe('makeFinal')
     expect(action({ code: 'Digit3', ctrlKey: true })).toBe('routeExport')
@@ -132,7 +131,7 @@ describe('app surfaces', () => {
     expect(action({ code: 'Comma' })).toBeNull()
     expect(action({ code: 'Comma', ctrlKey: true, shiftKey: true })).toBeNull()
     expect(action({ code: 'F1', ctrlKey: true })).toBeNull()
-    for (const scope of ['popover', 'decision'] as Scope[]) {
+    for (const scope of ['popover'] as Scope[]) {
       expect(action({ code: 'Comma', ctrlKey: true, scope })).toBeNull()
       expect(action({ code: 'F1', scope })).toBeNull()
     }
@@ -173,7 +172,6 @@ describe('shortcuts table', () => {
     expect(keyText(of('approve'))).toBe('A')
     expect(keyText(of('approveNext'))).toBe('Shift+A')
     expect(keyText(of('generate'))).toBe('Ctrl+G')
-    expect(keyText(of('promptFragment'))).toBe('Ctrl+Shift+G')
     expect(keyText(of('settings'))).toBe('Ctrl+,')
     expect(keyText(of('shortcuts'))).toBe('F1')
     expect(keyText(of('routeImport'))).toBe('Ctrl+1')
@@ -239,21 +237,13 @@ describe('project grid', () => {
 })
 
 describe('scope precedence', () => {
-  const scopes: Scope[] = ['popover', 'decision', 'text', 'gridText', 'grid', 'timeline', 'workspace']
+  const scopes: Scope[] = ['popover', 'text', 'gridText', 'grid', 'timeline', 'workspace']
 
   it('a popover consumes every key', () => {
     for (const code of ['KeyA', 'Space', 'Escape', 'Delete', 'Digit1']) {
       expect(action({ code, scope: 'popover' })).toBeNull()
     }
     expect(action({ code: 'KeyG', ctrlKey: true, scope: 'popover' })).toBeNull()
-  })
-
-  it('an unsaved-recording decision leaves only Escape', () => {
-    expect(action({ code: 'Escape', scope: 'decision' })).toBe('escape')
-    for (const code of ['KeyA', 'Space', 'KeyR', 'Enter']) {
-      expect(action({ code, scope: 'decision' })).toBeNull()
-    }
-    expect(action({ code: 'KeyG', ctrlKey: true, scope: 'decision' })).toBeNull()
   })
 
   it('a text editor keeps its own keys and allows only Escape and generate', () => {
@@ -269,7 +259,7 @@ describe('scope precedence', () => {
       expect(action({ code, scope: 'timeline' })).not.toBeNull()
       expect(action({ code, scope: 'workspace' })).toBeNull()
     }
-    expect(action({ code: 'KeyR', shiftKey: true, scope: 'timeline' })).toBe('toggleFragmentRecord')
+    expect(action({ code: 'KeyR', scope: 'timeline' })).toBe('toggleRecord')
     expect(action({ code: 'KeyR', shiftKey: true, scope: 'workspace' })).toBeNull()
   })
 
@@ -319,7 +309,6 @@ describe('focused controls', () => {
     timeline: false,
     grid: false,
     deliver: false,
-    decision: () => false,
     ...over,
   })
 

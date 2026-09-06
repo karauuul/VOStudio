@@ -1,21 +1,18 @@
-import type { Character, ClipEditPatch, CueComp, Take, VoiceSettings } from '@shared/domain'
+import type { ClipEditPatch, CueComp, Take } from '@shared/domain'
 import { compDuration } from '@shared/comp'
 import { fmt } from '../Waveform'
 import { ClipParams, type EffectName, type EffectsTarget } from './ClipParams'
 import { stamp } from './shared'
 import { knobText, KNOBS } from './voice'
-import { VoicePanel } from './VoicePanel'
 
-export type InspectorTab = 'take' | 'voice' | 'effects'
+export type InspectorTab = 'take' | 'effects'
 
 const TABS: { id: InspectorTab; label: string }[] = [
-  { id: 'voice', label: 'Voice' },
   { id: 'take', label: 'Take' },
   { id: 'effects', label: 'Effects' },
 ]
 
 interface Props {
-  cueId: string
   tab: InspectorTab
   onTab: (tab: InspectorTab) => void
   take?: Take
@@ -24,12 +21,6 @@ interface Props {
   canSetFinal: boolean
   onSetFinal: () => void
   onDelete: () => void
-  character?: Character
-  voice: VoiceSettings
-  voiceOverride?: Partial<VoiceSettings>
-  onVoiceChange: (patch: Partial<VoiceSettings>) => void
-  onVoiceReset: () => void
-  onVoiceDefault: () => void
   effects: EffectsTarget | null
   effectsLabel: string
   onClipEdit: (patch: ClipEditPatch, commit: boolean) => void
@@ -39,7 +30,6 @@ interface Props {
 }
 
 export function Inspector({
-  cueId,
   tab,
   onTab,
   take,
@@ -48,12 +38,6 @@ export function Inspector({
   canSetFinal,
   onSetFinal,
   onDelete,
-  character,
-  voice,
-  voiceOverride,
-  onVoiceChange,
-  onVoiceReset,
-  onVoiceDefault,
   effects,
   effectsLabel,
   onClipEdit,
@@ -95,18 +79,6 @@ export function Inspector({
             onTrim={onClipTrim}
             onEffect={onClipEffect}
             onEditAsComposition={onEditAsComposition}
-          />
-        )}
-
-        {tab === 'voice' && (
-          <VoicePanel
-            key={cueId}
-            character={character}
-            value={voice}
-            override={voiceOverride}
-            onChange={onVoiceChange}
-            onReset={onVoiceReset}
-            onUseAsDefault={onVoiceDefault}
           />
         )}
       </div>

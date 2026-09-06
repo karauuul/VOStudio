@@ -46,7 +46,6 @@ interface Props {
   onReconvert: (take: Take) => void
   converting: boolean
   genDisabled: boolean
-  genTitle: string
   noVoiceReason: string
 }
 
@@ -106,7 +105,6 @@ export function TakeSourceMenu({
   onReconvert,
   converting,
   genDisabled,
-  genTitle,
   noVoiceReason,
 }: Props) {
   const [open, setOpen] = useState(false)
@@ -330,7 +328,6 @@ export function TakeSourceMenu({
             className="menu-item"
             role="menuitem"
             disabled={genDisabled}
-            title={genTitle}
             onClick={() => {
               close()
               onGenerate()

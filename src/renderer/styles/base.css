@@ -363,21 +363,6 @@ kbd {
   color: var(--tx3);
 }
 
-.knob-dot {
-  position: absolute;
-  top: -2px;
-  right: -7px;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--ac);
-}
-
-.knob.mod .knob-l,
-.knob.mod .knob-v {
-  color: var(--ac);
-}
-
 .knob input[type='range'] {
   width: 72px;
   accent-color: var(--ac);
@@ -389,27 +374,6 @@ kbd {
   font-variant-numeric: tabular-nums;
   color: var(--tx);
   text-align: right;
-}
-
-.knob.wide {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-areas: 'label value' 'range range';
-  gap: 2px 8px;
-  margin-top: 6px;
-}
-
-.knob.wide .knob-l {
-  grid-area: label;
-}
-
-.knob.wide .knob-v {
-  grid-area: value;
-}
-
-.knob.wide input[type='range'] {
-  grid-area: range;
-  width: 100%;
 }
 
 .stats-row {
