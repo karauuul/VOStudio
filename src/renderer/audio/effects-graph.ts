@@ -1,4 +1,5 @@
 import {
+  effectOn,
   hasSends,
   mixGains,
   sanitizeDelay,
@@ -123,8 +124,8 @@ export function connectEffects(
   const sum = ctx.createGain()
   const dryGain = ctx.createGain()
   let dry = 1
-  if (fx!.reverb) dry *= reverbSend(ctx, input, fx!.reverb, sum)
-  if (fx!.delay) dry *= delaySend(ctx, input, fx!.delay, sum)
+  if (effectOn(fx!.reverb)) dry *= reverbSend(ctx, input, fx!.reverb!, sum)
+  if (effectOn(fx!.delay)) dry *= delaySend(ctx, input, fx!.delay!, sum)
   dryGain.gain.value = dry
   input.connect(dryGain)
   dryGain.connect(sum)

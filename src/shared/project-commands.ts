@@ -1,5 +1,6 @@
 import { approveCue, changeCompOutput, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval } from './approval'
 import { compProblem, normalizeComp } from './comp'
+import { sanitizeEffects } from './effects'
 import {
   characterColor,
   DEFAULT_VOICE_SETTINGS,
@@ -10,6 +11,7 @@ import {
   sanitizeOriginal,
   sanitizePinned,
   type Character,
+  type ClipEffects,
   type Cue,
   type CueComp,
   type CueRegion,
@@ -27,6 +29,7 @@ export type ProjectCommand =
   | { type: 'cue.setComp'; cueId: string; comp: CueComp | null }
   | { type: 'cue.setOriginal'; cueId: string; original: OriginalLane | null }
   | { type: 'cue.setTakePinned'; cueId: string; takeId: string; pinned: boolean }
+  | { type: 'cue.setTakeEffects'; cueId: string; takeId: string; effects: ClipEffects | null }
   | { type: 'cue.setRegion'; cueId: string; region: CueRegion | null }
   | { type: 'cue.acceptSuggestion'; cueId: string }
   | { type: 'cue.rejectSuggestion'; cueId: string }
@@ -214,6 +217,19 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
         }
         delete take.pinned
       }
+      break
+    }
+    case 'cue.setTakeEffects': {
+      const take = cue.takes.find((item) => item.id === command.takeId)
+      if (!take) throw new Error('Take not found in this cue')
+      const effects = command.effects === null ? undefined : sanitizeEffects(command.effects)
+      if (JSON.stringify(effects ?? null) === JSON.stringify(take.edits.effects ?? null)) break
+      if (effects) take.edits = { ...take.edits, effects }
+      else {
+        const { effects: _dropped, ...edits } = take.edits
+        take.edits = edits
+      }
+      Object.assign(cue, invalidateVoicedOutput(cue, project))
       break
     }
     case 'cue.setRegion': {

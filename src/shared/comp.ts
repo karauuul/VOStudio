@@ -10,7 +10,7 @@ import {
   type CueComp,
   type Take,
 } from './domain'
-import { effectsTail, pitchActive, sanitizeEffects } from './effects'
+import { effectOn, effectsTail, pitchActive, sanitizeEffects } from './effects'
 
 export const COMP_EPS = 1e-6
 
@@ -98,11 +98,20 @@ export function compEffectsTail(clips: readonly CompClip[], tracks?: readonly Co
 }
 
 export function compHasReverb(clips: readonly CompClip[], tracks?: readonly CompTrack[]): boolean {
-  return clips.some((c) => !!c.edits.effects?.reverb || !!trackOf(tracks, c)?.effects?.reverb)
+  return clips.some(
+    (c) => effectOn(c.edits.effects?.reverb) || effectOn(trackOf(tracks, c)?.effects?.reverb)
+  )
 }
 
 export function compHasPitch(clips: readonly CompClip[]): boolean {
   return clips.some((c) => pitchActive(c.edits.effects?.pitch))
+}
+
+export function withSourceEffects(clip: CompClip, take: Pick<Take, 'edits'>): CompClip {
+  const source = take.edits.effects
+  if (!source) return clip
+  const merged = { ...source, ...(clip.edits.effects ?? {}) }
+  return { ...clip, edits: { ...clip.edits, effects: merged } }
 }
 
 export function compClipEdits(clip: CompClip, bufferDuration: number): ClipEdits {

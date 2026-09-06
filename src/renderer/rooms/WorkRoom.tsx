@@ -5,7 +5,7 @@ import { TextPanel, type TextPanelProps } from '../work/TextPanel'
 import { ProgramPanel } from '../work/ProgramPanel'
 import { TimelinePanel } from '../work/TimelinePanel'
 import { LibraryPanel } from '../work/LibraryPanel'
-import { Inspector } from '../cue/Inspector'
+import { PropertiesPanel } from '../work/PropertiesPanel'
 
 const LINES = { key: 'vo.lines.w', def: 280, min: 240, max: 400 }
 const PROPS = { key: 'vo.props.w', def: 380, min: 320, max: 480 }
@@ -31,7 +31,7 @@ interface Props {
   program: ComponentProps<typeof ProgramPanel>
   timeline: ComponentProps<typeof TimelinePanel>
   library: ComponentProps<typeof LibraryPanel>
-  inspector: ComponentProps<typeof Inspector>
+  properties: ComponentProps<typeof PropertiesPanel>
 }
 
 export function WorkRoom({
@@ -43,7 +43,7 @@ export function WorkRoom({
   program,
   timeline,
   library,
-  inspector,
+  properties,
 }: Props) {
   const [linesW, setLinesW] = useState(() => stored(LINES))
   const [propsW, setPropsW] = useState(() => stored(PROPS))
@@ -123,10 +123,7 @@ export function WorkRoom({
 
         <div className="splitter row" onMouseDown={startDrag('lib')} />
 
-        <section className="panel">
-          <div className="phd">Properties</div>
-          {cueText && <Inspector {...inspector} />}
-        </section>
+        <PropertiesPanel {...properties} />
       </div>
     </div>
   )

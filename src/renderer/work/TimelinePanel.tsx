@@ -38,19 +38,20 @@ import {
   clipVersions,
   compTracks,
   resolveTake,
+  resolveTargetTrack,
   splitClipByWord,
   updateTrack,
   versionLabel,
   wordSnapPoints,
 } from '@shared/library'
-import { mergeEffects, toggleEffect } from '@shared/effects'
 import {
   clipSpeed,
+  DEFAULT_DUCK_DB,
   DUCK_MAX_DB,
   DUCK_MIN_DB,
+  nextOriginal,
   TRACK_GAIN_MAX_DB,
   TRACK_GAIN_MIN_DB,
-  type ClipEditPatch,
   type ClipEdits,
   type CompClip,
   type CompTrack,
@@ -65,7 +66,6 @@ import { reportTakeDuration } from '../audio/duration-backfill'
 import { clipId, transport, type TransportState } from '../audio/transport'
 import { playback, type PlaybackOps } from '../playback'
 import { getPeaks, Wave, type Peaks } from '../Waveform'
-import type { EffectName, EffectsTarget } from '../cue/ClipParams'
 import { DragNumber } from '../cue/DragNumber'
 import {
   clampView,
@@ -92,6 +92,14 @@ export interface ClipSelection {
   reference: { id: string; url: string; from: number; to: number } | null
 }
 
+export interface TimelineSelection {
+  kind: 'clip' | 'track' | null
+  clip: CompClip | null
+  trackId: string
+  tracks: CompTrack[]
+  region: { in: number; out: number }
+}
+
 export interface CompApi {
   deleteSelected: () => boolean
   split: () => void
@@ -101,11 +109,13 @@ export interface CompApi {
   redo: () => void
   selection: () => ClipSelection | null
   playhead: () => number
-  editSelected: (patch: ClipEditPatch, commit: boolean) => void
+  editSelected: (patch: Partial<ClipEdits>, commit: boolean) => void
+  moveSelected: (start: number, commit: boolean) => void
   trimSelected: (edge: 'start' | 'end', at: number, commit: boolean) => void
-  toggleEffect: (which: EffectName) => void
+  editTrack: (trackId: string, patch: Partial<Omit<CompTrack, 'id'>>, commit: boolean) => void
   setIn: () => void
   setOut: () => void
+  setRegion: (edge: 'in' | 'out', at: number) => void
   zoom: (factor: number) => void
   selectTool: () => void
   place: (next: CueComp) => void
@@ -122,7 +132,6 @@ const EDGE_PX = 6
 const FADE_GRAB = 10
 const GAIN_SPAN = 24
 const GAIN_GRAB = 6
-const DEFAULT_DUCK_DB = -12
 const TRACK_COLORS = ['var(--l1)', 'var(--l2)']
 const WAVE_COLORS = ['#3fb8a8', '#a58cf0']
 export const DRAG_TYPE = 'text/vo-source'
@@ -160,7 +169,7 @@ interface Props {
   onComp: (cueId: string, comp: CueComp | null) => Promise<boolean>
   onOriginal: (original: OriginalLane) => void
   onStatus: (kind: 'ok' | 'err' | 'info', text: string) => void
-  onEffectsTarget: (target: EffectsTarget | null) => void
+  onSelect: (selection: TimelineSelection | null) => void
   compRef: MutableRefObject<CompApi | null>
   busyClipId?: string | null
   onDropSource: (takeId: string, trackId: string, at: number) => void
@@ -176,7 +185,7 @@ export function TimelinePanel({
   onComp,
   onOriginal,
   onStatus,
-  onEffectsTarget,
+  onSelect,
   compRef,
   busyClipId,
   onDropSource,
@@ -201,6 +210,7 @@ export function TimelinePanel({
   const [origSolo, setOrigSolo] = useState(false)
   const [peaks, setPeaks] = useState<Record<string, Peaks>>({})
   const [gainDrag, setGainDrag] = useState<{ id: string; db: number } | null>(null)
+  const [pickedTrack, setPickedTrack] = useState<string | null>(null)
   const [playingId, setPlayingId] = useState<string | null>(null)
 
   const cueId = cue?.id ?? ''
@@ -208,6 +218,7 @@ export function TimelinePanel({
   if (shownCue !== cueId) {
     setShownCue(cueId)
     setSelected(null)
+    setPickedTrack(null)
     setPending(null)
     setPxPerSec(savedView?.pxPerSec ?? 100)
     setScroll(savedView?.scroll ?? 0)
@@ -260,10 +271,7 @@ export function TimelinePanel({
   const original = cue?.original
   const setOriginal = useCallback(
     (patch: Partial<OriginalLane> & { previewMuted?: true | undefined }): void => {
-      const base: OriginalLane = original ?? { exportMode: 'off' }
-      const next = { ...base, ...patch }
-      if (next.previewMuted !== true) delete next.previewMuted
-      onOriginal(next)
+      onOriginal(nextOriginal(original, patch))
     },
     [original, onOriginal]
   )
@@ -614,6 +622,7 @@ export function TimelinePanel({
       e.preventDefault()
       e.stopPropagation()
       setSelected(c.id)
+      setPickedTrack(null)
       selRef.current = c.id
       const box = e.currentTarget.getBoundingClientRect()
       const lx = e.clientX - box.left
@@ -731,41 +740,42 @@ export function TimelinePanel({
     setSelected((s) => (s && !live.clips.some((c) => c.id === s) ? null : s))
   }, [live])
 
-  const effectsLabel = useMemo(() => {
-    if (!selectedClip || !cue) return ''
-    const track = tracks.find((t) => t.id === clipTrackId(selectedClip))
-    const v = versionLabel(cue, project, selectedClip.sourceTakeId)
-    return [track?.name, v].filter(Boolean).join(' · ')
-  }, [selectedClip, cue, tracks, project])
+  const liveTracks = useMemo(() => compTracks(live), [live])
 
   useEffect(() => {
-    if (!selectedClip) {
-      onEffectsTarget(null)
+    if (!cue) {
+      onSelect(null)
       return
     }
-    const take = takeOf(selectedClip)
-    onEffectsTarget({
-      label: effectsLabel,
+    onSelect({
+      kind: selectedClip ? 'clip' : pickedTrack ? 'track' : null,
       clip: selectedClip,
-      sourceDuration:
-        (take && peaks[take.file.relPath]?.duration) || take?.duration || 0,
-      busy: busyClipId === selectedClip.id,
+      trackId: selectedClip
+        ? clipTrackId(selectedClip)
+        : resolveTargetTrack(live, pickedTrack ?? targetTrackId),
+      tracks: liveTracks,
+      region: { in: regionIn, out: regionOut },
     })
-  }, [selectedClip, effectsLabel, takeOf, peaks, busyClipId, onEffectsTarget])
+  }, [
+    cue,
+    selectedClip,
+    pickedTrack,
+    targetTrackId,
+    live,
+    liveTracks,
+    regionIn,
+    regionOut,
+    onSelect,
+  ])
 
-  useEffect(() => () => onEffectsTarget(null), [onEffectsTarget])
+  useEffect(() => () => onSelect(null), [onSelect])
 
   const editSelected = useCallback(
-    (patch: ClipEditPatch, doCommit: boolean): void => {
+    (patch: Partial<ClipEdits>, doCommit: boolean): void => {
       const id = selRef.current
       const base = compRefLive.current
-      const c = base.clips.find((x) => x.id === id)
-      if (!id || !c) return
-      const { effects, ...rest } = patch
-      const edits: Partial<ClipEdits> = effects
-        ? { ...rest, effects: mergeEffects(c.edits.effects, effects) }
-        : rest
-      const next = setClipEdits(base, id, edits)
+      if (!id || !base.clips.some((x) => x.id === id)) return
+      const next = setClipEdits(base, id, patch)
       if (doCommit) commit(next)
       else setPending(next)
     },
@@ -832,6 +842,14 @@ export function TimelinePanel({
       },
       playhead: () => posRef.current,
       editSelected,
+      moveSelected: (start, doCommit) => {
+        const base = compRefLive.current
+        const id = selRef.current
+        if (!id || !base.clips.some((x) => x.id === id)) return
+        const next = moveClipTo(base, id, start)
+        if (doCommit) commit(next)
+        else setPending(next)
+      },
       trimSelected: (edge, at, doCommit) => {
         const base = compRefLive.current
         const id = selRef.current
@@ -839,19 +857,12 @@ export function TimelinePanel({
         if (!c) return
         const take = takeOf(c)
         const srcDur = (take && peaks[take.file.relPath]?.duration) || take?.duration || Infinity
-        const from = edge === 'start' ? c.srcIn : c.srcOut
-        const next = trimClipEdge(base, c.id, edge, (at - from) / clipSpeed(c.edits), srcDur)
+        const from = edge === 'start' ? c.start : clipEnd(c)
+        const next = trimClipEdge(base, c.id, edge, at - from, srcDur)
         if (doCommit) commit(next)
         else setPending(next)
       },
-      toggleEffect: (which) => {
-        const base = compRefLive.current
-        const id = selRef.current
-        const c = id ? base.clips.find((x) => x.id === id) : null
-        if (!c || !id) return
-        const on = !!c.edits.effects?.[which]
-        commit(setClipEdits(base, id, { effects: toggleEffect(c.edits.effects, which, !on) }))
-      },
+      editTrack,
       setIn: () => {
         const base = compRefLive.current
         commit(setRegionEdge(base, 'in', posRef.current, refDur))
@@ -860,11 +871,14 @@ export function TimelinePanel({
         const base = compRefLive.current
         commit(setRegionEdge(base, 'out', posRef.current, refDur))
       },
+      setRegion: (edge, at) => {
+        commit(setRegionEdge(compRefLive.current, edge, at, refDur))
+      },
       zoom: zoomBy,
       selectTool: () => setTool('select'),
       place: (next) => commit(next),
     }),
-    [editable, commit, edit, splitClip, editSelected, refDur, refPath, takeOf, peaks, zoomBy]
+    [editable, commit, edit, splitClip, editSelected, editTrack, refDur, refPath, takeOf, peaks, zoomBy]
   )
 
   useWire(compRef, api)
@@ -1078,12 +1092,23 @@ export function TimelinePanel({
           <div
             key={track.id}
             className="tl-lane"
-            style={{ ['--c' as string]: TRACK_COLORS[i % TRACK_COLORS.length], height: TRACK_H }}
+            style={{
+              ['--c' as string]: TRACK_COLORS[i % TRACK_COLORS.length],
+              height: TRACK_H,
+              ...(i === tracks.length - 1 ? { flexGrow: 1 } : {}),
+            }}
           >
-            <div className="tl-strip">
+            <div
+              className="tl-strip"
+              onMouseDown={() => {
+                setSelected(null)
+                selRef.current = null
+                setPickedTrack(track.id)
+              }}
+            >
               <div className="r1">
                 <button
-                  className={'tl-badge' + (track.id === targetTrackId || (!targetTrackId && i === 0) ? ' on' : '')}
+                  className={'tl-badge' + (track.id === resolveTargetTrack(comp, targetTrackId) ? ' on' : '')}
                   onClick={() => onTargetTrack(track.id)}
                   aria-label={`Target track ${i + 1}`}
                 >
