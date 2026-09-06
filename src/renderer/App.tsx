@@ -10,6 +10,7 @@ import {
   type CueComp,
   type Project,
   type Take,
+  type MatchRule,
   type TimelineViewState,
   type UsageInfo,
   type VoiceSettings,
@@ -32,9 +33,9 @@ import {
 import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues, groupByCharacter } from '@shared/cue-filter'
 import { LinesPanel } from './work/LinesPanel'
 import type { TextPanelProps } from './work/TextPanel'
-import { ProjectTable, type GridApi } from './ProjectTable'
 import { DeliverScreen } from './DeliverScreen'
 import { ImportRoom } from './rooms/ImportRoom'
+import type { GridApi } from './import/LinesTable'
 import { WorkRoom } from './rooms/WorkRoom'
 import { ExportRoom } from './rooms/ExportRoom'
 import { useProjectSession, type StatusKind } from './useProjectSession'
@@ -44,7 +45,6 @@ import type { LibraryPanel } from './work/LibraryPanel'
 import { ProgramPanel, type ProgramApi } from './work/ProgramPanel'
 import { CueText } from './work/CueText'
 import { TimelinePanel } from './work/TimelinePanel'
-import { CharactersDialog } from './CharactersDialog'
 import { RulesDialog } from './RulesPanel'
 import { ProjectHome } from './ProjectHome'
 import { TopBar, type MenuItem, type Route } from './shell/TopBar'
@@ -55,7 +55,6 @@ import { StatusToast, type Status } from './StatusToast'
 import { SettingsDialog } from './SettingsDialog'
 import { ShortcutsDialog } from './ShortcutsDialog'
 import { JobsDrawer } from './JobsDrawer'
-import { useTemplateReimport } from './TemplateReimport'
 import { useKeyboard, type KeyboardHandlers } from './keyboard'
 import {
   cueDecision,
@@ -96,13 +95,12 @@ export default function App() {
   const [status, setStatus] = useState<Status>(null)
   const [bulk, setBulk] = useState(false)
   const [exporting, setExporting] = useState(false)
-  const [showCharacters, setShowCharacters] = useState(false)
+  const [matchBy, setMatchBy] = useState<MatchRule>('id')
   const [showRules, setShowRules] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showJobs, setShowJobs] = useState(false)
-  const [tableOverlay, setTableOverlay] = useState(false)
   const [previewCueId, setPreviewCueId] = useState<string | undefined>(undefined)
   const [previewSource, setPreviewSource] = useState<PreviewSource>({ kind: 'none' })
   const [selection, setSelection] = useState<TimelineSelection | null>(null)
@@ -149,11 +147,11 @@ export default function App() {
     setStatus({ id: ++statusSeq.current, kind, text })
   }, [])
   const closeStatus = useCallback(() => setStatus(null), [])
-  const reimport = useTemplateReimport(pushStatus)
 
   const onBootstrap = useCallback((p: Project) => {
     setFilter(p.ui.filter || DEFAULT_FILTER)
     setSearch(p.ui.search ?? '')
+    setMatchBy(p.ui.matchBy ?? 'id')
     setTargetTrack(p.ui.targetTrack ?? {})
     setTimelineView(p.ui.timeline ?? {})
     setActiveCueId(p.ui.activeCueId)
@@ -307,8 +305,8 @@ export default function App() {
 
   useEffect(() => {
     if (!project) return
-    saveUi({ activeCueId, filter, search, targetTrack, timeline: timelineView })
-  }, [saveUi, activeCueId, filter, search, targetTrack, timelineView, project !== null])
+    saveUi({ activeCueId, filter, search, matchBy, targetTrack, timeline: timelineView })
+  }, [saveUi, activeCueId, filter, search, matchBy, targetTrack, timelineView, project !== null])
 
   useEffect(() => setTextSel(null), [activeCueId])
 
@@ -859,15 +857,6 @@ export default function App() {
     void leaveProject()
   }, [leaveProject, refuseWhileExporting])
 
-  const startReimport = useCallback(async () => {
-    if (refuseWhileExporting()) return
-    const saved = await flushText()
-    await flushVoice()
-    if (!saved) return
-    playback.stop()
-    reimport.start()
-  }, [flushText, flushVoice, reimport, refuseWhileExporting])
-
   async function syncCsv(): Promise<void> {
     setBulk(true)
     try {
@@ -1017,15 +1006,7 @@ export default function App() {
     ]
   )
 
-  const blocked =
-    showCharacters ||
-    showRules ||
-    showSettings ||
-    showShortcuts ||
-    showJobs ||
-    menuOpen ||
-    tableOverlay ||
-    reimport.open
+  const blocked = showRules || showSettings || showShortcuts || showJobs || menuOpen
 
   useKeyboard(handlers, !blocked, {
     home: !project,
@@ -1076,15 +1057,6 @@ export default function App() {
     ...(project.csvBinding
       ? [{ label: 'Sync CSV', disabled: bulk || exporting, onClick: () => void syncCsv() }]
       : []),
-    {
-      label: 'Re-import template…',
-      disabled: bulk || exporting || busyCount > 0,
-      onClick: () => {
-        if (guardRef.current?.(() => void startReimport())) return
-        void startReimport()
-      },
-    },
-    { label: 'Characters', onClick: () => setShowCharacters(true) },
     { label: 'Rules…', onClick: () => setShowRules(true) },
     { label: 'Settings', onClick: () => setShowSettings(true) },
     { label: 'Shortcuts', onClick: () => setShowShortcuts(true) },
@@ -1469,23 +1441,6 @@ export default function App() {
     onOpenLine: openCue,
   }
 
-  const table: Omit<ComponentProps<typeof ProjectTable>, 'hidden'> = {
-    project,
-    filter,
-    search,
-    characterFilter: liveCharacterFilter,
-    onFilter: setFilter,
-    onSearch: setSearch,
-    onCharacterFilter: setCharacterFilter,
-    searchRef: tableSearchRef,
-    gridRef,
-    onOpenCue: openCue,
-    onReviewSelection: startReviewSelection,
-    onGenerate: generateSelected,
-    onAssignCharacter: (ids, characterId) => void assignCharacter(ids, characterId),
-    onOverlay: setTableOverlay,
-  }
-
   const deliver: Omit<ComponentProps<typeof DeliverScreen>, 'hidden'> = {
     project,
     onStatus: pushStatus,
@@ -1511,7 +1466,27 @@ export default function App() {
         onMenu={setMenuOpen}
       />
 
-      <ImportRoom hidden={route !== 'import'} table={table} />
+      <ImportRoom
+        hidden={route !== 'import'}
+        project={project}
+        search={search}
+        onSearch={setSearch}
+        searchRef={tableSearchRef}
+        gridRef={gridRef}
+        matchBy={matchBy}
+        onMatchBy={setMatchBy}
+        hasKey={hasKey}
+        onStatus={pushStatus}
+        onOpenCue={openCue}
+        onReviewSelection={startReviewSelection}
+        onGenerate={generateSelected}
+        onAssignCharacter={(ids, characterId) => void assignCharacter(ids, characterId)}
+        dispatch={dispatch}
+        onVoiceSettings={onCharacterVoice}
+        onProvider={onCharacterProvider}
+        onFlushVoice={flushVoice}
+        onCancelVoice={session.cancelCharacterVoice}
+      />
 
       <WorkRoom
         hidden={route !== 'work'}
@@ -1531,8 +1506,6 @@ export default function App() {
 
       <HotkeyHint />
 
-      {reimport.dialog}
-
       {settingsUi}
       {shortcutsUi}
 
@@ -1545,21 +1518,6 @@ export default function App() {
           }}
           onStatus={pushStatus}
           onClose={() => setShowJobs(false)}
-        />
-      )}
-
-      {showCharacters && (
-        <CharactersDialog
-          characters={project.characters}
-          cues={project.cues}
-          hasKey={hasKey}
-          onVoiceSettings={onCharacterVoice}
-          onProvider={onCharacterProvider}
-          onFlushVoice={flushVoice}
-          onCancelVoice={session.cancelCharacterVoice}
-          dispatch={dispatch}
-          onStatus={pushStatus}
-          onClose={() => setShowCharacters(false)}
         />
       )}
 

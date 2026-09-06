@@ -1,4 +1,5 @@
 import type { UsageInfo, VoiceSettings, WordTiming } from '@shared/domain'
+import type { ProviderVoice } from '@shared/ipc'
 import { wordsFromAlignment } from '@shared/library'
 import { getApiKey } from '../secrets'
 
@@ -103,6 +104,50 @@ export async function sts(req: {
   }
   if (!r.ok) throw new Error(`ElevenLabs STS ${r.status}: ${(await r.text()).slice(0, 300)}`)
   return Buffer.from(await r.arrayBuffer())
+}
+
+export const ELEVENLABS_STT_MODEL = 'scribe_v1'
+
+export async function stt(req: { audio: Buffer; filename: string }): Promise<string> {
+  const form = new FormData()
+  const view = new Uint8Array(req.audio.byteLength)
+  view.set(req.audio)
+  form.append('file', new Blob([view]), req.filename)
+  form.append('model_id', ELEVENLABS_STT_MODEL)
+
+  let r: Response
+  try {
+    r = await fetch(`${BASE}/speech-to-text`, {
+      method: 'POST',
+      headers: { 'xi-api-key': await key(), Accept: 'application/json' },
+      body: form,
+      signal: AbortSignal.timeout(120_000),
+    })
+  } catch (e) {
+    if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+      throw new Error('ElevenLabs STT: timed out after 120s — try again manually')
+    }
+    throw e
+  }
+  if (!r.ok) throw new Error(`ElevenLabs STT ${r.status}: ${(await r.text()).slice(0, 300)}`)
+  const data = (await r.json()) as { text?: unknown }
+  if (typeof data.text !== 'string') throw new Error('ElevenLabs STT returned no text')
+  return data.text.trim()
+}
+
+export async function voices(): Promise<ProviderVoice[]> {
+  const r = await fetch(`${BASE}/voices`, { headers: { 'xi-api-key': await key() } })
+  if (!r.ok) throw new Error(`ElevenLabs ${r.status}: ${(await r.text()).slice(0, 300)}`)
+  const data = (await r.json()) as { voices?: unknown }
+  if (!Array.isArray(data.voices)) return []
+  const out: ProviderVoice[] = []
+  for (const raw of data.voices) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as { voice_id?: unknown; name?: unknown }
+    if (typeof row.voice_id !== 'string' || !row.voice_id) continue
+    out.push({ id: row.voice_id, name: typeof row.name === 'string' && row.name ? row.name : row.voice_id })
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name))
 }
 
 export async function usage(): Promise<UsageInfo | null> {

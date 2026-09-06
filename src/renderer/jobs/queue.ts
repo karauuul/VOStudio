@@ -1,4 +1,4 @@
-export type JobKind = 'tts' | 'sts'
+export type JobKind = 'tts' | 'sts' | 'stt'
 export type JobState = 'queued' | 'running' | 'done' | 'error'
 
 export interface Job {

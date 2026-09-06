@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { TemplatePreview } from '@shared/ipc'
 import type { ProjectSnapshot } from '@shared/project-commands'
 import type { ProjectSummary } from '@shared/project-summary'
 import { api } from './api'
 import { ConfirmDialog } from './Overlay'
-import { TemplatePreviewDialog } from './TemplatePreviewDialog'
 
 type Status = (kind: 'ok' | 'err' | 'info', text: string) => void
 
@@ -22,7 +20,6 @@ export function ProjectHome({
   const [selected, setSelected] = useState<string | null>(null)
   const [menuFor, setMenuFor] = useState<string | null>(null)
   const [trash, setTrash] = useState<ProjectSummary | null>(null)
-  const [preview, setPreview] = useState<TemplatePreview | null>(null)
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
 
@@ -60,20 +57,23 @@ export function ProjectHome({
 
   const pickTemplate = (): void =>
     run(async () => {
-      const result = await api['project:pickTemplate']()
-      if (result) setPreview(result)
-    })
-
-  const importTemplate = (current: TemplatePreview): void =>
-    run(async () => {
-      const result = await api['project:importTemplate'](current.dir)
-      const known = new Set(current.warnings.map((w) => `${w.row}:${w.reason}`))
-      const fresh = result.warnings.filter((w) => !known.has(`${w.row}:${w.reason}`))
-      setPreview(null)
+      const preview = await api['project:pickTemplate']()
+      if (!preview) return
+      if (preview.fatalErrors.length > 0) {
+        onStatus(
+          'err',
+          preview.fatalErrors
+            .slice(0, 3)
+            .map((e) => `${e.row === null ? 'file' : `row ${e.row}`}: ${e.reason}`)
+            .join(' · ') + (preview.fatalErrors.length > 3 ? ` · +${preview.fatalErrors.length - 3} more` : '')
+        )
+        return
+      }
+      const result = await api['project:importTemplate'](preview.dir)
       onOpen(result.snapshot)
       onStatus('ok', `Imported ${result.snapshot.project.cues.length} cues`)
-      if (fresh.length > 0) {
-        onStatus('info', `${fresh.length} new warnings since preview: ${fresh[0].reason}`)
+      if (result.warnings.length > 0) {
+        onStatus('info', `${result.warnings.length} warnings: ${result.warnings[0].reason}`)
       }
     })
 
@@ -211,15 +211,6 @@ export function ProjectHome({
             { label: 'Move to Trash', kind: 'danger', onClick: () => moveToTrash(trash) },
             { label: 'Cancel', safe: true, onClick: () => setTrash(null) },
           ]}
-        />
-      )}
-
-      {preview && (
-        <TemplatePreviewDialog
-          preview={preview}
-          busy={busy}
-          onCancel={() => setPreview(null)}
-          onCreate={() => importTemplate(preview)}
         />
       )}
     </div>

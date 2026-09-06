@@ -8,6 +8,7 @@ import {
   ELEVENLABS_TTS_MODEL,
   hasVoicedTake,
   sanitizeCueRegion,
+  sanitizeLanguages,
   sanitizeOriginal,
   sanitizePinned,
   type Character,
@@ -17,6 +18,7 @@ import {
   type CueRegion,
   type OriginalLane,
   type Project,
+  type ProjectLanguages,
   type ProjectVersion,
   type VoiceSettings,
 } from './domain'
@@ -44,9 +46,11 @@ export type ProjectCommand =
   | { type: 'character.delete'; characterId: string; reassignTo: string }
   | { type: 'rules.set'; text: string }
   | { type: 'project.rename'; name: string }
+  | { type: 'project.setLanguages'; languages: ProjectLanguages | null }
 
 export interface ChangeSet {
   name?: string
+  languages?: ProjectLanguages | null
   versions?: ProjectVersion[]
   cues?: Cue[]
   characters?: Project['characters']
@@ -162,6 +166,13 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
     if (!name) throw new Error('Project name cannot be empty')
     project.name = name
     return { name }
+  }
+  if (command.type === 'project.setLanguages') {
+    const languages = command.languages === null ? undefined : sanitizeLanguages(command.languages)
+    if (command.languages !== null && !languages) throw new Error('Invalid language pair')
+    if (languages) project.languages = languages
+    else delete project.languages
+    return { languages: languages ?? null }
   }
   const cue = cueById(project, command.cueId)
   switch (command.type) {
@@ -291,6 +302,12 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
 export function applyChangeSet(project: Project, changes: ChangeSet): Project {
   let next = project
   if (changes.name !== undefined) next = { ...next, name: changes.name }
+  if (changes.languages !== undefined) {
+    if (changes.languages === null) {
+      const { languages: _drop, ...rest } = next
+      next = rest
+    } else next = { ...next, languages: changes.languages }
+  }
   if (changes.versions) next = { ...next, versions: structuredClone(changes.versions) }
   if (changes.cues) {
     const replacements = new Map(changes.cues.map((cue) => [cue.id, cue]))

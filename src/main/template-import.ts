@@ -7,6 +7,7 @@ import {
   DEFAULT_VOICE_SETTINGS,
   ELEVENLABS_STS_MODEL,
   ELEVENLABS_TTS_MODEL,
+  sanitizeLanguages,
   sanitizeTerms,
   type AudioRef,
   type Character,
@@ -14,9 +15,9 @@ import {
   type Project,
   type Term,
 } from '@shared/domain'
-import type { ReimportDiff, ReimportResult, TemplateIssue, TemplateMeta, TemplatePreview } from '@shared/ipc'
+import type { ReimportResult, TemplateIssue, TemplateMeta, TemplatePreview } from '@shared/ipc'
 import type { ChangeSet } from '@shared/project-commands'
-import { applyTemplateDiff, diffTemplate, type TemplateDiff } from '@shared/template-reimport'
+import { applyTemplateDiff, diffTemplate } from '@shared/template-reimport'
 import { isSafeFileName, PROJECT_SUFFIX } from '@shared/project-summary'
 import { projectNameSchema, templateMetaSchema } from './schemas'
 import * as store from './project-store'
@@ -385,6 +386,11 @@ export function buildProjectBase(
     ui: { filter: '', search: '' },
   }
   if (validation.terms) base.terms = validation.terms
+  const languages = sanitizeLanguages({
+    source: validation.meta?.sourceLang,
+    target: validation.meta?.targetLang,
+  })
+  if (languages) base.languages = languages
   return base
 }
 
@@ -532,19 +538,5 @@ export async function reimportTemplate(
         ? { characters: structuredClone(project.characters), charactersReplace: true }
         : {}),
     },
-  }
-}
-
-export function summarizeDiff(diff: TemplateDiff<TemplateRow>): ReimportDiff {
-  return {
-    added: diff.added.length,
-    updated: diff.updated.length,
-    untouched: diff.untouched.length,
-    orphaned: diff.orphaned.length,
-    updatedSample: diff.updated.slice(0, PREVIEW_ROWS).map((entry) => ({
-      cueId: entry.row.cueId,
-      sourceChanged: entry.sourceChanged,
-      translationChanged: entry.translationChanged,
-    })),
   }
 }

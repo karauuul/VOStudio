@@ -1,12 +1,14 @@
 import type {
   ClipEdits,
   CompTrack,
+  MatchRule,
   ProjectVersion,
   Take,
   UsageInfo,
   VoiceSettings,
   UiSessionState,
 } from './domain'
+import type { TableMapping } from './import-table'
 import type { ExportFormat } from './export-plan'
 import type { PreflightPlan, PreflightSource } from './export-preflight'
 import type { UpdateStatus } from './updater'
@@ -198,19 +200,6 @@ export interface TemplateImportResult {
   warnings: TemplateIssue[]
 }
 
-export interface ReimportDiff {
-  added: number
-  updated: number
-  untouched: number
-  orphaned: number
-  updatedSample: { cueId: string; sourceChanged: boolean; translationChanged: boolean }[]
-}
-
-export interface ReimportPreview {
-  preview: TemplatePreview
-  diff: ReimportDiff
-}
-
 export interface ReimportResult {
   added: number
   updated: number
@@ -222,6 +211,32 @@ export interface ReimportResult {
 export interface SuggestionsLoadResult {
   loaded: number
   skipped: number
+}
+
+export interface AudioImportResult {
+  added: number
+  updated: number
+  files: number
+}
+
+export interface TableImportResult {
+  path: string
+  name: string
+  headers: string[]
+  mapping: TableMapping
+  rows: number
+  matched: number
+  unmatched: number
+}
+
+export interface TranscribeResult {
+  updated: number
+  skipped: number
+}
+
+export interface ProviderVoice {
+  id: string
+  name: string
 }
 
 export interface TakeDurationUpdate {
@@ -238,8 +253,15 @@ export interface IpcApi {
   'project:close': () => Promise<void>
   'project:pickTemplate': () => Promise<TemplatePreview | null>
   'project:importTemplate': (dir: string) => Promise<TemplateImportResult>
-  'project:previewReimport': (dir: string) => Promise<ReimportPreview>
-  'project:applyReimport': (dir: string) => Promise<ReimportResult>
+  'import:pick': (kind: 'files' | 'folder' | 'table') => Promise<string[]>
+  'import:audio': (req: { paths: string[]; rule: MatchRule }) => Promise<AudioImportResult>
+  'import:table': (req: {
+    path: string
+    rule: MatchRule
+    mapping?: TableMapping
+    replaceTranslations?: boolean
+  }) => Promise<TableImportResult>
+  'import:template': (dir: string) => Promise<ReimportResult>
   'project:command': (command: ProjectCommand) => Promise<CommandResult>
   'project:saveVersion': (req: { name?: string }) => Promise<ProjectVersion[]>
   'ui:save': (ui: UiSessionState) => Promise<void>
@@ -264,6 +286,8 @@ export interface IpcApi {
 
   'provider:tts': (req: TtsRequest) => Promise<Take>
   'provider:sts': (req: StsRequest) => Promise<Take>
+  'provider:transcribe': (req: { cueIds: string[]; overwrite?: boolean }) => Promise<TranscribeResult>
+  'provider:voices': () => Promise<ProviderVoice[]>
   'provider:testVoice': (characterId: string) => Promise<ArrayBuffer>
   'provider:usage': () => Promise<UsageInfo | null>
   'provider:setApiKey': (key: string) => Promise<void>

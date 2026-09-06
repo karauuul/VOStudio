@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { EventChannel, IpcApi, IpcChannel, IpcEvents } from '@shared/ipc'
 
 const channelMap: Record<IpcChannel, true> = {
@@ -9,8 +9,10 @@ const channelMap: Record<IpcChannel, true> = {
   'project:close': true,
   'project:pickTemplate': true,
   'project:importTemplate': true,
-  'project:previewReimport': true,
-  'project:applyReimport': true,
+  'import:pick': true,
+  'import:audio': true,
+  'import:table': true,
+  'import:template': true,
   'project:command': true,
   'project:saveVersion': true,
   'ui:save': true,
@@ -28,6 +30,8 @@ const channelMap: Record<IpcChannel, true> = {
 
   'provider:tts': true,
   'provider:sts': true,
+  'provider:transcribe': true,
+  'provider:voices': true,
   'provider:testVoice': true,
   'provider:usage': true,
   'provider:setApiKey': true,
@@ -80,8 +84,23 @@ function on<C extends EventChannel>(channel: C, cb: (payload: IpcEvents[C]) => v
 
 api['on'] = on
 
+function pathsFor(files: File[]): string[] {
+  const out: string[] = []
+  for (const file of files) {
+    try {
+      const p = webUtils.getPathForFile(file)
+      if (p) out.push(p)
+    } catch {
+    }
+  }
+  return out
+}
+
+api['pathsFor'] = pathsFor
+
 contextBridge.exposeInMainWorld('api', api)
 
 export type WindowApi = { [C in IpcChannel]: IpcApi[C] } & {
   on<C extends EventChannel>(channel: C, cb: (payload: IpcEvents[C]) => void): () => void
+  pathsFor(files: File[]): string[]
 }
