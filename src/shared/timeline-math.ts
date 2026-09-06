@@ -43,6 +43,51 @@ export function clampView(
   return { pxPerSec, scroll: clamp(view.scroll, 0, max) }
 }
 
+export function clampPlayhead(t: number, extent: number): number {
+  if (!(t > 0)) return 0
+  return extent > 0 && t > extent ? extent : t
+}
+
+export type WheelIntent =
+  | { kind: 'zoom'; factor: number }
+  | { kind: 'scrollX'; seconds: number }
+  | { kind: 'scrollY'; pixels: number }
+
+export interface WheelInput {
+  deltaX: number
+  deltaY: number
+  altKey: boolean
+  ctrlKey: boolean
+  metaKey: boolean
+}
+
+export function wheelIntent(e: WheelInput, pxPerSec: number): WheelIntent {
+  if (e.altKey) return { kind: 'zoom', factor: Math.exp(-e.deltaY * 0.0025) }
+  if (e.ctrlKey || e.metaKey) return { kind: 'scrollY', pixels: e.deltaY }
+  const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
+  return { kind: 'scrollX', seconds: d / Math.max(1e-9, pxPerSec) }
+}
+
+export interface MarqueeClip {
+  id: string
+  start: number
+  end: number
+  trackId: string
+}
+
+export function marqueeHits(
+  clips: readonly MarqueeClip[],
+  from: number,
+  to: number,
+  tracks: readonly string[]
+): string[] {
+  const lo = Math.min(from, to)
+  const hi = Math.max(from, to)
+  return clips
+    .filter((c) => tracks.includes(c.trackId) && c.start < hi && c.end > lo)
+    .map((c) => c.id)
+}
+
 const STEPS = [
   0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600,
 ]

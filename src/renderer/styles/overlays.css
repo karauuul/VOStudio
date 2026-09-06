@@ -581,8 +581,14 @@
   border: 1px solid var(--line2);
   border-radius: 4px;
   background: #26292e;
-  font: 11px var(--mono);
-  color: var(--tx3);
+  font: 11px var(--sans);
+  color: var(--tx2);
   pointer-events: none;
   white-space: nowrap;
+}
+
+.hk-hint b {
+  margin-left: 8px;
+  font: 11px var(--mono);
+  color: var(--tx3);
 }

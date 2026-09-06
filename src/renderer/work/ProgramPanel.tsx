@@ -41,6 +41,7 @@ export interface ProgramApi {
   toggle: () => boolean
   insert: () => void
   replace: () => void
+  showTab: (tab: 'program' | 'source') => void
 }
 
 export interface ProgramPanelProps {
@@ -195,8 +196,11 @@ export function ProgramPanel({
       },
       insert: onInsert,
       replace: onReplace,
+      showTab: (next) => {
+        if (next === 'program' || source) setTab(next)
+      },
     }),
-    [onSource, audition, onInsert, onReplace]
+    [onSource, source, audition, onInsert, onReplace]
   )
   useWire(programRef, api)
 
@@ -364,6 +368,7 @@ export function ProgramPanel({
             <select
               className="field mono"
               aria-label="Frame fit"
+              data-hint="Frame fit"
               value={fill ? 'fill' : 'fit'}
               onChange={(e) => setFill(e.target.value === 'fill')}
             >
@@ -373,6 +378,7 @@ export function ProgramPanel({
             <select
               className="field mono"
               aria-label="Aspect"
+              data-hint="Aspect"
               value={aspect}
               onChange={(e) => setAspect(e.target.value)}
             >
@@ -405,7 +411,13 @@ export function ProgramPanel({
               <path d="M12 1L4 6l8 5z" fill="currentColor" />
             </svg>
           </button>
-          <button className="ico" aria-label="Step back" disabled={off} onClick={() => step(-1)}>
+          <button
+            className="ico"
+            aria-label="Step back"
+            data-hint="Step back"
+            disabled={off}
+            onClick={() => step(-1)}
+          >
             <svg width="12" height="12" viewBox="0 0 12 12">
               <path d="M10 1L2 6l8 5z" fill="currentColor" />
             </svg>
@@ -428,7 +440,13 @@ export function ProgramPanel({
               </svg>
             )}
           </button>
-          <button className="ico" aria-label="Step forward" disabled={off} onClick={() => step(1)}>
+          <button
+            className="ico"
+            aria-label="Step forward"
+            data-hint="Step forward"
+            disabled={off}
+            onClick={() => step(1)}
+          >
             <svg width="12" height="12" viewBox="0 0 12 12">
               <path d="M2 1l8 5-8 5z" fill="currentColor" />
             </svg>
@@ -450,6 +468,7 @@ export function ProgramPanel({
           <button
             className={'ico' + (loop ? ' on' : '')}
             aria-label="Loop"
+            data-hint="Loop"
             aria-pressed={loop}
             onClick={() => {
               const next = !loop
@@ -483,7 +502,12 @@ export function ProgramPanel({
             </>
           ) : (
             <>
-              <button className="ico" aria-label="Full screen" onClick={() => setFull(true)}>
+              <button
+                className="ico"
+                aria-label="Full screen"
+                data-hint="Full screen"
+                onClick={() => setFull(true)}
+              >
                 <svg width="14" height="14" viewBox="0 0 14 14">
                   <path
                     d="M1 5V1h4M9 1h4v4M13 9v4H9M5 13H1V9"
@@ -500,6 +524,7 @@ export function ProgramPanel({
                 <button
                   className={'ico' + (gainOpen ? ' on' : '')}
                   aria-label={gain === 0 ? 'Monitor volume, muted' : 'Monitor volume'}
+                  data-hint="Volume"
                   onClick={() => setGainOpen((v) => !v)}
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14">

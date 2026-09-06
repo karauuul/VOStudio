@@ -204,8 +204,12 @@ export function keyText(b: Binding): string {
   return [b.mod ? MOD_LABEL : '', b.shift ? 'Shift' : '', codeName(code)].filter(Boolean).join('+')
 }
 
+export function bindingOf(action: KeyAction): Binding | null {
+  return BINDINGS.find((x) => x.action === action && x.label) ?? null
+}
+
 export function hotkeyText(action: KeyAction): string {
-  const b = BINDINGS.find((x) => x.action === action && x.label)
+  const b = bindingOf(action)
   return b ? keyText(b) : ''
 }
 
