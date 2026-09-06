@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import {
   DEFAULT_VOICE_SETTINGS,
+  ELEVENLABS_STS_MODEL,
+  ELEVENLABS_TTS_MODEL,
   liveTakes,
   normalizeOverride,
   resolveVoiceSettings,
@@ -11,6 +13,7 @@ import {
   type Project,
   type Take,
   type MatchRule,
+  type ProviderModeSettings,
   type TimelineViewState,
   type UsageInfo,
   type VoiceSettings,
@@ -76,6 +79,12 @@ import {
   type GenTarget,
   type TextRange,
 } from '@shared/generation'
+import {
+  estimateChars,
+  nextProviderSettings,
+  type GenMode,
+  type ProviderModel,
+} from '@shared/provider-models'
 import { originalRef } from '@shared/export-plan'
 import { splitStems } from './audio/stems'
 import { reportTakeDuration } from './audio/duration-backfill'
@@ -96,6 +105,9 @@ export default function App() {
   const [bulk, setBulk] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [matchBy, setMatchBy] = useState<MatchRule>('id')
+  const [genMode, setGenMode] = useState<GenMode | undefined>(undefined)
+  const mode: GenMode = genMode ?? 'tts'
+  const [providerModels, setProviderModels] = useState<ProviderModel[]>([])
   const [showRules, setShowRules] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -152,6 +164,7 @@ export default function App() {
     setFilter(p.ui.filter || DEFAULT_FILTER)
     setSearch(p.ui.search ?? '')
     setMatchBy(p.ui.matchBy ?? 'id')
+    setGenMode(p.ui.genMode)
     setTargetTrack(p.ui.targetTrack ?? {})
     setTimelineView(p.ui.timeline ?? {})
     setActiveCueId(p.ui.activeCueId)
@@ -228,7 +241,10 @@ export default function App() {
   )
 
   useEffect(() => {
-    void api['provider:hasApiKey']().then(setHasKey)
+    void api['provider:hasApiKey']().then((has) => {
+      setHasKey(has)
+      if (has) void api['provider:models']().then(setProviderModels, () => setProviderModels([]))
+    })
     void api['provider:usage']().then(setUsage)
     void api['settings:get']()
       .then(setAppSettings)
@@ -325,8 +341,8 @@ export default function App() {
 
   useEffect(() => {
     if (!project) return
-    saveUi({ activeCueId, filter, search, matchBy, targetTrack, timeline: timelineView })
-  }, [saveUi, activeCueId, filter, search, matchBy, targetTrack, timelineView, project !== null])
+    saveUi({ activeCueId, filter, search, matchBy, genMode, targetTrack, timeline: timelineView })
+  }, [saveUi, activeCueId, filter, search, matchBy, genMode, targetTrack, timelineView, project !== null])
 
   useEffect(() => setTextSel(null), [activeCueId])
 
@@ -476,6 +492,22 @@ export default function App() {
     },
     [setProject, debounceVoice, pushStatus, dispatch, refuseWhileExporting]
   )
+
+  const setProviderMode = useCallback(
+    (patch: ProviderModeSettings) => {
+      if (refuseWhileExporting()) return
+      const next = nextProviderSettings(projectRef.current?.provider, mode, patch, providerModels)
+      void dispatch({ type: 'project.setProvider', provider: next ?? null }).catch((e: unknown) =>
+        pushStatus('err', String(e))
+      )
+    },
+    [projectRef, mode, providerModels, dispatch, pushStatus, refuseWhileExporting]
+  )
+
+  const goGenMode = useCallback((next: GenMode) => {
+    if (guardRef.current?.(() => setGenMode(next))) return
+    setGenMode(next)
+  }, [])
 
   const onCharacterProvider = useCallback(
     (characterId: string, patch: { voiceId?: string; ttsModel?: string; stsModel?: string }) => {
@@ -661,7 +693,8 @@ export default function App() {
       text: string,
       announce: boolean,
       target: GenTarget = { kind: 'all' },
-      override?: VoiceSettings
+      override?: VoiceSettings,
+      model?: string
     ) => {
       submitJob({
         kind: 'tts',
@@ -678,6 +711,7 @@ export default function App() {
             text,
             voiceSettings,
             selectOutput: false,
+            ...(model ? { model } : {}),
             ...(target.kind === 'all' ? {} : { fragment: true }),
           })
           onTakeAdded(cueId, take)
@@ -879,6 +913,7 @@ export default function App() {
   const onKeySaved = useCallback(() => {
     setHasKey(true)
     void api['provider:usage']().then(setUsage)
+    void api['provider:models']().then(setProviderModels, () => setProviderModels([]))
   }, [])
 
   const onTakeEffects = useCallback(
@@ -1146,7 +1181,7 @@ export default function App() {
           if (!cue || !text) return
           if (isCueBusyNow(cue.id) || refuseWhileExporting() || refuseWithoutKey()) return
           noteSubmit(cue.id)
-          submitTts(cue.id, text, true, { kind: 'all' }, take.meta.voiceSettings)
+          submitTts(cue.id, text, true, { kind: 'all' }, take.meta.voiceSettings, take.meta.model)
         },
       },
       {
@@ -1252,6 +1287,14 @@ export default function App() {
     menu: lineMenu,
   }
 
+  const modelId =
+    project.provider?.[mode]?.model ??
+    (mode === 'tts' ? activeCharacter?.provider.ttsModel : activeCharacter?.provider.stsModel) ??
+    (mode === 'tts' ? ELEVENLABS_TTS_MODEL : ELEVENLABS_STS_MODEL)
+  const genModel =
+    providerModels.find((m) => m.id === modelId) ??
+    ({ id: modelId, name: modelId, tts: true, sts: true, style: true, boost: true, languages: [], costMultiplier: 1 } as ProviderModel)
+
   const text: TextPanelProps = {
     cue: activeCue,
     terms: project.terms ?? [],
@@ -1268,6 +1311,19 @@ export default function App() {
     hasClip: !!clipTarget,
     originalMenu,
     translationMenu,
+    onCopy,
+    mode,
+    onMode: goGenMode,
+    models: providerModels,
+    model: genModel,
+    onProvider: setProviderMode,
+    ...(project.provider?.[mode]?.language
+      ? { language: project.provider[mode]?.language }
+      : {}),
+    ...(activeCue
+      ? { cost: estimateChars(activeCue.text, genTarget, project.pronunciationRules, genModel) }
+      : {}),
+    ...(usage ? { remaining: usage.remaining } : {}),
   }
 
   const cueText: ComponentProps<typeof CueText> | null = activeCue

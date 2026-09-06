@@ -3,9 +3,11 @@ import { promises as fs, type Dirent } from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
 import {
+  sanitizeGenMode,
   sanitizeLanguages,
   sanitizeMatchRule,
   sanitizeProjectSources,
+  sanitizeProviderSettings,
   sanitizeTargetTrack,
   sanitizeTimelineViews,
   sanitizeTerms,
@@ -78,8 +80,16 @@ export async function saveUi(raw: UiSessionState): Promise<void> {
   const targetTrack = sanitizeTargetTrack(raw.targetTrack)
   const timeline = sanitizeTimelineViews(raw.timeline)
   const matchBy = sanitizeMatchRule(raw.matchBy)
-  const { targetTrack: _drop, timeline: _dropTimeline, matchBy: _dropMatch, ...base } = raw
-  const withMatch = matchBy ? { ...base, matchBy } : base
+  const genMode = sanitizeGenMode(raw.genMode)
+  const {
+    targetTrack: _drop,
+    timeline: _dropTimeline,
+    matchBy: _dropMatch,
+    genMode: _dropMode,
+    ...base
+  } = raw
+  const withMode = genMode ? { ...base, genMode } : base
+  const withMatch = matchBy ? { ...withMode, matchBy } : withMode
   const rest = timeline ? { ...withMatch, timeline } : withMatch
   const next = targetTrack ? { ...rest, targetTrack } : rest
   ui = next
@@ -209,6 +219,11 @@ export async function openProjectDir(dir: string): Promise<Project> {
     const versions = sanitizeVersions(p.versions)
     if (versions) p.versions = versions
     else delete p.versions
+  }
+  if (p.provider !== undefined) {
+    const provider = sanitizeProviderSettings(p.provider)
+    if (provider) p.provider = provider
+    else delete p.provider
   }
   if (p.languages !== undefined) {
     const languages = sanitizeLanguages(p.languages)

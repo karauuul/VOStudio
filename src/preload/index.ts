@@ -36,6 +36,7 @@ const channelMap: Record<IpcChannel, true> = {
   'provider:sts': true,
   'provider:transcribe': true,
   'provider:voices': true,
+  'provider:models': true,
   'provider:testVoice': true,
   'provider:usage': true,
   'provider:setApiKey': true,

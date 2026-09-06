@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type ComponentProps,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react'
 import type { ProjectSource } from '@shared/domain'
 import { LinesPanel } from '../work/LinesPanel'
 import { CueText } from '../work/CueText'
@@ -24,6 +31,22 @@ const INVERTED: Pane[] = ['props', 'prog']
 const KEEP = 160
 
 const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
+
+type CopyKind = 'source' | 'translation' | 'prompt'
+
+const COPIES: { kind: CopyKind; hint: string; extra: ReactNode }[] = [
+  { kind: 'source', hint: 'Copy source', extra: null },
+  {
+    kind: 'translation',
+    hint: 'Copy translation',
+    extra: <path d="M6.5 5.5h4M6.5 7.5h4" stroke="currentColor" />,
+  },
+  {
+    kind: 'prompt',
+    hint: 'Copy prompt',
+    extra: <path d="M6.8 4.6l2.4 1.4-2.4 1.4z" fill="currentColor" />,
+  },
+]
 
 interface PaneConfig {
   key: string
@@ -149,6 +172,36 @@ export function WorkRoom({
               {cue && (
                 <span className="n">{regionLabel ?? (cue.fields['EventName'] || cue.key)}</span>
               )}
+              <span className="copies">
+                {COPIES.map(({ kind, hint, extra }) => (
+                  <button
+                    key={kind}
+                    className="ico sm"
+                    data-hint={hint}
+                    aria-label={hint}
+                    disabled={!cue}
+                    onClick={() => text.onCopy?.(kind)}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 14 14">
+                      <rect
+                        x="4.5"
+                        y="1.5"
+                        width="8"
+                        height="9"
+                        rx="1.5"
+                        fill="none"
+                        stroke="currentColor"
+                      />
+                      <path
+                        d="M9.5 12.5h-7a1 1 0 0 1-1-1v-8"
+                        fill="none"
+                        stroke="currentColor"
+                      />
+                      {extra}
+                    </svg>
+                  </button>
+                ))}
+              </span>
             </div>
             <div className="ed-script">{cueText ? <CueText {...cueText} /> : <TextPanel {...text} />}</div>
           </section>

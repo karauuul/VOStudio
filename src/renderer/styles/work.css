@@ -326,8 +326,85 @@
 .gen.dis .cp-num.off {
   opacity: 1;
 }
-.gen > .g:nth-child(2) {
+.gen .g.w2 {
   grid-column: span 2;
+}
+.gen .g .lh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.gen .g .lh .n {
+  margin-left: auto;
+  font: 11px var(--mono);
+  color: var(--tx3);
+  white-space: nowrap;
+}
+.gen .seg {
+  display: flex;
+  width: 100%;
+  height: var(--ctl);
+  border: 1px solid var(--line2);
+  border-radius: var(--r);
+  overflow: hidden;
+  background: var(--bg);
+}
+.gen .seg button {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  border-right: 1px solid var(--line2);
+  background: transparent;
+  color: var(--tx2);
+  font: 13px var(--sans);
+  cursor: pointer;
+}
+.gen .seg button:last-child {
+  border-right: 0;
+}
+.gen .seg button.on {
+  background: var(--ac-bg);
+  color: var(--ac);
+}
+.gen .gsec {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  margin-top: 2px;
+}
+.gen .tog {
+  height: var(--ctl);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--line2);
+  border-radius: var(--r);
+  background: var(--bg);
+  color: var(--tx);
+  font: 12px var(--mono);
+  cursor: pointer;
+}
+.gen .tags {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.gen .tags button {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line2);
+  border-radius: var(--r);
+  background: var(--raise);
+  color: var(--tx2);
+  font: 11px var(--mono);
+  cursor: pointer;
+}
+.gen .tags button:hover:not(:disabled) {
+  background: var(--raise2);
+  color: var(--tx);
 }
 .gen .g {
   display: flex;
@@ -1708,6 +1785,13 @@ input.tl-name:focus {
 
 .lib .phd .ico.sm {
   margin-left: 4px;
+}
+
+.phd .copies {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
 }
 
 .lib-q {

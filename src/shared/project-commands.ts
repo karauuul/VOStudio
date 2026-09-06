@@ -11,6 +11,7 @@ import {
   sanitizeLanguages,
   sanitizeOriginal,
   sanitizePinned,
+  sanitizeProviderSettings,
   sanitizeStems,
   type Character,
   type ClipEffects,
@@ -22,6 +23,7 @@ import {
   type ProjectLanguages,
   type ProjectSource,
   type ProjectVersion,
+  type ProviderSettings,
   type Stem,
   type VoiceSettings,
 } from './domain'
@@ -53,12 +55,14 @@ export type ProjectCommand =
   | { type: 'project.rename'; name: string }
   | { type: 'project.setLanguages'; languages: ProjectLanguages | null }
   | { type: 'project.setExport'; settings: ExportSettings | null }
+  | { type: 'project.setProvider'; provider: ProviderSettings | null }
   | { type: 'project.setExportTemplate'; template: string }
 
 export interface ChangeSet {
   name?: string
   languages?: ProjectLanguages | null
   export?: ExportSettings | null
+  provider?: ProviderSettings | null
   exportTemplate?: string
   versions?: ProjectVersion[]
   cues?: Cue[]
@@ -190,6 +194,12 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
     if (!template) throw new Error('Output name cannot be empty')
     project.exportTemplate = template
     return { exportTemplate: template }
+  }
+  if (command.type === 'project.setProvider') {
+    const provider = command.provider === null ? undefined : sanitizeProviderSettings(command.provider)
+    if (provider) project.provider = provider
+    else delete project.provider
+    return { provider: provider ?? null }
   }
   if (command.type === 'project.setExport') {
     const settings = command.settings === null ? undefined : sanitizeExportSettings(command.settings)
@@ -346,6 +356,12 @@ export function applyChangeSet(project: Project, changes: ChangeSet): Project {
       const { export: _dropped, ...rest } = next
       next = rest as Project
     } else next = { ...next, export: structuredClone(changes.export) }
+  }
+  if (changes.provider !== undefined) {
+    if (changes.provider === null) {
+      const { provider: _dropped, ...rest } = next
+      next = rest as Project
+    } else next = { ...next, provider: structuredClone(changes.provider) }
   }
   if (changes.versions) next = { ...next, versions: structuredClone(changes.versions) }
   if (changes.sources) next = { ...next, sources: structuredClone(changes.sources) }
