@@ -18,7 +18,7 @@ import {
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
 import type { UpdateStatus } from '@shared/updater'
 import { api, audioUrl } from './api'
-import { clipId, transport } from './audio/transport'
+import { clipId, setOutputDevice, transport } from './audio/transport'
 import { playback } from './playback'
 import {
   busyCountNow,
@@ -238,6 +238,13 @@ export default function App() {
 
   useEffect(() => api.on('usage:updated', setUsage), [])
   useEffect(() => api.on('updater:status', setUpdateStatus), [])
+
+  useEffect(() => {
+    const want = appSettings.outputDeviceLabel ?? ''
+    void setOutputDevice(want).then((applied) => {
+      if (!applied) setAppSettings((s) => ({ ...s, outputDeviceLabel: undefined }))
+    })
+  }, [appSettings.outputDeviceLabel])
 
   const onAppSettings = useCallback(
     (s: AppSettings) => {
@@ -1290,7 +1297,6 @@ export default function App() {
         guardRef,
         focusTextRef,
         appSettings,
-        onAppSettings,
         onTakeAdded,
         onStatus: pushStatus,
         isActiveCue,

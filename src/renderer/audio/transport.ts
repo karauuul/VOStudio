@@ -44,6 +44,42 @@ let fx: GainNode | null = null
 let monitor: GainNode | null = null
 let monitorGain = 1
 let looping = false
+let sinkId = ''
+
+export interface SinkTarget {
+  setSinkId?: (id: string) => Promise<void>
+}
+
+export async function applySink(target: SinkTarget | AudioContext, id: string): Promise<string> {
+  const set = (target as SinkTarget).setSinkId
+  if (typeof set !== 'function') return ''
+  try {
+    await set.call(target, id)
+    return id
+  } catch {
+  }
+  if (id === '') return ''
+  try {
+    await set.call(target, '')
+  } catch {
+  }
+  return ''
+}
+
+export function outputDeviceId(): string {
+  return sinkId
+}
+
+export async function deviceIdForLabel(kind: MediaDeviceKind, label: string): Promise<string> {
+  const list = await navigator.mediaDevices.enumerateDevices().catch(() => [] as MediaDeviceInfo[])
+  return list.find((d) => d.kind === kind && d.label === label)?.deviceId ?? ''
+}
+
+export async function setOutputDevice(label: string): Promise<boolean> {
+  const id = label ? await deviceIdForLabel('audiooutput', label) : ''
+  sinkId = ctx ? await applySink(ctx, id) : id
+  return label === '' || (id !== '' && sinkId === id)
+}
 
 export function setMonitorGain(v: number): void {
   monitorGain = Math.min(1, Math.max(0, v))
@@ -69,6 +105,7 @@ function ac(): AudioContext {
   ctx = c
   fx = f
   monitor = m
+  void applySink(c, sinkId)
   void ensurePitchModule(c).catch(() => {})
   const wake = (): void => {
     void c.resume().catch(() => {})

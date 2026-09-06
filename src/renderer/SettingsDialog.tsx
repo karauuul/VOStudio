@@ -49,13 +49,22 @@ export function SettingsDialog({
     void navigator.mediaDevices
       ?.enumerateDevices()
       .then((list) => {
-        if (alive) setDevices(list.filter((d) => d.kind === 'audioinput'))
+        if (alive) setDevices(list)
       })
       .catch(() => {})
     return () => {
       alive = false
     }
   }, [])
+
+  const inputs = devices.filter((d) => d.kind === 'audioinput')
+  const outputs = devices.filter((d) => d.kind === 'audiooutput')
+  const mic = inputs.some((d) => d.label === settings.micDeviceLabel)
+    ? (settings.micDeviceLabel ?? '')
+    : ''
+  const output = outputs.some((d) => d.label === settings.outputDeviceLabel)
+    ? (settings.outputDeviceLabel ?? '')
+    : ''
 
   const saveKey = (): void => {
     const key = keyInput.trim()
@@ -106,23 +115,41 @@ export function SettingsDialog({
           </span>
         </div>
 
-        <div className="sec-h">Defaults</div>
+        <div className="sec-h">Audio</div>
         <label className="set-row">
           <span className="set-l">Microphone</span>
           <select
-            value={settings.micDeviceId ?? ''}
+            value={mic}
             onChange={(e) =>
-              onSettings({ ...settings, micDeviceId: e.target.value || undefined })
+              onSettings({ ...settings, micDeviceLabel: e.target.value || undefined })
             }
           >
-            <option value="">Default microphone</option>
-            {devices.map((d, i) => (
-              <option key={d.deviceId || i} value={d.deviceId}>
+            <option value="">System default</option>
+            {inputs.map((d, i) => (
+              <option key={d.deviceId || i} value={d.label}>
                 {d.label || `Input ${i + 1}`}
               </option>
             ))}
           </select>
         </label>
+        <label className="set-row">
+          <span className="set-l">Output</span>
+          <select
+            value={output}
+            onChange={(e) =>
+              onSettings({ ...settings, outputDeviceLabel: e.target.value || undefined })
+            }
+          >
+            <option value="">System default</option>
+            {outputs.map((d, i) => (
+              <option key={d.deviceId || i} value={d.label}>
+                {d.label || `Output ${i + 1}`}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="sec-h">Defaults</div>
         <label className="set-row tgl">
           <input
             type="checkbox"

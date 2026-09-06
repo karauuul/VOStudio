@@ -81,7 +81,7 @@ export function useVoiceToVoice({
     if (!sel) {
       targetRef.current = null
       rec.start({
-        deviceId: appSettings.micDeviceId,
+        device: appSettings.micDeviceLabel ?? appSettings.micDeviceId,
         countIn: appSettings.countIn,
         autoReference: appSettings.autoReference,
         referenceUrl: cue.referenceAudio ? audioUrl(cue.referenceAudio.relPath) : undefined,
@@ -98,7 +98,7 @@ export function useVoiceToVoice({
       if (token !== preGen.current) return
       preRef.current = false
       rec.start({
-        deviceId: appSettings.micDeviceId,
+        device: appSettings.micDeviceLabel ?? appSettings.micDeviceId,
         countIn: appSettings.countIn,
         autoReference: false,
       })

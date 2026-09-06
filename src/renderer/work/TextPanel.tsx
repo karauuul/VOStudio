@@ -43,10 +43,6 @@ export interface TextPanelProps {
   onRecord?: () => void
   recording?: boolean
   recordDisabled?: boolean
-  devices?: MediaDeviceInfo[]
-  deviceId?: string
-  onDevice?: (deviceId: string | undefined) => void
-  onRefreshDevices?: () => void
   originalMenu?: () => MenuEntry[]
   translationMenu?: (range: TextRange, el: HTMLTextAreaElement) => MenuEntry[]
 }
@@ -278,10 +274,6 @@ export function TextPanel({
   onRecord,
   recording,
   recordDisabled,
-  devices = [],
-  deviceId,
-  onDevice,
-  onRefreshDevices,
   originalMenu,
   translationMenu,
 }: TextPanelProps) {
@@ -355,26 +347,6 @@ export function TextPanel({
             {recording ? 'Stop' : 'Record'}
           </button>
         </div>
-
-        <label className="g">
-          <span className="lab">Microphone</span>
-          <span className="field">
-            <select
-              value={deviceId ?? ''}
-              disabled={off}
-              onFocus={onRefreshDevices}
-              onChange={(e) => onDevice?.(e.target.value || undefined)}
-            >
-              <option value="">Default</option>
-              {devices.map((d, i) => (
-                <option key={d.deviceId || i} value={d.deviceId}>
-                  {d.label || `Input ${i + 1}`}
-                </option>
-              ))}
-            </select>
-            <Caret />
-          </span>
-        </label>
 
         <DragNumber
           label="Stability"

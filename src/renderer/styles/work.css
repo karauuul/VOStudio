@@ -314,6 +314,9 @@
 .gen.dis .cp-num.off {
   opacity: 1;
 }
+.gen > .g:nth-child(2) {
+  grid-column: span 2;
+}
 .gen .g {
   display: flex;
   flex-direction: column;
