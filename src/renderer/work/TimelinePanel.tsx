@@ -96,7 +96,7 @@ import {
   xToTime,
   zoomAt,
   type TimelineView,
-} from '../cue/timeline-math'
+} from '@shared/timeline-math'
 import { useCompEdit, sameComp } from '../cue/useCompEdit'
 import { useWire } from '../cue/useWire'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'

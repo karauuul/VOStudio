@@ -16,7 +16,7 @@ import {
   xToTime,
   zoomAt,
   type TimelineView,
-} from '../src/renderer/cue/timeline-math'
+} from '../src/shared/timeline-math'
 
 const view = (pxPerSec: number, scroll = 0): TimelineView => ({ pxPerSec, scroll })
 
