@@ -9,8 +9,12 @@ import {
   pitchActive,
   sanitizeEffects,
   setEffectEnabled,
+  EFFECT_KINDS,
+  pickEffects,
+  TRACK_EFFECT_KINDS,
   type ClipEffects,
 } from '../src/shared/effects'
+import { propertiesTab, propertiesTabs } from '../src/shared/properties'
 import { connectEffects } from '../src/renderer/audio/effects-graph'
 import { compHasReverb } from '../src/shared/comp'
 import { resolveTargetTrack } from '../src/shared/library'
@@ -318,5 +322,75 @@ describe('withSourceEffects', () => {
     expect(out.edits.effects?.reverb?.mix).toBe(0.3)
     expect(out.edits.effects?.delay?.time).toBe(0.5)
     expect(withSourceEffects(clip, { edits: emptyEdits() })).toBe(clip)
+  })
+})
+
+describe('properties tabs follow the newest selection', () => {
+  const none = { source: '', clip: '', track: '' }
+
+  it('a timeline clip opens the Clip tab while a library row stays selected', () => {
+    const withSource = { ...none, source: 'take-1' }
+    expect(propertiesTab(none, withSource, 'line')).toBe('source')
+    const withClip = { ...withSource, clip: 'clip-a' }
+    expect(propertiesTab(withSource, withClip, 'source')).toBe('clip')
+    expect(propertiesTabs(withClip)).toEqual(['clip', 'track', 'line', 'source'])
+  })
+
+  it('offers the Source tab only while a library row is selected', () => {
+    expect(propertiesTabs(none)).toEqual(['clip', 'track', 'line'])
+    expect(propertiesTabs({ ...none, clip: 'clip-a' })).toEqual(['clip', 'track', 'line'])
+  })
+
+  it('a library row opens the Source tab while a clip stays selected', () => {
+    const withClip = { ...none, clip: 'clip-a' }
+    expect(propertiesTab(withClip, { ...withClip, source: 'take-2' }, 'clip')).toBe('source')
+  })
+
+  it('keeps a hand-picked tab until the selection changes', () => {
+    const withClip = { ...none, clip: 'clip-a' }
+    expect(propertiesTab(withClip, withClip, 'track')).toBe('track')
+    expect(propertiesTab(withClip, withClip, 'line')).toBe('line')
+    expect(propertiesTab(withClip, withClip, 'clip')).toBe('clip')
+  })
+
+  it('falls back when the shown target disappears', () => {
+    expect(propertiesTab(none, none, 'clip')).toBe('line')
+    expect(propertiesTab(none, none, 'source')).toBe('line')
+    expect(propertiesTab(none, { ...none, clip: 'clip-a' }, 'source')).toBe('clip')
+    expect(propertiesTab(none, { ...none, track: 'tr1' }, 'clip')).toBe('track')
+  })
+
+  it('picking a track strip opens the Track tab', () => {
+    expect(propertiesTab(none, { ...none, track: 'tr2' }, 'line')).toBe('track')
+  })
+})
+
+describe('pickEffects — copy and paste an effect stack', () => {
+  const full: ClipEffects = {
+    reverb: { ...DEFAULT_REVERB },
+    delay: { ...DEFAULT_DELAY },
+    pitch: { semitones: 3 },
+  }
+
+  it('replaces rather than merges and drops what the target cannot hold', () => {
+    expect(pickEffects(full, EFFECT_KINDS)).toEqual(full)
+    expect(pickEffects(full, TRACK_EFFECT_KINDS)).toEqual({
+      reverb: { ...DEFAULT_REVERB },
+      delay: { ...DEFAULT_DELAY },
+    })
+    expect(pickEffects(undefined, EFFECT_KINDS)).toBeUndefined()
+    expect(pickEffects({ pitch: { semitones: 3 } }, TRACK_EFFECT_KINDS)).toBeUndefined()
+  })
+
+  it('hands out a detached copy, so editing the paste never touches the source', () => {
+    const copy = pickEffects(full, EFFECT_KINDS)!
+    copy.reverb!.mix = 0.9
+    expect(full.reverb!.mix).toBe(DEFAULT_REVERB.mix)
+    expect(pickEffects(full, EFFECT_KINDS)!.reverb).not.toBe(full.reverb)
+  })
+
+  it('keeps a bypassed effect bypassed through a paste', () => {
+    const off: ClipEffects = { delay: { ...DEFAULT_DELAY, enabled: false } }
+    expect(pickEffects(off, TRACK_EFFECT_KINDS)?.delay?.enabled).toBe(false)
   })
 })

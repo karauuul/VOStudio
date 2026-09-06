@@ -1914,3 +1914,11 @@ input.tl-name:focus {
   background: var(--ac);
 }
 
+
+.props-note {
+  margin-left: 8px;
+  font-family: var(--mono);
+  font-style: normal;
+  font-size: 11px;
+  color: var(--tx3);
+}

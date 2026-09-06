@@ -41,7 +41,7 @@ import type { GridApi } from './import/LinesTable'
 import { WorkRoom } from './rooms/WorkRoom'
 import { ExportRoom } from './rooms/ExportRoom'
 import { useProjectSession, type StatusKind } from './useProjectSession'
-import { PropertiesPanel } from './work/PropertiesPanel'
+import { PropertiesPanel, type PropsApi } from './work/PropertiesPanel'
 import type { CompApi, TimelineSelection } from './work/TimelinePanel'
 import type { LibraryPanel } from './work/LibraryPanel'
 import { ProgramPanel, type ProgramApi } from './work/ProgramPanel'
@@ -126,6 +126,7 @@ export default function App() {
 
   const compRef = useRef<CompApi | null>(null)
   const programRef = useRef<ProgramApi | null>(null)
+  const propsRef = useRef<PropsApi | null>(null)
   const recRef = useRef<(() => void) | null>(null)
   const escRef = useRef<(() => boolean) | null>(null)
   const recActiveRef = useRef<(() => boolean) | null>(null)
@@ -1010,6 +1011,8 @@ export default function App() {
       copySource: () => onCopy('source'),
       copyTranslation: () => onCopy('translation'),
       copyPrompt: () => onCopy('prompt'),
+      copyEffects: () => propsRef.current?.copyEffects(),
+      pasteEffects: () => propsRef.current?.pasteEffects(),
     }),
     [
       goRoute,
@@ -1466,6 +1469,7 @@ export default function App() {
       if (row) void pinTake(row.cueId, takeId, pinned).catch(() => {})
     },
     onShowInLibrary: setSourceTakeId,
+    onTakeEffects,
     onMonitor: (tab) => programRef.current?.showTab(tab),
   }
 
@@ -1488,6 +1492,7 @@ export default function App() {
     original: activeCue?.original,
     exportName: activeCue ? activeCue.fields['exportName'] || activeCue.key : '',
     compRef,
+    propsRef,
     onCharacter: onCueCharacter,
     onOriginal: (patch) => {
       if (!activeCueId) return

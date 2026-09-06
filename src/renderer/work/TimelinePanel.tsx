@@ -69,6 +69,7 @@ import {
   TRACK_GAIN_MAX_DB,
   TRACK_GAIN_MIN_DB,
   type ClipEdits,
+  type ClipEffects,
   type CompClip,
   type CompTrack,
   type Cue,
@@ -111,6 +112,8 @@ import {
 import { ghostPlacement, type GhostPlacement } from '@shared/generation'
 import { useCompEdit, sameComp } from '../cue/useCompEdit'
 import { useWire } from '../cue/useWire'
+import { EFFECT_KINDS, pickEffects, TRACK_EFFECT_KINDS } from '@shared/effects'
+import { copiedEffects, copyEffects, hasCopiedEffects } from '../effects-clipboard'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 import { hotkeyText, type KeyAction } from '../keyboard'
 
@@ -236,6 +239,7 @@ interface Props {
   onRegenerateClip: (clipId: string) => void
   onPinSource: (takeId: string, pinned: boolean) => void
   onShowInLibrary: (takeId: string) => void
+  onTakeEffects: (takeId: string, effects: ClipEffects | undefined) => void
   onMonitor: (tab: 'program' | 'source') => void
 }
 
@@ -260,6 +264,7 @@ export function TimelinePanel({
   onRegenerateClip,
   onPinSource,
   onShowInLibrary,
+  onTakeEffects,
   onMonitor,
 }: Props) {
   const lanesRef = useRef<HTMLDivElement>(null)
@@ -678,6 +683,8 @@ export function TimelinePanel({
 
   const startDrag = useCallback(
     (onMove: (ev: MouseEvent) => void, onUp: (ev: MouseEvent) => void): void => {
+      const active = document.activeElement
+      if (active instanceof HTMLElement && active !== document.body) active.blur()
       const stop = (): void => {
         window.removeEventListener('mousemove', move)
         window.removeEventListener('mouseup', up)
@@ -1407,6 +1414,19 @@ export function TimelinePanel({
         },
         { sep: true },
         {
+          label: 'Copy effects',
+          hotkey: hotkeyText('copyEffects'),
+          disabled: !take,
+          onClick: () => take && copyEffects(take.edits.effects),
+        },
+        {
+          label: 'Paste effects',
+          hotkey: hotkeyText('pasteEffects'),
+          disabled: !take || !hasCopiedEffects(),
+          onClick: () => take && onTakeEffects(take.id, pickEffects(copiedEffects(), EFFECT_KINDS)),
+        },
+        { sep: true },
+        {
           label: 'Delete',
           hotkey: hotkeyText('deleteClip'),
           danger: true,
@@ -1424,6 +1444,7 @@ export function TimelinePanel({
       onRegenerateClip,
       onPinSource,
       onShowInLibrary,
+      onTakeEffects,
       switchVersion,
       splitClip,
       commit,
@@ -1450,6 +1471,18 @@ export function TimelinePanel({
       { label: 'Solo', onClick: () => editTrack(track.id, { solo: !track.solo }) },
       { sep: true },
       { label: 'Track effects…', onClick: () => setPickedTrack(track.id) },
+      {
+        label: 'Copy effects',
+        hotkey: hotkeyText('copyEffects'),
+        onClick: () => copyEffects(track.effects),
+      },
+      {
+        label: 'Paste effects',
+        hotkey: hotkeyText('pasteEffects'),
+        disabled: !hasCopiedEffects(),
+        onClick: () =>
+          editTrack(track.id, { effects: pickEffects(copiedEffects(), TRACK_EFFECT_KINDS) }),
+      },
       {
         label: 'Fit to original length',
         disabled: !(originalLength > 0) || trackClips(comp, track.id).length === 0,

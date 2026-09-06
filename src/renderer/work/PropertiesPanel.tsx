@@ -26,9 +26,11 @@ import {
   DELAY_FEEDBACK_MIN,
   DELAY_TIME_MAX,
   DELAY_TIME_MIN,
+  EFFECT_KINDS,
   effectOn,
   MIX_MAX,
   MIX_MIN,
+  pickEffects,
   PITCH_SEMITONES_MAX,
   PITCH_SEMITONES_MIN,
   PITCH_STEP,
@@ -38,13 +40,27 @@ import {
   REVERB_SIZE_MIN,
   setEffectEnabled,
   toggleEffect,
+  TRACK_EFFECT_KINDS,
   type EffectKind,
 } from '@shared/effects'
+import {
+  propertiesTab,
+  propertiesTabs,
+  type PropertiesTab,
+  type PropertiesTargets,
+} from '@shared/properties'
 import { clipText, libraryRow, lineLabel, resolveTake, versionLabel } from '@shared/library'
 import { toPercent } from '@shared/generation'
 import { DragNumber } from '../cue/DragNumber'
+import { copiedEffects, copyEffects } from '../effects-clipboard'
+import { useWire } from '../cue/useWire'
 import type { CompApi, TimelineSelection } from './TimelinePanel'
 import { useContextMenu } from '../shell/ContextMenu'
+
+export interface PropsApi {
+  copyEffects: () => void
+  pasteEffects: () => void
+}
 
 export interface PropertiesPanelProps {
   cue: Cue | null
@@ -55,6 +71,7 @@ export interface PropertiesPanelProps {
   original: OriginalLane | undefined
   exportName: string
   compRef: MutableRefObject<CompApi | null>
+  propsRef: MutableRefObject<PropsApi | null>
   onCharacter: (characterId: string) => void
   onOriginal: (patch: Partial<OriginalLane>) => void
   onTakeEffects: (takeId: string, effects: ClipEffects | undefined) => void
@@ -63,9 +80,12 @@ export interface PropertiesPanelProps {
   onOpenLine: (cueId: string) => void
 }
 
-type Tab = 'clip' | 'track' | 'line' | 'source'
-
-const TAB_LABEL: Record<Tab, string> = { clip: 'Clip', track: 'Track', line: 'Line', source: 'Source' }
+const TAB_LABEL: Record<PropertiesTab, string> = {
+  clip: 'Clip',
+  track: 'Track',
+  line: 'Line',
+  source: 'Source',
+}
 
 const FX_LABEL: Record<EffectKind, string> = { reverb: 'Reverb', delay: 'Delay', pitch: 'Pitch' }
 
@@ -90,6 +110,7 @@ export function PropertiesPanel({
   original,
   exportName,
   compRef,
+  propsRef,
   onCharacter,
   onOriginal,
   onTakeEffects,
@@ -103,30 +124,53 @@ export function PropertiesPanel({
   const tracks = selection?.tracks ?? []
   const track = tracks.find((t) => t.id === selection?.trackId) ?? tracks[0]
 
-  const auto: Tab = sourceRow
-    ? 'source'
-    : clip
-      ? 'clip'
-      : selection?.kind === 'track'
-        ? 'track'
-        : 'line'
-  const signature = sourceRow
-    ? `source:${sourceRow.take.id}`
-    : clip
-      ? `clip:${clip.id}`
-      : selection?.kind === 'track'
-        ? `track:${selection.trackId}`
-        : `line:${cue?.id ?? ''}`
+  const clipTake = cue && clip ? resolveTake(project, cue, clip.sourceTakeId)?.take : undefined
 
-  const [tab, setTab] = useState<Tab>(auto)
-  const [shown, setShown] = useState(signature)
-  if (shown !== signature) {
-    setShown(signature)
-    setTab(auto)
+  const targets: PropertiesTargets = {
+    source: sourceRow?.take.id ?? '',
+    clip: clip?.id ?? '',
+    track: selection?.kind === 'track' ? selection.trackId : '',
   }
 
-  const tabs: Tab[] = sourceRow ? ['source'] : ['clip', 'track', 'line']
-  const active: Tab = tabs.includes(tab) ? tab : auto
+  const [tab, setTab] = useState<PropertiesTab>('line')
+  const [shown, setShown] = useState<PropertiesTargets>(targets)
+  const active = propertiesTab(shown, targets, tab)
+  if (
+    shown.source !== targets.source ||
+    shown.clip !== targets.clip ||
+    shown.track !== targets.track
+  ) {
+    setShown(targets)
+  }
+  if (active !== tab) setTab(active)
+
+  const tabs = propertiesTabs(targets)
+
+  const api = useMemo<PropsApi>(
+    () => ({
+      copyEffects: () => {
+        if (active === 'track') copyEffects(track?.effects)
+        else if (active === 'source') copyEffects(sourceRow?.take.edits.effects)
+        else copyEffects(clipTake?.edits.effects)
+      },
+      pasteEffects: () => {
+        const fx = copiedEffects()
+        if (active === 'track') {
+          if (track) {
+            compRef.current?.editTrack(
+              track.id,
+              { effects: pickEffects(fx, TRACK_EFFECT_KINDS) },
+              true
+            )
+          }
+        } else if (active === 'source') {
+          if (sourceRow) onTakeEffects(sourceRow.take.id, pickEffects(fx, EFFECT_KINDS))
+        } else if (clipTake) onTakeEffects(clipTake.id, pickEffects(fx, EFFECT_KINDS))
+      },
+    }),
+    [active, track, sourceRow, clipTake, compRef, onTakeEffects]
+  )
+  useWire(propsRef, api)
 
   const head = (
     <div className="phd">
@@ -378,18 +422,16 @@ function effectParams(fx: ClipEffects, which: EffectKind): Param[] {
 
 function EffectStack({
   title,
+  note,
   effects,
   kinds,
   onChange,
-  readOnly,
-  action,
 }: {
   title: string
+  note?: string
   effects: ClipEffects | undefined
-  kinds: EffectKind[]
+  kinds: readonly EffectKind[]
   onChange: (next: ClipEffects | undefined) => void
-  readOnly?: boolean
-  action?: ReactNode
 }) {
   const [open, setOpen] = useState<EffectKind | null>(null)
   const pop = useContextMenu()
@@ -410,8 +452,7 @@ function EffectStack({
     <>
       <Sec
         action={
-          action ??
-          (readOnly || missing.length === 0 ? undefined : (
+          missing.length === 0 ? undefined : (
             <span className="props-add">
               <button
                 className="ico sm"
@@ -438,10 +479,11 @@ function EffectStack({
               </button>
               {pop.node}
             </span>
-          ))
+          )
         }
       >
         {title}
+        {note && <i className="props-note">{note}</i>}
       </Sec>
 
       {present.length === 0 && <div className="fx empty">—</div>}
@@ -453,20 +495,17 @@ function EffectStack({
               type="checkbox"
               className="fx-cb"
               checked={effectOn(fx?.[k])}
-              disabled={readOnly}
               aria-label={`${FX_LABEL[k]} on`}
               onChange={(e) => apply(setEffectEnabled(fx, k, e.target.checked), true)}
             />
             <span className="fx-n">{FX_LABEL[k]}</span>
-            {!readOnly && (
-              <button
-                className="ico sm fx-x"
-                aria-label={`Remove ${FX_LABEL[k]}`}
-                onClick={() => apply(toggleEffect(fx, k, false), true)}
-              >
-                &times;
-              </button>
-            )}
+            <button
+              className="ico sm fx-x"
+              aria-label={`Remove ${FX_LABEL[k]}`}
+              onClick={() => apply(toggleEffect(fx, k, false), true)}
+            >
+              &times;
+            </button>
             <button
               className="fx-c"
               aria-label={`${FX_LABEL[k]} parameters`}
@@ -491,7 +530,6 @@ function EffectStack({
                     max={p.max}
                     step={p.decimals === 0 ? 1 : 10 ** -p.decimals}
                     value={p.value}
-                    disabled={readOnly}
                     aria-label={p.label}
                     onChange={(e) => apply(p.set(Number(e.target.value)), false)}
                     onMouseUp={(e) => apply(p.set(Number(e.currentTarget.value)), true)}
@@ -505,7 +543,6 @@ function EffectStack({
                     max={p.max}
                     perPx={(p.max - p.min) / 200}
                     decimals={p.decimals}
-                    disabled={readOnly}
                     onInput={(v) => apply(p.set(v), false)}
                     onCommit={(v) => apply(p.set(v), true)}
                   />
@@ -518,9 +555,6 @@ function EffectStack({
     </>
   )
 }
-
-const CLIP_KINDS: EffectKind[] = ['reverb', 'delay', 'pitch']
-const TRACK_KINDS: EffectKind[] = ['reverb', 'delay']
 
 function ClipTab({
   cue,
@@ -643,18 +677,15 @@ function ClipTab({
       </Row2>
 
       <EffectStack
-        title="Clip effects"
+        key={take?.id ?? 'no-source'}
+        title="Source effects"
+        note={[version, take ? `${secs(take.duration)}s` : ''].filter(Boolean).join(' · ')}
         effects={take?.edits.effects}
-        kinds={CLIP_KINDS}
+        kinds={EFFECT_KINDS}
         onChange={(next) => take && onTakeEffects(take.id, next)}
       />
 
-      <EffectStack
-        title="Track effects"
-        effects={track?.effects}
-        kinds={TRACK_KINDS}
-        readOnly
-        onChange={() => {}}
+      <Sec
         action={
           <button className="ico sm" aria-label="Open the Track tab" onClick={onTrackTab}>
             <svg width="8" height="12" viewBox="0 0 8 12">
@@ -662,7 +693,12 @@ function ClipTab({
             </svg>
           </button>
         }
-      />
+      >
+        Track effects
+        <i className="props-note">
+          {TRACK_EFFECT_KINDS.filter((k) => track?.effects?.[k]).length}
+        </i>
+      </Sec>
     </>
   )
 }
@@ -745,9 +781,10 @@ function TrackTab({
       </Row2>
 
       <EffectStack
+        key={track.id}
         title="Track effects"
         effects={track.effects}
-        kinds={TRACK_KINDS}
+        kinds={TRACK_EFFECT_KINDS}
         onChange={(next) => set({ effects: next })}
       />
     </>
@@ -961,9 +998,10 @@ function SourceTab({
       )}
 
       <EffectStack
+        key={take.id}
         title="Source effects"
         effects={take.edits.effects}
-        kinds={CLIP_KINDS}
+        kinds={EFFECT_KINDS}
         onChange={(next) => onTakeEffects(take.id, next)}
       />
     </>

@@ -53,6 +53,8 @@ export type KeyAction =
   | 'copySource'
   | 'copyTranslation'
   | 'copyPrompt'
+  | 'copyEffects'
+  | 'pasteEffects'
   | 'insertSource'
   | 'replaceSource'
   | 'escape'
@@ -161,6 +163,22 @@ export const BINDINGS: Binding[] = [
   { action: 'insertSource', codes: ['Comma'], scopes: WORK, label: 'Insert source' },
   { action: 'replaceSource', codes: ['Period'], scopes: WORK, label: 'Replace with source' },
   { action: 'splitClip', codes: ['KeyC'], scopes: TIMELINE, label: 'Cut' },
+  {
+    action: 'copyEffects',
+    codes: ['KeyC'],
+    mod: true,
+    shift: true,
+    scopes: WORK,
+    label: 'Copy effects',
+  },
+  {
+    action: 'pasteEffects',
+    codes: ['KeyV'],
+    mod: true,
+    shift: true,
+    scopes: WORK,
+    label: 'Paste effects',
+  },
   { action: 'healClip', codes: ['KeyH'], scopes: TIMELINE, label: 'Heal' },
   { action: 'crossfadeClip', codes: ['KeyX'], scopes: TIMELINE, label: 'Crossfade' },
   { action: 'deleteClip', codes: ['Delete'], scopes: TIMELINE, label: 'Delete clip' },
@@ -280,6 +298,8 @@ export interface KeyboardHandlers {
   copySource: () => void
   copyTranslation: () => void
   copyPrompt: () => void
+  copyEffects: () => void
+  pasteEffects: () => void
   insertSource: () => void
   replaceSource: () => void
   escape: () => boolean
