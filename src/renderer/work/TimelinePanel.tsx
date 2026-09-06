@@ -821,6 +821,7 @@ export function TimelinePanel({
       const base = e.shiftKey ? selRef.current : []
       selRef.current = base
       setSelected(base)
+      setPickedTrack(null)
       const box = el.getBoundingClientRect()
       const x0 = e.clientX
       const y0 = e.clientY
