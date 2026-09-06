@@ -50,7 +50,6 @@ interface Props {
   onStatus: (kind: 'ok' | 'err' | 'info', text: string) => void
   onEffectsTarget: (target: EffectsTarget | null) => void
   busyClipId?: string | null
-  onFragmentText: (clipId: string, text: string) => void
 }
 
 export function WaveLanes({
@@ -66,7 +65,6 @@ export function WaveLanes({
   onStatus,
   onEffectsTarget,
   busyClipId,
-  onFragmentText,
 }: Props) {
   const bodyRef = useRef<HTMLDivElement>(null)
   const rulerRef = useRef<HTMLCanvasElement>(null)
@@ -507,11 +505,6 @@ export function WaveLanes({
           onZoomOut={() => zoomBy(1 / 1.5)}
           canZoomOut={pxPerSec > MIN_PX_PER_SEC}
           onFit={fit}
-          busy={!!busyClipId}
-          onFragmentText={(text) => {
-            const id = selRef.current
-            if (id) onFragmentText(id, text)
-          }}
         />
       )}
 

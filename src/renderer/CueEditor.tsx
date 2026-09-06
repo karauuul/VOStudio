@@ -7,28 +7,18 @@ import {
   type MouseEvent as ReactMouseEvent,
   type MutableRefObject,
 } from 'react'
-import {
-  resolveVoiceSettings,
-  type Character,
-  type Cue,
-  type CueComp,
-  type Take,
-  type Term,
-} from '@shared/domain'
+import { resolveVoiceSettings, type Character, type Cue, type CueComp, type Take } from '@shared/domain'
 import { isEmptyComp } from '@shared/comp'
-import { applyRules } from '@shared/pronunciation'
+import type { GenTarget } from '@shared/generation'
 import type { PreviewSource, ResolvedPreview } from '@shared/workspace-source'
 import type { AppSettings } from '@shared/ipc'
 import type { EffectsTarget } from './cue/ClipParams'
-import { CueHeader } from './cue/CueHeader'
-import { CreateBar } from './cue/CreateBar'
 import { compositionLabel } from './cue/shared'
 import { TakeSourceMenu } from './cue/TakeSourceMenu'
-import { TextBlock, type CopyKind } from './cue/TextBlock'
-import { useFragment } from './cue/useFragment'
 import { useVoiceToVoice } from './cue/useVoiceToVoice'
 import { useWire } from './cue/useWire'
 import { WaveLanes, type ClipSelection, type CompApi } from './cue/WaveLanes'
+import { TextPanel, type TextPanelProps } from './work/TextPanel'
 
 type SplitMode = 'review' | 'timeline'
 
@@ -37,7 +27,8 @@ const SPLIT_KEY: Record<SplitMode, string> = {
   timeline: 'vo.script.h.timeline',
 }
 
-const SCRIPT_MIN = 150
+const SCRIPT_MIN = 260
+const SCRIPT_DEF = 374
 const AUDIO_MIN = 240
 const SPLIT_STEP = 12
 
@@ -52,42 +43,27 @@ function readHeight(mode: SplitMode): number | null {
   }
 }
 
-function defaultHeight(mode: SplitMode, avail: number): number {
-  return mode === 'timeline'
-    ? clamp(Math.round(avail * 0.28), SCRIPT_MIN, 220)
-    : clamp(Math.round(avail * 0.4), 210, 360)
-}
-
 interface Props {
   cue: Cue
   cues: Cue[]
   character?: Character
-  characters: Character[]
-  onCharacter: (characterId: string) => void
   preview: ResolvedPreview
   onSelectSource: (source: PreviewSource) => void
-  onText: (text: string) => void
-  onCopy: (kind: CopyKind) => void
-  terms: Term[]
-  onGenerate: () => void
-  onApprove: (approved: boolean) => void
-  onApproveNext: () => void
-  onSetFinal: () => void
+  onGenerate: (kind: GenTarget['kind']) => void
   onDetails: () => void
   onDeleteTake: (takeId: string) => void
   onSubmit: (cueId: string) => void
-  onAcceptSuggestion: () => void
-  onRejectSuggestion: () => void
   cueBusy: boolean
   compRef: MutableRefObject<CompApi | null>
   onComp: (cueId: string, comp: CueComp | null) => Promise<boolean>
+  onPlace: (cueId: string, take: Take, replaceClipId?: string) => Promise<void>
+  replaceClipId?: string
   timelineOpen: boolean
   onTimeline: () => void
   onEffectsTarget: (target: EffectsTarget | null) => void
-  recRef: MutableRefObject<((fragment?: boolean) => void) | null>
+  recRef: MutableRefObject<(() => void) | null>
   escRef: MutableRefObject<(() => boolean) | null>
   recActiveRef: MutableRefObject<(() => boolean) | null>
-  decisionRef: MutableRefObject<(() => boolean) | null>
   guardRef: MutableRefObject<((proceed: () => void) => boolean) | null>
   focusTextRef: MutableRefObject<(() => void) | null>
   appSettings: AppSettings
@@ -96,39 +72,30 @@ interface Props {
   onStatus: (kind: 'ok' | 'err' | 'info', text: string) => void
   isActiveCue: (cueId: string) => boolean
   hasKey: boolean
-  rules: string
+  text: TextPanelProps
 }
 
 export function CueEditor({
   cue,
   cues,
   character,
-  characters,
-  onCharacter,
   preview,
   onSelectSource,
-  onText,
-  onCopy,
-  terms,
   onGenerate,
-  onApprove,
-  onApproveNext,
-  onSetFinal,
   onDetails,
   onDeleteTake,
   onSubmit,
-  onAcceptSuggestion,
-  onRejectSuggestion,
   cueBusy,
   compRef,
   onComp,
+  onPlace,
+  replaceClipId,
   timelineOpen,
   onTimeline,
   onEffectsTarget,
   recRef,
   escRef,
   recActiveRef,
-  decisionRef,
   guardRef,
   focusTextRef,
   appSettings,
@@ -137,7 +104,7 @@ export function CueEditor({
   onStatus,
   isActiveCue,
   hasKey,
-  rules,
+  text,
 }: Props) {
   const textRef = useRef<HTMLTextAreaElement>(null)
   const splitRef = useRef<HTMLDivElement>(null)
@@ -149,8 +116,7 @@ export function CueEditor({
 
   const mode: SplitMode = timelineOpen ? 'timeline' : 'review'
   const maxScript = Math.max(SCRIPT_MIN, avail - AUDIO_MIN)
-  const scriptH =
-    avail > 0 ? clamp(stored[mode] ?? defaultHeight(mode, avail), SCRIPT_MIN, maxScript) : 0
+  const scriptH = avail > 0 ? clamp(stored[mode] ?? SCRIPT_DEF, SCRIPT_MIN, maxScript) : 0
 
   useEffect(() => {
     const el = splitRef.current
@@ -200,8 +166,6 @@ export function CueEditor({
     [scriptH, setHeight]
   )
 
-  const spoken = useMemo(() => applyRules(cue.text, rules), [cue.text, rules])
-
   const voice = useMemo(() => resolveVoiceSettings(character, cue), [character, cue])
 
   const noVoice = !character || !character.provider.voiceId
@@ -213,21 +177,6 @@ export function CueEditor({
       : noVoice
         ? `No voice configured for character "${character.name}"`
         : ''
-  const genTitle = providerBlocked
-    ? noVoiceReason
-    : cueBusy
-      ? 'Already in the queue'
-      : 'Generate a new take'
-
-  const fragment = useFragment({
-    cue,
-    voice,
-    compRef,
-    onTakeAdded,
-    onStatus,
-    isActiveCue,
-    noVoiceReason,
-  })
 
   const selection = useCallback((): ClipSelection | null => compRef.current?.selection() ?? null, [
     compRef,
@@ -243,7 +192,7 @@ export function CueEditor({
     isActiveCue,
     noVoiceReason,
     selection,
-    fragment,
+    onPlace,
   })
 
   const focusText = useCallback(() => {
@@ -255,12 +204,10 @@ export function CueEditor({
   }, [])
 
   const recActive = useCallback(() => v2v.rec.phase !== 'idle', [v2v.rec.phase])
-  const decision = useCallback(() => v2v.pending, [v2v.pending])
 
   useWire(recRef, v2v.toggleRec)
   useWire(escRef, v2v.onEscape)
   useWire(recActiveRef, recActive)
-  useWire(decisionRef, decision)
   useWire(guardRef, v2v.guard)
   useWire(focusTextRef, focusText)
 
@@ -268,102 +215,81 @@ export function CueEditor({
     cue,
     source: preview.source,
     onSelect: onSelectSource,
-    onGenerate,
+    onGenerate: () => onGenerate('all'),
     onDetails,
     onDelete: onDeleteTake,
     onReconvert: v2v.reconvert,
     converting: v2v.converting,
     genDisabled: cueBusy || !cue.text.trim() || providerBlocked,
-    genTitle,
     noVoiceReason,
   }
 
   return (
-    <div className="editor">
-      <CueHeader
-        cue={cue}
-        character={character}
-        characters={characters}
-        onCharacter={onCharacter}
-        source={preview.source}
-        onApprove={onApprove}
-        onApproveNext={onApproveNext}
-        onSetFinal={onSetFinal}
-      />
-
-      <div className="ed-split" ref={splitRef}>
-        <div className="ed-script" style={avail > 0 ? { height: scriptH } : undefined}>
-          <TextBlock
-            cue={cue}
-            terms={terms}
-            textRef={textRef}
-            onText={onText}
-            onCopy={onCopy}
-            onAcceptSuggestion={onAcceptSuggestion}
-            onRejectSuggestion={onRejectSuggestion}
-            spoken={spoken}
-          />
-
-          <CreateBar
-            onGenerate={onGenerate}
-            generating={cueBusy}
-            genDisabled={cueBusy || !cue.text.trim() || providerBlocked}
-            genTitle={genTitle}
-            v2v={v2v}
-            appSettings={appSettings}
-            onAppSettings={onAppSettings}
-          />
-        </div>
-
-        <div
-          className="vsplit"
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label="Resize script and audio"
-          tabIndex={0}
-          onMouseDown={startSplit}
-          onDoubleClick={resetHeight}
-          onKeyDown={(e) => {
-            if (e.code !== 'ArrowUp' && e.code !== 'ArrowDown') return
-            e.preventDefault()
-            e.stopPropagation()
-            setHeight(scriptH + (e.code === 'ArrowDown' ? SPLIT_STEP : -SPLIT_STEP))
-          }}
-        />
-
-        <WaveLanes
-          cue={cue}
-          cues={cues}
-          preview={preview}
-          sourceHeader={
-            <TakeSourceMenu
-              {...pickerProps}
-              label={
-                timelineOpen &&
-                (preview.source.kind === 'comp' ||
-                  (!!preview.take && preview.take.kind !== 'recording' && isEmptyComp(cue.comp)))
-                  ? compositionLabel(cue)
-                  : undefined
-              }
-            />
-          }
-          insertMenu={
-            <TakeSourceMenu
-              {...pickerProps}
-              variant="insert"
-              onInsert={(take) => compRef.current?.insertTake(take)}
-            />
-          }
-          timelineOpen={timelineOpen}
-          onTimeline={onTimeline}
-          compRef={compRef}
-          onComp={onComp}
-          onStatus={onStatus}
-          onEffectsTarget={onEffectsTarget}
-          busyClipId={fragment.busyClipId}
-          onFragmentText={fragment.generate}
+    <div className="ed-split" ref={splitRef}>
+      <div className="ed-script" style={avail > 0 ? { height: scriptH } : undefined}>
+        <TextPanel
+          {...text}
+          textRef={textRef}
+          generating={cueBusy}
+          genDisabled={cueBusy || providerBlocked}
+          onGenerate={onGenerate}
+          onRecord={v2v.toggleRec}
+          recording={v2v.rec.phase !== 'idle'}
+          recordDisabled={v2v.converting}
+          devices={v2v.rec.devices}
+          deviceId={appSettings.micDeviceId}
+          onDevice={(micDeviceId) => onAppSettings({ ...appSettings, micDeviceId })}
+          onRefreshDevices={v2v.rec.refreshDevices}
         />
       </div>
+
+      <div
+        className="vsplit"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize script and audio"
+        tabIndex={0}
+        onMouseDown={startSplit}
+        onDoubleClick={resetHeight}
+        onKeyDown={(e) => {
+          if (e.code !== 'ArrowUp' && e.code !== 'ArrowDown') return
+          e.preventDefault()
+          e.stopPropagation()
+          setHeight(scriptH + (e.code === 'ArrowDown' ? SPLIT_STEP : -SPLIT_STEP))
+        }}
+      />
+
+      <WaveLanes
+        cue={cue}
+        cues={cues}
+        preview={preview}
+        sourceHeader={
+          <TakeSourceMenu
+            {...pickerProps}
+            label={
+              timelineOpen &&
+              (preview.source.kind === 'comp' ||
+                (!!preview.take && preview.take.kind !== 'recording' && isEmptyComp(cue.comp)))
+                ? compositionLabel(cue)
+                : undefined
+            }
+          />
+        }
+        insertMenu={
+          <TakeSourceMenu
+            {...pickerProps}
+            variant="insert"
+            onInsert={(take) => compRef.current?.insertTake(take)}
+          />
+        }
+        timelineOpen={timelineOpen}
+        onTimeline={onTimeline}
+        compRef={compRef}
+        onComp={onComp}
+        onStatus={onStatus}
+        onEffectsTarget={onEffectsTarget}
+        busyClipId={cueBusy ? (replaceClipId ?? null) : null}
+      />
     </div>
   )
 }

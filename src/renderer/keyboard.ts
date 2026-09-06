@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react'
 
 export type Scope =
   | 'popover'
-  | 'decision'
   | 'text'
   | 'gridText'
   | 'grid'
@@ -26,7 +25,6 @@ export type KeyAction =
   | 'next'
   | 'prev'
   | 'generate'
-  | 'promptFragment'
   | 'approve'
   | 'approveNext'
   | 'playOriginal'
@@ -44,7 +42,6 @@ export type KeyAction =
   | 'acceptSuggestion'
   | 'rejectSuggestion'
   | 'toggleRecord'
-  | 'toggleFragmentRecord'
   | 'toggleTimeline'
   | 'focusText'
   | 'copySource'
@@ -87,7 +84,7 @@ export const BINDINGS: Binding[] = [
   {
     action: 'escape',
     codes: ['Escape'],
-    scopes: [...ROUTES, 'home', 'decision'],
+    scopes: [...ROUTES, 'home'],
     label: 'Close surface',
   },
   { action: 'settings', codes: ['Comma'], mod: true, scopes: APP, label: 'Settings' },
@@ -114,14 +111,6 @@ export const BINDINGS: Binding[] = [
   { action: 'gridToggle', codes: ['Space'], scopes: GRID, label: 'Select row' },
   { action: 'gridSelectAll', codes: ['KeyA'], mod: true, scopes: GRID, label: 'Select all results' },
   { action: 'generate', codes: ['KeyG'], mod: true, scopes: TEXT, label: 'Generate' },
-  {
-    action: 'promptFragment',
-    codes: ['KeyG'],
-    mod: true,
-    shift: true,
-    scopes: TIMELINE,
-    label: 'Generate fragment',
-  },
   { action: 'undo', codes: ['KeyZ'], mod: true, scopes: TIMELINE, label: 'Undo' },
   { action: 'redo', codes: ['KeyZ'], mod: true, shift: true, scopes: TIMELINE, label: 'Redo' },
   { action: 'next', codes: ['KeyJ', 'ArrowDown'], scopes: WORK, repeat: true, label: 'Next cue' },
@@ -141,13 +130,6 @@ export const BINDINGS: Binding[] = [
   { action: 'approveNext', codes: ['KeyA'], shift: true, scopes: WORK, label: 'Approve & next' },
   { action: 'focusText', codes: ['KeyE'], scopes: WORK, label: 'Focus translation' },
   { action: 'toggleRecord', codes: ['KeyR'], scopes: WORK, label: 'Record' },
-  {
-    action: 'toggleFragmentRecord',
-    codes: ['KeyR'],
-    shift: true,
-    scopes: TIMELINE,
-    label: 'Record fragment',
-  },
   { action: 'toggleTimeline', codes: ['KeyD'], scopes: WORK, label: 'Timeline / review' },
   { action: 'acceptSuggestion', codes: ['KeyY'], scopes: WORK, label: 'Accept suggestion' },
   { action: 'rejectSuggestion', codes: ['KeyN'], scopes: WORK, label: 'Reject suggestion' },
@@ -234,7 +216,6 @@ export interface KeyboardHandlers {
   next: () => void
   prev: () => void
   generate: () => void
-  promptFragment: () => void
   approve: () => void
   approveNext: () => void
   playOriginal: () => void
@@ -252,7 +233,6 @@ export interface KeyboardHandlers {
   acceptSuggestion: () => void
   rejectSuggestion: () => void
   toggleRecord: () => void
-  toggleFragmentRecord: () => void
   toggleTimeline: () => void
   focusText: () => void
   copySource: () => void
@@ -267,10 +247,9 @@ export interface KeyboardScopes {
   timeline: boolean
   grid: boolean
   deliver: boolean
-  decision: () => boolean
 }
 
-const LOCAL = '[role="menu"], [role="dialog"], .modal, .frag-pop'
+const LOCAL = '[role="menu"], [role="dialog"], .modal'
 const NATIVE = 'button, a[href], select, [role="separator"], [role="button"], summary'
 const NATIVE_CODES = [
   'Enter',
@@ -292,7 +271,6 @@ export function keyScope(
   ctx: KeyboardScopes
 ): Scope | null {
   if (ctx.home) return 'home'
-  if (ctx.decision()) return 'decision'
   if (ctx.deliver) return 'deliver'
   if (target.editor) return ctx.grid ? 'gridText' : 'text'
   if (target.native && NATIVE_CODES.includes(target.code)) return null

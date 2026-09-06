@@ -123,8 +123,6 @@ interface Props {
   canUndo: boolean
   onRedo: () => void
   canRedo: boolean
-  onFragment: () => void
-  canFragment: boolean
   onSetIn: () => void
   onSetOut: () => void
   onClearRegion: () => void
@@ -225,17 +223,6 @@ export function TimelineBar(p: Props) {
               }}
             >
               Redo <kbd>Ctrl+Shift+Z</kbd>
-            </button>
-            <button
-              className="menu-item"
-              role="menuitem"
-              disabled={!p.canFragment}
-              onClick={() => {
-                setMenu(false)
-                p.onFragment()
-              }}
-            >
-              Generate fragment <kbd>Ctrl+Shift+G</kbd>
             </button>
           </div>
         )}

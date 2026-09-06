@@ -8,10 +8,7 @@ import { clipId, transport } from '../audio/transport'
 import { playback } from '../playback'
 import { useCueBusy, useJobsStore } from '../jobs/store'
 import { credits } from './shared'
-import type { FragmentApi } from './useFragment'
 import type { ClipSelection } from './WaveLanes'
-
-export type PendingChoice = 'save' | 'discard' | 'cancel'
 
 interface Options {
   cue: Cue
@@ -23,23 +20,15 @@ interface Options {
   isActiveCue: (cueId: string) => boolean
   noVoiceReason: string
   selection: () => ClipSelection | null
-  fragment: FragmentApi
+  onPlace: (cueId: string, take: Take, replaceClipId?: string) => Promise<void>
 }
 
 export interface VoiceToVoice {
   rec: RecorderApi
   converting: boolean
-  preroll: boolean
-  pending: boolean
-  toggleRec: (fragment?: boolean) => void
-  saveRecording: () => void
-  convertClip: () => void
-  discard: () => void
-  retake: () => void
-  resolvePending: (choice: PendingChoice) => void
+  toggleRec: () => void
   guard: (proceed: () => void) => boolean
   reconvert: (take: Take) => void
-  convertBlocked: string
   onEscape: () => boolean
 }
 
@@ -53,7 +42,7 @@ export function useVoiceToVoice({
   isActiveCue,
   noVoiceReason,
   selection,
-  fragment,
+  onPlace,
 }: Options): VoiceToVoice {
   const rec = useRecorder()
   const [saving, setSaving] = useState(false)
@@ -61,34 +50,24 @@ export function useVoiceToVoice({
   const cueBusy = useCueBusy(cue.id)
   const converting = saving || cueBusy
 
-  const [pre, setPre] = useState(false)
   const preRef = useRef(false)
   const preGen = useRef(0)
   const targetRef = useRef<string | null>(null)
   const savingRef = useRef(false)
-  const pendingRef = useRef<(() => void) | null>(null)
-  const [pending, setPending] = useState(false)
 
   const cancelPre = useCallback((): void => {
     preGen.current++
     targetRef.current = null
     if (!preRef.current) return
     preRef.current = false
-    setPre(false)
     transport.stop()
-  }, [])
-
-  const clearPending = useCallback((): void => {
-    pendingRef.current = null
-    setPending(false)
   }, [])
 
   const recCancel = rec.cancel
   useEffect(() => {
-    clearPending()
     cancelPre()
     recCancel()
-  }, [cue.id, recCancel, cancelPre, clearPending])
+  }, [cue.id, recCancel, cancelPre])
 
   const recError = rec.error
   const clearRecError = rec.clearError
@@ -98,10 +77,9 @@ export function useVoiceToVoice({
     clearRecError()
   }, [recError, clearRecError, onStatus])
 
-  const startRec = useCallback((useSelection: boolean) => {
+  const startRec = useCallback(() => {
     playback.cancelCompare()
-    const sel = useSelection ? selection() : null
-    if (useSelection && !sel) return
+    const sel = selection()
     if (!sel) {
       targetRef.current = null
       rec.start({
@@ -121,7 +99,6 @@ export function useVoiceToVoice({
     const armed = (): void => {
       if (token !== preGen.current) return
       preRef.current = false
-      setPre(false)
       rec.start({
         deviceId: appSettings.micDeviceId,
         countIn: appSettings.countIn,
@@ -131,7 +108,6 @@ export function useVoiceToVoice({
     if (appSettings.autoReference && sel.reference) {
       const r = sel.reference
       preRef.current = true
-      setPre(true)
       void transport.playRange({ id: r.id, url: r.url }, r.from, r.to).then(armed, armed)
     } else {
       armed()
@@ -139,11 +115,10 @@ export function useVoiceToVoice({
   }, [rec, appSettings, cue.referenceAudio, selection])
 
   const saveClip = useCallback(
-    async (select: boolean): Promise<Take | null> => {
+    async (target: string | null): Promise<Take | null> => {
       const clip = rec.clip
       if (!clip || savingRef.current) return null
       const cueId = cue.id
-      const target = targetRef.current
       savingRef.current = true
       setSaving(true)
       useJobsStore.getState().beginSave()
@@ -157,10 +132,11 @@ export function useVoiceToVoice({
         )
         targetRef.current = null
         rec.cancel()
-        onTakeAdded(cueId, take, select)
+        onTakeAdded(cueId, take, true)
         return take
       } catch (e) {
         onStatus('err', String(e))
+        rec.cancel()
         return null
       } finally {
         savingRef.current = false
@@ -171,17 +147,23 @@ export function useVoiceToVoice({
     [rec, cue.id, onTakeAdded, onStatus]
   )
 
+  const hasClip = !!rec.clip
+  const recPhase = rec.phase
+  useEffect(() => {
+    if (recPhase !== 'preview' || !hasClip || savingRef.current) return
+    const cueId = cue.id
+    const target = targetRef.current
+    void saveClip(target).then((take) => {
+      if (!take) return
+      onPlace(cueId, take, target ?? undefined).then(
+        () => onStatus('ok', 'Recording placed'),
+        (e: unknown) => onStatus('err', String(e))
+      )
+    })
+  }, [recPhase, hasClip, cue.id, saveClip, onPlace, onStatus])
+
   const submitSts = useCallback(
-    (
-      cueId: string,
-      sourceTakeId: string,
-      voiceSettings: VoiceSettings,
-      okText: string,
-      frag: { clipId?: string; mark?: boolean } = {}
-    ) => {
-      const target = frag.clipId ?? null
-      const isFragment = !!target || !!frag.mark
-      if (target) fragment.begin(cueId, target)
+    (cueId: string, sourceTakeId: string, voiceSettings: VoiceSettings, fragment: boolean) => {
       submitJob({
         kind: 'sts',
         cueId,
@@ -191,113 +173,40 @@ export function useVoiceToVoice({
             sourceTakeId,
             voiceSettings,
             selectOutput: false,
-            ...(isFragment ? { fragment: true } : {}),
+            ...(fragment ? { fragment: true } : {}),
           })
           onTakeAdded(cueId, take)
-          if (target) {
-            await fragment.apply(cueId, target, take)
-          } else if (isActiveCue(cueId)) {
+          await onPlace(cueId, take)
+          if (isActiveCue(cueId)) {
             void transport.playClip(
               { id: clipId.take(take.id), url: audioUrl(take.file.relPath) },
               0
             )
           }
-          onStatus('ok', okText)
+          onStatus('ok', 'Voice converted')
         },
-        onError: (e) => {
-          if (target) fragment.release(cueId, target)
-          onStatus('err', String(e))
-        },
+        onError: (e) => onStatus('err', String(e)),
       })
     },
-    [submitJob, onTakeAdded, onStatus, isActiveCue, fragment]
+    [submitJob, onTakeAdded, onStatus, isActiveCue, onPlace]
   )
-
-  const convertClip = useCallback(() => {
-    const clip = rec.clip
-    if (!clip || converting) return
-    const cueId = cue.id
-    const target = targetRef.current
-    const voiceSettings = voice
-    clearPending()
-    onSubmit(cueId)
-    onStatus(
-      'info',
-      `Converting ${clip.durationSec.toFixed(1)}s (≈${credits(clip.durationSec)} credits)…`
-    )
-    void saveClip(false).then((recTake) => {
-      if (!recTake) return
-      submitSts(
-        cueId,
-        recTake.id,
-        voiceSettings,
-        target ? 'Fragment replaced' : 'Voice converted',
-        target ? { clipId: target } : {}
-      )
-    })
-  }, [rec.clip, converting, cue.id, voice, clearPending, onSubmit, onStatus, saveClip, submitSts])
-
-  const saveRecording = useCallback(() => {
-    if (!rec.clip || converting) return
-    clearPending()
-    void saveClip(true).then((take) => {
-      if (take) onStatus('ok', 'Recording saved')
-    })
-  }, [rec.clip, converting, clearPending, saveClip, onStatus])
-
-  const discard = useCallback(() => {
-    clearPending()
-    recCancel()
-  }, [clearPending, recCancel])
 
   const guard = useCallback(
     (proceed: () => void): boolean => {
-      const decision = recordingGuard(rec.phase, !!rec.clip)
-      if (decision === 'block') {
-        onStatus('info', 'Stop the recording first')
-        return true
-      }
+      const decision = recordingGuard(rec.phase, hasClip)
+      if (decision === 'allow') return false
       if (decision === 'cancel') {
         cancelPre()
         recCancel()
         return false
       }
-      if (decision === 'allow') return false
-      pendingRef.current = proceed
-      setPending(true)
+      onStatus('info', decision === 'block' ? 'Stop the recording first' : 'Saving the recording…')
       return true
     },
-    [rec.phase, rec.clip, cancelPre, recCancel, onStatus]
+    [rec.phase, hasClip, cancelPre, recCancel, onStatus]
   )
 
-  const resolvePending = useCallback(
-    (choice: PendingChoice) => {
-      const run = pendingRef.current
-      clearPending()
-      if (choice === 'cancel') return
-      if (choice === 'discard') {
-        recCancel()
-        run?.()
-        return
-      }
-      void saveClip(true).then((take) => {
-        if (!take) return
-        onStatus('ok', 'Recording saved')
-        run?.()
-      })
-    },
-    [clearPending, recCancel, saveClip, onStatus]
-  )
-
-  const retake = useCallback(() => {
-    if (converting) return
-    const frag = targetRef.current !== null
-    const again = (): void => startRec(frag)
-    if (guard(again)) return
-    again()
-  }, [converting, guard, startRec])
-
-  const toggleRec = useCallback((fragment?: boolean) => {
+  const toggleRec = useCallback(() => {
     if (converting) return
     if (preRef.current) {
       cancelPre()
@@ -305,10 +214,7 @@ export function useVoiceToVoice({
     }
     switch (rec.phase) {
       case 'idle':
-        startRec(fragment === true)
-        return
-      case 'preview':
-        retake()
+        startRec()
         return
       case 'arming':
       case 'countin':
@@ -318,38 +224,25 @@ export function useVoiceToVoice({
         rec.stop()
         return
     }
-  }, [converting, rec, startRec, retake, cancelPre])
+  }, [converting, rec, startRec, cancelPre])
 
-  const recPhase = rec.phase
-  const hasClip = !!rec.clip
   const recStop = rec.stop
   const onEscape = useCallback((): boolean => {
     if (preRef.current) {
       cancelPre()
       return true
     }
-    if (pendingRef.current !== null || pending) {
-      clearPending()
-      return true
-    }
-    const decision = recordingGuard(recPhase, hasClip)
-    if (decision === 'allow') {
-      if (recPhase === 'preview') recCancel()
-      return recPhase !== 'idle'
-    }
-    if (decision === 'block') {
+    if (recPhase === 'recording') {
       recStop()
       return true
     }
-    if (decision === 'cancel') {
+    if (recPhase === 'arming' || recPhase === 'countin') {
       cancelPre()
       recCancel()
       return true
     }
-    pendingRef.current = null
-    setPending(true)
-    return true
-  }, [recPhase, hasClip, pending, recCancel, recStop, cancelPre, clearPending])
+    return false
+  }, [recPhase, recCancel, recStop, cancelPre])
 
   const reconvert = useCallback(
     (take: Take) => {
@@ -359,34 +252,18 @@ export function useVoiceToVoice({
         return
       }
       onSubmit(cue.id)
-      onStatus('info', `Converting again (≈${credits(take.duration)} credits)…`)
-      submitSts(cue.id, take.id, voice, 'New take from the same recording', {
-        mark: take.fragment,
-      })
+      onStatus('info', `Converting (≈${credits(take.duration)} credits)…`)
+      submitSts(cue.id, take.id, voice, take.fragment === true)
     },
     [converting, cue.id, voice, onStatus, onSubmit, submitSts]
   )
 
-  const convertBlocked =
-    noVoiceReason ||
-    (rec.clip && rec.clip.durationSec > MAX_STS_SECONDS
-      ? `Recording is ${rec.clip.durationSec.toFixed(1)}s — the STS limit is 5 min`
-      : '')
-
   return {
     rec,
     converting,
-    preroll: pre,
-    pending,
     toggleRec,
-    saveRecording,
-    convertClip,
-    discard,
-    retake,
-    resolvePending,
     guard,
     reconvert,
-    convertBlocked,
     onEscape,
   }
 }

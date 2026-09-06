@@ -50,6 +50,7 @@ import {
   copyJob,
   encodeJob,
   finishExport,
+  lastExport,
   planBatchExport,
   preflightExport,
 } from './export'
@@ -634,6 +635,7 @@ function registerHandlers(): void {
   typedHandle('export:finish', (token, summary) =>
     finishExport(z.string().uuid().parse(token), exportSummarySchema.parse(summary))
   )
+  typedHandle('export:last', () => lastExport())
 
   typedHandle('settings:get', () => store.getSettings())
   typedHandle('settings:set', async (s: AppSettings) => {

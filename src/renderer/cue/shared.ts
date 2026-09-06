@@ -2,19 +2,11 @@ import { isEmptyComp } from '@shared/comp'
 import { estimateStsCredits, type Cue } from '@shared/domain'
 import { outputSource } from '@shared/workspace-source'
 
-export function clock(sec: number): string {
+export function timecode(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return '00:00.0'
   const m = Math.floor(sec / 60)
   const s = sec - m * 60
   return `${String(m).padStart(2, '0')}:${s.toFixed(1).padStart(4, '0')}`
-}
-
-export const timecode = clock
-
-export function meterPct(rms: number): number {
-  if (!(rms > 0)) return 0
-  const db = 20 * Math.log10(rms)
-  return Math.max(0, Math.min(100, ((db + 60) / 60) * 100))
 }
 
 export const credits = (sec: number): string => estimateStsCredits(sec).toLocaleString('en-US')

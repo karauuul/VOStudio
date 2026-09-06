@@ -15,7 +15,7 @@ import {
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
 import type { UpdateStatus } from '@shared/updater'
 import { api } from './api'
-import { transport } from './audio/transport'
+import { clipId, transport } from './audio/transport'
 import { playback } from './playback'
 import {
   busyCountNow,
@@ -27,9 +27,10 @@ import {
   useJobFailed,
   useJobsStore,
 } from './jobs/store'
-import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues } from '@shared/cue-filter'
-import { CueList } from './CueList'
+import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues, groupByCharacter } from '@shared/cue-filter'
 import { CueEditor } from './CueEditor'
+import { LinesPanel } from './work/LinesPanel'
+import type { TextPanelProps } from './work/TextPanel'
 import { ProjectTable, type GridApi } from './ProjectTable'
 import { DeliverScreen } from './DeliverScreen'
 import { ImportRoom } from './rooms/ImportRoom'
@@ -63,7 +64,18 @@ import {
 import { isEmptyComp } from '@shared/comp'
 import type { ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
 import { buildPrompt } from '@shared/prompt'
-import type { CopyKind } from './cue/TextBlock'
+import {
+  clipTargetText,
+  deriveGenTarget,
+  placeTake,
+  targetText,
+  type GenTarget,
+  type TextRange,
+} from '@shared/generation'
+import { reportTakeDuration } from './audio/duration-backfill'
+import { getPeaks } from './Waveform'
+
+type CopyKind = 'source' | 'translation' | 'prompt'
 
 export default function App() {
   const [activeCueId, setActiveCueId] = useState<string | undefined>(undefined)
@@ -89,14 +101,16 @@ export default function App() {
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('take')
   const [timelineOpen, setTimelineOpen] = useState(false)
   const [effects, setEffects] = useState<EffectsTarget | null>(null)
+  const [targetTrack, setTargetTrack] = useState<Record<string, string>>({})
+  const [exported, setExported] = useState<ReadonlySet<string>>(() => new Set())
+  const [textSel, setTextSel] = useState<TextRange | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
 
   const compRef = useRef<CompApi | null>(null)
-  const recRef = useRef<((fragment?: boolean) => void) | null>(null)
+  const recRef = useRef<(() => void) | null>(null)
   const escRef = useRef<(() => boolean) | null>(null)
   const recActiveRef = useRef<(() => boolean) | null>(null)
-  const decisionRef = useRef<(() => boolean) | null>(null)
   const guardRef = useRef<((proceed: () => void) => boolean) | null>(null)
   const gridRef = useRef<GridApi | null>(null)
   const queueSearchRef = useRef<HTMLInputElement>(null)
@@ -108,6 +122,8 @@ export default function App() {
   const statusSeq = useRef(0)
   const activeCueIdRef = useRef<string | undefined>(undefined)
   const exportingRef = useRef(false)
+  const targetTrackRef = useRef<Record<string, string>>({})
+  targetTrackRef.current = targetTrack
 
   const submitJob = useJobsStore((s) => s.submit)
   const jobCount = useJobCount()
@@ -130,7 +146,15 @@ export default function App() {
   const onBootstrap = useCallback((p: Project) => {
     setFilter(p.ui.filter || DEFAULT_FILTER)
     setSearch(p.ui.search ?? '')
-    setActiveCueId(p.ui.activeCueId ?? p.cues[0]?.id)
+    setTargetTrack(p.ui.targetTrack ?? {})
+    setActiveCueId(p.ui.activeCueId)
+  }, [])
+
+  const refreshExported = useCallback(() => {
+    void api['export:last']().then(
+      (last) => setExported(new Set(last?.cueIds ?? [])),
+      () => setExported(new Set())
+    )
   }, [])
 
   const session = useProjectSession({ onStatus: pushStatus, onBootstrap })
@@ -181,7 +205,8 @@ export default function App() {
   const endExport = useCallback(() => {
     exportingRef.current = false
     setExporting(false)
-  }, [])
+    refreshExported()
+  }, [refreshExported])
 
   const enterProject = useCallback(
     (snapshot: ProjectSnapshot) => {
@@ -190,8 +215,9 @@ export default function App() {
       setReviewIds(null)
       clearTerminalJobs()
       session.enter(snapshot)
+      refreshExported()
     },
-    [session]
+    [session, refreshExported]
   )
 
   useEffect(() => {
@@ -221,14 +247,20 @@ export default function App() {
       ? ALL_CHARACTERS
       : characterFilter
 
-  const visible = useMemo(() => {
-    if (!project) return []
+  const grouped = useMemo(() => {
+    if (!project) return { cues: [], groups: [] }
     if (reviewIds) {
       const byId = new Map(project.cues.map((c) => [c.id, c]))
-      return reviewIds.flatMap((id) => byId.get(id) ?? [])
+      const picked = reviewIds.flatMap((id) => byId.get(id) ?? [])
+      return groupByCharacter(picked, project.characters)
     }
-    return filterCues(project.cues, filter, search, liveCharacterFilter)
+    return groupByCharacter(
+      filterCues(project.cues, filter, search, liveCharacterFilter),
+      project.characters
+    )
   }, [project, reviewIds, filter, search, liveCharacterFilter])
+
+  const visible = grouped.cues
 
   const activeCue = useMemo(
     () => project?.cues.find((c) => c.id === activeCueId),
@@ -271,8 +303,10 @@ export default function App() {
 
   useEffect(() => {
     if (!project) return
-    saveUi({ activeCueId, filter, search })
-  }, [saveUi, activeCueId, filter, search, project !== null])
+    saveUi({ activeCueId, filter, search, targetTrack })
+  }, [saveUi, activeCueId, filter, search, targetTrack, project !== null])
+
+  useEffect(() => setTextSel(null), [activeCueId])
 
   const doSelectCue = useCallback(
     async (cueId: string | undefined): Promise<boolean> => {
@@ -439,20 +473,6 @@ export default function App() {
     ]
   )
 
-  const onVoiceReset = useCallback(() => {
-    const cue = activeCue
-    if (!cue || refuseWhileExporting()) return
-    mutateCue(cue.id, (c) => {
-      const { voiceSettingsOverride: _drop, ...rest } = c
-      return rest
-    })
-    debounceVoice(`cue:${cue.id}`, () =>
-      dispatch({ type: 'cue.setVoiceOverride', cueId: cue.id, override: null }).catch(
-        (e: unknown) => pushStatus('err', String(e))
-      )
-    )
-  }, [activeCue, mutateCue, debounceVoice, pushStatus, dispatch, refuseWhileExporting])
-
   const onCharacterVoice = useCallback(
     (characterId: string, settings: VoiceSettings) => {
       if (refuseWhileExporting()) return
@@ -474,14 +494,6 @@ export default function App() {
     },
     [setProject, debounceVoice, pushStatus, dispatch, refuseWhileExporting]
   )
-
-  const onVoiceDefault = useCallback(() => {
-    const cue = activeCue
-    const character = activeCharacter
-    if (!cue || !character) return
-    onCharacterVoice(character.id, resolveVoiceSettings(character, cue))
-    onVoiceReset()
-  }, [activeCue, activeCharacter, onCharacterVoice, onVoiceReset])
 
   const onCharacterProvider = useCallback(
     (characterId: string, patch: { voiceId?: string; ttsModel?: string; stsModel?: string }) => {
@@ -568,8 +580,36 @@ export default function App() {
     )
   }, [activeCue, dispatch, pushStatus])
 
+  const placeOnComp = useCallback(
+    async (cueId: string, take: Take, replaceClipId?: string): Promise<void> => {
+      const peaks = await getPeaks(take.file.relPath)
+      reportTakeDuration(cueId, take, peaks.duration)
+      const duration = take.duration > 0 ? take.duration : peaks.duration
+      if (!(duration > 0)) throw new Error('the new take decoded to nothing')
+      const cue = projectRef.current?.cues.find((c) => c.id === cueId)
+      if (!cue) return
+      const state = transport.getState()
+      const replace =
+        replaceClipId && cue.comp?.clips.some((c) => c.id === replaceClipId)
+          ? replaceClipId
+          : undefined
+      const placed = placeTake({
+        comp: cue.comp,
+        takeId: take.id,
+        duration,
+        targetTrackId: targetTrackRef.current[cueId],
+        playhead: state.clipId === clipId.comp(cueId) ? state.pos : 0,
+        ...(replace ? { replaceClipId: replace } : {}),
+      })
+      setTargetTrack((m) => (m[cueId] === placed.trackId ? m : { ...m, [cueId]: placed.trackId }))
+      await dispatch({ type: 'cue.setComp', cueId, comp: placed.comp })
+      if (isActiveCue(cueId)) selectSource({ kind: 'comp' })
+    },
+    [projectRef, dispatch, isActiveCue, selectSource]
+  )
+
   const submitTts = useCallback(
-    (cueId: string, text: string, announce: boolean) => {
+    (cueId: string, text: string, announce: boolean, target: GenTarget = { kind: 'all' }) => {
       submitJob({
         kind: 'tts',
         cueId,
@@ -580,14 +620,21 @@ export default function App() {
           if (!project || !cue) throw new Error('Cue is no longer in the project')
           const character = project.characters.find((c) => c.id === cue.characterId)
           const voiceSettings = resolveVoiceSettings(character, cue)
-          const take = await api['provider:tts']({ cueId, text, voiceSettings, selectOutput: false })
+          const take = await api['provider:tts']({
+            cueId,
+            text,
+            voiceSettings,
+            selectOutput: false,
+            ...(target.kind === 'all' ? {} : { fragment: true }),
+          })
           onTakeAdded(cueId, take)
-          if (announce) pushStatus('ok', `Take ready (${take.kind})`)
+          await placeOnComp(cueId, take, target.kind === 'clip' ? target.clipId : undefined)
+          if (announce) pushStatus('ok', 'Take placed')
         },
         onError: (e) => pushStatus('err', String(e)),
       })
     },
-    [submitJob, onTakeAdded, pushStatus, projectRef]
+    [submitJob, onTakeAdded, pushStatus, projectRef, placeOnComp]
   )
 
   const refuseWithoutKey = useCallback((): boolean => {
@@ -596,14 +643,49 @@ export default function App() {
     return true
   }, [hasKey, pushStatus])
 
-  const generate = useCallback(() => {
-    const cue = activeCue
-    if (!cue || !cue.text.trim()) return
-    if (isCueBusyNow(cue.id) || refuseWhileExporting() || refuseWithoutKey()) return
-    noteSubmit(cue.id)
-    void flushText()
-    submitTts(cue.id, cue.text, true)
-  }, [activeCue, flushText, noteSubmit, submitTts, refuseWhileExporting, refuseWithoutKey])
+  const selectedClipId = effects?.clip.id
+
+  const clipTarget = useMemo(
+    () =>
+      activeCue && selectedClipId
+        ? {
+            clipId: selectedClipId,
+            text: clipTargetText(project ?? undefined, activeCue, selectedClipId),
+          }
+        : null,
+    [project, activeCue, selectedClipId]
+  )
+
+  const genTarget = useMemo(() => deriveGenTarget(clipTarget, textSel), [clipTarget, textSel])
+
+  const generate = useCallback(
+    (kind: GenTarget['kind']) => {
+      const cue = activeCue
+      if (!cue) return
+      const target: GenTarget =
+        kind === 'clip' && clipTarget
+          ? { kind: 'clip', clipId: clipTarget.clipId, text: clipTarget.text }
+          : kind === 'range' && textSel
+            ? { kind: 'range', start: textSel.start, end: textSel.end }
+            : { kind: 'all' }
+      const text = targetText(cue.text, target)
+      if (!text) return
+      if (isCueBusyNow(cue.id) || refuseWhileExporting() || refuseWithoutKey()) return
+      noteSubmit(cue.id)
+      void flushText()
+      submitTts(cue.id, text, true, target)
+    },
+    [
+      activeCue,
+      clipTarget,
+      textSel,
+      flushText,
+      noteSubmit,
+      submitTts,
+      refuseWhileExporting,
+      refuseWithoutKey,
+    ]
+  )
 
   const generateSelected = useCallback(
     async (cues: Cue[]) => {
@@ -689,6 +771,8 @@ export default function App() {
     setActiveCueId(undefined)
     setTimelineOpen(false)
     setEffects(null)
+    setTargetTrack({})
+    setExported(new Set())
     setRoute('work')
     setReviewIds(null)
   }, [session])
@@ -789,7 +873,7 @@ export default function App() {
       gridSelectAll: () => gridRef.current?.selectAll(),
       next: () => move(1),
       prev: () => move(-1),
-      generate: () => generate(),
+      generate: () => generate(genTarget.kind),
       approve: () => void onApprove(true),
       approveNext: onApproveNext,
       playOriginal: () => playback.toggle('orig'),
@@ -813,11 +897,7 @@ export default function App() {
       acceptSuggestion: onAcceptSuggestion,
       rejectSuggestion: onRejectSuggestion,
       toggleRecord: () => recRef.current?.(),
-      toggleFragmentRecord: () => recRef.current?.(true),
       toggleTimeline,
-      promptFragment: () => {
-        compRef.current?.promptFragment()
-      },
       escape: () => escRef.current?.() ?? false,
       focusText: () => focusTextRef.current?.(),
       copySource: () => onCopy('source'),
@@ -829,6 +909,7 @@ export default function App() {
       route,
       move,
       generate,
+      genTarget,
       onApprove,
       onApproveNext,
       activeTakes,
@@ -860,7 +941,6 @@ export default function App() {
     timeline: timelineOpen,
     grid: route === 'import',
     deliver: route === 'export',
-    decision: () => decisionRef.current?.() ?? false,
   })
 
   const settingsUi = showSettings && (
@@ -919,23 +999,35 @@ export default function App() {
     { label: 'Shortcuts', onClick: () => setShowShortcuts(true) },
   ]
 
-  const queue: ComponentProps<typeof CueList> = {
+  const lines: ComponentProps<typeof LinesPanel> = {
     cues: visible,
-    allCues: project.cues,
+    groups: grouped.groups,
     activeCueId,
-    filter,
     search,
-    characters: project.characters,
-    characterFilter: liveCharacterFilter,
-    onFilter: setFilter,
     onSearch: setSearch,
-    onCharacterFilter: setCharacterFilter,
     onSelect: selectCue,
     scrollToIndex: activeIndex,
     searchRef: queueSearchRef,
+    exported,
     scope: reviewIds
       ? { label: `Selection · ${visible.length}`, onExit: () => setReviewIds(null) }
       : undefined,
+  }
+
+  const text: TextPanelProps = {
+    cue: activeCue,
+    terms: project.terms ?? [],
+    characters: project.characters,
+    voice: resolveVoiceSettings(activeCharacter, activeCue),
+    target: genTarget,
+    onText,
+    onSelection: setTextSel,
+    onAcceptSuggestion,
+    onRejectSuggestion,
+    onCharacter: onCueCharacter,
+    onVoiceChange,
+    hasRange: !!textSel,
+    hasClip: !!clipTarget,
   }
 
   const editor: ComponentProps<typeof CueEditor> | null = activeCue
@@ -943,32 +1035,23 @@ export default function App() {
         cue: activeCue,
         cues: project.cues,
         character: activeCharacter,
-        characters: project.characters,
-        onCharacter: onCueCharacter,
         preview,
         onSelectSource: selectSource,
-        onText,
-        onCopy,
-        terms: project.terms ?? [],
         onGenerate: generate,
-        onApprove,
-        onApproveNext,
-        onSetFinal: makeFinal,
         onDetails: () => setInspectorTab('take'),
         onDeleteTake,
         onSubmit: noteSubmit,
-        onAcceptSuggestion,
-        onRejectSuggestion,
         cueBusy: activeCueBusy,
         compRef,
         onComp: onSetComp,
+        onPlace: placeOnComp,
+        replaceClipId: clipTarget?.clipId,
         timelineOpen,
         onTimeline: toggleTimeline,
         onEffectsTarget: setEffects,
         recRef,
         escRef,
         recActiveRef,
-        decisionRef,
         guardRef,
         focusTextRef,
         appSettings,
@@ -977,12 +1060,11 @@ export default function App() {
         onStatus: pushStatus,
         isActiveCue,
         hasKey,
-        rules: project.pronunciationRules,
+        text,
       }
     : null
 
   const inspector: ComponentProps<typeof Inspector> = {
-    cueId: activeCue?.id ?? '',
     tab: inspectorTab,
     onTab: setInspectorTab,
     take: shownTake,
@@ -991,12 +1073,6 @@ export default function App() {
     canSetFinal: !!activeCue && setFinalEligible(activeCue, previewSource),
     onSetFinal: makeFinal,
     onDelete: () => shownTake && onDeleteTake(shownTake.id),
-    character: activeCharacter,
-    voice: resolveVoiceSettings(activeCharacter, activeCue),
-    voiceOverride: activeCue?.voiceSettingsOverride,
-    onVoiceChange,
-    onVoiceReset,
-    onVoiceDefault,
     effects,
     effectsLabel: timelineOpen && activeCue ? compositionLabel(activeCue) : 'Composition',
     onClipEdit,
@@ -1056,7 +1132,14 @@ export default function App() {
 
       <ImportRoom hidden={route !== 'import'} table={table} />
 
-      <WorkRoom hidden={route !== 'work'} queue={queue} editor={editor} inspector={inspector} />
+      <WorkRoom
+        hidden={route !== 'work'}
+        lines={lines}
+        total={project.cues.length}
+        text={text}
+        editor={editor}
+        inspector={inspector}
+      />
 
       <ExportRoom hidden={route !== 'export'} deliver={deliver} />
 

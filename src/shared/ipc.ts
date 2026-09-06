@@ -110,6 +110,7 @@ export interface LastExport {
   exported: number
   failed: number
   skipped: number
+  cueIds: string[]
 }
 
 export interface ExportPreflight extends Omit<PreflightPlan, 'sources'> {
@@ -277,6 +278,7 @@ export interface IpcApi {
   'export:copy': (outPath: string) => Promise<ExportResult>
   'export:encode': (outPath: string, wav: ArrayBuffer) => Promise<ExportResult>
   'export:finish': (token: string, summary: ExportSummary) => Promise<DeliverPaths>
+  'export:last': () => Promise<LastExport | null>
 
   'settings:get': () => Promise<AppSettings>
   'settings:set': (settings: AppSettings) => Promise<void>
