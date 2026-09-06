@@ -56,7 +56,7 @@ export const projectFileSchema = z
 export const exportSettingsSchema = z
   .object({
     outDir: z.string().min(1).max(4096).optional(),
-    format: z.enum(['wav-48-24', 'wav-44-16', 'mp3-192', 'ogg']).optional(),
+    format: z.enum(['source', 'wav-48-24', 'wav-44-16', 'mp3-192', 'ogg']).optional(),
     loudness: z.enum(['match', 'off']).optional(),
     length: z.enum(['trim', 'pad', 'asis']).optional(),
   })

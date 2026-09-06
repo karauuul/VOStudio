@@ -91,7 +91,7 @@ describe('exportName', () => {
   it('placeholders are substituted', () => {
     const c = cue('12345')
     const p = project([c], '{EventName}__{WemId}.{ext}')
-    expect(exportName(p, c, c.takes[0])).toBe('Event_12345__12345.wav')
+    expect(exportName(p, c, c.takes[0])).toBe('Event_12345__12345.mp3')
   })
 
   it('the extension comes from the chosen format', () => {
@@ -103,7 +103,7 @@ describe('exportName', () => {
 
   it('without EventName falls back to key', () => {
     const c = cue('77', { fields: {} })
-    expect(exportName(project([c]), c, c.takes[0])).toBe('77.wav')
+    expect(exportName(project([c]), c, c.takes[0])).toBe('77.mp3')
   })
 })
 
@@ -184,7 +184,7 @@ describe('collisions', () => {
   it('finds exactly one collision with both keys', () => {
     const coll = findCollisions(planBatch(project([a, b, c])))
     expect(coll).toHaveLength(1)
-    expect(coll[0].name).toBe('Same.wav')
+    expect(coll[0].name).toBe('Same.mp3')
     expect(coll[0].cueKeys).toEqual(['100', '200'])
   })
 

@@ -128,9 +128,10 @@ describe('loudness', () => {
 })
 
 describe('output name follows the chosen format', () => {
-  it('the extension comes from the format, not from the take', () => {
+  it('the extension comes from the chosen format, from the take when none is chosen', () => {
     const c = cue('1')
-    expect(exportName(project([c]), c, c.takes[0])).toBe('Ev_1.wav')
+    expect(exportName(project([c]), c, c.takes[0])).toBe('Ev_1.mp3')
+    expect(exportName(project([c], { export: { format: 'wav-48-24' } }), c, c.takes[0])).toBe('Ev_1.wav')
     expect(exportName(project([c], { export: { format: 'mp3-192' } }), c, c.takes[0])).toBe('Ev_1.mp3')
     expect(exportName(project([c], { export: { format: 'ogg' } }), c, c.takes[0])).toBe('Ev_1.ogg')
   })
