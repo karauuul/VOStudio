@@ -236,11 +236,12 @@ export default function App() {
     void api['updater:getStatus']().then(setUpdateStatus)
   }, [])
 
+  const [outputApplied, setOutputApplied] = useState(true)
   useEffect(() => api.on('usage:updated', setUsage), [])
   useEffect(() => api.on('updater:status', setUpdateStatus), [])
 
   useEffect(() => {
-    void setOutputDevice(appSettings.outputDeviceLabel ?? '')
+    void setOutputDevice(appSettings.outputDeviceLabel ?? '').then(setOutputApplied)
   }, [appSettings.outputDeviceLabel])
 
   const onAppSettings = useCallback(
@@ -1002,6 +1003,7 @@ export default function App() {
 
   const settingsUi = showSettings && (
     <SettingsDialog
+      outputApplied={outputApplied}
       hasKey={hasKey}
       onKeySaved={onKeySaved}
       settings={appSettings}

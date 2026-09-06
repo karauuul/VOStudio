@@ -268,7 +268,7 @@ export function useRecorder(): RecorderApi {
     if (aliveRef.current) setClip(null)
   }, [])
 
-  const ensureCue = useCallback((): CueOut | null => {
+  const ensureCue = useCallback(async (): Promise<CueOut | null> => {
     let c = cueRef.current
     if (!c || c.ctx.state === 'closed') {
       try {
@@ -282,7 +282,7 @@ export function useRecorder(): RecorderApi {
         return null
       }
     }
-    void applySink(c.ctx, outputDeviceId())
+    await applySink(c.ctx, outputDeviceId())
     void c.ctx.resume().catch(() => {})
     return c
   }, [])
@@ -475,7 +475,7 @@ export function useRecorder(): RecorderApi {
           }
 
           if (opts.countIn) {
-            const c = ensureCue()
+            const c = await ensureCue()
             if (c) {
               const now = c.ctx.currentTime
               try {
@@ -510,7 +510,7 @@ export function useRecorder(): RecorderApi {
 
           if (perfNow > t.startAtMs - LATE_MARGIN_MS) {
             const atMs = Math.max(perfNow + LEAD_IN * 1000, t.startAtMs + BEEP_GAP * 1000)
-            const c = ensureCue()
+            const c = await ensureCue()
             if (c) beep(c.ctx, c.gain, c.ctx.currentTime + (atMs - performance.now()) / 1000, true)
             t.beeps++
             t.startAtMs = atMs

@@ -20,6 +20,7 @@ interface Props {
   onKeySaved: () => void
   settings: AppSettings
   onSettings: (next: AppSettings) => void
+  outputApplied: boolean
   usage: UsageInfo | null
   updateStatus: UpdateStatus | null
   onUpdateStatus: (next: UpdateStatus) => void
@@ -33,6 +34,7 @@ export function SettingsDialog({
   onKeySaved,
   settings,
   onSettings,
+  outputApplied,
   usage,
   updateStatus,
   onUpdateStatus,
@@ -73,9 +75,10 @@ export function SettingsDialog({
   const mic = inputs.some((d) => d.label === settings.micDeviceLabel)
     ? (settings.micDeviceLabel ?? '')
     : ''
-  const output = outputs.some((d) => d.label === settings.outputDeviceLabel)
-    ? (settings.outputDeviceLabel ?? '')
-    : ''
+  const output =
+    outputApplied && outputs.some((d) => d.label === settings.outputDeviceLabel)
+      ? (settings.outputDeviceLabel ?? '')
+      : ''
 
   const saveKey = (): void => {
     const key = keyInput.trim()
