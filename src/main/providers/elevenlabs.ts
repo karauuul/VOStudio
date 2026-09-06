@@ -107,6 +107,30 @@ export async function sts(req: {
   return Buffer.from(await r.arrayBuffer())
 }
 
+export async function audioIsolation(req: { audio: Buffer; filename: string }): Promise<Buffer> {
+  const form = new FormData()
+  const view = new Uint8Array(req.audio.byteLength)
+  view.set(req.audio)
+  form.append('audio', new Blob([view], { type: 'audio/wav' }), req.filename)
+
+  let r: Response
+  try {
+    r = await fetch(`${BASE}/audio-isolation`, {
+      method: 'POST',
+      headers: { 'xi-api-key': await key(), Accept: 'audio/mpeg' },
+      body: form,
+      signal: AbortSignal.timeout(300_000),
+    })
+  } catch (e) {
+    if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+      throw new Error('ElevenLabs isolation: timed out after 5 min — try again manually')
+    }
+    throw e
+  }
+  if (!r.ok) throw new Error(`ElevenLabs isolation ${r.status}: ${(await r.text()).slice(0, 300)}`)
+  return Buffer.from(await r.arrayBuffer())
+}
+
 export const ELEVENLABS_STT_MODEL = 'scribe_v1'
 
 export async function stt(req: { audio: Buffer; filename: string }): Promise<string> {

@@ -130,7 +130,7 @@ describe('the original lane as a preview voice', () => {
     const { ctx, destination } = fakeContext()
     const s = scheduleComp(ctx, sources([clip()]), destination, {
       tracks: [track('track-1', { muted: true })],
-      original: { buffer: orig, gainDb: -6 },
+      originals: [{ buffer: orig, gainDb: -6 }],
     })
     expect(s.voices).toHaveLength(2)
     expect((s.voices[1].output as unknown as FakeNode).to).toEqual([destination])
@@ -139,7 +139,7 @@ describe('the original lane as a preview voice', () => {
   it('the composition runs to the end of the longer original', () => {
     const { ctx, destination } = fakeContext()
     const s = scheduleComp(ctx, sources([clip()]), destination, {
-      original: { buffer: orig, gainDb: 0 },
+      originals: [{ buffer: orig, gainDb: 0 }],
     })
     expect(s.duration).toBe(5)
   })

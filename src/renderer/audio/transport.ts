@@ -140,7 +140,7 @@ interface CompState {
   id: string
   sources: CompSource[]
   tracks?: CompTrack[]
-  original?: OriginalVoice
+  originals?: OriginalVoice[]
   dur: number
   from: number
   until: number
@@ -225,14 +225,14 @@ function makeCompBus(
   seek: number,
   until = Infinity,
   tracks?: CompTrack[],
-  original?: OriginalVoice
+  originals?: OriginalVoice[]
 ): Bus {
   const c = ac()
   const gain = c.createGain()
   gain.gain.setValueAtTime(0, when)
   gain.gain.linearRampToValueAtTime(1, when + FADE_IN)
   gain.connect(fx as GainNode)
-  const s = scheduleComp(c, sources, gain, { when, seek, tracks, original })
+  const s = scheduleComp(c, sources, gain, { when, seek, tracks, originals })
   const voices = s.voices.map((v) => v.source)
   if (Number.isFinite(until)) {
     const endAt = when + Math.max(0, until - seek)
@@ -448,7 +448,7 @@ function startComp(pos: number, rewindAtEnd: boolean): void {
   const when = c.currentTime + LEAD_IN
   s.at = when
   s.startPos = p
-  s.bus = makeCompBus(s.sources, when, p, p < s.until ? s.until : Infinity, s.tracks, s.original)
+  s.bus = makeCompBus(s.sources, when, p, p < s.until ? s.until : Infinity, s.tracks, s.originals)
   playing = true
   pausedPos = p
   emit({ clipId: s.id, playing: true, pos: p, dur: s.dur })
@@ -492,21 +492,23 @@ export async function playComp(
   halt()
   dropComp()
   const g = ++gen
-  if (resolved.clips.length === 0 && !resolved.original) return
+  const resolvedOriginals = resolved.originals ?? []
+  if (resolved.clips.length === 0 && resolvedOriginals.length === 0) return
   const urls = compUrls(resolved)
-  pin(resolved.original ? [...urls, resolved.original.url] : urls)
+  pin([...new Set([...urls, ...resolvedOriginals.map((o) => o.url)])])
   let sources: CompSource[]
-  let original: OriginalVoice | undefined
+  let originals: OriginalVoice[] = []
   try {
     sources = await loadCompSources(resolved)
-    if (resolved.original) {
-      original = {
-        buffer: await getBuffer(resolved.original.url),
-        gainDb: resolved.original.gainDb,
-        ...(resolved.original.offset === undefined ? {} : { offset: resolved.original.offset }),
-        ...(resolved.original.duration === undefined ? {} : { duration: resolved.original.duration }),
-      }
-    }
+    originals = await Promise.all(
+      resolvedOriginals.map(async (o) => ({
+        buffer: await getBuffer(o.url),
+        gainDb: o.gainDb,
+        ...(o.offset === undefined ? {} : { offset: o.offset }),
+        ...(o.duration === undefined ? {} : { duration: o.duration }),
+        ...(o.duckDb === undefined ? {} : { duckDb: o.duckDb }),
+      }))
+    )
   } catch (e) {
     console.error(e)
     return
@@ -517,7 +519,8 @@ export async function playComp(
 
   const dur = Math.max(
     compDuration({ clips: sources.map((s) => s.clip) }),
-    original ? originalVoiceLength(original) : 0
+    ...originals.map((o) => originalVoiceLength(o)),
+    0
   )
   if (!(dur > 0)) return
 
@@ -530,10 +533,10 @@ export async function playComp(
   mode = 'comp'
   cur = null
   comp = {
-    id: opts.id ?? 'comp:' + (urls[0] ?? resolved.original?.url ?? ''),
+    id: opts.id ?? 'comp:' + (urls[0] ?? resolvedOriginals[0]?.url ?? ''),
     sources,
     ...(resolved.tracks ? { tracks: resolved.tracks } : {}),
-    ...(original ? { original } : {}),
+    ...(originals.length > 0 ? { originals } : {}),
     dur,
     from,
     until,

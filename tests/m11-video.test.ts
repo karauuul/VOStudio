@@ -276,12 +276,15 @@ describe('region lines and the original', () => {
     })
     expect(mixesOriginal(c)).toBe(true)
     const plan = compPlanFor(c, t, project([c]))
-    expect(plan?.original).toEqual({
-      srcPath: 'E:/p/audio/sources/s1.wav',
-      gainDb: -12,
-      offset: 72.4,
-      duration: 80.6 - 72.4,
-    })
+    expect(plan?.originals).toEqual([
+      {
+        srcPath: 'E:/p/audio/sources/s1.wav',
+        gainDb: 0,
+        offset: 72.4,
+        duration: 80.6 - 72.4,
+        duckDb: -12,
+      },
+    ])
   })
 
   it('a plain file line still mixes its whole reference from zero', () => {
@@ -294,12 +297,9 @@ describe('region lines and the original', () => {
       finalTakeId: t.id,
       output: { kind: 'take', takeId: t.id, revision: 1 },
     })
-    expect(compPlanFor(c, t, project([c]))?.original).toEqual({
-      srcPath: 'E:/orig/a.wav',
-      gainDb: -6,
-      offset: 0,
-      duration: 3.5,
-    })
+    expect(compPlanFor(c, t, project([c]))?.originals).toEqual([
+      { srcPath: 'E:/orig/a.wav', gainDb: 0, offset: 0, duration: 3.5, duckDb: -6 },
+    ])
   })
 
   it('subtitles of a region line are looked up in the region length', () => {

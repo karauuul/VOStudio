@@ -3,6 +3,7 @@ import type {
   CompTrack,
   MatchRule,
   ProjectVersion,
+  Stem,
   Take,
   UsageInfo,
   VoiceSettings,
@@ -282,6 +283,9 @@ export interface IpcApi {
   ) => Promise<Take>
 
   'take:setDurations': (items: TakeDurationUpdate[]) => Promise<{ updated: number }>
+
+  'stems:isolate': (cueId: string, wav: ArrayBuffer) => Promise<ArrayBuffer>
+  'stems:save': (cueId: string, voiceWav: ArrayBuffer, restWav: ArrayBuffer) => Promise<Stem[]>
 
   'provider:tts': (req: TtsRequest) => Promise<Take>
   'provider:sts': (req: StsRequest) => Promise<Take>

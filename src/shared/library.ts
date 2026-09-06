@@ -1,11 +1,13 @@
 import {
   clipEnd,
   clipTrackId,
+  compProblem,
   COMP_EPS,
   DEFAULT_TRACK_ID,
   newCompClipId,
   normalizeComp,
-  setClipEdits,
+  SPEED_MAX,
+  SPEED_MIN,
   splitClipAt,
 } from './comp'
 import {
@@ -279,10 +281,44 @@ export function splitClipIntoWords(
   return next
 }
 
-export function fitToLength(comp: CueComp, clipId: string, length: number): CueComp {
-  const clip = comp.clips.find((c) => c.id === clipId)
-  if (!clip || !Number.isFinite(length) || length <= 0) return comp
-  return setClipEdits(comp, clipId, { timeStretch: (clip.srcOut - clip.srcIn) / length })
+export type FitResult = { comp: CueComp } | { refused: string }
+
+export function fitToLength(
+  comp: CueComp,
+  clipIds: readonly string[],
+  length: number
+): FitResult {
+  const ids = new Set(clipIds)
+  const targets = comp.clips.filter((c) => ids.has(c.id))
+  if (targets.length === 0) return { refused: 'Nothing to fit' }
+  if (!Number.isFinite(length) || length <= 0) return { refused: 'The original has no length' }
+  const anchor = Math.min(...targets.map((c) => c.start))
+  const span = Math.max(...targets.map((c) => clipEnd(c))) - anchor
+  const want = length - anchor
+  if (!(span > COMP_EPS) || !(want > COMP_EPS)) {
+    return { refused: `Cannot fit into ${length.toFixed(2)}s` }
+  }
+  const factor = span / want
+  for (const c of targets) {
+    const speed = clipSpeed(c.edits) * factor
+    if (speed < SPEED_MIN - COMP_EPS || speed > SPEED_MAX + COMP_EPS) {
+      return { refused: `Fit needs ${speed.toFixed(2)}× — outside ${SPEED_MIN}–${SPEED_MAX}×` }
+    }
+  }
+  const next = normalizeComp({
+    ...comp,
+    clips: comp.clips.map((c) =>
+      ids.has(c.id)
+        ? {
+            ...c,
+            start: anchor + (c.start - anchor) / factor,
+            edits: { ...c.edits, timeStretch: clipSpeed(c.edits) * factor },
+          }
+        : c
+    ),
+  })
+  const problem = compProblem(next)
+  return problem ? { refused: `Fit rejected: ${problem}` } : { comp: next }
 }
 
 const WORD_RE = /\S+/g

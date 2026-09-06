@@ -13,6 +13,7 @@ import {
   compClipEdits,
   compDuration,
   compRenderPlan,
+  duckEnvelope,
 } from '@shared/comp'
 import { connectEffects } from './effects-graph'
 import { connectPitch } from './pitch-node'
@@ -210,6 +211,7 @@ export interface OriginalVoice {
   gainDb: number
   offset?: number
   duration?: number
+  duckDb?: number
 }
 
 export function originalVoiceLength(orig: OriginalVoice): number {
@@ -221,7 +223,7 @@ export function originalVoiceLength(orig: OriginalVoice): number {
 
 export interface ScheduleCompOptions extends ClipGraphOptions {
   tracks?: CompTrack[]
-  original?: OriginalVoice
+  originals?: OriginalVoice[]
 }
 
 function trackBuses(
@@ -280,10 +282,16 @@ export function scheduleComp(
     voices.push({ source: graph.source, output: graph.output, at, duration: graph.duration })
   }
 
-  const orig = opts.original
-  const origLength = orig ? originalVoiceLength(orig) : 0
-  if (orig && origLength > seek) {
+  let origLength = 0
+  for (const orig of opts.originals ?? []) {
+    const length = originalVoiceLength(orig)
+    if (length > origLength) origLength = length
+    if (!(length > seek)) continue
     const trimStart = Math.max(0, orig.offset ?? 0)
+    const envelope =
+      orig.duckDb === undefined
+        ? []
+        : duckEnvelope(sources.map((s) => s.clip), orig.duckDb)
     const graph = buildClipGraph(
       ctx,
       orig.buffer,
@@ -291,7 +299,8 @@ export function scheduleComp(
         ...emptyEdits(),
         gainDb: orig.gainDb,
         trimStart,
-        trimEnd: Math.max(0, orig.buffer.duration - trimStart - origLength),
+        trimEnd: Math.max(0, orig.buffer.duration - trimStart - length),
+        ...(envelope.length > 0 ? { gainEnvelope: envelope } : {}),
       },
       { when, seek }
     )

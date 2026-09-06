@@ -96,23 +96,27 @@ describe('split by words', () => {
   })
 })
 
+const fitted = (comp: CueComp, ids: string[], length: number): CueComp => {
+  const r = fitToLength(comp, ids, length)
+  if ('refused' in r) throw new Error(r.refused)
+  return r.comp
+}
+
 describe('fit to original length', () => {
   it('stretches the clip so its timeline duration matches the target', () => {
-    const comp: CueComp = { clips: [clip()] }
-    const next = fitToLength(comp, 'k1', 4)
+    const next = fitted({ clips: [clip()] }, ['k1'], 4)
     expect(clipTimelineDuration(next.clips[0])).toBeCloseTo(4, 6)
     expect(next.clips[0].edits.timeStretch).toBeCloseTo(0.75, 6)
   })
 
   it('compresses a clip that is longer than the original', () => {
-    const comp: CueComp = { clips: [clip()] }
-    expect(clipTimelineDuration(fitToLength(comp, 'k1', 1.5).clips[0])).toBeCloseTo(1.5, 6)
+    expect(clipTimelineDuration(fitted({ clips: [clip()] }, ['k1'], 1.5).clips[0])).toBeCloseTo(1.5, 6)
   })
 
-  it('ignores a target that is not a positive length', () => {
+  it('refuses a target that is not a positive length', () => {
     const comp: CueComp = { clips: [clip()] }
-    expect(fitToLength(comp, 'k1', 0)).toBe(comp)
-    expect(fitToLength(comp, 'k1', Number.NaN)).toBe(comp)
+    expect(fitToLength(comp, ['k1'], 0)).toEqual({ refused: 'The original has no length' })
+    expect(fitToLength(comp, ['k1'], Number.NaN)).toEqual({ refused: 'The original has no length' })
   })
 })
 

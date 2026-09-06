@@ -66,7 +66,10 @@ export function exportName(project: Project, cue: Cue, take: Take): string {
 }
 
 export function mixesOriginal(cue: Cue): boolean {
-  return cue.original?.exportMode === 'on' && (!!cue.referenceAudio || !!cue.region)
+  if (!cue.referenceAudio && !cue.region) return false
+  const stems = cue.stems
+  if (stems && stems.length > 0) return stems.some((s) => s.exportMode === 'on')
+  return cue.original?.exportMode === 'on'
 }
 
 export interface OriginalRef {
@@ -74,6 +77,7 @@ export interface OriginalRef {
   gainDb: number
   offset: number
   duration: number
+  duckDb?: number
 }
 
 export function originalRef(
@@ -88,6 +92,27 @@ export function originalRef(
   }
   if (!cue.referenceAudio) return undefined
   return { srcPath: cue.referenceAudio.relPath, offset: 0, duration: cue.referenceDuration ?? 0 }
+}
+
+export function originalRefs(cue: Cue, sources: ProjectSource[] | undefined): OriginalRef[] {
+  if (!mixesOriginal(cue)) return []
+  const stems = cue.stems
+  if (stems && stems.length > 0) {
+    const duration = originalLength(cue) ?? 0
+    return stems
+      .filter((s) => s.exportMode === 'on')
+      .map((s) => ({
+        srcPath: s.file.relPath,
+        gainDb: 0,
+        offset: 0,
+        duration,
+        ...(s.duckDb === undefined ? {} : { duckDb: s.duckDb }),
+      }))
+  }
+  const base = originalRef(cue, sources)
+  if (!base) return []
+  const duckDb = cue.original?.duckDb
+  return [{ ...base, gainDb: 0, ...(duckDb === undefined ? {} : { duckDb }) }]
 }
 
 export function originalLength(cue: Cue): number | undefined {
@@ -165,7 +190,7 @@ export interface CompPlan {
   clips: CompClipPlan[]
   region?: { in: number; out: number }
   tracks?: CompTrack[]
-  original?: OriginalRef
+  originals?: OriginalRef[]
 }
 
 export interface ResolvedCompClip {
@@ -238,8 +263,8 @@ export function renderLength(cue: Cue, take: Take, project: Project): number {
 
 export function compPlanFor(cue: Cue, take: Take, project: Project): CompPlan | undefined {
   const comp = outputComp(cue, project)
-  const original = originalRef(cue, project.sources)
-  const mixed = mixesOriginal(cue) && !!original
+  const originals = originalRefs(cue, project.sources)
+  const mixed = originals.length > 0
   const window = renderWindow(cue, take, project)
   if (!comp && !mixed && !window) return undefined
   const known = take.duration > 0 ? take.duration : (originalLength(cue) ?? 0)
@@ -261,9 +286,7 @@ export function compPlanFor(cue: Cue, take: Take, project: Project): CompPlan | 
     clips,
     ...(window ? { region: window } : {}),
     ...(tracks ? { tracks } : {}),
-    ...(mixed && original
-      ? { original: { ...original, gainDb: cue.original?.duckDb ?? 0 } }
-      : {}),
+    ...(mixed ? { originals } : {}),
   }
 }
 

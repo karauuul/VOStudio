@@ -76,6 +76,8 @@ import {
   type GenTarget,
   type TextRange,
 } from '@shared/generation'
+import { originalRef } from '@shared/export-plan'
+import { splitStems } from './audio/stems'
 import { reportTakeDuration } from './audio/duration-backfill'
 import { getPeaks, sourceColor } from './Waveform'
 
@@ -1375,6 +1377,21 @@ export default function App() {
       void dispatch({ type: 'cue.setOriginal', cueId: activeCueId, original }).catch((e: unknown) =>
         pushStatus('err', String(e))
       )
+    },
+    onStems: (stems) => {
+      if (!activeCueId) return
+      void dispatch({ type: 'cue.setStems', cueId: activeCueId, stems }).catch((e: unknown) =>
+        pushStatus('err', String(e))
+      )
+    },
+    onSplitStems: async () => {
+      if (!activeCue) throw new Error('No line selected')
+      const ref = originalRef(activeCue, project.sources)
+      if (!ref) throw new Error('This line has no original audio')
+      pushStatus('info', 'Splitting the original into stems…')
+      const stems = await splitStems(activeCue.id, ref)
+      await dispatch({ type: 'cue.setStems', cueId: activeCue.id, stems })
+      pushStatus('ok', 'Stems ready')
     },
     onStatus: pushStatus,
     onSelect: setSelection,

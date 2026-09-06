@@ -177,6 +177,28 @@ export const originalLaneSchema = z
   })
   .nullable()
 
+const audioRefSchema = z.object({
+  fileId: z.string().min(1).max(400),
+  relPath: z.string().min(1).max(4096),
+  format: z.enum(['wav', 'mp3', 'ogg']),
+  sampleRate: finite.min(1).max(384000).optional(),
+  channels: finite.min(1).max(64).optional(),
+})
+
+export const stemsSchema = z
+  .array(
+    z.object({
+      id: z.string().min(1).max(200),
+      name: z.string().min(1).max(200),
+      file: audioRefSchema,
+      exportMode: z.enum(['off', 'on']),
+      duckDb: finite.min(DUCK_MIN_DB).max(DUCK_MAX_DB).optional(),
+    })
+  )
+  .min(1)
+  .max(20)
+  .nullable()
+
 export const cueRegionSchema = z
   .object({
     sourceId: z.string().min(1).max(200),
@@ -251,6 +273,7 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   cueId.extend({ type: z.literal('cue.setFinalTake'), takeId: z.string().min(1).max(200) }),
   cueId.extend({ type: z.literal('cue.setComp'), comp: compSchema }),
   cueId.extend({ type: z.literal('cue.setOriginal'), original: originalLaneSchema }),
+  cueId.extend({ type: z.literal('cue.setStems'), stems: stemsSchema }),
   cueId.extend({
     type: z.literal('cue.setTakePinned'),
     takeId: z.string().min(1).max(200),

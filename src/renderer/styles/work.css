@@ -938,6 +938,20 @@ input.tl-name:focus {
   border-color: var(--warn);
 }
 
+.tl-duck {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.tl-duck polyline {
+  fill: none;
+  stroke: var(--warn);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
 .tl-shade {
   position: absolute;
   top: 0;
@@ -1297,7 +1311,8 @@ input.tl-name:focus {
   border-bottom: 1px solid var(--line);
 }
 
-.props-sec .ico {
+.props-sec .ico,
+.props-sec .btn {
   margin-left: auto;
 }
 

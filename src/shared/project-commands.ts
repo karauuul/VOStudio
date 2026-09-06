@@ -11,6 +11,7 @@ import {
   sanitizeLanguages,
   sanitizeOriginal,
   sanitizePinned,
+  sanitizeStems,
   type Character,
   type ClipEffects,
   type Cue,
@@ -21,6 +22,7 @@ import {
   type ProjectLanguages,
   type ProjectSource,
   type ProjectVersion,
+  type Stem,
   type VoiceSettings,
 } from './domain'
 import { referencedByOtherComp, resolveTake } from './library'
@@ -32,6 +34,7 @@ export type ProjectCommand =
   | { type: 'cue.setFinalTake'; cueId: string; takeId: string }
   | { type: 'cue.setComp'; cueId: string; comp: CueComp | null }
   | { type: 'cue.setOriginal'; cueId: string; original: OriginalLane | null }
+  | { type: 'cue.setStems'; cueId: string; stems: Stem[] | null }
   | { type: 'cue.setTakePinned'; cueId: string; takeId: string; pinned: boolean }
   | { type: 'cue.setTakeEffects'; cueId: string; takeId: string; effects: ClipEffects | null }
   | { type: 'cue.setRegion'; cueId: string; region: CueRegion | null }
@@ -238,7 +241,17 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
       cue.original = original
       break
     }
-    case 'cue.setTakePinned': {
+    case 'cue.setStems': {
+      if (command.stems === null) {
+        delete cue.stems
+        break
+      }
+      const stems = sanitizeStems(command.stems)
+      if (!stems) throw new Error('Invalid stems')
+      cue.stems = stems
+      break
+    }
+        case 'cue.setTakePinned': {
       const take = cue.takes.find((item) => item.id === command.takeId)
       if (!take) throw new Error('Take not found in this cue')
       const pinned = sanitizePinned(command.pinned)

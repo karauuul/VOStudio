@@ -18,7 +18,7 @@ The screens in this folder are built on the existing project format. New concept
 | Clip words | derived | `Take.words` cut to `[srcIn, srcOut]`. |
 | Target track | UI state | `ui.json`, per line: `targetTrackId`. Never in `project.json`. |
 | Original lane controls | `Cue.original?: OriginalLane` | `{ exportMode: 'off' \| 'on', duckDb?: number, previewMuted?: true }`. Absent = Off, preview audible. Duck applies when `exportMode` is `on` and `duckDb` is set. |
-| Stems | `Cue.stems?: Stem[]` | Milestone 12. `{ id, name, file: AudioRef, exportMode, duckDb? }`. |
+| Stems | `Cue.stems?: Stem[]` | `{ id, name, file: AudioRef, exportMode, duckDb? }`. Split on demand; while present they replace the combined Original lane in preview and export. |
 | Long source (video or long audio) | `Project.sources?: ProjectSource[]` | `{ id, file: AudioRef, kind: 'audio' \| 'video', duration, name }`. |
 | Region of a long source | `Cue.region?: { sourceId, in, out }` | When present the original lane plays `[in, out]` of that source; `referenceAudio` stays undefined. |
 | Project version | folder `versions/` | `Save version` copies `project.json` to `versions/v<N>.json` and records `{ n, name?, createdAt }` in `project.json` `versions?: ProjectVersion[]`. Export writes the version it used. |
@@ -27,7 +27,7 @@ The screens in this folder are built on the existing project format. New concept
 
 ## Audio engine
 
-All audible behavior stays inside `scheduleComp` / `buildClipGraph`. Per-track gain, mute, solo and track effects are applied there by grouping clip voices per track into one gain node per track. The Original lane in preview is a separate voice scheduled by the same function with `previewMuted` honoured. Export of a line with `original.exportMode === 'on'` mixes the original at `duckDb` and therefore always renders offline (`export-plan.ts` treats it as `hasEdits`). No new DSP. `transport.ts` and `offline-render.ts` stay consumers.
+All audible behavior stays inside `scheduleComp` / `buildClipGraph`. Per-track gain, mute, solo and track effects are applied there by grouping clip voices per track into one gain node per track. The Original lane, or one voice per stem while `stems` is present, is scheduled by the same function with `previewMuted` honoured. A lane with `exportMode === 'on'` and a `duckDb` carries a `duckEnvelope` gain envelope: full level outside the translation clips, `duckDb` under them, ramped over `DUCK_ATTACK`/`DUCK_RELEASE`. Live preview and export therefore duck identically, and a line that mixes the original always renders offline (`export-plan.ts` treats it as `hasEdits`). No new DSP. `transport.ts` and `offline-render.ts` stay consumers.
 
 ## Sanitizers and schemas
 
