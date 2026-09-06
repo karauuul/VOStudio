@@ -9,6 +9,7 @@ import type {
   VoiceSettings,
   UiSessionState,
 } from './domain'
+import type { ProviderModel } from './provider-models'
 import type { TableMapping } from './import-table'
 import type { CompClipPlan, CompPlan, ExportFormat } from './export-plan'
 import type { ExportedLines } from './readiness'
@@ -25,6 +26,7 @@ export interface TtsRequest {
   cueId: string
   text: string
   voiceSettings: VoiceSettings
+  model?: string
   fragment?: boolean
   selectOutput?: boolean
 }
@@ -293,6 +295,7 @@ export interface IpcApi {
   'provider:sts': (req: StsRequest) => Promise<Take>
   'provider:transcribe': (req: { cueIds: string[]; overwrite?: boolean }) => Promise<TranscribeResult>
   'provider:voices': () => Promise<ProviderVoice[]>
+  'provider:models': () => Promise<ProviderModel[]>
   'provider:testVoice': (characterId: string) => Promise<ArrayBuffer>
   'provider:usage': () => Promise<UsageInfo | null>
   'provider:setApiKey': (key: string) => Promise<void>

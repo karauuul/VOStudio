@@ -94,6 +94,22 @@ describe('ui.json', () => {
     expect(reopened?.cues[0]?.text).toBe('новий текст')
   })
 
+  it('an untouched generation mode leaves ui.json byte-identical', async () => {
+    const file = path.join(PROJECT_DIR, 'ui.json')
+    const ui = { activeCueId: 'cue-9', filter: 'all', search: '' }
+    await store.saveUi(ui)
+    const before = await fs.readFile(file, 'utf-8')
+
+    await store.saveUi({ ...ui, genMode: undefined })
+    expect(await fs.readFile(file, 'utf-8')).toBe(before)
+
+    await store.saveUi({ ...ui, genMode: 'sts' })
+    expect(await readJson(file)).toHaveProperty('genMode', 'sts')
+
+    await store.saveUi(ui)
+    expect(await fs.readFile(file, 'utf-8')).toBe(before)
+  })
+
   it('does not publish the new project or path when the target write fails', async () => {
     const previousProject = store.getProject()
     const previousDir = store.getProjectDir()

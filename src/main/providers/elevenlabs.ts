@@ -1,6 +1,7 @@
 import type { UsageInfo, VoiceSettings, WordTiming } from '@shared/domain'
 import type { ProviderVoice } from '@shared/ipc'
 import { wordsFromAlignment } from '@shared/library'
+import { parseModels, type ProviderModel } from '@shared/provider-models'
 import type { SttWord } from '@shared/sources'
 import { getApiKey } from '../secrets'
 
@@ -16,6 +17,7 @@ export interface TtsRequest {
   text: string
   voiceId: string
   model: string
+  language?: string
   settings: VoiceSettings
 }
 
@@ -23,6 +25,7 @@ const ttsBody = (req: TtsRequest): string =>
   JSON.stringify({
     text: req.text,
     model_id: req.model,
+    ...(req.language ? { language_code: req.language } : {}),
     voice_settings: {
       stability: req.settings.stability,
       similarity_boost: req.settings.similarity,
@@ -85,6 +88,7 @@ export async function sts(req: {
     JSON.stringify({
       stability: req.settings.stability,
       similarity_boost: req.settings.similarity,
+      style: req.settings.style,
       use_speaker_boost: req.settings.boost,
     })
   )
@@ -201,6 +205,12 @@ export async function voices(): Promise<ProviderVoice[]> {
     out.push({ id: row.voice_id, name: typeof row.name === 'string' && row.name ? row.name : row.voice_id })
   }
   return out.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export async function models(): Promise<ProviderModel[]> {
+  const r = await fetch(`${BASE}/models`, { headers: { 'xi-api-key': await key() } })
+  if (!r.ok) throw new Error(`ElevenLabs ${r.status}: ${(await r.text()).slice(0, 300)}`)
+  return parseModels(await r.json())
 }
 
 export async function usage(): Promise<UsageInfo | null> {

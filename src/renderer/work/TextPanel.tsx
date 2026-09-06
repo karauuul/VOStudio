@@ -6,7 +6,13 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
-import type { Character, Cue, Term, VoiceSettings } from '@shared/domain'
+import type {
+  Character,
+  Cue,
+  ProviderModeSettings,
+  Term,
+  VoiceSettings,
+} from '@shared/domain'
 import { highlightRanges, matchTerms } from '@shared/prompt'
 import {
   clampSpeed,
@@ -16,6 +22,16 @@ import {
   type GenTarget,
   type TextRange,
 } from '@shared/generation'
+import {
+  AUDIO_TAGS,
+  insertTag,
+  isV3,
+  modelsFor,
+  supportedSettings,
+  supportsLanguageCode,
+  type GenMode,
+  type ProviderModel,
+} from '@shared/provider-models'
 import { DragNumber } from '../cue/DragNumber'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 
@@ -45,6 +61,15 @@ export interface TextPanelProps {
   recordDisabled?: boolean
   originalMenu?: () => MenuEntry[]
   translationMenu?: (range: TextRange, el: HTMLTextAreaElement) => MenuEntry[]
+  onCopy?: (kind: 'source' | 'translation' | 'prompt') => void
+  mode?: GenMode
+  onMode?: (mode: GenMode) => void
+  models?: ProviderModel[]
+  model?: ProviderModel
+  onProvider?: (patch: ProviderModeSettings) => void
+  language?: string
+  cost?: number
+  remaining?: number
 }
 
 const Caret = (): ReactNode => (
@@ -52,6 +77,8 @@ const Caret = (): ReactNode => (
     <path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.3" />
   </svg>
 )
+
+const count = (n: number): string => n.toLocaleString('en-US').replace(/,/g, ' ')
 
 function Marked({ text, ranges }: { text: string; ranges: { start: number; end: number }[] }) {
   if (ranges.length === 0) return <>{text}</>
@@ -253,6 +280,34 @@ function GenerateMenu({
   )
 }
 
+function Select({
+  label,
+  value,
+  disabled,
+  wide,
+  onChange,
+  children,
+}: {
+  label: string
+  value: string
+  disabled?: boolean
+  wide?: boolean
+  onChange: (value: string) => void
+  children: ReactNode
+}) {
+  return (
+    <label className={'g' + (wide ? ' w2' : '')}>
+      <span className="lab">{label}</span>
+      <span className="field">
+        <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+          {children}
+        </select>
+        <Caret />
+      </span>
+    </label>
+  )
+}
+
 export function TextPanel({
   cue,
   terms = [],
@@ -276,10 +331,32 @@ export function TextPanel({
   recordDisabled,
   originalMenu,
   translationMenu,
+  mode = 'tts',
+  onMode,
+  models = [],
+  model,
+  onProvider,
+  language,
+  cost,
+  remaining,
 }: TextPanelProps) {
   const off = !cue
   const settings = voice
   const genOff = off || !!genDisabled
+  const shows = useMemo(() => supportedSettings(model, mode), [model, mode])
+  const options = useMemo(() => modelsFor(models, mode), [models, mode])
+  const tags = mode === 'tts' && isV3(model)
+
+  const addTag = (tag: string): void => {
+    const el = textRef?.current
+    if (!el || !cue) return
+    const next = insertTag(el.value, el.selectionStart, el.selectionEnd, tag)
+    onText?.(next.text)
+    requestAnimationFrame(() => {
+      el.focus()
+      el.setSelectionRange(next.caret, next.caret)
+    })
+  }
 
   return (
     <>
@@ -296,106 +373,202 @@ export function TextPanel({
       />
 
       <div className={'gen' + (off ? ' dis' : '')}>
-        <label className="g">
-          <span className="lab">Voice</span>
-          <span className="field">
-            <select
-              value={cue?.characterId ?? ''}
-              disabled={off}
-              onChange={(e) => onCharacter?.(e.target.value)}
-            >
-              <option value="">No character</option>
-              {characters.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <Caret />
-          </span>
-        </label>
+        <Select
+          label="Voice"
+          value={cue?.characterId ?? ''}
+          disabled={off}
+          onChange={(v) => onCharacter?.(v)}
+        >
+          <option value="">No character</option>
+          {characters.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
 
         <div className="g">
-          <span className="lab">Generate</span>
-          <span className="split">
+          <span className="lab">Mode</span>
+          <span className="seg" role="group">
             <button
-              className="btn primary"
-              data-hk="generate"
-              disabled={genOff}
-              onClick={() => onGenerate?.(target?.kind ?? 'all')}
+              className={mode === 'tts' ? 'on' : ''}
+              aria-pressed={mode === 'tts'}
+              onClick={() => onMode?.('tts')}
             >
-              {generating ? <span className="spin" /> : <span className="play" />}
               Generate
             </button>
-            <GenerateMenu
-              hasRange={hasRange}
-              hasClip={hasClip}
-              disabled={genOff}
-              onGenerate={onGenerate}
-            />
+            <button
+              className={mode === 'sts' ? 'on' : ''}
+              aria-pressed={mode === 'sts'}
+              onClick={() => onMode?.('sts')}
+            >
+              Record
+            </button>
           </span>
         </div>
 
-        <div className="g">
-          <span className="lab">Record</span>
-          <button
-            className={'btn rec' + (recording ? ' on' : '')}
-            data-hk="toggleRecord"
-            disabled={off || !!recordDisabled}
-            onClick={() => onRecord?.()}
-          >
-            {recording ? 'Stop' : 'Record'}
-          </button>
+        {mode === 'tts' ? (
+          <div className="g w2">
+            <span className="lh">
+              <span className="lab">Generate</span>
+              <span className="n">
+                {cost !== undefined ? `${count(cost)} chars` : ''}
+                {cost !== undefined && remaining !== undefined ? ' · ' : ''}
+                {remaining !== undefined ? `${count(remaining)} left` : ''}
+              </span>
+            </span>
+            <span className="split">
+              <button
+                className="btn primary"
+                data-hk="generate"
+                disabled={genOff}
+                onClick={() => onGenerate?.(target?.kind ?? 'all')}
+              >
+                {generating ? <span className="spin" /> : <span className="play" />}
+                Generate
+              </button>
+              <GenerateMenu
+                hasRange={hasRange}
+                hasClip={hasClip}
+                disabled={genOff}
+                onGenerate={onGenerate}
+              />
+            </span>
+          </div>
+        ) : (
+          <div className="g w2">
+            <span className="lh">
+              <span className="lab">Record</span>
+              <span className="n">
+                {remaining !== undefined ? `${count(remaining)} left` : ''}
+              </span>
+            </span>
+            <button
+              className={'btn rec' + (recording ? ' on' : '')}
+              data-hk="toggleRecord"
+              disabled={off || !!recordDisabled}
+              onClick={() => onRecord?.()}
+            >
+              {recording ? 'Stop' : 'Record'}
+            </button>
+          </div>
+        )}
+
+        <div className="gsec">
+          <span className="lab">ElevenLabs</span>
         </div>
 
-        <DragNumber
-          label="Stability"
-          value={toPercent(settings?.stability ?? 0)}
-          min={0}
-          max={100}
-          perPx={0.5}
-          decimals={0}
-          unit=""
-          disabled={off}
-          onInput={(v) => onVoiceChange?.({ stability: fromPercent(v) })}
-          onCommit={(v) => onVoiceChange?.({ stability: fromPercent(v) })}
-        />
-        <DragNumber
-          label="Similarity"
-          value={toPercent(settings?.similarity ?? 0)}
-          min={0}
-          max={100}
-          perPx={0.5}
-          decimals={0}
-          unit=""
-          disabled={off}
-          onInput={(v) => onVoiceChange?.({ similarity: fromPercent(v) })}
-          onCommit={(v) => onVoiceChange?.({ similarity: fromPercent(v) })}
-        />
-        <DragNumber
-          label="Style"
-          value={toPercent(settings?.style ?? 0)}
-          min={0}
-          max={100}
-          perPx={0.5}
-          decimals={0}
-          unit=""
-          disabled={off}
-          onInput={(v) => onVoiceChange?.({ style: fromPercent(v) })}
-          onCommit={(v) => onVoiceChange?.({ style: fromPercent(v) })}
-        />
-        <DragNumber
-          label="Speed"
-          value={settings?.speed ?? 1}
-          min={0.7}
-          max={1.2}
-          perPx={0.004}
-          decimals={2}
-          unit="×"
-          disabled={off}
-          onInput={(v) => onVoiceChange?.({ speed: clampSpeed(v) })}
-          onCommit={(v) => onVoiceChange?.({ speed: clampSpeed(v) })}
-        />
+        <Select
+          label="Model"
+          value={model?.id ?? ''}
+          wide
+          onChange={(v) => onProvider?.({ model: v })}
+        >
+          {model && !options.some((m) => m.id === model.id) && (
+            <option value={model.id}>{model.name}</option>
+          )}
+          {options.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+        </Select>
+
+        {supportsLanguageCode(model, mode) && (
+          <Select
+            label="Language"
+            value={language ?? ''}
+            onChange={(v) => onProvider?.({ language: v })}
+          >
+            <option value="">Auto</option>
+            {model?.languages.map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
+          </Select>
+        )}
+
+        {shows.includes('stability') && (
+          <DragNumber
+            label="Stability"
+            value={toPercent(settings?.stability ?? 0)}
+            min={0}
+            max={100}
+            perPx={0.5}
+            decimals={0}
+            unit=""
+            disabled={off}
+            onInput={(v) => onVoiceChange?.({ stability: fromPercent(v) })}
+            onCommit={(v) => onVoiceChange?.({ stability: fromPercent(v) })}
+          />
+        )}
+        {shows.includes('similarity') && (
+          <DragNumber
+            label="Similarity"
+            value={toPercent(settings?.similarity ?? 0)}
+            min={0}
+            max={100}
+            perPx={0.5}
+            decimals={0}
+            unit=""
+            disabled={off}
+            onInput={(v) => onVoiceChange?.({ similarity: fromPercent(v) })}
+            onCommit={(v) => onVoiceChange?.({ similarity: fromPercent(v) })}
+          />
+        )}
+        {shows.includes('style') && (
+          <DragNumber
+            label="Style"
+            value={toPercent(settings?.style ?? 0)}
+            min={0}
+            max={100}
+            perPx={0.5}
+            decimals={0}
+            unit=""
+            disabled={off}
+            onInput={(v) => onVoiceChange?.({ style: fromPercent(v) })}
+            onCommit={(v) => onVoiceChange?.({ style: fromPercent(v) })}
+          />
+        )}
+        {shows.includes('speed') && (
+          <DragNumber
+            label="Speed"
+            value={settings?.speed ?? 1}
+            min={0.7}
+            max={1.2}
+            perPx={0.004}
+            decimals={2}
+            unit="×"
+            disabled={off}
+            onInput={(v) => onVoiceChange?.({ speed: clampSpeed(v) })}
+            onCommit={(v) => onVoiceChange?.({ speed: clampSpeed(v) })}
+          />
+        )}
+        {shows.includes('boost') && (
+          <label className="g">
+            <span className="lab">Boost</span>
+            <span className="tog">
+              <input
+                type="checkbox"
+                checked={settings?.boost ?? false}
+                disabled={off}
+                onChange={(e) => onVoiceChange?.({ boost: e.target.checked })}
+              />
+              {settings?.boost ? 'On' : 'Off'}
+            </span>
+          </label>
+        )}
+
+        {tags && (
+          <div className="tags">
+            {AUDIO_TAGS.map((tag) => (
+              <button key={tag} disabled={off} onClick={() => addTag(tag)}>
+                [{tag}]
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </>
   )

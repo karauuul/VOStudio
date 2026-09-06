@@ -24,6 +24,13 @@ describe('provider request schemas', () => {
     expect(() => stsSchema.parse({ ...sts, selectOutput: 1 })).toThrow()
   })
 
+  it('carries an explicit model only when the request sets one', () => {
+    expect(ttsSchema.parse(tts).model).toBeUndefined()
+    expect(ttsSchema.parse({ ...tts, model: 'eleven_v3' }).model).toBe('eleven_v3')
+    expect(() => ttsSchema.parse({ ...tts, model: '' })).toThrow()
+    expect(() => ttsSchema.parse({ ...tts, model: 7 })).toThrow()
+  })
+
   it('keeps fragment requests unchanged', () => {
     expect(ttsSchema.parse({ ...tts, fragment: true }).fragment).toBe(true)
     expect(stsSchema.parse({ ...sts, fragment: true }).fragment).toBe(true)
