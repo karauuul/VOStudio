@@ -247,6 +247,9 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
       const take = cue.takes.find((item) => item.id === command.takeId)
       if (!take) throw new Error('Take not found in this cue')
       if (take.id === cue.finalTakeId) throw new Error('The final take cannot be deleted')
+      if ((cue.comp?.clips ?? []).some((clip) => clip.sourceTakeId === take.id)) {
+        throw new Error('This source is used by a clip on this line — remove the clip first')
+      }
       if (take.pinned && referencedByOtherComp(project, cue.id, take.id)) {
         throw new Error('This pinned source is used on another line')
       }

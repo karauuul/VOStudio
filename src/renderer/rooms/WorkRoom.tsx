@@ -4,14 +4,16 @@ import { CueText } from '../work/CueText'
 import { TextPanel, type TextPanelProps } from '../work/TextPanel'
 import { ProgramPanel } from '../work/ProgramPanel'
 import { TimelinePanel } from '../work/TimelinePanel'
+import { LibraryPanel } from '../work/LibraryPanel'
 import { Inspector } from '../cue/Inspector'
 
 const LINES = { key: 'vo.lines.w', def: 280, min: 240, max: 400 }
 const PROPS = { key: 'vo.props.w', def: 380, min: 320, max: 480 }
+const LIB = { key: 'vo.lib.h', def: 500, min: 160, max: 800 }
 
 const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
 
-function storedWidth({ key, def, min, max }: typeof LINES): number {
+function stored({ key, def, min, max }: typeof LINES): number {
   try {
     const v = parseInt(localStorage.getItem(key) ?? '', 10)
     return Number.isFinite(v) ? clamp(v, min, max) : def
@@ -28,32 +30,46 @@ interface Props {
   cueText: ComponentProps<typeof CueText> | null
   program: ComponentProps<typeof ProgramPanel>
   timeline: ComponentProps<typeof TimelinePanel>
+  library: ComponentProps<typeof LibraryPanel>
   inspector: ComponentProps<typeof Inspector>
 }
 
-export function WorkRoom({ hidden, lines, total, text, cueText, program, timeline, inspector }: Props) {
-  const [linesW, setLinesW] = useState(() => storedWidth(LINES))
-  const [propsW, setPropsW] = useState(() => storedWidth(PROPS))
+export function WorkRoom({
+  hidden,
+  lines,
+  total,
+  text,
+  cueText,
+  program,
+  timeline,
+  library,
+  inspector,
+}: Props) {
+  const [linesW, setLinesW] = useState(() => stored(LINES))
+  const [propsW, setPropsW] = useState(() => stored(PROPS))
+  const [libH, setLibH] = useState(() => stored(LIB))
 
   useEffect(() => {
     try {
       localStorage.setItem(LINES.key, String(linesW))
       localStorage.setItem(PROPS.key, String(propsW))
+      localStorage.setItem(LIB.key, String(libH))
     } catch {
     }
-  }, [linesW, propsW])
+  }, [linesW, propsW, libH])
 
   const startDrag = useCallback(
-    (side: 'left' | 'right') => (e: ReactMouseEvent) => {
+    (side: 'left' | 'right' | 'lib') => (e: ReactMouseEvent) => {
       e.preventDefault()
-      const x0 = e.clientX
-      const w0 = side === 'left' ? linesW : propsW
-      const cfg = side === 'left' ? LINES : PROPS
-      const set = side === 'left' ? setLinesW : setPropsW
+      const vertical = side === 'lib'
+      const p0 = vertical ? e.clientY : e.clientX
+      const cfg = side === 'left' ? LINES : side === 'right' ? PROPS : LIB
+      const v0 = side === 'left' ? linesW : side === 'right' ? propsW : libH
+      const set = side === 'left' ? setLinesW : side === 'right' ? setPropsW : setLibH
       document.body.classList.add('resizing')
       const move = (ev: MouseEvent): void => {
-        const dx = side === 'left' ? ev.clientX - x0 : x0 - ev.clientX
-        set(clamp(w0 + dx, cfg.min, cfg.max))
+        const d = side === 'right' ? p0 - ev.clientX : (vertical ? ev.clientY : ev.clientX) - p0
+        set(clamp(v0 + d, cfg.min, cfg.max))
       }
       const up = (): void => {
         document.body.classList.remove('resizing')
@@ -63,7 +79,7 @@ export function WorkRoom({ hidden, lines, total, text, cueText, program, timelin
       window.addEventListener('mousemove', move)
       window.addEventListener('mouseup', up)
     },
-    [linesW, propsW]
+    [linesW, propsW, libH]
   )
 
   const cue = text.cue
@@ -102,10 +118,16 @@ export function WorkRoom({ hidden, lines, total, text, cueText, program, timelin
 
       <div className="splitter col" onMouseDown={startDrag('right')} />
 
-      <section className="panel">
-        <div className="phd">Properties</div>
-        {cueText && <Inspector {...inspector} />}
-      </section>
+      <div className="work-right" style={{ gridTemplateRows: `${libH}px 8px minmax(0, 1fr)` }}>
+        <LibraryPanel {...library} />
+
+        <div className="splitter row" onMouseDown={startDrag('lib')} />
+
+        <section className="panel">
+          <div className="phd">Properties</div>
+          {cueText && <Inspector {...inspector} />}
+        </section>
+      </div>
     </div>
   )
 }

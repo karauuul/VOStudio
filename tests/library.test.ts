@@ -7,8 +7,10 @@ import {
   clipWords,
   compTracks,
   libraryGroups,
+  libraryRow,
   nearestPoint,
   placeClip,
+  projectLibrary,
   referencedByOtherComp,
   resolveTake,
   splitClipByWord,
@@ -186,6 +188,64 @@ describe('libraryGroups', () => {
     expect(all.map((g) => g.text)).toEqual(['Mine', 'Shared'])
     expect(all[1]).toMatchObject({ pinned: true, useCount: 1 })
     expect(all[1].rows.map((r) => r.take.id)).toEqual(['p1'])
+  })
+
+  it('every row carries the cue that owns the take', () => {
+    const mine = cue('a', { text: 'Mine', takes: [take('m1')] })
+    const other = cue('b', { text: 'Shared', takes: [take('p1', { pinned: true })] })
+    const all = libraryGroups(mine, project([mine, other]))
+    expect(all[0].rows[0].cueId).toBe('a')
+    expect(all[1].rows[0].cueId).toBe('b')
+  })
+})
+
+describe('projectLibrary', () => {
+  const a = cue('a', {
+    key: 'A_KEY',
+    text: 'Line A',
+    takes: [take('a1'), take('a2', { createdAt: '2026-01-01T00:00:02.000Z' })],
+    comp: { clips: [clip({ sourceTakeId: 'a1' })] },
+  })
+  const b = cue('b', {
+    key: 'B_KEY',
+    fields: { EventName: 'Event_B' },
+    text: 'Line B',
+    takes: [take('b1'), take('b2', { deletedAt: 'then' })],
+  })
+  const groups = projectLibrary(a, project([a, b]))
+
+  it('lists every live take of the project grouped by text', () => {
+    expect(groups.map((g) => g.text)).toEqual(['Line A', 'Line B'])
+    expect(groups[0].rows.map((r) => r.take.id)).toEqual(['a1', 'a2'])
+    expect(groups[1].rows.map((r) => r.take.id)).toEqual(['b1'])
+  })
+
+  it('names the owning line, preferring EventName over the key', () => {
+    expect(groups.map((g) => g.lineId)).toEqual(['A_KEY', 'Event_B'])
+    expect(groups.map((g) => g.rows[0].cueId)).toEqual(['a', 'b'])
+  })
+
+  it('marks used against the composition of the active line only', () => {
+    expect(groups[0].rows.map((r) => r.used)).toEqual([true, false])
+    expect(groups[1].rows.map((r) => r.used)).toEqual([false])
+  })
+})
+
+describe('libraryRow', () => {
+  const a = cue('a', { text: 'Line A', takes: [take('a1')] })
+  const b = cue('b', { text: 'Line B', takes: [take('b1'), take('gone', { deletedAt: 'then' })] })
+  const p = project([a, b])
+
+  it('finds a row of this line with its version label', () => {
+    expect(libraryRow(a, p, 'a1')).toMatchObject({ cueId: 'a', label: 'v1' })
+  })
+
+  it('reaches an unpinned take of another line through the project tab', () => {
+    expect(libraryRow(a, p, 'b1')).toMatchObject({ cueId: 'b', label: 'v1' })
+  })
+
+  it('never returns a deleted take', () => {
+    expect(libraryRow(a, p, 'gone')).toBeUndefined()
   })
 })
 

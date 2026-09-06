@@ -136,7 +136,8 @@
   height: 100%;
 }
 
-.phd .tabs span {
+.phd .tabs span,
+.phd .tabs button {
   padding: 0 12px;
   display: flex;
   align-items: center;
@@ -145,7 +146,15 @@
   border-bottom: 2px solid transparent;
 }
 
-.phd .tabs span.on {
+.phd .tabs button {
+  border: 0;
+  background: transparent;
+  font: 500 13px var(--sans);
+  cursor: pointer;
+}
+
+.phd .tabs span.on,
+.phd .tabs button.on {
   color: var(--ac);
   border-color: var(--ac);
 }

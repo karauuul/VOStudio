@@ -1,6 +1,9 @@
+import { useEffect, useRef } from 'react'
+import type { TakeKind } from '@shared/domain'
 import { audioUrl } from './api'
 import { Lru } from './audio/lru'
 import { transport } from './audio/transport'
+import { drawWave } from './cue/timeline-draw'
 
 export interface Peaks {
   min: Float32Array
@@ -40,6 +43,34 @@ export function getPeaks(absPath: string): Promise<Peaks> {
   peakCache.set(url, p)
   void p.catch(() => peakCache.delete(url))
   return p
+}
+
+export const GENERATED_COLOR = '#3fb8a8'
+export const RECORDED_COLOR = '#a58cf0'
+export const IMPORTED_COLOR = '#8f97a8'
+
+export function sourceColor(kind: TakeKind): string {
+  if (kind === 'recording') return RECORDED_COLOR
+  if (kind === 'imported') return IMPORTED_COLOR
+  return GENERATED_COLOR
+}
+
+export function Wave({
+  peaks,
+  from,
+  to,
+  color,
+}: {
+  peaks: Peaks | null
+  from: number
+  to: number
+  color: string
+}) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    drawWave(ref.current, peaks, from, to, color)
+  })
+  return <canvas ref={ref} />
 }
 
 export function fmt(sec: number): string {

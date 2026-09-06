@@ -1,19 +1,3 @@
-import { isEmptyComp } from '@shared/comp'
-import { estimateStsCredits, type Cue } from '@shared/domain'
-import { outputSource } from '@shared/workspace-source'
-
-export function timecode(sec: number): string {
-  if (!Number.isFinite(sec) || sec < 0) return '00:00.0'
-  const m = Math.floor(sec / 60)
-  const s = sec - m * 60
-  return `${String(m).padStart(2, '0')}:${s.toFixed(1).padStart(4, '0')}`
-}
+import { estimateStsCredits } from '@shared/domain'
 
 export const credits = (sec: number): string => estimateStsCredits(sec).toLocaleString('en-US')
-
-export const stamp = (at: string | number): string => new Date(at).toLocaleString('en-US')
-
-export function compositionLabel(cue: Cue): string {
-  if (isEmptyComp(cue.comp)) return 'Composition · Unsaved'
-  return outputSource(cue)?.kind === 'comp' ? 'Composition · Final' : 'Composition'
-}
