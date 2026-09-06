@@ -451,3 +451,16 @@ describe('project export settings round trip', () => {
     expect(applyChangeSet(applyChangeSet(base(), changes), cleared)).not.toHaveProperty('export')
   })
 })
+
+describe('Same as source format', () => {
+  it('keeps the take extension and the byte-copy path when no format is chosen', async () => {
+    const { exportName, isFastPath } = await import('../src/shared/export-plan')
+    const { emptyEdits } = await import('../src/shared/domain')
+    const take = { id: 't', kind: 'tts', createdAt: '', file: { fileId: 'f', relPath: 'a.mp3', format: 'mp3' }, duration: 1, meta: {}, edits: emptyEdits() } as never
+    const cue = { id: 'c', characterId: '', key: 'K', fields: {}, sourceText: '', text: '', status: 'generated', notes: '', takes: [take] } as never
+    const project = { exportTemplate: '{Key}.{ext}' } as never
+    expect(exportName(project, cue, take)).toBe('K.mp3')
+    expect(isFastPath(take, 'K.mp3', undefined, undefined, cue)).toBe(true)
+    expect(exportName({ exportTemplate: '{Key}.{ext}', export: { format: 'wav-48-24' } } as never, cue, take)).toBe('K.wav')
+  })
+})

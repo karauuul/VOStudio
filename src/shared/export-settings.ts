@@ -1,4 +1,4 @@
-export type ExportFormatId = 'wav-48-24' | 'wav-44-16' | 'mp3-192' | 'ogg'
+export type ExportFormatId = 'source' | 'wav-48-24' | 'wav-44-16' | 'mp3-192' | 'ogg'
 export type LoudnessMode = 'match' | 'off'
 export type LengthMode = 'trim' | 'pad' | 'asis'
 
@@ -12,12 +12,13 @@ export interface ExportSettings {
 export interface ExportFormatSpec {
   id: ExportFormatId
   label: string
-  ext: 'wav' | 'mp3' | 'ogg'
+  ext?: 'wav' | 'mp3' | 'ogg'
   bytesPerSecond: number
   args: string[]
 }
 
 export const EXPORT_FORMATS: ExportFormatSpec[] = [
+  { id: 'source', label: 'Same as source', bytesPerSecond: 24000, args: [] },
   {
     id: 'wav-48-24',
     label: 'WAV · 48 kHz · 24-bit',
@@ -42,7 +43,7 @@ export const EXPORT_FORMATS: ExportFormatSpec[] = [
   { id: 'ogg', label: 'OGG', ext: 'ogg', bytesPerSecond: 24000, args: ['-c:a', 'libvorbis', '-q:a', '6'] },
 ]
 
-export const DEFAULT_EXPORT_FORMAT: ExportFormatId = 'wav-48-24'
+export const DEFAULT_EXPORT_FORMAT: ExportFormatId = 'source'
 
 export function formatSpec(id: ExportFormatId | undefined): ExportFormatSpec {
   return EXPORT_FORMATS.find((f) => f.id === id) ?? EXPORT_FORMATS[0]

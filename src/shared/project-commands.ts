@@ -48,15 +48,12 @@ export type ProjectCommand =
   | { type: 'rules.set'; text: string }
   | { type: 'project.rename'; name: string }
   | { type: 'project.setLanguages'; languages: ProjectLanguages | null }
-
-export interface ChangeSet {
-  name?: string
-  languages?: ProjectLanguages | null
   | { type: 'project.setExport'; settings: ExportSettings | null }
   | { type: 'project.setExportTemplate'; template: string }
 
 export interface ChangeSet {
   name?: string
+  languages?: ProjectLanguages | null
   export?: ExportSettings | null
   exportTemplate?: string
   versions?: ProjectVersion[]
@@ -181,6 +178,7 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
     if (languages) project.languages = languages
     else delete project.languages
     return { languages: languages ?? null }
+  }
   if (command.type === 'project.setExportTemplate') {
     const template = command.template.trim()
     if (!template) throw new Error('Output name cannot be empty')
@@ -326,6 +324,7 @@ export function applyChangeSet(project: Project, changes: ChangeSet): Project {
       const { languages: _drop, ...rest } = next
       next = rest
     } else next = { ...next, languages: changes.languages }
+  }
   if (changes.export !== undefined) {
     if (changes.export === null) {
       const { export: _dropped, ...rest } = next

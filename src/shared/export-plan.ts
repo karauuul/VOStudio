@@ -60,7 +60,8 @@ export function exportName(project: Project, cue: Cue, take: Take): string {
     .replace(/\{WemId\}/g, cue.key)
     .replace(/\{Key\}/g, cue.key)
     .replace(/\{ext\}/g, ext)
-  return withExt(named, formatSpec(project.export?.format).ext)
+  const target = formatSpec(project.export?.format).ext
+  return target ? withExt(named, target) : named
 }
 
 export function mixesOriginal(cue: Cue): boolean {

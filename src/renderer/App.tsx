@@ -1405,8 +1405,6 @@ export default function App() {
     onOpenLine: openCue,
   }
 
-  }
-
   return (
     <div className="app">
       <TopBar

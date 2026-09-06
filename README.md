@@ -33,7 +33,7 @@ node scripts/convert-satisfactory.ts --csv <master_vo_table.csv> --audio <origin
   - `cue/` — cue workspace: take source menu, lanes, timeline editor, inspector, recording hook.
   - `audio/` — `clip-graph.ts` (`buildClipGraph` / `scheduleComp`, the only place audio node chains are built), `transport.ts` (live playback), `offline-render.ts` (export rendering), `comp-source.ts`, `recorder.ts`, `duration-queue.ts`, `lru.ts`; `audio/worklets/` and `worklets/` (AudioWorklet sources, delivered as Blob URLs).
   - `export/run-export.ts` (`runJob` / `runPlan`), `jobs/` (queue and store), `api.ts` (typed IPC bridge and audio URLs).
-  - `styles/` — `tokens.css`, `shell.css`, `base.css`, `work.css`, `project.css`, `overlays.css`; `app.css` imports them in that order.
+  - `styles/` — `tokens.css`, `shell.css`, `base.css`, `work.css`, `import.css`, `export.css`, `overlays.css`; `app.css` imports them in that order.
 - `tests/` — vitest, pure logic only.
 
 ## Project data
