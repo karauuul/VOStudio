@@ -135,7 +135,7 @@ export function SettingsDialog({
           <select
             value={mic}
             onChange={(e) =>
-              onSettings({ ...settings, micDeviceLabel: e.target.value || undefined })
+              onSettings({ ...settings, micDeviceLabel: e.target.value || undefined, micDeviceId: undefined })
             }
           >
             <option value="">System default</option>

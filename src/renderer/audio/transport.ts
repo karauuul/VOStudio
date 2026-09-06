@@ -75,9 +75,15 @@ export async function deviceIdForLabel(kind: MediaDeviceKind, label: string): Pr
   return list.find((d) => d.kind === kind && d.label === label)?.deviceId ?? ''
 }
 
+let sinkRequest = 0
+
 export async function setOutputDevice(label: string): Promise<boolean> {
+  const request = ++sinkRequest
   const id = label ? await deviceIdForLabel('audiooutput', label) : ''
-  sinkId = ctx ? await applySink(ctx, id) : id
+  if (request !== sinkRequest) return false
+  const applied = ctx ? await applySink(ctx, id) : id
+  if (request !== sinkRequest) return false
+  sinkId = applied
   return label === '' || (id !== '' && sinkId === id)
 }
 
