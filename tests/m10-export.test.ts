@@ -213,7 +213,7 @@ describe('the Original lane on export', () => {
     expect(plan.clips).toEqual([
       { srcPath: 'E:/p/t-1.mp3', srcIn: 0, srcOut: 3, start: 0, edits: emptyEdits() },
     ])
-    expect(plan.original).toEqual({ srcPath: 'E:/orig/1.wav', gainDb: -12 })
+    expect(plan.original).toEqual({ srcPath: 'E:/orig/1.wav', gainDb: -12, offset: 0, duration: 3.5 })
   })
 
   it('a line without the mix and without a window renders through the plain clip path', () => {
@@ -250,7 +250,7 @@ describe('offline and live schedule the same composition', () => {
     expect(offline.clips).toEqual(live.map(toClipPlan))
     expect(offline.tracks).toEqual(compTracks(c.comp!))
     expect(offline.region).toEqual({ in: 0, out: 2.8 })
-    expect(offline.original).toEqual({ srcPath: 'E:/orig/1.wav', gainDb: -9 })
+    expect(offline.original).toEqual({ srcPath: 'E:/orig/1.wav', gainDb: -9, offset: 0, duration: 3.5 })
   })
 
   it('source effects travel with the source on both sides', () => {

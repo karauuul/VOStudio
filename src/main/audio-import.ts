@@ -1,4 +1,3 @@
-import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
@@ -6,7 +5,7 @@ import { matchAudioFiles, type MatchRule } from '@shared/import-table'
 import type { AudioRef, Cue, Project } from '@shared/domain'
 import type { ChangeSet } from '@shared/project-commands'
 import type { AudioImportResult } from '@shared/ipc'
-import { ffmpegPath } from './ffmpeg'
+import { probeMedia } from './ffmpeg'
 
 const FORMATS: Record<string, AudioRef['format']> = {
   '.wav': 'wav',
@@ -16,21 +15,13 @@ const FORMATS: Record<string, AudioRef['format']> = {
 
 const CONCURRENCY = 8
 const MAX_FILES = 20_000
-const DURATION_RE = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/
 
-export function probeDuration(file: string): Promise<number | undefined> {
-  return new Promise((resolve) => {
-    const proc = spawn(ffmpegPath(), ['-hide_banner', '-i', file], { windowsHide: true })
-    let stderr = ''
-    proc.stderr.on('data', (d) => (stderr += d.toString()))
-    proc.on('error', () => resolve(undefined))
-    proc.on('close', () => {
-      const m = DURATION_RE.exec(stderr)
-      if (!m) return resolve(undefined)
-      const seconds = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
-      resolve(Number.isFinite(seconds) && seconds > 0 ? seconds : undefined)
-    })
-  })
+export async function probeDuration(file: string): Promise<number | undefined> {
+  try {
+    return (await probeMedia(file)).duration
+  } catch {
+    return undefined
+  }
 }
 
 async function mapLimited<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R[]> {

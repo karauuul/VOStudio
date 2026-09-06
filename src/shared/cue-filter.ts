@@ -2,6 +2,7 @@ import { approvalState, hasValidVoicedOutput } from './approval'
 import { compDuration } from './comp'
 import { hasVoicedTake, type Character, type Cue } from './domain'
 import { outputSource } from './workspace-source'
+import { groupByScene } from './sources'
 
 export const DEFAULT_FILTER = 'work'
 export const ALL_CHARACTERS = 'all'
@@ -106,6 +107,23 @@ export function groupByCharacter(
     ordered.push(...bucket)
   }
   return { cues: ordered, groups }
+}
+
+export function groupLines(
+  cues: Cue[],
+  characters: Pick<Character, 'id' | 'name'>[]
+): GroupedCues {
+  const regions = cues.filter((c) => c.region)
+  if (regions.length === 0) return groupByCharacter(cues, characters)
+  const scenes = groupByScene(regions)
+  const rest = groupByCharacter(
+    cues.filter((c) => !c.region),
+    characters
+  )
+  return {
+    cues: [...scenes.cues, ...rest.cues],
+    groups: [...scenes.groups, ...rest.groups],
+  }
 }
 
 export type ReviewLabel =

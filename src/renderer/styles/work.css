@@ -489,6 +489,74 @@
   height: 26px;
 }
 
+.tl.tl-hasnav {
+  grid-template-rows: var(--hd) 22px 26px minmax(0, 1fr) 40px;
+}
+
+.tl-nav {
+  display: grid;
+  grid-template-columns: 190px 1fr;
+  height: 22px;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+
+.tl-nav .n {
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  font: 10px var(--mono);
+  color: var(--tx3);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.tl-nav .bar {
+  position: relative;
+  background: var(--bg);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.tl-nav .bar i {
+  position: absolute;
+  top: 7px;
+  height: 8px;
+  min-width: 2px;
+  background: var(--line2);
+  border-radius: 1px;
+}
+
+.tl-nav .bar i.cur {
+  top: 5px;
+  height: 12px;
+  background: var(--ac);
+}
+
+.tl-nav .bar .vp {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border: 1px solid var(--ac);
+  background: rgba(130, 172, 236, 0.08);
+  pointer-events: none;
+}
+
+.tl-ctx {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.tl-ctx canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
 .tl-rul {
   display: grid;
   grid-template-columns: 190px 1fr;
@@ -964,6 +1032,10 @@ input.tl-name:focus {
   gap: 8px;
 }
 
+.prog-aspect select.field {
+  cursor: pointer;
+}
+
 .prog-aspect .field {
   height: 24px;
 }
@@ -984,6 +1056,28 @@ input.tl-name:focus {
   max-width: 100%;
   aspect-ratio: 16 / 9;
   overflow: hidden;
+}
+
+.prog-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.prog-video.fill {
+  object-fit: cover;
+}
+
+.prog-tc {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  font: 11px var(--mono);
+  color: rgba(255, 255, 255, 0.6);
+  pointer-events: none;
 }
 
 .sub {

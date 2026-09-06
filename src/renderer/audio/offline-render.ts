@@ -2,8 +2,15 @@ import { compDuration, compEffectsTail, compHasPitch, compHasReverb } from '@sha
 import type { ClipEdits, CompTrack } from '@shared/domain'
 import { effectsTail, pitchActive } from '@shared/effects'
 import { ensurePitchModule } from './pitch-node'
-import { buildClipGraph, renderDuration, scheduleComp, type CompSource } from './clip-graph'
-import type { ResolvedComp } from './comp-source'
+import {
+  buildClipGraph,
+  originalVoiceLength,
+  renderDuration,
+  scheduleComp,
+  type CompSource,
+  type OriginalVoice,
+} from './clip-graph'
+import type { ResolvedComp, ResolvedOriginal } from './comp-source'
 import { getBuffer, loadCompSources, release } from './transport'
 import { encodeWavFloat32 } from './wav'
 
@@ -39,7 +46,7 @@ export async function renderBufferOffline(
   return ctx.startRendering()
 }
 
-function channelsOf(buffer: AudioBuffer): Float32Array[] {
+export function channelsOf(buffer: AudioBuffer): Float32Array[] {
   const out: Float32Array[] = []
   for (let i = 0; i < buffer.numberOfChannels; i++) out.push(buffer.getChannelData(i))
   return out
@@ -69,14 +76,23 @@ export async function renderClipToWav(
   }
 }
 
+export async function loadOriginal(o: ResolvedOriginal): Promise<OriginalVoice> {
+  return {
+    buffer: await getBuffer(o.url),
+    gainDb: o.gainDb,
+    ...(o.offset === undefined ? {} : { offset: o.offset }),
+    ...(o.duration === undefined ? {} : { duration: o.duration }),
+  }
+}
+
 export async function renderCompOffline(
   sources: CompSource[],
   region?: { in: number; out: number },
   tracks?: CompTrack[],
-  original?: { buffer: AudioBuffer; gainDb: number }
+  original?: OriginalVoice
 ): Promise<AudioBuffer> {
   const clips = sources.map((s) => s.clip)
-  const total = Math.max(compDuration({ clips }), original?.buffer.duration ?? 0)
+  const total = Math.max(compDuration({ clips }), original ? originalVoiceLength(original) : 0)
   if (!(total > 0)) throw new Error('Composition is empty — nothing to render')
   const from = region ? Math.min(Math.max(0, region.in), total) : 0
   const to = region ? Math.max(from, region.out) : total + compEffectsTail(clips, tracks)
@@ -103,9 +119,7 @@ export async function renderCompOffline(
 
 export async function renderCompToWav(resolved: ResolvedComp): Promise<RenderedClip> {
   const sources = await loadCompSources(resolved)
-  const original = resolved.original
-    ? { buffer: await getBuffer(resolved.original.url), gainDb: resolved.original.gainDb }
-    : undefined
+  const original = resolved.original ? await loadOriginal(resolved.original) : undefined
   try {
     const rendered = await renderCompOffline(sources, resolved.region, resolved.tracks, original)
     return {

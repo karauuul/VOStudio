@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from 'react'
+import type { ProjectSource } from '@shared/domain'
 import { LinesPanel } from '../work/LinesPanel'
 import { CueText } from '../work/CueText'
 import { TextPanel, type TextPanelProps } from '../work/TextPanel'
 import { ProgramPanel } from '../work/ProgramPanel'
-import { TimelinePanel } from '../work/TimelinePanel'
+import { TimelinePanel, timecode } from '../work/TimelinePanel'
 import { LibraryPanel } from '../work/LibraryPanel'
 import { PropertiesPanel } from '../work/PropertiesPanel'
 
@@ -26,6 +27,7 @@ interface Props {
   hidden: boolean
   lines: ComponentProps<typeof LinesPanel>
   total: number
+  source: ProjectSource | null
   text: TextPanelProps
   cueText: ComponentProps<typeof CueText> | null
   program: ComponentProps<typeof ProgramPanel>
@@ -38,6 +40,7 @@ export function WorkRoom({
   hidden,
   lines,
   total,
+  source,
   text,
   cueText,
   program,
@@ -83,6 +86,8 @@ export function WorkRoom({
   )
 
   const cue = text.cue
+  const region = cue?.region
+  const regionLabel = region ? `${timecode(region.in)} – ${timecode(region.out)}` : null
 
   return (
     <div
@@ -92,7 +97,7 @@ export function WorkRoom({
     >
       <section className="panel">
         <div className="phd">
-          Lines <span className="n">{total}</span>
+          Lines <span className="n">{source ? `${total} · ${source.name}` : total}</span>
         </div>
         <LinesPanel {...lines} />
       </section>
@@ -103,7 +108,10 @@ export function WorkRoom({
         <div className="work-upper">
           <section className="panel text">
             <div className="phd">
-              Text {cue && <span className="n">{cue.fields['EventName'] || cue.key}</span>}
+              Text{' '}
+              {cue && (
+                <span className="n">{regionLabel ?? (cue.fields['EventName'] || cue.key)}</span>
+              )}
             </div>
             <div className="ed-script">{cueText ? <CueText {...cueText} /> : <TextPanel {...text} />}</div>
           </section>

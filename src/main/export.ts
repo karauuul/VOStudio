@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs'
+import type { FileHandle } from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import { createHash, randomUUID } from 'crypto'
@@ -11,6 +12,7 @@ import type {
   ExportResult,
   ExportSummary,
   LastExport,
+  VideoExportPlan,
 } from '@shared/ipc'
 import {
   compPlanFor,
@@ -20,6 +22,7 @@ import {
   isFastPath,
   planBatch,
   type PlannedTake,
+  videoLines,
 } from '@shared/export-plan'
 import {
   buildReport,
@@ -31,13 +34,23 @@ import {
   type DeliverReport,
   type DeliverSummary,
 } from '@shared/deliver'
-import { formatSpec, loudnessGainDb, loudnessMode, parseEbur128 } from '@shared/export-settings'
+import {
+  formatSpec,
+  loudnessGainDb,
+  loudnessMode,
+  parseEbur128,
+  videoMode,
+  videoName,
+} from '@shared/export-settings'
+import { renderChunks, videoTimelinePlan } from '@shared/sources'
 import { sanitizeRevision } from '@shared/approval'
 import type { Project } from '@shared/domain'
 import * as store from './project-store'
 import { ffmpegStderr, runFfmpeg } from './ffmpeg'
+import { muxVideo } from './sources'
 
 const MAX_ENCODE_BYTES = 600 * 1024 * 1024
+const VIDEO_CHUNK_SECONDS = 60
 
 function ctx(): { project: Project; dir: string } {
   const project = store.getProject()
@@ -273,5 +286,104 @@ export async function finishExport(
     ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }),
     reportPath: path.join(outDir, 'report.json'),
     ...(version === undefined ? {} : { version }),
+  }
+}
+
+interface VideoRun {
+  token: string
+  outPath: string
+  videoPath: string | null
+  raw: string
+  handle: FileHandle | null
+  sampleRate: number
+  channels: number
+}
+
+let videoRun: VideoRun | null = null
+const VIDEO_MAX_BYTES = 4 * 1024 * 1024 * 1024
+
+export async function planVideoExport(sourceId: string): Promise<VideoExportPlan | null> {
+  const { project, dir } = ctx()
+  const source = project.sources?.find((s) => s.id === sourceId)
+  if (!source) throw new Error('Source not found')
+  const lines = videoLines(project, sourceId)
+  if (lines.length === 0) return null
+  const mode = videoMode(project.export)
+  const name = videoName(project.export, source.name, project.languages?.target ?? '', mode)
+  const plan = videoTimelinePlan(source.file.relPath, source.duration, lines)
+  await closeVideoRun()
+  const token = randomUUID()
+  const raw = path.join(os.tmpdir(), `vostudio-video-${token}.f32`)
+  videoRun = {
+    token,
+    outPath: path.join(exportDir(project, dir), name),
+    videoPath: mode === 'copy' && source.media ? source.media : null,
+    raw,
+    handle: null,
+    sampleRate: 0,
+    channels: 0,
+  }
+  return {
+    token,
+    sourceId,
+    name,
+    outPath: videoRun.outPath,
+    duration: source.duration,
+    chunks: renderChunks(source.duration, VIDEO_CHUNK_SECONDS, lines.map((l) => ({ start: l.in, end: l.out }))).map(
+      (c) => ({ in: c.start, out: c.end })
+    ),
+    clips: plan.clips,
+    tracks: plan.tracks,
+  }
+}
+
+async function closeVideoRun(): Promise<void> {
+  const run = videoRun
+  videoRun = null
+  if (!run) return
+  await run.handle?.close().catch(() => undefined)
+  await fs.rm(run.raw, { force: true }).catch(() => undefined)
+}
+
+function videoFor(token: string): VideoRun {
+  if (!videoRun || videoRun.token !== token) throw new Error('This video export is no longer current')
+  return videoRun
+}
+
+export async function appendVideoChunk(
+  token: string,
+  pcm: unknown,
+  sampleRate: number,
+  channels: number
+): Promise<void> {
+  const run = videoFor(token)
+  const bytes = toBuffer(pcm)
+  if (run.handle === null) {
+    run.sampleRate = sampleRate
+    run.channels = channels
+    run.handle = await fs.open(run.raw, 'w')
+  } else if (run.sampleRate !== sampleRate || run.channels !== channels) {
+    throw new Error('Rendered chunks disagree on sample rate or channel count')
+  }
+  const { size } = await run.handle.stat()
+  if (size + bytes.length > VIDEO_MAX_BYTES) throw new Error('Rendered video audio is too large')
+  await run.handle.write(bytes)
+}
+
+export async function abortVideoExport(token: string): Promise<void> {
+  if (videoRun && videoRun.token === token) await closeVideoRun()
+}
+
+export async function finishVideoExport(token: string): Promise<ExportResult> {
+  const run = videoFor(token)
+  if (!run.handle) throw new Error('No audio was rendered for the video')
+  await run.handle.close()
+  run.handle = null
+  try {
+    await muxVideo(run.outPath, run.videoPath, run.raw, run.sampleRate, run.channels)
+    const out = await fs.readFile(run.outPath)
+    return { outPath: run.outPath, bytes: out.length, parityHash: sha256(out) }
+  } finally {
+    await closeVideoRun()
   }
 }

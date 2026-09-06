@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, type CSSProperties, type RefObject } from 'react'
 import { GroupedVirtuoso, type GroupedVirtuosoHandle } from 'react-virtuoso'
-import type { Cue } from '@shared/domain'
+import type { Character, Cue } from '@shared/domain'
 import { hasValidVoicedOutput } from '@shared/approval'
 import type { CueGroup } from '@shared/cue-filter'
+import { regionTimecode } from '@shared/sources'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 
 interface Props {
   cues: Cue[]
+  characters: Pick<Character, 'id' | 'name'>[]
   groups: CueGroup[]
   activeCueId?: string
   search: string
@@ -26,6 +28,7 @@ function dotColor(cue: Cue, exported: ReadonlySet<string>): string | undefined {
 
 export function LinesPanel({
   cues,
+  characters,
   groups,
   activeCueId,
   search,
@@ -39,6 +42,7 @@ export function LinesPanel({
 }: Props) {
   const vRef = useRef<GroupedVirtuosoHandle>(null)
   const pop = useContextMenu()
+  const names = useMemo(() => new Map(characters.map((c) => [c.id, c.name])), [characters])
   const counts = useMemo(() => groups.map((g) => g.count), [groups])
 
   const absolute = useMemo(() => {
@@ -115,7 +119,11 @@ export function LinesPanel({
             >
               <div>
                 <div className="t">{cue.sourceText || cue.text}</div>
-                <div className="id">{cue.fields['EventName'] || cue.key}</div>
+                <div className="id">
+                  {cue.region
+                    ? `${names.get(cue.characterId) ?? 'no character'} · ${regionTimecode(cue.region.in)}`
+                    : cue.fields['EventName'] || cue.key}
+                </div>
               </div>
               {cue.referenceDuration !== undefined && (
                 <span className="d">{cue.referenceDuration.toFixed(1)}s</span>

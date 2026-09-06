@@ -9,7 +9,7 @@ import type {
   UiSessionState,
 } from './domain'
 import type { TableMapping } from './import-table'
-import type { CompPlan, ExportFormat } from './export-plan'
+import type { CompClipPlan, CompPlan, ExportFormat } from './export-plan'
 import type { ExportedLines } from './readiness'
 import type { UpdateStatus } from './updater'
 import type { CommandResult, ProjectCommand, ProjectSnapshot } from './project-commands'
@@ -210,6 +210,23 @@ export interface TableImportResult {
   unmatched: number
 }
 
+export interface DetectResult {
+  added: number
+  kept: number
+  removed: number
+}
+
+export interface VideoExportPlan {
+  token: string
+  sourceId: string
+  name: string
+  outPath: string
+  duration: number
+  chunks: { in: number; out: number }[]
+  clips: CompClipPlan[]
+  tracks: CompTrack[]
+}
+
 export interface TranscribeResult {
   updated: number
   skipped: number
@@ -243,6 +260,7 @@ export interface IpcApi {
     replaceTranslations?: boolean
   }) => Promise<TableImportResult>
   'import:template': (dir: string) => Promise<ReimportResult>
+  'source:detect': (req: { sourceId: string; mode: 'silence' | 'transcribe' }) => Promise<DetectResult>
   'project:command': (command: ProjectCommand) => Promise<CommandResult>
   'project:saveVersion': (req: { name?: string }) => Promise<ProjectVersion[]>
   'ui:save': (ui: UiSessionState) => Promise<void>
@@ -286,6 +304,15 @@ export interface IpcApi {
   'export:copy': (outPath: string) => Promise<ExportResult>
   'export:encode': (outPath: string, wav: ArrayBuffer) => Promise<ExportResult>
   'export:finish': (token: string, summary: ExportSummary) => Promise<DeliverPaths>
+  'export:videoPlan': (sourceId: string) => Promise<VideoExportPlan | null>
+  'export:videoChunk': (
+    token: string,
+    pcm: ArrayBuffer,
+    sampleRate: number,
+    channels: number
+  ) => Promise<void>
+  'export:videoFinish': (token: string) => Promise<ExportResult>
+  'export:videoAbort': (token: string) => Promise<void>
 
   'settings:get': () => Promise<AppSettings>
   'settings:set': (settings: AppSettings) => Promise<void>

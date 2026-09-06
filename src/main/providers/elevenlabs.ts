@@ -1,6 +1,7 @@
 import type { UsageInfo, VoiceSettings, WordTiming } from '@shared/domain'
 import type { ProviderVoice } from '@shared/ipc'
 import { wordsFromAlignment } from '@shared/library'
+import type { SttWord } from '@shared/sources'
 import { getApiKey } from '../secrets'
 
 const BASE = 'https://api.elevenlabs.io/v1'
@@ -109,11 +110,21 @@ export async function sts(req: {
 export const ELEVENLABS_STT_MODEL = 'scribe_v1'
 
 export async function stt(req: { audio: Buffer; filename: string }): Promise<string> {
+  const data = (await sttRequest(req, false)) as { text?: unknown }
+  if (typeof data.text !== 'string') throw new Error('ElevenLabs STT returned no text')
+  return data.text.trim()
+}
+
+async function sttRequest(req: { audio: Buffer; filename: string }, diarize: boolean): Promise<unknown> {
   const form = new FormData()
   const view = new Uint8Array(req.audio.byteLength)
   view.set(req.audio)
   form.append('file', new Blob([view]), req.filename)
   form.append('model_id', ELEVENLABS_STT_MODEL)
+  if (diarize) {
+    form.append('timestamps_granularity', 'word')
+    form.append('diarize', 'true')
+  }
 
   let r: Response
   try {
@@ -121,18 +132,36 @@ export async function stt(req: { audio: Buffer; filename: string }): Promise<str
       method: 'POST',
       headers: { 'xi-api-key': await key(), Accept: 'application/json' },
       body: form,
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(diarize ? 900_000 : 120_000),
     })
   } catch (e) {
     if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
-      throw new Error('ElevenLabs STT: timed out after 120s — try again manually')
+      throw new Error('ElevenLabs STT: timed out — try again manually')
     }
     throw e
   }
   if (!r.ok) throw new Error(`ElevenLabs STT ${r.status}: ${(await r.text()).slice(0, 300)}`)
-  const data = (await r.json()) as { text?: unknown }
-  if (typeof data.text !== 'string') throw new Error('ElevenLabs STT returned no text')
-  return data.text.trim()
+  return r.json()
+}
+
+export async function sttWords(req: { audio: Buffer; filename: string }): Promise<SttWord[]> {
+  const data = (await sttRequest(req, true)) as { words?: unknown }
+  if (!Array.isArray(data.words)) throw new Error('ElevenLabs STT returned no word timings')
+  const out: SttWord[] = []
+  for (const raw of data.words) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as { text?: unknown; start?: unknown; end?: unknown; type?: unknown; speaker_id?: unknown }
+    if (typeof row.text !== 'string') continue
+    if (typeof row.start !== 'number' || typeof row.end !== 'number') continue
+    out.push({
+      text: row.text,
+      start: row.start,
+      end: row.end,
+      ...(typeof row.type === 'string' ? { type: row.type } : {}),
+      ...(typeof row.speaker_id === 'string' && row.speaker_id ? { speaker: row.speaker_id } : {}),
+    })
+  }
+  return out
 }
 
 export async function voices(): Promise<ProviderVoice[]> {

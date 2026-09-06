@@ -13,6 +13,7 @@ const channelMap: Record<IpcChannel, true> = {
   'import:audio': true,
   'import:table': true,
   'import:template': true,
+  'source:detect': true,
   'project:command': true,
   'project:saveVersion': true,
   'ui:save': true,
@@ -49,6 +50,10 @@ const channelMap: Record<IpcChannel, true> = {
   'export:copy': true,
   'export:encode': true,
   'export:finish': true,
+  'export:videoPlan': true,
+  'export:videoChunk': true,
+  'export:videoFinish': true,
+  'export:videoAbort': true,
 
   'settings:get': true,
   'settings:set': true,

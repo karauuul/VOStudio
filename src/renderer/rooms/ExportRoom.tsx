@@ -12,7 +12,8 @@ import {
 } from '@shared/readiness'
 import { matchesSearch } from '@shared/cue-filter'
 import { api } from '../api'
-import { runPlan, type ExportProgress } from '../export/run-export'
+import { runPlan, runVideo, type ExportProgress } from '../export/run-export'
+import { videoMode, videoName } from '@shared/export-settings'
 import { OutputPanel } from '../export/OutputPanel'
 import { ReadinessTable } from '../export/ReadinessTable'
 import { SummaryPanel } from '../export/SummaryPanel'
@@ -101,6 +102,19 @@ export function ExportRoom({
     if (selected) onOpenCue(selected)
   }, [selected, onOpenCue])
 
+  const videos = useMemo(() => {
+    const mode = videoMode(project.export)
+    const lang = project.languages?.target ?? ''
+    return (project.sources ?? [])
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        out: videoName(project.export, s.name, lang, mode),
+        lines: project.cues.filter((c) => c.region?.sourceId === s.id).length,
+      }))
+      .filter((v) => v.lines > 0)
+  }, [project.sources, project.cues, project.export, project.languages])
+
   const runExport = useCallback(
     async (changedOnly: boolean) => {
       if (busy) return
@@ -115,11 +129,18 @@ export function ExportRoom({
       try {
         const plan = await api['export:planBatch']({ cueIds })
         const result = await runPlan(plan, setProgress)
+        let written = 0
+        for (const v of videos) {
+          const videoPlan = await api['export:videoPlan'](v.id)
+          if (!videoPlan) continue
+          await runVideo(videoPlan, setProgress)
+          written++
+        }
         onStatus(
           result.failed.length > 0 ? 'err' : 'ok',
           result.failed.length > 0
             ? `Exported ${result.written}, failed ${result.failed.length}`
-            : `Exported ${result.written} to ${result.outDir}`
+            : `Exported ${result.written}${written > 0 ? ` + ${written} video` : ''} to ${result.outDir}`
         )
       } catch (e) {
         setError(String(e))
@@ -129,10 +150,8 @@ export function ExportRoom({
         endExport()
       }
     },
-    [busy, rows, beginExport, endExport, onStatus]
+    [busy, rows, videos, beginExport, endExport, onStatus]
   )
-
-  const videos = project.sources?.filter((s) => s.kind === 'video').length ?? 0
 
   return (
     <div className="main exp" hidden={hidden}>

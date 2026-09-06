@@ -45,6 +45,11 @@ const MAP_COLUMNS: TableColumn[] = ['id', 'text', 'translation', 'character']
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
 
+const sourceClock = (seconds: number): string => {
+  const total = Math.round(seconds)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
 const nnn = (n: number): string => n.toLocaleString('en-US')
 
 const Caret = () => (
@@ -63,6 +68,7 @@ interface Props {
   onMapping: (mapping: TableMapping) => void
   onImportText: (replaceTranslations: boolean) => void
   onTranscribe: (cueIds: string[], overwrite: boolean) => void
+  onDetect: (sourceId: string, mode: 'silence' | 'transcribe') => void
   onOpenCue: (cueId: string) => void
   menu: (cues: Cue[]) => MenuEntry[]
 }
@@ -77,6 +83,7 @@ export function LinesTable({
   onMapping,
   onImportText,
   onTranscribe,
+  onDetect,
   onOpenCue,
   menu,
 }: Props) {
@@ -84,6 +91,7 @@ export function LinesTable({
   const [sel, setSel] = useState<ReadonlySet<string>>(() => new Set())
   const [focus, setFocus] = useState(0)
   const [pending, setPending] = useState<{ ids: string[]; overwrite: boolean } | null>(null)
+  const [armed, setArmed] = useState<{ sourceId: string; label: string } | null>(null)
   const vRef = useRef<VirtuosoHandle>(null)
   const anchorRef = useRef(0)
   const pop = useContextMenu()
@@ -104,6 +112,42 @@ export function LinesTable({
     setSel(new Set())
     setPending(null)
   }, [tab, search])
+
+  const sources = project.sources ?? []
+
+  useEffect(() => {
+    setArmed((a) => (a && sources.some((s) => s.id === a.sourceId) ? a : null))
+  }, [sources])
+
+  const detectClick = (): void => {
+    if (armed) {
+      const { sourceId } = armed
+      setArmed(null)
+      onDetect(sourceId, 'transcribe')
+      return
+    }
+    if (sources.length === 1) onDetect(sources[0].id, 'silence')
+  }
+
+  const detectMenu = (): MenuEntry[] =>
+    sources.length === 1
+      ? [
+          { label: 'Silence', onClick: () => onDetect(sources[0].id, 'silence') },
+          {
+            label: 'Transcribe',
+            onClick: () => setArmed({ sourceId: sources[0].id, label: sourceClock(sources[0].duration) }),
+          },
+        ]
+      : sources.map((s) => ({
+          label: s.name,
+          submenu: [
+            { label: 'Silence', onClick: () => onDetect(s.id, 'silence') },
+            {
+              label: 'Transcribe',
+              onClick: () => setArmed({ sourceId: s.id, label: sourceClock(s.duration) }),
+            },
+          ],
+        }))
 
   useEffect(() => {
     setFocus((f) => (f < rows.length ? f : Math.max(0, rows.length - 1)))
@@ -238,10 +282,19 @@ export function LinesTable({
         </span>
         <span className="sp" />
         <span className="split">
-          <button className="btn ghost" disabled title="Milestone 11">
-            Detect lines
+          <button
+            className="btn ghost"
+            disabled={sources.length === 0}
+            onClick={detectClick}
+          >
+            {armed ? `Transcribe ${armed.label}` : 'Detect lines'}
           </button>
-          <button className="btn ghost caret-btn" disabled aria-label="Detect lines options">
+          <button
+            className="btn ghost caret-btn"
+            disabled={sources.length === 0}
+            aria-label="Detect lines options"
+            onClick={(e) => pop.open(e, detectMenu())}
+          >
             <Caret />
           </button>
         </span>

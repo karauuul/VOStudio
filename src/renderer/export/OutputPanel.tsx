@@ -5,8 +5,11 @@ import {
   EXPORT_FORMATS,
   LENGTH_MODES,
   LOUDNESS_MODES,
+  DEFAULT_VIDEO_NAME,
+  VIDEO_MODES,
   lengthMode,
   loudnessMode,
+  videoMode,
   type ExportSettings,
 } from '@shared/export-settings'
 
@@ -29,8 +32,20 @@ function stamp(iso: string): string {
 
 export function OutputPanel({ project, outDir, last, onSettings, onTemplate, onPickDir }: Props) {
   const [template, setTemplate] = useState(project.exportTemplate)
+  const [video, setVideo] = useState(project.export?.videoName ?? DEFAULT_VIDEO_NAME)
 
   useEffect(() => setTemplate(project.exportTemplate), [project.exportTemplate])
+  useEffect(
+    () => setVideo(project.export?.videoName ?? DEFAULT_VIDEO_NAME),
+    [project.export?.videoName]
+  )
+
+  const commitVideo = (): void => {
+    const next = video.trim()
+    if (next && next !== (project.export?.videoName ?? DEFAULT_VIDEO_NAME)) {
+      onSettings({ videoName: next })
+    } else setVideo(project.export?.videoName ?? DEFAULT_VIDEO_NAME)
+  }
 
   const commit = (): void => {
     const next = template.trim()
@@ -110,15 +125,31 @@ export function OutputPanel({ project, outDir, last, onSettings, onTemplate, onP
 
       <div className="exp-kvp">
         Container
-        <select value="copy" disabled onChange={() => undefined}>
-          <option value="copy">Copy video, replace audio</option>
-          <option value="audio">Audio only</option>
+        <select
+          value={videoMode(project.export)}
+          onChange={(e) => onSettings({ video: e.target.value as ExportSettings['video'] })}
+        >
+          {VIDEO_MODES.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
         </select>
       </div>
 
       <div className="exp-kvp">
         Name
-        <input className="mono" type="text" value="{name}_UK.mp4" disabled readOnly />
+        <input
+          className="mono"
+          type="text"
+          value={video}
+          onChange={(e) => setVideo(e.target.value)}
+          onBlur={commitVideo}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+            if (e.key === 'Escape') setVideo(project.export?.videoName ?? DEFAULT_VIDEO_NAME)
+          }}
+        />
       </div>
 
       <div className="sp" />
