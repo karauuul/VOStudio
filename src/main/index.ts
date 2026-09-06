@@ -10,6 +10,7 @@ import {
   projectCommandSchema,
   projectDirSchema,
   projectNameSchema,
+  saveVersionSchema,
   stsSchema,
   templateDirSchema,
   ttsSchema,
@@ -392,6 +393,15 @@ function registerHandlers(): void {
     return projectRepository.execute(projectCommandSchema.parse(command))
   })
 
+  typedHandle('project:saveVersion', (req) =>
+    serialLifecycle(async () => {
+      const parsed = saveVersionSchema.parse(req)
+      requireProject()
+      await flushPersist()
+      return store.saveVersion(parsed.name)
+    })
+  )
+
   typedHandle('ui:save', (ui: UiSessionState) => store.saveUi(ui))
 
   typedHandle('suggestions:load', async () => {
@@ -443,7 +453,7 @@ function registerHandlers(): void {
         channels: 1,
       },
       duration: parsed.durationSec,
-      meta: {},
+      meta: cue.text ? { text: cue.text } : {},
       edits: emptyEdits(),
       ...(parsed.fragment ? { fragment: true as const } : {}),
     }
@@ -484,7 +494,7 @@ function registerHandlers(): void {
     }
     const voiceId = character.provider.voiceId
     const processed = applyRules(parsed.text, project.pronunciationRules)
-    const audio = await eleven.tts({
+    const { audio, words } = await eleven.ttsWithTimestamps({
       text: processed,
       voiceId,
       model: character.provider.ttsModel,
@@ -500,11 +510,12 @@ function registerHandlers(): void {
       duration: 0,
       meta: { text: processed, voiceSettings: parsed.voiceSettings, provider: 'elevenlabs' },
       edits: emptyEdits(),
+      ...(words ? { words } : {}),
       ...(parsed.fragment ? { fragment: true as const } : {}),
     }
     target.takes.push(take)
     if (autoSelectsOutput(parsed, false)) {
-      Object.assign(target, changeTakeOutput(target, take.id))
+      Object.assign(target, changeTakeOutput(target, take.id, project))
     }
     await publishCue(target)
     pushUsage()
@@ -564,7 +575,7 @@ function registerHandlers(): void {
     }
     target.takes.push(take)
     if (autoSelectsOutput(parsed, target.status === 'approved')) {
-      Object.assign(target, changeTakeOutput(target, take.id))
+      Object.assign(target, changeTakeOutput(target, take.id, project))
     }
     await publishCue(target)
     pushUsage()

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { isProjectDirIn, isValidProjectName } from '@shared/project-summary'
+import { DUCK_MAX_DB, DUCK_MIN_DB, TRACK_GAIN_MAX_DB, TRACK_GAIN_MIN_DB } from '@shared/domain'
 import {
   DELAY_FEEDBACK_MAX,
   DELAY_FEEDBACK_MIN,
@@ -41,6 +42,8 @@ export const projectFileSchema = z
     characters: z.array(z.unknown()),
     cues: z.array(z.unknown()),
     sessions: z.array(z.unknown()),
+    sources: z.array(z.unknown()).optional(),
+    versions: z.array(z.unknown()).optional(),
     pronunciationRules: z.string(),
     exportTemplate: z.string(),
     terms: z.array(z.unknown()).optional(),
@@ -102,6 +105,18 @@ export const clipEditsSchema = z.object({
   fadeOut: z.object({ duration: finite.min(0).max(3600), shape: z.enum(['linear', 'equalPower', 'sCurve']) }),
   timeStretch: finite.min(0.1).max(10).optional(),
   gainEnvelope: z.array(z.object({ t: finite.min(0), db: finite.min(-96).max(24) })).max(500).optional(),
+  effects: clipEffectsSchema.omit({ pitch: true }).optional(),
+})
+
+const trackId = z.string().min(1).max(200)
+
+export const compTrackSchema = z.object({
+  id: trackId,
+  name: z.string().min(1).max(200),
+  characterId: z.string().min(1).max(200).optional(),
+  gainDb: finite.min(TRACK_GAIN_MIN_DB).max(TRACK_GAIN_MAX_DB),
+  muted: z.boolean(),
+  solo: z.boolean(),
   effects: clipEffectsSchema.optional(),
 })
 
@@ -118,6 +133,7 @@ export const compSchema = z
             start: finite.min(0).max(36000),
             edits: clipEditsSchema,
             crossfade: finite.min(0).max(3600).optional(),
+            trackId: trackId.optional(),
           })
           .refine((c) => c.srcOut > c.srcIn, { message: 'srcOut must be greater than srcIn' })
       )
@@ -127,8 +143,28 @@ export const compSchema = z
       .object({ in: finite.min(0).max(36000), out: finite.min(0).max(36000) })
       .refine((r) => r.out > r.in, { message: 'region out must be greater than in' })
       .optional(),
+    tracks: z.array(compTrackSchema).min(1).max(100).optional(),
   })
   .nullable()
+
+export const originalLaneSchema = z
+  .object({
+    exportMode: z.enum(['off', 'on']),
+    duckDb: finite.min(DUCK_MIN_DB).max(DUCK_MAX_DB).optional(),
+    previewMuted: z.literal(true).optional(),
+  })
+  .nullable()
+
+export const cueRegionSchema = z
+  .object({
+    sourceId: z.string().min(1).max(200),
+    in: finite.min(0).max(360000),
+    out: finite.min(0).max(360000),
+  })
+  .refine((r) => r.out > r.in, { message: 'region out must be greater than in' })
+  .nullable()
+
+export const saveVersionSchema = z.object({ name: z.string().max(200).optional() })
 
 const revisionSchema = z.number().int().min(0).max(2_147_483_647)
 
@@ -187,6 +223,13 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   cueId.extend({ type: z.literal('cue.approve'), approved: z.boolean(), approvedAt: z.string().min(1).optional() }),
   cueId.extend({ type: z.literal('cue.setFinalTake'), takeId: z.string().min(1).max(200) }),
   cueId.extend({ type: z.literal('cue.setComp'), comp: compSchema }),
+  cueId.extend({ type: z.literal('cue.setOriginal'), original: originalLaneSchema }),
+  cueId.extend({
+    type: z.literal('cue.setTakePinned'),
+    takeId: z.string().min(1).max(200),
+    pinned: z.boolean(),
+  }),
+  cueId.extend({ type: z.literal('cue.setRegion'), region: cueRegionSchema }),
   cueId.extend({ type: z.literal('cue.acceptSuggestion') }),
   cueId.extend({ type: z.literal('cue.rejectSuggestion') }),
   cueId.extend({ type: z.literal('cue.setVoiceOverride'), override: voiceSettingsSchema.partial().nullable() }),

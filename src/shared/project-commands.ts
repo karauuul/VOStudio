@@ -6,18 +6,27 @@ import {
   ELEVENLABS_STS_MODEL,
   ELEVENLABS_TTS_MODEL,
   hasVoicedTake,
+  sanitizeCueRegion,
+  sanitizeOriginal,
+  sanitizePinned,
   type Character,
   type Cue,
   type CueComp,
+  type CueRegion,
+  type OriginalLane,
   type Project,
   type VoiceSettings,
 } from './domain'
+import { referencedByOtherComp, resolveTake } from './library'
 
 export type ProjectCommand =
   | { type: 'cue.saveText'; cueId: string; text: string }
   | { type: 'cue.approve'; cueId: string; approved: boolean; approvedAt?: string }
   | { type: 'cue.setFinalTake'; cueId: string; takeId: string }
   | { type: 'cue.setComp'; cueId: string; comp: CueComp | null }
+  | { type: 'cue.setOriginal'; cueId: string; original: OriginalLane | null }
+  | { type: 'cue.setTakePinned'; cueId: string; takeId: string; pinned: boolean }
+  | { type: 'cue.setRegion'; cueId: string; region: CueRegion | null }
   | { type: 'cue.acceptSuggestion'; cueId: string }
   | { type: 'cue.rejectSuggestion'; cueId: string }
   | { type: 'cue.setVoiceOverride'; cueId: string; override: Partial<VoiceSettings> | null }
@@ -63,7 +72,7 @@ function invalidateCharacterCues(project: Project, characterId: string): Cue[] {
   const moved: Cue[] = []
   for (const cue of project.cues) {
     if (cue.characterId !== characterId) continue
-    const next = invalidateVoicedOutput(cue)
+    const next = invalidateVoicedOutput(cue, project)
     if (next === cue) continue
     Object.assign(cue, next)
     moved.push(structuredClone(cue))
@@ -130,7 +139,7 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
     for (const cue of project.cues) {
       if (cue.characterId !== character.id) continue
       cue.characterId = command.reassignTo
-      Object.assign(cue, invalidateVoicedOutput(cue))
+      Object.assign(cue, invalidateVoicedOutput(cue, project))
       moved.push(structuredClone(cue))
     }
     project.characters = project.characters.filter((item) => item.id !== character.id)
@@ -143,13 +152,13 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
   const cue = cueById(project, command.cueId)
   switch (command.type) {
     case 'cue.saveText':
-      Object.assign(cue, changeCueText(cue, command.text))
+      Object.assign(cue, changeCueText(cue, command.text, project))
       if (cue.status === 'empty' && command.text.trim()) cue.status = 'translated'
       break
     case 'cue.approve':
-      if (command.approved) Object.assign(cue, approveCue(cue, command.approvedAt))
+      if (command.approved) Object.assign(cue, approveCue(cue, command.approvedAt, project))
       else {
-        Object.assign(cue, removeApproval(cue))
+        Object.assign(cue, removeApproval(cue, project))
         delete cue.approval
       }
       break
@@ -157,26 +166,62 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
       const take = cue.takes.find((item) => item.id === command.takeId)
       if (!take) throw new Error('Take not found in this cue')
       if (take.kind === 'recording') throw new Error('A raw recording cannot be final — convert it first')
-      Object.assign(cue, changeTakeOutput(cue, command.takeId))
+      Object.assign(cue, changeTakeOutput(cue, command.takeId, project))
       break
     }
     case 'cue.setComp': {
       if (command.comp === null) {
         delete cue.comp
-        Object.assign(cue, changeCompOutput(cue, null))
+        Object.assign(cue, changeCompOutput(cue, null, project))
         break
       }
       const problem = compProblem(command.comp)
       if (problem) throw new Error(`Invalid composition: ${problem}`)
       for (const clip of command.comp.clips) {
-        if (!cue.takes.some((take) => take.id === clip.sourceTakeId)) throw new Error(`Composition clip "${clip.id}": take ${clip.sourceTakeId} is not in this cue`)
+        if (!resolveTake(project, cue, clip.sourceTakeId)) throw new Error(`Composition clip "${clip.id}": take ${clip.sourceTakeId} is not in this cue`)
       }
-      Object.assign(cue, changeCompOutput(cue, normalizeComp(command.comp)))
+      Object.assign(cue, changeCompOutput(cue, normalizeComp(command.comp), project))
+      break
+    }
+    case 'cue.setOriginal': {
+      if (command.original === null) {
+        delete cue.original
+        break
+      }
+      const original = sanitizeOriginal(command.original)
+      if (!original) throw new Error('Invalid original lane settings')
+      cue.original = original
+      break
+    }
+    case 'cue.setTakePinned': {
+      const take = cue.takes.find((item) => item.id === command.takeId)
+      if (!take) throw new Error('Take not found in this cue')
+      const pinned = sanitizePinned(command.pinned)
+      if (pinned) take.pinned = pinned
+      else {
+        if (referencedByOtherComp(project, cue.id, take.id)) {
+          throw new Error('This source is used on another line — remove it there first')
+        }
+        delete take.pinned
+      }
+      break
+    }
+    case 'cue.setRegion': {
+      if (command.region === null) {
+        delete cue.region
+        break
+      }
+      const region = sanitizeCueRegion(command.region)
+      if (!region) throw new Error('Invalid region')
+      if (!project.sources?.some((s) => s.id === region.sourceId)) {
+        throw new Error(`Source "${region.sourceId}" is not in this project`)
+      }
+      cue.region = region
       break
     }
     case 'cue.acceptSuggestion':
       if (cue.suggestedText !== undefined) {
-        Object.assign(cue, changeCueText(cue, cue.suggestedText))
+        Object.assign(cue, changeCueText(cue, cue.suggestedText, project))
         delete cue.suggestedText
         if (cue.status === 'empty') cue.status = 'translated'
       }
@@ -192,6 +237,9 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
       const take = cue.takes.find((item) => item.id === command.takeId)
       if (!take) throw new Error('Take not found in this cue')
       if (take.id === cue.finalTakeId) throw new Error('The final take cannot be deleted')
+      if (take.pinned && referencedByOtherComp(project, cue.id, take.id)) {
+        throw new Error('This pinned source is used on another line')
+      }
       if (!take.deletedAt) take.deletedAt = command.deletedAt ?? new Date().toISOString()
       if (cue.status === 'generated' && !hasVoicedTake(cue)) cue.status = cue.text.trim() ? 'translated' : 'empty'
       break
@@ -200,7 +248,7 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
       if (command.characterId) characterById(project, command.characterId)
       if (cue.characterId === command.characterId) break
       cue.characterId = command.characterId
-      Object.assign(cue, invalidateVoicedOutput(cue))
+      Object.assign(cue, invalidateVoicedOutput(cue, project))
       break
     }
   }

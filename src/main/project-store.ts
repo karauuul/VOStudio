@@ -2,7 +2,15 @@ import { app } from 'electron'
 import { promises as fs, type Dirent } from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
-import { sanitizeTerms, type Project, type UiSessionState } from '@shared/domain'
+import {
+  sanitizeProjectSources,
+  sanitizeTargetTrack,
+  sanitizeTerms,
+  sanitizeVersions,
+  type Project,
+  type ProjectVersion,
+  type UiSessionState,
+} from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
 import { PROJECT_SUFFIX, summarizeProject, type ProjectStats, type ProjectSummary } from '@shared/project-summary'
 import { projectFileSchema } from './schemas'
@@ -63,7 +71,10 @@ export function getProjectDir(): string | null {
 
 const uiPath = (dir: string): string => path.join(dir, 'ui.json')
 
-export async function saveUi(next: UiSessionState): Promise<void> {
+export async function saveUi(raw: UiSessionState): Promise<void> {
+  const targetTrack = sanitizeTargetTrack(raw.targetTrack)
+  const { targetTrack: _drop, ...rest } = raw
+  const next = targetTrack ? { ...rest, targetTrack } : rest
   ui = next
   if (current) current.ui = next
   if (!projectDir) return
@@ -182,6 +193,16 @@ export async function openProjectDir(dir: string): Promise<Project> {
     if (terms) p.terms = terms
     else delete p.terms
   }
+  if (Array.isArray(p.sources)) {
+    const sources = sanitizeProjectSources(p.sources)
+    if (sources) p.sources = sources
+    else delete p.sources
+  }
+  if (Array.isArray(p.versions)) {
+    const versions = sanitizeVersions(p.versions)
+    if (versions) p.versions = versions
+    else delete p.versions
+  }
   ui = await loadUi(dir, p.ui)
   p.ui = ui
   current = p
@@ -195,6 +216,22 @@ export function closeProject(): void {
   projectDir = null
   ui = { ...DEFAULT_UI }
   rev = 0
+}
+
+export async function saveVersion(name?: string): Promise<ProjectVersion[]> {
+  if (!current || !projectDir) throw new Error('No project is open')
+  const dir = path.join(projectDir, 'versions')
+  await fs.mkdir(dir, { recursive: true })
+  const previous = current.versions ?? []
+  const n = (previous[previous.length - 1]?.n ?? 0) + 1
+  await fs.copyFile(path.join(projectDir, 'project.json'), path.join(dir, `v${n}.json`))
+  const trimmed = name?.trim()
+  current.versions = [
+    ...previous,
+    { n, ...(trimmed ? { name: trimmed } : {}), createdAt: new Date().toISOString() },
+  ]
+  await persistProjectSnapshot(current)
+  return current.versions
 }
 
 export async function writeTakeFile(cueId: string, fileName: string, data: Buffer): Promise<string> {

@@ -12,6 +12,7 @@ const channelMap: Record<IpcChannel, true> = {
   'project:previewReimport': true,
   'project:applyReimport': true,
   'project:command': true,
+  'project:saveVersion': true,
   'ui:save': true,
 
   'suggestions:load': true,

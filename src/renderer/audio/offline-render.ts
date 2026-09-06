@@ -1,5 +1,5 @@
 import { compDuration, compEffectsTail, compHasPitch, compHasReverb } from '@shared/comp'
-import type { ClipEdits } from '@shared/domain'
+import type { ClipEdits, CompTrack } from '@shared/domain'
 import { effectsTail, pitchActive } from '@shared/effects'
 import { ensurePitchModule } from './pitch-node'
 import { buildClipGraph, renderDuration, scheduleComp, type CompSource } from './clip-graph'
@@ -71,7 +71,8 @@ export async function renderClipToWav(
 
 export async function renderCompOffline(
   sources: CompSource[],
-  region?: { in: number; out: number }
+  region?: { in: number; out: number },
+  tracks?: CompTrack[]
 ): Promise<AudioBuffer> {
   const clips = sources.map((s) => s.clip)
   const total = compDuration({ clips })
@@ -79,7 +80,7 @@ export async function renderCompOffline(
   const from = region ? Math.min(Math.max(0, region.in), total) : 0
   const to = region
     ? Math.min(Math.max(from, region.out), total)
-    : total + compEffectsTail(clips)
+    : total + compEffectsTail(clips, tracks)
   const dur = to - from
   if (!(dur > 0)) {
     throw new Error(
@@ -93,18 +94,18 @@ export async function renderCompOffline(
     if (s.buffer.numberOfChannels > channels) channels = s.buffer.numberOfChannels
   }
   if (!(sampleRate > 0)) throw new Error('Composition sources have no sample rate')
-  if (compHasReverb(clips)) channels = Math.max(2, channels)
+  if (compHasReverb(clips, tracks)) channels = Math.max(2, channels)
   const frames = Math.max(1, Math.ceil(dur * sampleRate))
   const ctx = new OfflineAudioContext(channels, frames, sampleRate)
   if (compHasPitch(clips)) await ensurePitchModule(ctx)
-  scheduleComp(ctx, sources, ctx.destination, { when: 0, seek: from })
+  scheduleComp(ctx, sources, ctx.destination, { when: 0, seek: from, tracks })
   return ctx.startRendering()
 }
 
 export async function renderCompToWav(resolved: ResolvedComp): Promise<RenderedClip> {
   const sources = await loadCompSources(resolved)
   try {
-    const rendered = await renderCompOffline(sources, resolved.region)
+    const rendered = await renderCompOffline(sources, resolved.region, resolved.tracks)
     return {
       wav: encodeWavFloat32(channelsOf(rendered), rendered.sampleRate),
       duration: rendered.duration,

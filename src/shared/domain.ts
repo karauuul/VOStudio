@@ -1,7 +1,15 @@
-import type { ClipEffects } from './effects'
+import { sanitizeEffects, type ClipEffects } from './effects'
 
 export type { ClipEffects, DelayEffect, ReverbEffect } from './effects'
 import type { ClipEffectsPatch } from './effects'
+
+const clampTo = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
+
+const finiteOr = (v: unknown, fallback: number): number =>
+  typeof v === 'number' && Number.isFinite(v) ? v : fallback
+
+const nonEmptyString = (v: unknown): string | undefined =>
+  typeof v === 'string' && v.trim() ? v : undefined
 
 export interface AudioRef {
   fileId: string
@@ -74,6 +82,32 @@ export function envelopeDbAt(points: Array<{ t: number; db: number }>, t: number
   return last.db
 }
 
+export interface WordTiming {
+  text: string
+  start: number
+  end: number
+}
+
+export function sanitizeWords(rows: unknown): WordTiming[] | undefined {
+  if (!Array.isArray(rows)) return undefined
+  const out: WordTiming[] = []
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as Partial<WordTiming>
+    if (typeof row.text !== 'string') continue
+    if (typeof row.start !== 'number' || !Number.isFinite(row.start)) continue
+    if (typeof row.end !== 'number' || !Number.isFinite(row.end)) continue
+    const start = Math.max(0, row.start)
+    out.push({ text: row.text, start, end: Math.max(start, row.end) })
+  }
+  out.sort((a, b) => a.start - b.start || a.end - b.end)
+  return out.length > 0 ? out : undefined
+}
+
+export function sanitizePinned(value: unknown): true | undefined {
+  return value === true ? true : undefined
+}
+
 export interface Take {
   id: string
   kind: TakeKind
@@ -88,8 +122,10 @@ export interface Take {
     model?: string
   }
   edits: ClipEdits
+  words?: WordTiming[]
   rating?: 0 | 1 | 2 | 3
   fragment?: true
+  pinned?: true
   deletedAt?: string
 }
 
@@ -101,6 +137,46 @@ export interface CompClip {
   start: number
   edits: ClipEdits
   crossfade?: number
+  trackId?: string
+}
+
+export const TRACK_GAIN_MIN_DB = -96
+export const TRACK_GAIN_MAX_DB = 24
+
+export interface CompTrack {
+  id: string
+  name: string
+  characterId?: string
+  gainDb: number
+  muted: boolean
+  solo: boolean
+  effects?: ClipEffects
+}
+
+export function sanitizeCompTracks(rows: unknown): CompTrack[] | undefined {
+  if (!Array.isArray(rows)) return undefined
+  const out: CompTrack[] = []
+  const seen = new Set<string>()
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as Partial<CompTrack>
+    const id = nonEmptyString(row.id)
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    const characterId = nonEmptyString(row.characterId)
+    const { pitch: _pitch, ...trackEffects } = (row.effects ?? {}) as ClipEffects
+    const effects = sanitizeEffects(trackEffects)
+    out.push({
+      id,
+      name: nonEmptyString(row.name) ?? id,
+      ...(characterId ? { characterId } : {}),
+      gainDb: clampTo(finiteOr(row.gainDb, 0), TRACK_GAIN_MIN_DB, TRACK_GAIN_MAX_DB),
+      muted: row.muted === true,
+      solo: row.solo === true,
+      ...(effects ? { effects } : {}),
+    })
+  }
+  return out.length > 0 ? out : undefined
 }
 
 export interface CompRegion {
@@ -111,6 +187,121 @@ export interface CompRegion {
 export interface CueComp {
   clips: CompClip[]
   region?: CompRegion
+  tracks?: CompTrack[]
+}
+
+export const DUCK_MIN_DB = -60
+export const DUCK_MAX_DB = 0
+
+export interface OriginalLane {
+  exportMode: 'off' | 'on'
+  duckDb?: number
+  previewMuted?: true
+}
+
+export function sanitizeOriginal(value: unknown): OriginalLane | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const row = value as Partial<OriginalLane>
+  const duckDb = typeof row.duckDb === 'number' && Number.isFinite(row.duckDb) ? row.duckDb : undefined
+  return {
+    exportMode: row.exportMode === 'on' ? 'on' : 'off',
+    ...(duckDb === undefined ? {} : { duckDb: clampTo(duckDb, DUCK_MIN_DB, DUCK_MAX_DB) }),
+    ...(row.previewMuted === true ? { previewMuted: true as const } : {}),
+  }
+}
+
+export interface CueRegion {
+  sourceId: string
+  in: number
+  out: number
+}
+
+export function sanitizeCueRegion(value: unknown): CueRegion | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const row = value as Partial<CueRegion>
+  const sourceId = nonEmptyString(row.sourceId)
+  if (!sourceId) return undefined
+  if (typeof row.in !== 'number' || !Number.isFinite(row.in)) return undefined
+  if (typeof row.out !== 'number' || !Number.isFinite(row.out)) return undefined
+  const from = Math.max(0, row.in)
+  return row.out > from ? { sourceId, in: from, out: row.out } : undefined
+}
+
+export interface ProjectSource {
+  id: string
+  name: string
+  kind: 'audio' | 'video'
+  file: AudioRef
+  duration: number
+}
+
+function sanitizeAudioRef(value: unknown): AudioRef | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const row = value as Partial<AudioRef>
+  const fileId = nonEmptyString(row.fileId)
+  const relPath = nonEmptyString(row.relPath)
+  if (!fileId || !relPath) return undefined
+  if (row.format !== 'wav' && row.format !== 'mp3' && row.format !== 'ogg') return undefined
+  return {
+    fileId,
+    relPath,
+    format: row.format,
+    ...(typeof row.sampleRate === 'number' && Number.isFinite(row.sampleRate)
+      ? { sampleRate: row.sampleRate }
+      : {}),
+    ...(typeof row.channels === 'number' && Number.isFinite(row.channels)
+      ? { channels: row.channels }
+      : {}),
+  }
+}
+
+export function sanitizeProjectSources(rows: unknown): ProjectSource[] | undefined {
+  if (!Array.isArray(rows)) return undefined
+  const out: ProjectSource[] = []
+  const seen = new Set<string>()
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as Partial<ProjectSource>
+    const id = nonEmptyString(row.id)
+    if (!id || seen.has(id)) continue
+    const file = sanitizeAudioRef(row.file)
+    if (!file) continue
+    seen.add(id)
+    out.push({
+      id,
+      name: nonEmptyString(row.name) ?? id,
+      kind: row.kind === 'video' ? 'video' : 'audio',
+      file,
+      duration: Math.max(0, finiteOr(row.duration, 0)),
+    })
+  }
+  return out.length > 0 ? out : undefined
+}
+
+export interface ProjectVersion {
+  n: number
+  name?: string
+  createdAt: string
+}
+
+export function sanitizeVersions(rows: unknown): ProjectVersion[] | undefined {
+  if (!Array.isArray(rows)) return undefined
+  const out: ProjectVersion[] = []
+  const seen = new Set<number>()
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as Partial<ProjectVersion>
+    if (typeof row.n !== 'number' || !Number.isFinite(row.n)) continue
+    const n = Math.trunc(row.n)
+    if (n < 1 || seen.has(n)) continue
+    const createdAt = nonEmptyString(row.createdAt)
+    if (!createdAt) continue
+    seen.add(n)
+    const name = nonEmptyString(row.name)
+    out.push({ n, ...(name ? { name } : {}), createdAt })
+  }
+  out.sort((a, b) => a.n - b.n)
+  return out.length > 0 ? out : undefined
 }
 
 export type CueOutput =
@@ -135,6 +326,8 @@ export interface Cue {
   notes: string
   referenceAudio?: AudioRef
   referenceDuration?: number
+  original?: OriginalLane
+  region?: CueRegion
   takes: Take[]
   finalTakeId?: string
   comp?: CueComp
@@ -199,6 +392,16 @@ export interface UiSessionState {
   filter: string
   search: string
   scrollIndex?: number
+  targetTrack?: Record<string, string>
+}
+
+export function sanitizeTargetTrack(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: Record<string, string> = {}
+  for (const [cueId, trackId] of Object.entries(value as Record<string, unknown>)) {
+    if (cueId && typeof trackId === 'string' && trackId) out[cueId] = trackId
+  }
+  return Object.keys(out).length > 0 ? out : undefined
 }
 
 export interface Term {
@@ -234,6 +437,8 @@ export interface Project {
   characters: Character[]
   cues: Cue[]
   sessions: Session[]
+  sources?: ProjectSource[]
+  versions?: ProjectVersion[]
   pronunciationRules: string
   csvBinding?: CsvBinding
   exportTemplate: string

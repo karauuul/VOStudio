@@ -1,0 +1,241 @@
+import { clipEnd, clipTrackId, COMP_EPS, DEFAULT_TRACK_ID, newCompClipId, normalizeComp } from './comp'
+import {
+  liveTakes,
+  sanitizeWords,
+  type ClipEdits,
+  type CompClip,
+  type CompTrack,
+  type Cue,
+  type CueComp,
+  type Project,
+  type Take,
+  type WordTiming,
+} from './domain'
+
+export { clipTrackId, DEFAULT_TRACK_ID }
+
+export type TakeLookup = Pick<Project, 'cues'>
+
+export function compTracks(comp: CueComp): CompTrack[] {
+  return comp.tracks ?? [{ id: DEFAULT_TRACK_ID, name: 'Track 1', gainDb: 0, muted: false, solo: false }]
+}
+
+export function resolveTake(
+  project: TakeLookup | undefined,
+  cue: Cue,
+  takeId: string
+): { take: Take; cue: Cue } | undefined {
+  const own = cue.takes.find((t) => t.id === takeId)
+  if (own) return { take: own, cue }
+  if (!project) return undefined
+  for (const other of project.cues) {
+    if (other.id === cue.id) continue
+    const take = other.takes.find((t) => t.id === takeId && t.pinned === true && !t.deletedAt)
+    if (take) return { take, cue: other }
+  }
+  return undefined
+}
+
+export function referencedByOtherComp(
+  project: TakeLookup,
+  cueId: string,
+  takeId: string
+): boolean {
+  return project.cues.some(
+    (c) => c.id !== cueId && (c.comp?.clips ?? []).some((clip) => clip.sourceTakeId === takeId)
+  )
+}
+
+export interface LibraryRow {
+  take: Take
+  label: string
+  used: boolean
+}
+
+export interface LibraryGroup {
+  text: string
+  rows: LibraryRow[]
+  pinned?: true
+  useCount?: number
+}
+
+const groupText = (take: Take, fallback: string): string => take.meta.text?.trim() || fallback.trim()
+
+function labelled(takes: Take[]): LibraryRow[] {
+  let versions = 0
+  let recordings = 0
+  return takes.map((take) => {
+    const label = take.kind === 'recording' ? `take ${++recordings}` : `v${++versions}`
+    return { take, label, used: false }
+  })
+}
+
+function byCreation(takes: Take[]): Take[] {
+  return takes
+    .map((take, i) => ({ take, i }))
+    .sort((a, b) => a.take.createdAt.localeCompare(b.take.createdAt) || a.i - b.i)
+    .map((x) => x.take)
+}
+
+function collect(takes: Take[], fallback: (take: Take) => string): Map<string, Take[]> {
+  const groups = new Map<string, Take[]>()
+  for (const take of byCreation(takes)) {
+    const key = groupText(take, fallback(take))
+    const list = groups.get(key)
+    if (list) list.push(take)
+    else groups.set(key, [take])
+  }
+  return groups
+}
+
+export function libraryGroups(cue: Cue, project: TakeLookup): LibraryGroup[] {
+  const used = new Set((cue.comp?.clips ?? []).map((c) => c.sourceTakeId))
+  const mark = (rows: LibraryRow[]): LibraryRow[] =>
+    rows.map((r) => (used.has(r.take.id) ? { ...r, used: true } : r))
+
+  const out: LibraryGroup[] = []
+  for (const [text, takes] of collect(liveTakes(cue), () => cue.text)) {
+    out.push({ text, rows: mark(labelled(takes)) })
+  }
+
+  const pinned: Take[] = []
+  const owner = new Map<string, string>()
+  for (const other of project.cues) {
+    if (other.id === cue.id) continue
+    for (const take of liveTakes(other)) {
+      if (take.pinned !== true) continue
+      pinned.push(take)
+      owner.set(take.id, other.text)
+    }
+  }
+  for (const [text, takes] of collect(pinned, (t) => owner.get(t.id) ?? '')) {
+    const ids = new Set(takes.map((t) => t.id))
+    const useCount = project.cues.filter((c) =>
+      (c.comp?.clips ?? []).some((clip) => ids.has(clip.sourceTakeId))
+    ).length
+    out.push({ text, rows: mark(labelled(takes)), pinned: true, useCount })
+  }
+  return out
+}
+
+export function clipWords(take: Take, srcIn: number, srcOut: number): WordTiming[] {
+  if (!take.words || take.words.length === 0) {
+    const text = take.meta.text?.trim() ?? ''
+    return text ? [{ text, start: 0, end: Math.max(0, srcOut - srcIn) }] : []
+  }
+  return take.words
+    .filter((w) => w.end > srcIn && w.start < srcOut)
+    .map((w) => ({ text: w.text, start: w.start - srcIn, end: w.end - srcIn }))
+}
+
+export interface PlaceClipRequest {
+  duration: number
+  targetTrackId: string
+  playhead: number
+  replaceClipId?: string
+  sourceTakeId: string
+  edits: ClipEdits
+}
+
+export interface PlacedClip {
+  comp: CueComp
+  clipId: string
+  trackId: string
+}
+
+function freshTrack(tracks: CompTrack[]): CompTrack {
+  const taken = new Set(tracks.map((t) => t.id))
+  let n = tracks.length + 1
+  while (taken.has(`track-${n}`)) n++
+  return { id: `track-${n}`, name: `Track ${n}`, gainDb: 0, muted: false, solo: false }
+}
+
+export function placeClip(comp: CueComp, req: PlaceClipRequest): PlacedClip {
+  const tracks = compTracks(comp)
+  const i = req.replaceClipId ? comp.clips.findIndex((c) => c.id === req.replaceClipId) : -1
+  if (i >= 0) {
+    const previous = comp.clips[i]
+    const clips = [...comp.clips]
+    clips[i] = {
+      ...previous,
+      sourceTakeId: req.sourceTakeId,
+      srcIn: 0,
+      srcOut: req.duration,
+      edits: req.edits,
+    }
+    return {
+      comp: normalizeComp({ ...comp, clips }),
+      clipId: previous.id,
+      trackId: clipTrackId(previous),
+    }
+  }
+
+  const start = Math.max(0, req.playhead)
+  const end = start + req.duration
+  const busy = (trackId: string): boolean =>
+    comp.clips.some(
+      (c) => clipTrackId(c) === trackId && c.start < end - COMP_EPS && clipEnd(c) > start + COMP_EPS
+    )
+
+  const from = Math.max(
+    0,
+    tracks.findIndex((t) => t.id === req.targetTrackId)
+  )
+  let trackId = ''
+  for (let k = from; k < tracks.length; k++) {
+    if (!busy(tracks[k].id)) {
+      trackId = tracks[k].id
+      break
+    }
+  }
+  const added = trackId ? null : freshTrack(tracks)
+  if (added) trackId = added.id
+
+  const clip: CompClip = {
+    id: newCompClipId(),
+    sourceTakeId: req.sourceTakeId,
+    srcIn: 0,
+    srcOut: req.duration,
+    start,
+    edits: req.edits,
+    ...(!added && !comp.tracks ? {} : { trackId }),
+  }
+  const next = added ? { ...comp, tracks: [...tracks, added] } : comp
+  return { comp: normalizeComp({ ...next, clips: [...comp.clips, clip] }), clipId: clip.id, trackId }
+}
+
+export function wordsFromAlignment(value: unknown): WordTiming[] | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const a = value as {
+    characters?: unknown
+    character_start_times_seconds?: unknown
+    character_end_times_seconds?: unknown
+  }
+  const chars = a.characters
+  const starts = a.character_start_times_seconds
+  const ends = a.character_end_times_seconds
+  if (!Array.isArray(chars) || !Array.isArray(starts) || !Array.isArray(ends)) return undefined
+  const n = Math.min(chars.length, starts.length, ends.length)
+  const out: WordTiming[] = []
+  let text = ''
+  let start = 0
+  let end = 0
+  for (let i = 0; i < n; i++) {
+    const ch = chars[i]
+    if (typeof ch !== 'string') continue
+    if (ch.trim() === '') {
+      if (text) out.push({ text, start, end })
+      text = ''
+      continue
+    }
+    const s = starts[i]
+    const e = ends[i]
+    if (typeof s !== 'number' || !Number.isFinite(s)) continue
+    if (typeof e !== 'number' || !Number.isFinite(e)) continue
+    if (!text) start = Math.max(0, s)
+    text += ch
+    end = Math.max(start, e)
+  }
+  if (text) out.push({ text, start, end })
+  return sanitizeWords(out)
+}

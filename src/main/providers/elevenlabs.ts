@@ -1,4 +1,5 @@
-import type { UsageInfo, VoiceSettings } from '@shared/domain'
+import type { UsageInfo, VoiceSettings, WordTiming } from '@shared/domain'
+import { wordsFromAlignment } from '@shared/library'
 import { getApiKey } from '../secrets'
 
 const BASE = 'https://api.elevenlabs.io/v1'
@@ -9,12 +10,27 @@ async function key(): Promise<string> {
   return k
 }
 
-export async function tts(req: {
+export interface TtsRequest {
   text: string
   voiceId: string
   model: string
   settings: VoiceSettings
-}): Promise<Buffer> {
+}
+
+const ttsBody = (req: TtsRequest): string =>
+  JSON.stringify({
+    text: req.text,
+    model_id: req.model,
+    voice_settings: {
+      stability: req.settings.stability,
+      similarity_boost: req.settings.similarity,
+      style: req.settings.style,
+      speed: req.settings.speed,
+      use_speaker_boost: req.settings.boost,
+    },
+  })
+
+export async function tts(req: TtsRequest): Promise<Buffer> {
   const r = await fetch(`${BASE}/text-to-speech/${req.voiceId}`, {
     method: 'POST',
     headers: {
@@ -22,20 +38,32 @@ export async function tts(req: {
       'Content-Type': 'application/json',
       Accept: 'audio/mpeg',
     },
-    body: JSON.stringify({
-      text: req.text,
-      model_id: req.model,
-      voice_settings: {
-        stability: req.settings.stability,
-        similarity_boost: req.settings.similarity,
-        style: req.settings.style,
-        speed: req.settings.speed,
-        use_speaker_boost: req.settings.boost,
-      },
-    }),
+    body: ttsBody(req),
   })
   if (!r.ok) throw new Error(`ElevenLabs ${r.status}: ${(await r.text()).slice(0, 300)}`)
   return Buffer.from(await r.arrayBuffer())
+}
+
+export async function ttsWithTimestamps(
+  req: TtsRequest
+): Promise<{ audio: Buffer; words?: WordTiming[] }> {
+  const r = await fetch(`${BASE}/text-to-speech/${req.voiceId}/with-timestamps`, {
+    method: 'POST',
+    headers: {
+      'xi-api-key': await key(),
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: ttsBody(req),
+  })
+  if (!r.ok) throw new Error(`ElevenLabs ${r.status}: ${(await r.text()).slice(0, 300)}`)
+  const data = (await r.json()) as { audio_base64?: unknown; alignment?: unknown }
+  if (typeof data.audio_base64 !== 'string' || !data.audio_base64) {
+    throw new Error('ElevenLabs returned no audio')
+  }
+  const audio = Buffer.from(data.audio_base64, 'base64')
+  const words = wordsFromAlignment(data.alignment)
+  return words ? { audio, words } : { audio }
 }
 
 export async function sts(req: {

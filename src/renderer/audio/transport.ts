@@ -1,5 +1,5 @@
 import { compDuration, compEffectsTail, compHasPitch } from '@shared/comp'
-import { emptyEdits } from '@shared/domain'
+import { emptyEdits, type CompTrack } from '@shared/domain'
 import { buildClipGraph, scheduleComp, type CompSource } from './clip-graph'
 import type { ResolvedComp } from './comp-source'
 import { Lru } from './lru'
@@ -115,6 +115,7 @@ interface Bus {
 interface CompState {
   id: string
   sources: CompSource[]
+  tracks?: CompTrack[]
   dur: number
   from: number
   until: number
@@ -193,13 +194,19 @@ function makeVoice(buf: AudioBuffer, when: number, offset: number): Voice {
   return { src: plan.source, g }
 }
 
-function makeCompBus(sources: CompSource[], when: number, seek: number, until = Infinity): Bus {
+function makeCompBus(
+  sources: CompSource[],
+  when: number,
+  seek: number,
+  until = Infinity,
+  tracks?: CompTrack[]
+): Bus {
   const c = ac()
   const gain = c.createGain()
   gain.gain.setValueAtTime(0, when)
   gain.gain.linearRampToValueAtTime(1, when + FADE_IN)
   gain.connect(fx as GainNode)
-  const s = scheduleComp(c, sources, gain, { when, seek })
+  const s = scheduleComp(c, sources, gain, { when, seek, tracks })
   const voices = s.voices.map((v) => v.source)
   if (Number.isFinite(until)) {
     const endAt = when + Math.max(0, until - seek)
@@ -411,7 +418,7 @@ function startComp(pos: number, rewindAtEnd: boolean): void {
   const when = c.currentTime + LEAD_IN
   s.at = when
   s.startPos = p
-  s.bus = makeCompBus(s.sources, when, p, p < s.until ? s.until : Infinity)
+  s.bus = makeCompBus(s.sources, when, p, p < s.until ? s.until : Infinity, s.tracks)
   playing = true
   pausedPos = p
   emit({ clipId: s.id, playing: true, pos: p, dur: s.dur })
@@ -476,13 +483,14 @@ export async function playComp(
   const from = r ? Math.min(Math.max(0, r.in), dur) : 0
   const until = r
     ? Math.min(Math.max(from, r.out), dur)
-    : dur + compEffectsTail(sources.map((s) => s.clip))
+    : dur + compEffectsTail(sources.map((s) => s.clip), resolved.tracks)
 
   mode = 'comp'
   cur = null
   comp = {
     id: opts.id ?? 'comp:' + urls[0],
     sources,
+    ...(resolved.tracks ? { tracks: resolved.tracks } : {}),
     dur,
     from,
     until,

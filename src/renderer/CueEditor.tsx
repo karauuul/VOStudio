@@ -60,6 +60,7 @@ function defaultHeight(mode: SplitMode, avail: number): number {
 
 interface Props {
   cue: Cue
+  cues: Cue[]
   character?: Character
   characters: Character[]
   onCharacter: (characterId: string) => void
@@ -100,6 +101,7 @@ interface Props {
 
 export function CueEditor({
   cue,
+  cues,
   character,
   characters,
   onCharacter,
@@ -331,6 +333,7 @@ export function CueEditor({
 
         <WaveLanes
           cue={cue}
+          cues={cues}
           preview={preview}
           sourceHeader={
             <TakeSourceMenu

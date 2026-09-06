@@ -2,6 +2,7 @@ import { isEmptyComp } from './comp'
 import type { ClipEdits, Cue, CueComp, Project, Take } from './domain'
 import { hasEffects } from './effects'
 import { approvalState, hasValidVoicedOutput } from './approval'
+import { resolveTake, type TakeLookup } from './library'
 
 export type ExportFormat = 'mp3' | 'wav' | 'ogg'
 
@@ -68,13 +69,14 @@ export function isFastPath(take: Take, outName: string, comp?: CueComp): boolean
   return extOf(outName) === '.' + take.file.format
 }
 
-export function outputTakeOf(cue: Cue): Take | undefined {
+export function outputTakeOf(cue: Cue, project?: TakeLookup): Take | undefined {
   const output = cue.output
   if (output === null) return undefined
   if (output?.kind === 'take') return cue.takes.find((t) => t.id === output.takeId)
   if (output?.kind === 'comp') {
+    const first = cue.comp?.clips[0]?.sourceTakeId
     return cue.takes.find((t) => t.id === cue.finalTakeId) ??
-      cue.takes.find((t) => t.id === cue.comp?.clips[0]?.sourceTakeId)
+      (first ? resolveTake(project, cue, first)?.take : undefined)
   }
   return cue.takes.find((t) => t.id === cue.finalTakeId)
 }
@@ -82,9 +84,9 @@ export function outputTakeOf(cue: Cue): Take | undefined {
 export function planBatch(project: Project, scope: 'approved' | 'all-final'): PlannedTake[] {
   const out: PlannedTake[] = []
   for (const cue of project.cues) {
-    if (!hasValidVoicedOutput(cue)) continue
-    if (scope === 'approved' && approvalState(cue) !== 'approved') continue
-    const take = outputTakeOf(cue)
+    if (!hasValidVoicedOutput(cue, project)) continue
+    if (scope === 'approved' && approvalState(cue, project) !== 'approved') continue
+    const take = outputTakeOf(cue, project)
     if (!take) continue
     out.push({ cue, take, name: exportName(project, cue, take) })
   }
