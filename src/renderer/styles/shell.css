@@ -1,0 +1,232 @@
+.top {
+  flex: 0 0 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding-right: 12px;
+  border-right: 1px solid var(--line);
+  font-weight: 700;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.pname {
+  height: var(--ctl);
+  min-width: 120px;
+  max-width: 320px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--tx);
+  font: 600 14px var(--sans);
+}
+
+.pname:hover {
+  border-color: var(--line2);
+}
+
+.pname:focus {
+  outline: none;
+  border-color: var(--ac);
+  background: var(--bg);
+}
+
+.rooms {
+  margin-left: auto;
+  margin-right: auto;
+  display: flex;
+  border: 1px solid var(--line2);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+.rooms button {
+  height: 28px;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  border: 0;
+  border-right: 1px solid var(--line2);
+  background: transparent;
+  color: var(--tx2);
+  font: 13px var(--sans);
+  cursor: pointer;
+}
+
+.rooms button:last-child {
+  border-right: 0;
+}
+
+.rooms button.on {
+  background: var(--ac-bg);
+  color: var(--ac);
+}
+
+.top .btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--tx2);
+}
+
+.top .btn.ghost:hover:not(:disabled) {
+  background: var(--raise);
+  color: var(--tx);
+}
+
+.main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  padding: 8px;
+  background: var(--bg);
+}
+
+.main[hidden] {
+  display: none;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--panel);
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.phd {
+  height: var(--hd);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx);
+}
+
+.phd .n {
+  font: 12px var(--mono);
+  font-weight: 400;
+  color: var(--tx3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.phd .tabs {
+  display: flex;
+  margin-left: auto;
+  height: 100%;
+}
+
+.phd .tabs span {
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  font-weight: 500;
+  color: var(--tx3);
+  border-bottom: 2px solid transparent;
+}
+
+.phd .tabs span.on {
+  color: var(--ac);
+  border-color: var(--ac);
+}
+
+.field {
+  height: var(--ctl);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--line2);
+  border-radius: var(--r);
+  background: var(--bg);
+  color: var(--tx);
+}
+
+button.field {
+  cursor: pointer;
+}
+
+.field.mono {
+  font: 12px var(--mono);
+}
+
+.ico {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--r);
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--tx2);
+  flex: none;
+  cursor: pointer;
+}
+
+.ico:hover:not(:disabled) {
+  background: var(--raise);
+  color: var(--tx);
+}
+
+.ico.on {
+  background: var(--ac-bg);
+  color: var(--ac);
+}
+
+.ico.sm {
+  width: 24px;
+  height: 24px;
+}
+
+.lab {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tx3);
+}
+
+.gutter {
+  background: var(--bg);
+}
+
+.splitter {
+  background: var(--bg);
+  border: 0;
+  padding: 0;
+}
+
+.splitter.col {
+  cursor: col-resize;
+}
+
+.splitter.row {
+  cursor: row-resize;
+}
+
+.dot-err {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--err);
+}

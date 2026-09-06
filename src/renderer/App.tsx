@@ -25,7 +25,6 @@ import {
   useCueBusy,
   useJobCount,
   useJobFailed,
-  useJobTotal,
   useJobsStore,
 } from './jobs/store'
 import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues } from '@shared/cue-filter'
@@ -33,24 +32,24 @@ import { CueList } from './CueList'
 import { CueEditor } from './CueEditor'
 import { ProjectTable, type GridApi } from './ProjectTable'
 import { DeliverScreen } from './DeliverScreen'
-import { WorkScreen } from './WorkScreen'
+import { ImportRoom } from './rooms/ImportRoom'
+import { WorkRoom } from './rooms/WorkRoom'
+import { ExportRoom } from './rooms/ExportRoom'
 import { useProjectSession, type StatusKind } from './useProjectSession'
 import type { EffectName, EffectsTarget } from './cue/ClipParams'
 import { Inspector, type InspectorTab } from './cue/Inspector'
 import { compositionLabel } from './cue/shared'
 import type { CompApi } from './cue/WaveLanes'
-import { TransportBar } from './TransportBar'
 import { CharactersDialog } from './CharactersDialog'
 import { RulesDialog } from './RulesPanel'
 import { ProjectHome } from './ProjectHome'
-import { ProjectHeader, type MenuItem, type Route } from './ProjectHeader'
+import { TopBar, type MenuItem, type Route } from './shell/TopBar'
 import { StatusToast, type Status } from './StatusToast'
 import { SettingsDialog } from './SettingsDialog'
 import { ShortcutsDialog } from './ShortcutsDialog'
 import { JobsDrawer } from './JobsDrawer'
 import { useTemplateReimport } from './TemplateReimport'
 import { useKeyboard, type KeyboardHandlers } from './keyboard'
-import { approvalState } from '@shared/approval'
 import {
   cueDecision,
   initialPreviewSource,
@@ -112,7 +111,6 @@ export default function App() {
 
   const submitJob = useJobsStore((s) => s.submit)
   const jobCount = useJobCount()
-  const jobTotal = useJobTotal()
   const jobFailed = useJobFailed()
   const busyCount = useBusyCount()
   const activeCueBusy = useCueBusy(activeCueId ?? '')
@@ -270,15 +268,6 @@ export default function App() {
   )
   const shownTake = preview.take
   const output = useMemo(() => (activeCue ? outputSource(activeCue) : null), [activeCue])
-
-  const approved = useMemo(
-    () =>
-      (project?.cues ?? []).reduce(
-        (n, c) => (c.status !== 'excluded' && approvalState(c) === 'approved' ? n + 1 : n),
-        0
-      ),
-    [project]
-  )
 
   useEffect(() => {
     if (!project) return
@@ -667,7 +656,7 @@ export default function App() {
     (id: string) => {
       setFilter(id)
       setReviewIds(null)
-      goRoute('project')
+      goRoute('import')
     },
     [goRoute]
   )
@@ -732,6 +721,22 @@ export default function App() {
     }
   }
 
+  const renameProject = useCallback(
+    (name: string) => {
+      void dispatch({ type: 'project.rename', name }).catch((e: unknown) =>
+        pushStatus('err', String(e))
+      )
+    },
+    [dispatch, pushStatus]
+  )
+
+  const saveVersion = useCallback(() => {
+    void api['project:saveVersion']({}).then(
+      (versions) => pushStatus('ok', `Saved v${versions[versions.length - 1]?.n ?? 1}`),
+      (e: unknown) => pushStatus('err', String(e))
+    )
+  }, [pushStatus])
+
   const onKeySaved = useCallback(() => {
     setHasKey(true)
     void api['provider:usage']().then(setUsage)
@@ -772,11 +777,11 @@ export default function App() {
     () => ({
       settings: () => setShowSettings(true),
       shortcuts: () => setShowShortcuts(true),
+      routeImport: () => goRoute('import'),
       routeWork: () => goRoute('work'),
-      routeProject: () => goRoute('project'),
-      routeDeliver: () => goRoute('deliver'),
+      routeExport: () => goRoute('export'),
       focusSearch: () =>
-        (route === 'project' ? tableSearchRef : queueSearchRef).current?.focus(),
+        (route === 'import' ? tableSearchRef : queueSearchRef).current?.focus(),
       gridNext: () => gridRef.current?.move(1),
       gridPrev: () => gridRef.current?.move(-1),
       gridOpen: () => gridRef.current?.open(),
@@ -853,8 +858,8 @@ export default function App() {
   useKeyboard(handlers, !blocked, {
     home: !project,
     timeline: timelineOpen,
-    grid: route === 'project',
-    deliver: route === 'deliver',
+    grid: route === 'import',
+    deliver: route === 'export',
     decision: () => decisionRef.current?.() ?? false,
   })
 
@@ -864,6 +869,7 @@ export default function App() {
       onKeySaved={onKeySaved}
       settings={appSettings}
       onSettings={onAppSettings}
+      usage={usage}
       updateStatus={updateStatus}
       onUpdateStatus={setUpdateStatus}
       onShortcuts={() => setShowShortcuts(true)}
@@ -892,6 +898,9 @@ export default function App() {
   }
 
   const menuItems: MenuItem[] = [
+    ...(updateStatus?.phase === 'ready'
+      ? [{ label: 'Update ready · Restart', onClick: () => void api['updater:restart']() }]
+      : []),
     { label: 'Home', disabled: bulk || exporting || busyCount > 0, onClick: goHome },
     ...(project.csvBinding
       ? [{ label: 'Sync CSV', disabled: bulk || exporting, onClick: () => void syncCsv() }]
@@ -1003,60 +1012,53 @@ export default function App() {
         : undefined,
   }
 
+  const table: Omit<ComponentProps<typeof ProjectTable>, 'hidden'> = {
+    project,
+    filter,
+    search,
+    characterFilter: liveCharacterFilter,
+    onFilter: setFilter,
+    onSearch: setSearch,
+    onCharacterFilter: setCharacterFilter,
+    searchRef: tableSearchRef,
+    gridRef,
+    onOpenCue: openCue,
+    onReviewSelection: startReviewSelection,
+    onGenerate: generateSelected,
+    onAssignCharacter: (ids, characterId) => void assignCharacter(ids, characterId),
+    onOverlay: setTableOverlay,
+  }
+
+  const deliver: Omit<ComponentProps<typeof DeliverScreen>, 'hidden'> = {
+    project,
+    onStatus: pushStatus,
+    onOpenFilter: openFilter,
+    onOpenCue: openCue,
+    beginExport,
+    endExport,
+  }
+
   return (
     <div className="app">
-      <ProjectHeader
+      <TopBar
         name={project.name}
-        cues={project.cues.length}
-        approved={approved}
+        onRename={renameProject}
+        versions={project.versions ?? []}
+        onSaveVersion={saveVersion}
         route={route}
         onRoute={goRoute}
-        usage={usage}
-        jobsTotal={jobTotal}
+        items={menuItems}
         jobsPending={jobCount}
         jobsFailed={jobFailed}
         onJobs={() => setShowJobs(true)}
-        updateReady={updateStatus?.phase === 'ready'}
-        items={menuItems}
         onMenu={setMenuOpen}
       />
 
-      <WorkScreen
-        hidden={route !== 'work'}
-        queue={queue}
-        editor={editor}
-        inspector={inspector}
-      />
+      <ImportRoom hidden={route !== 'import'} table={table} />
 
-      <ProjectTable
-        hidden={route !== 'project'}
-        project={project}
-        filter={filter}
-        search={search}
-        characterFilter={liveCharacterFilter}
-        onFilter={setFilter}
-        onSearch={setSearch}
-        onCharacterFilter={setCharacterFilter}
-        searchRef={tableSearchRef}
-        gridRef={gridRef}
-        onOpenCue={openCue}
-        onReviewSelection={startReviewSelection}
-        onGenerate={generateSelected}
-        onAssignCharacter={(ids, characterId) => void assignCharacter(ids, characterId)}
-        onOverlay={setTableOverlay}
-      />
+      <WorkRoom hidden={route !== 'work'} queue={queue} editor={editor} inspector={inspector} />
 
-      <DeliverScreen
-        hidden={route !== 'deliver'}
-        project={project}
-        onStatus={pushStatus}
-        onOpenFilter={openFilter}
-        onOpenCue={openCue}
-        beginExport={beginExport}
-        endExport={endExport}
-      />
-
-      <TransportBar />
+      <ExportRoom hidden={route !== 'export'} deliver={deliver} />
 
       {toastUi}
 

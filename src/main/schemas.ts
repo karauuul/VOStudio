@@ -246,4 +246,5 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   }),
   characterId.extend({ type: z.literal('character.delete'), reassignTo: z.string().max(200) }),
   z.object({ type: z.literal('rules.set'), text: z.string().max(100_000) }),
+  z.object({ type: z.literal('project.rename'), name: z.string().min(1).max(200) }),
 ])
