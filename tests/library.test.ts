@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   addTrack,
+  applyTakeDurations,
   clipText,
   clipTrackId,
   clipVersions,
@@ -9,6 +10,7 @@ import {
   libraryGroups,
   libraryRow,
   nearestPoint,
+  pendingTakeDurations,
   placeClip,
   projectLibrary,
   referencedByOtherComp,
@@ -491,5 +493,46 @@ describe('track edits materialise the implicit track', () => {
     expect(one.tracks?.map((t) => t.name)).toEqual(['Track 1', 'Track 2'])
     expect(addTrack(one).tracks?.map((t) => t.id)).toEqual(['track-1', 'track-2', 'track-3'])
     expect(compProblem(addTrack(one))).toBeNull()
+  })
+})
+
+describe('take duration repair', () => {
+  const legacy = (): Project =>
+    project([
+      cue('a', { takes: [take('t1', { duration: 0 }), take('t2', { duration: 2 })] }),
+      cue('b', { takes: [take('t3', { duration: 0, deletedAt: 'now' }), take('t4', { duration: 0 })] }),
+    ])
+
+  it('lists only live takes with no duration', () => {
+    expect(pendingTakeDurations(legacy())).toEqual([
+      { cueId: 'a', takeId: 't1', file: 't1.mp3' },
+      { cueId: 'b', takeId: 't4', file: 't4.mp3' },
+    ])
+  })
+
+  it('leaves a project with every duration known untouched', () => {
+    const p = project([cue('a', { takes: [take('t1', { duration: 3 })] })])
+    const before = JSON.stringify(p)
+    expect(pendingTakeDurations(p)).toEqual([])
+    expect(applyTakeDurations(p, [])).toEqual({ cues: [], applied: [] })
+    expect(applyTakeDurations(p, [{ cueId: 'a', takeId: 't1', duration: 3 }])).toEqual({
+      cues: [],
+      applied: [],
+    })
+    expect(JSON.stringify(p)).toBe(before)
+  })
+
+  it('writes each probed duration once and reports only the cues it changed', () => {
+    const p = legacy()
+    const result = applyTakeDurations(p, [
+      { cueId: 'a', takeId: 't1', duration: 1.5 },
+      { cueId: 'a', takeId: 'missing', duration: 9 },
+      { cueId: 'gone', takeId: 't4', duration: 9 },
+      { cueId: 'b', takeId: 't4', duration: 0 },
+    ])
+    expect(result.cues.map((c) => c.id)).toEqual(['a'])
+    expect(result.applied).toEqual([{ cueId: 'a', takeId: 't1', duration: 1.5 }])
+    expect(p.cues[0].takes[0].duration).toBe(1.5)
+    expect(p.cues[1].takes[1].duration).toBe(0)
   })
 })

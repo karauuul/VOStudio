@@ -37,6 +37,7 @@ export type KeyAction =
   | 'toolSelect'
   | 'selectTake'
   | 'makeFinal'
+  | 'doneNext'
   | 'deleteClip'
   | 'splitClip'
   | 'splitAtPlayhead'
@@ -154,6 +155,7 @@ export const BINDINGS: Binding[] = [
   },
   { action: 'toolSelect', codes: ['KeyV'], scopes: TIMELINE, label: 'Select tool' },
   { action: 'makeFinal', codes: ['KeyF'], scopes: WORK, label: 'Set final' },
+  { action: 'doneNext', codes: ['KeyA'], shift: true, scopes: WORK, label: 'Done and next' },
   { action: 'focusText', codes: ['KeyE'], scopes: WORK, label: 'Focus translation' },
   { action: 'toggleRecord', codes: ['KeyR'], scopes: WORK, label: 'Record' },
   { action: 'acceptSuggestion', codes: ['KeyY'], scopes: WORK, label: 'Accept suggestion' },
@@ -282,6 +284,7 @@ export interface KeyboardHandlers {
   toolSelect: () => void
   selectTake: (index: number) => void
   makeFinal: () => void
+  doneNext: () => void
   deleteClip: () => void
   splitClip: () => void
   splitAtPlayhead: () => void
