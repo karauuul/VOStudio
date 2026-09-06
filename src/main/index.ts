@@ -40,7 +40,7 @@ import {
   type UiSessionState,
 } from '@shared/domain'
 import type { Project } from '@shared/domain'
-import type { AppSettings, TakeDurationUpdate } from '@shared/ipc'
+import type { AppSettings } from '@shared/ipc'
 import {
   createProjectFromTemplate,
   reimportTemplate,
@@ -50,7 +50,8 @@ import {
 import * as migration from './migration'
 import { GENERATED_DIR } from './migration'
 import { syncCsv } from './csv-sync'
-import { importAudio } from './audio-import'
+import { importAudio, probeTakeDurations } from './audio-import'
+import { applyTakeDurations } from '@shared/library'
 import { importTable } from './table-import'
 import {
   abortVideoExport,
@@ -86,8 +87,16 @@ function isAllowedPath(abs: string): boolean {
   const roots = [store.getProjectDir(), REFERENCE_DIR_ENV, GENERATED_DIR].filter(Boolean) as string[]
   const norm = path.resolve(abs).toLowerCase()
   if (roots.some((r) => norm.startsWith(path.resolve(r).toLowerCase() + path.sep))) return true
-  return (store.getProject()?.sources ?? []).some(
-    (source) => source.media !== undefined && path.resolve(source.media).toLowerCase() === norm
+  const project = store.getProject()
+  if (!project) return false
+  if (project.sources?.some((s) => s.media !== undefined && path.resolve(s.media).toLowerCase() === norm)) {
+    return true
+  }
+  return project.cues.some(
+    (cue) =>
+      (cue.referenceAudio !== undefined &&
+        path.resolve(cue.referenceAudio.relPath).toLowerCase() === norm) ||
+      cue.takes.some((take) => path.resolve(take.file.relPath).toLowerCase() === norm)
   )
 }
 
@@ -271,6 +280,15 @@ async function autoAdopt(): Promise<void> {
   }
 }
 
+async function repairTakeDurations(repository: SerialProjectRepository): Promise<void> {
+  const entries = await probeTakeDurations(repository.projectForMain())
+  if (entries.length === 0) return
+  const { cues, applied } = applyTakeDurations(repository.projectForMain(), entries)
+  if (cues.length === 0) return
+  emit('project:changed', await repository.commit({ cues: structuredClone(cues) }))
+  emit('takes:durations', applied)
+}
+
 async function migrateCharacters(project: Project): Promise<void> {
   if (applyAlienMigration(project)) await store.saveProject(project)
 }
@@ -373,6 +391,9 @@ function registerHandlers(): void {
         finishOpen: async (repository) => {
           if (repository.projectForMain().csvBinding) await autoAdopt()
           await consumeSuggestionsFile(false, repository)
+          void repairTakeDurations(repository).catch((e: unknown) =>
+            console.warn('duration repair skipped:', e)
+          )
         },
       })
       if (!snapshot) throw new Error('Project could not be opened')
@@ -602,19 +623,10 @@ function registerHandlers(): void {
 
   typedHandle('take:setDurations', async (items) => {
     const parsed = durationsSchema.parse(items)
-    const project = requireProject()
-    const byCue = new Map(project.cues.map((c) => [c.id, c]))
-    const applied: TakeDurationUpdate[] = []
-    for (const it of parsed) {
-      if (!(it.duration > 0)) continue
-      const take = byCue.get(it.cueId)?.takes.find((t) => t.id === it.takeId)
-      if (!take || Math.abs(take.duration - it.duration) < 0.005) continue
-      take.duration = it.duration
-      applied.push(it)
-    }
-    if (applied.length > 0) {
+    const { cues, applied } = applyTakeDurations(requireProject(), parsed)
+    if (cues.length > 0) {
       if (!projectRepository) throw new Error('No project is open')
-      emit('project:changed', await projectRepository.commit({ cues: [...new Set(applied.map((item) => item.cueId))].map((id) => byCue.get(id)!) }))
+      emit('project:changed', await projectRepository.commit({ cues: structuredClone(cues) }))
       emit('takes:durations', applied)
     }
     return { updated: applied.length }

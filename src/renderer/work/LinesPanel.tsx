@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, type CSSProperties, type RefObject } from 'react'
 import { GroupedVirtuoso, type GroupedVirtuosoHandle } from 'react-virtuoso'
 import type { Character, Cue } from '@shared/domain'
-import { hasValidVoicedOutput } from '@shared/approval'
+import { lineDotColor } from '@shared/approval'
 import type { CueGroup } from '@shared/cue-filter'
 import { regionTimecode } from '@shared/sources'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
@@ -19,11 +19,6 @@ interface Props {
   scope?: { label: string; onExit: () => void }
   exported: ReadonlySet<string>
   menu?: (cue: Cue) => MenuEntry[]
-}
-
-function dotColor(cue: Cue, exported: ReadonlySet<string>): string | undefined {
-  if (exported.has(cue.id)) return 'var(--ok)'
-  return hasValidVoicedOutput(cue) ? 'var(--warn)' : undefined
 }
 
 export function LinesPanel({
@@ -98,7 +93,7 @@ export function LinesPanel({
         itemContent={(i) => {
           const cue = cues[i]
           if (!cue) return null
-          const color = dotColor(cue, exported)
+          const color = lineDotColor(cue, exported.has(cue.id))
           return (
             <div
               className={'ln' + (cue.id === activeCueId ? ' sel' : '')}

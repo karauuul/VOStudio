@@ -148,6 +148,15 @@ export function removeApproval(cue: Cue, project?: TakeLookup): Cue {
   return { ...next, status: nonApprovedStatus(next, project) }
 }
 
+export function isDone(cue: Cue, project?: TakeLookup): boolean {
+  return approvalState(cue, project) === 'approved'
+}
+
+export function lineDotColor(cue: Cue, exported: boolean, project?: TakeLookup): string | undefined {
+  if (isDone(cue, project) || exported) return 'var(--ok)'
+  return hasValidVoicedOutput(cue, project) ? 'var(--warn)' : undefined
+}
+
 export function approvalState(cue: Cue, project?: TakeLookup): CueApprovalState {
   if (!hasValidVoicedOutput(cue, project)) return cue.approval ? 'stale' : 'unvoiced'
   if (!cue.approval) return cue.status === 'approved' ? 'approved' : 'needs-review'

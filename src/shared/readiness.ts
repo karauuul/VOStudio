@@ -1,5 +1,5 @@
 import type { Cue, Project } from './domain'
-import { hasValidVoicedOutput, sanitizeRevision } from './approval'
+import { hasValidVoicedOutput, isDone, sanitizeRevision } from './approval'
 import {
   exportName,
   findCollisions,
@@ -22,6 +22,7 @@ export interface LineRow {
   outputLength?: number
   status: LineStatus
   changed: boolean
+  done: boolean
   overBy?: number
   exportedVersion?: number
 }
@@ -54,6 +55,7 @@ export function readinessRows(project: Project, exported: ExportedLines = {}): L
       cueId: cue.id,
       cueKey: cue.key,
       changed: false,
+      done: isDone(cue, project),
       ...(originalLength(cue) === undefined ? {} : { originalLength: originalLength(cue) }),
       ...(version === undefined ? {} : { exportedVersion: version }),
     }
@@ -118,6 +120,7 @@ export function summarize(project: Project, rows: LineRow[]): ReadinessSummary {
     if (cue) {
       if (cue.text.trim()) s.translated++
       if (hasValidVoicedOutput(cue, project)) s.voiced++
+      if (row.done) s.done++
     }
     if (row.status === 'excluded') {
       s.excluded++
@@ -125,7 +128,6 @@ export function summarize(project: Project, rows: LineRow[]): ReadinessSummary {
     }
     if (row.status === 'ready') {
       s.ready++
-      if (row.exportedVersion !== undefined && !row.changed) s.done++
       if (row.changed) s.changed++
       else s.unchanged++
       s.bytes += estimateBytes(row.outputLength ?? 0, project.export?.format)

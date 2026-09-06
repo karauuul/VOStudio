@@ -66,6 +66,7 @@ import {
   shouldSelectCandidate,
   type PreviewSource,
 } from '@shared/workspace-source'
+import { hasValidVoicedOutput } from '@shared/approval'
 import { compDuration, isEmptyComp } from '@shared/comp'
 import { libraryRow, lineLabel, locateText, resolveTake, type LibraryRow } from '@shared/library'
 import type { ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
@@ -152,6 +153,20 @@ export default function App() {
   useEffect(() => {
     activeCueIdRef.current = activeCueId
   }, [activeCueId])
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent): void => {
+      if (e.button !== 0) return
+      const target = e.target instanceof HTMLElement ? e.target : null
+      const button = target?.closest('button')
+      if (!button || button.disabled) return
+      e.preventDefault()
+      const active = document.activeElement
+      if (active instanceof HTMLElement && active !== button) active.blur()
+    }
+    document.addEventListener('mousedown', onDown, true)
+    return () => document.removeEventListener('mousedown', onDown, true)
+  }, [])
 
   const isActiveCue = useCallback((cueId: string) => activeCueIdRef.current === cueId, [])
 
@@ -941,6 +956,26 @@ export default function App() {
     [visible, activeIndex, selectCue]
   )
 
+  const setDone = useCallback(
+    (cueId: string, done: boolean): Promise<boolean> =>
+      dispatch({ type: 'cue.approve', cueId, approved: done }).then(
+        () => true,
+        (e: unknown) => {
+          pushStatus('err', String(e))
+          return false
+        }
+      ),
+    [dispatch, pushStatus]
+  )
+
+  const doneNext = useCallback(() => {
+    const cue = activeCue
+    if (!cue || !hasValidVoicedOutput(cue, projectRef.current ?? undefined)) return
+    void setDone(cue.id, true).then((ok) => {
+      if (ok) move(1)
+    })
+  }, [activeCue, projectRef, setDone, move])
+
   const handlers: KeyboardHandlers = useMemo(
     () => ({
       settings: () => setShowSettings(true),
@@ -980,6 +1015,7 @@ export default function App() {
       insertSource: () => programRef.current?.insert(),
       replaceSource: () => programRef.current?.replace(),
       makeFinal,
+      doneNext,
       deleteClip: () => {
         const el = document.activeElement
         if (el instanceof HTMLElement && el.closest('.panel.lib') && deleteSelectedSource()) return
@@ -1020,6 +1056,7 @@ export default function App() {
       activeTakes,
       selectSource,
       makeFinal,
+      doneNext,
       onAcceptSuggestion,
       onRejectSuggestion,
       onCopy,
@@ -1507,6 +1544,9 @@ export default function App() {
       if (row) onDeleteTake(row.cueId, takeId)
     },
     onOpenLine: openCue,
+    onDone: (done) => {
+      if (activeCueId) void setDone(activeCueId, done)
+    },
   }
 
   return (

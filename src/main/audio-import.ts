@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto'
 import { matchAudioFiles, type MatchRule } from '@shared/import-table'
 import type { AudioRef, Cue, Project } from '@shared/domain'
 import type { ChangeSet } from '@shared/project-commands'
+import { pendingTakeDurations, type TakeDurationEntry } from '@shared/library'
 import type { AudioImportResult } from '@shared/ipc'
 import { probeMedia } from './ffmpeg'
 
@@ -30,6 +31,17 @@ async function mapLimited<T, R>(items: T[], fn: (item: T) => Promise<R>): Promis
     out.push(...(await Promise.all(items.slice(i, i + CONCURRENCY).map(fn))))
   }
   return out
+}
+
+export async function probeTakeDurations(project: Project): Promise<TakeDurationEntry[]> {
+  const pending = pendingTakeDurations(project)
+  if (pending.length === 0) return []
+  const probed = await mapLimited(pending, async (item) => ({
+    cueId: item.cueId,
+    takeId: item.takeId,
+    duration: await probeDuration(item.file),
+  }))
+  return probed.filter((row): row is TakeDurationEntry => (row.duration ?? 0) > 0)
 }
 
 export interface PickedAudio {
