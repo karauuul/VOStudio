@@ -1407,6 +1407,7 @@ export default function App() {
       if (row) void pinTake(row.cueId, takeId, pinned).catch(() => {})
     },
     onShowInLibrary: setSourceTakeId,
+    onMonitor: (tab) => programRef.current?.showTab(tab),
   }
 
   const library: ComponentProps<typeof LibraryPanel> = {

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  clampPlayhead,
   clampView,
   fitView,
+  marqueeHits,
   MAX_PX_PER_SEC,
   MIN_PX_PER_SEC,
   snap,
@@ -10,6 +12,7 @@ import {
   ticks,
   tickStep,
   timeToX,
+  wheelIntent,
   xToTime,
   zoomAt,
   type TimelineView,
@@ -146,5 +149,96 @@ describe('snapping', () => {
   it('snapDelta never moves further than the tolerance', () => {
     const d = snapDelta([0, 2], 1.5, [3, 10], 0.05)
     expect(Math.abs(d - 1.5)).toBeLessThanOrEqual(0.05 + 1e-9)
+  })
+})
+
+describe('clampPlayhead', () => {
+  it('never goes below zero', () => {
+    expect(clampPlayhead(-3, 10)).toBe(0)
+    expect(clampPlayhead(Number.NaN, 10)).toBe(0)
+  })
+
+  it('never goes past the extent', () => {
+    expect(clampPlayhead(12, 10)).toBe(10)
+    expect(clampPlayhead(9.5, 10)).toBe(9.5)
+  })
+
+  it('leaves the position alone while the extent is unknown', () => {
+    expect(clampPlayhead(4, 0)).toBe(4)
+  })
+})
+
+describe('wheelIntent', () => {
+  const wheel = (patch: Partial<Parameters<typeof wheelIntent>[0]>) => ({
+    deltaX: 0,
+    deltaY: 0,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    ...patch,
+  })
+
+  it('scrolls horizontally on a plain vertical wheel', () => {
+    const i = wheelIntent(wheel({ deltaY: 100 }), 50)
+    expect(i).toEqual({ kind: 'scrollX', seconds: 2 })
+  })
+
+  it('follows the horizontal axis when it dominates', () => {
+    const i = wheelIntent(wheel({ deltaX: -100, deltaY: 10 }), 50)
+    expect(i).toEqual({ kind: 'scrollX', seconds: -2 })
+  })
+
+  it('scrolls the tracks vertically with the Premiere modifier', () => {
+    expect(wheelIntent(wheel({ deltaY: 40, ctrlKey: true }), 50)).toEqual({
+      kind: 'scrollY',
+      pixels: 40,
+    })
+    expect(wheelIntent(wheel({ deltaY: 40, metaKey: true }), 50)).toEqual({
+      kind: 'scrollY',
+      pixels: 40,
+    })
+  })
+
+  it('zooms on Alt, in on scroll up and out on scroll down', () => {
+    const up = wheelIntent(wheel({ deltaY: -100, altKey: true }), 50)
+    const down = wheelIntent(wheel({ deltaY: 100, altKey: true }), 50)
+    expect(up.kind).toBe('zoom')
+    expect(down.kind).toBe('zoom')
+    if (up.kind !== 'zoom' || down.kind !== 'zoom') return
+    expect(up.factor).toBeGreaterThan(1)
+    expect(down.factor).toBeLessThan(1)
+  })
+
+  it('Alt wins over the scroll modifier', () => {
+    expect(wheelIntent(wheel({ deltaY: 10, altKey: true, ctrlKey: true }), 50).kind).toBe('zoom')
+  })
+})
+
+describe('marqueeHits', () => {
+  const clips = [
+    { id: 'a', start: 0, end: 2, trackId: 't1' },
+    { id: 'b', start: 3, end: 5, trackId: 't1' },
+    { id: 'c', start: 1, end: 4, trackId: 't2' },
+  ]
+
+  it('takes every clip the rectangle touches', () => {
+    expect(marqueeHits(clips, 1.5, 3.5, ['t1', 't2'])).toEqual(['a', 'b', 'c'])
+  })
+
+  it('ignores tracks the rectangle does not cover', () => {
+    expect(marqueeHits(clips, 1.5, 3.5, ['t2'])).toEqual(['c'])
+    expect(marqueeHits(clips, 1.5, 3.5, [])).toEqual([])
+  })
+
+  it('reads a rectangle dragged right to left the same way', () => {
+    expect(marqueeHits(clips, 3.5, 1.5, ['t1'])).toEqual(['a', 'b'])
+  })
+
+  it('a vertical line takes the clips it crosses', () => {
+    expect(marqueeHits(clips, 3.5, 3.5, ['t1', 't2'])).toEqual(['b', 'c'])
+  })
+
+  it('touching an edge is not an intersection', () => {
+    expect(marqueeHits(clips, 2, 3, ['t1'])).toEqual([])
   })
 })

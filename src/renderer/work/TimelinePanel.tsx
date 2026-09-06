@@ -80,8 +80,10 @@ import { playback, type PlaybackOps } from '../playback'
 import { getPeaks, Wave, type Peaks } from '../Waveform'
 import { DragNumber } from '../cue/DragNumber'
 import {
+  clampPlayhead,
   clampView,
   fitView,
+  marqueeHits,
   MAX_PX_PER_SEC,
   MIN_PX_PER_SEC,
   snapDelta,
@@ -90,6 +92,7 @@ import {
   ticks,
   tickStep,
   timeToX,
+  wheelIntent,
   xToTime,
   zoomAt,
   type TimelineView,
@@ -220,6 +223,7 @@ interface Props {
   onRegenerateClip: (clipId: string) => void
   onPinSource: (takeId: string, pinned: boolean) => void
   onShowInLibrary: (takeId: string) => void
+  onMonitor: (tab: 'program' | 'source') => void
 }
 
 export function TimelinePanel({
@@ -243,17 +247,20 @@ export function TimelinePanel({
   onRegenerateClip,
   onPinSource,
   onShowInLibrary,
+  onMonitor,
 }: Props) {
   const lanesRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const headRef = useRef<HTMLSpanElement>(null)
   const posRef = useRef(0)
+  const extentRef = useRef(0)
   const hoverTrackRef = useRef<string | null>(null)
   const scrubRef = useRef(false)
   const dragRef = useRef<(() => void) | null>(null)
 
   const [width, setWidth] = useState(0)
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string[]>([])
+  const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [pending, setPending] = useState<CueComp | null>(null)
   const [tool, setTool] = useState<Tool>('select')
   const [snapUnit, setSnapUnit] = useState<'words' | 'off'>('words')
@@ -273,7 +280,7 @@ export function TimelinePanel({
   const [shownCue, setShownCue] = useState(cueId)
   if (shownCue !== cueId) {
     setShownCue(cueId)
-    setSelected(null)
+    setSelected([])
     setPickedTrack(null)
     setPending(null)
     setPxPerSec(savedView?.pxPerSec ?? 100)
@@ -304,8 +311,9 @@ export function TimelinePanel({
   viewRef.current = view
   const compRefLive = useRef(comp)
   compRefLive.current = comp
-  const selRef = useRef<string | null>(null)
+  const selRef = useRef<string[]>(selected)
   selRef.current = selected
+  const selId = useCallback((): string | null => selRef.current[selRef.current.length - 1] ?? null, [])
 
   const srcRegion = cue?.region ?? null
   const lineSource = srcRegion && source && source.id === srcRegion.sourceId ? source : null
@@ -390,11 +398,13 @@ export function TimelinePanel({
 
   const transportId = cueId ? clipId.comp(cueId) : null
 
-  const paintHead = useCallback((t: number): void => {
-    posRef.current = t
-    playback.setPos(t)
+  const paintHead = useCallback((t: number): number => {
+    const at = clampPlayhead(t, extentRef.current)
+    posRef.current = at
+    playback.setPos(at)
     const el = headRef.current
-    if (el) el.style.transform = `translateX(${(STRIP + timeToX(viewRef.current, t)).toFixed(2)}px)`
+    if (el) el.style.transform = `translateX(${(STRIP + timeToX(viewRef.current, at)).toFixed(2)}px)`
+    return at
   }, [])
 
   useEffect(() => {
@@ -475,13 +485,13 @@ export function TimelinePanel({
   const region = comp.region
   const regionIn = region?.in ?? 0
   const regionOut = region?.out ?? (compDur > 0 ? compDur : refDur)
+  extentRef.current = Math.max(regionOut, contentDur)
   const rawDelta = compDelta(comp.clips.length > 0 ? comp : undefined, refDur)
   const delta = rawDelta !== null && Math.abs(rawDelta) < COMP_EPS ? 0 : rawDelta
 
   const seek = useCallback(
     (t: number, exact: boolean): void => {
-      const v = Math.max(0, t)
-      paintHead(v)
+      const v = paintHead(t)
       if (!transportId || transport.currentClipId() !== transportId) return
       if (exact) transport.seek(v)
       else transport.scrubTo(v)
@@ -492,8 +502,7 @@ export function TimelinePanel({
   const playFrom = useCallback(
     (at: number): void => {
       if (!resolved || !transportId) return
-      paintHead(at)
-      void transport.playComp(resolved, { id: transportId, seek: at })
+      void transport.playComp(resolved, { id: transportId, seek: paintHead(at) })
     },
     [resolved, transportId, paintHead]
   )
@@ -509,7 +518,7 @@ export function TimelinePanel({
       },
       restart: () => playFrom(regionIn),
       playClip: () => {
-        const c = comp.clips.find((x) => x.id === selRef.current)
+        const c = comp.clips.find((x) => x.id === selId())
         const take = c ? takeOf(c) : undefined
         if (!c || !take) return
         void transport.playComp(
@@ -533,7 +542,7 @@ export function TimelinePanel({
         seek(next ?? Math.max(0, at + dir * STEP_SECONDS), true)
       },
     }),
-    [transportId, playingId, playFrom, regionIn, regionOut, comp, takeOf, seek, cue, project]
+    [transportId, playingId, playFrom, regionIn, regionOut, comp, takeOf, seek, selId, cue, project]
   )
 
   const audioSig = useMemo(
@@ -612,18 +621,14 @@ export function TimelinePanel({
     const el = lanesRef.current
     if (!el) return
     const onWheel = (e: WheelEvent): void => {
-      if (e.altKey) {
-        e.preventDefault()
-        applyView(
-          zoomAt(viewRef.current, Math.exp(-e.deltaY * 0.0025), e.clientX - bodyLeft()),
-          true
-        )
-        return
-      }
-      if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-        e.preventDefault()
-        const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
-        applyView({ ...viewRef.current, scroll: viewRef.current.scroll + d / viewRef.current.pxPerSec }, true)
+      e.preventDefault()
+      const intent = wheelIntent(e, viewRef.current.pxPerSec)
+      if (intent.kind === 'zoom') {
+        applyView(zoomAt(viewRef.current, intent.factor, e.clientX - bodyLeft()), true)
+      } else if (intent.kind === 'scrollY') {
+        el.scrollTop += intent.pixels
+      } else {
+        applyView({ ...viewRef.current, scroll: viewRef.current.scroll + intent.seconds }, true)
       }
     }
     el.addEventListener('wheel', onWheel, { passive: false })
@@ -660,7 +665,7 @@ export function TimelinePanel({
       e.preventDefault()
       scrubRef.current = true
       const at = (clientX: number, exact: boolean): void =>
-        seek(Math.max(0, xToTime(viewRef.current, clientX - bodyLeft())), exact)
+        seek(xToTime(viewRef.current, clientX - bodyLeft()), exact)
       startDrag(
         (ev) => at(ev.clientX, false),
         (ev) => {
@@ -725,9 +730,14 @@ export function TimelinePanel({
       if (e.button !== 0 || !editable) return
       e.preventDefault()
       e.stopPropagation()
-      setSelected(c.id)
+      const picked = e.shiftKey
+        ? selRef.current.includes(c.id)
+          ? selRef.current.filter((id) => id !== c.id)
+          : [...selRef.current, c.id]
+        : [c.id]
+      setSelected(picked)
       setPickedTrack(null)
-      selRef.current = c.id
+      selRef.current = picked
       const box = e.currentTarget.getBoundingClientRect()
       const lx = e.clientX - box.left
       const ly = e.clientY - box.top
@@ -803,21 +813,110 @@ export function TimelinePanel({
     ]
   )
 
-  const deselect = useCallback(
+  const startMarquee = useCallback(
     (e: ReactMouseEvent): void => {
-      if (e.button !== 0) return
-      setSelected(null)
-      selRef.current = null
-      startScrub(e)
+      const el = lanesRef.current
+      if (!el) return
+      e.preventDefault()
+      const base = e.shiftKey ? selRef.current : []
+      selRef.current = base
+      setSelected(base)
+      const box = el.getBoundingClientRect()
+      const x0 = e.clientX
+      const y0 = e.clientY
+      const t0 = xToTime(viewRef.current, x0 - bodyLeft())
+      startDrag(
+        (ev) => {
+          const top = Math.min(y0, ev.clientY)
+          const bottom = Math.max(y0, ev.clientY)
+          setMarquee({
+            x: Math.min(x0, ev.clientX) - box.left,
+            y: top - box.top + el.scrollTop,
+            w: Math.abs(ev.clientX - x0),
+            h: bottom - top,
+          })
+          const lanes = Array.from(el.querySelectorAll<HTMLElement>('[data-track]'))
+            .filter((n) => {
+              const r = n.getBoundingClientRect()
+              return r.bottom > top && r.top < bottom
+            })
+            .map((n) => n.dataset['track'] ?? '')
+          const hits = marqueeHits(
+            compRefLive.current.clips.map((c) => ({
+              id: c.id,
+              start: c.start,
+              end: clipEnd(c),
+              trackId: clipTrackId(c),
+            })),
+            t0,
+            xToTime(viewRef.current, ev.clientX - bodyLeft()),
+            lanes
+          )
+          const next = [...base, ...hits.filter((id) => !base.includes(id))]
+          selRef.current = next
+          setSelected(next)
+        },
+        () => setMarquee(null)
+      )
     },
-    [startScrub]
+    [bodyLeft, startDrag]
+  )
+
+  const startPan = useCallback(
+    (e: ReactMouseEvent): void => {
+      const el = lanesRef.current
+      if (!el) return
+      e.preventDefault()
+      let lastX = e.clientX
+      let lastY = e.clientY
+      el.style.cursor = 'grabbing'
+      startDrag(
+        (ev) => {
+          const v = viewRef.current
+          applyView({ ...v, scroll: v.scroll - (ev.clientX - lastX) / v.pxPerSec }, false)
+          el.scrollTop -= ev.clientY - lastY
+          lastX = ev.clientX
+          lastY = ev.clientY
+        },
+        () => {
+          el.style.cursor = ''
+          persist({})
+        }
+      )
+    },
+    [applyView, persist, startDrag]
+  )
+
+  const openClip = useCallback(
+    (c: CompClip): void => {
+      const take = takeOf(c)
+      if (!take) return
+      onShowInLibrary(take.id)
+      onMonitor('source')
+    },
+    [takeOf, onShowInLibrary, onMonitor]
+  )
+
+  const onLanesDown = useCallback(
+    (e: ReactMouseEvent): void => {
+      if (e.button === 1) {
+        startPan(e)
+        return
+      }
+      if (e.button !== 0) return
+      const t = e.target instanceof HTMLElement ? e.target : null
+      if (t?.closest('.tl-strip') || t?.closest('[data-clip]')) return
+      startMarquee(e)
+    },
+    [startPan, startMarquee]
   )
 
   const onRulerDown = useCallback(
     (e: ReactMouseEvent): void => {
+      onMonitor('program')
       startScrub(e)
     },
-    [startScrub]
+    [onMonitor, startScrub]
   )
 
   const editTrack = useCallback(
@@ -837,12 +936,15 @@ export function TimelinePanel({
   )
 
   const selectedClip = useMemo(
-    () => live.clips.find((c) => c.id === selected) ?? null,
+    () => live.clips.find((c) => c.id === selected[selected.length - 1]) ?? null,
     [live, selected]
   )
 
   useEffect(() => {
-    setSelected((s) => (s && !live.clips.some((c) => c.id === s) ? null : s))
+    setSelected((s) => {
+      const next = s.filter((id) => live.clips.some((c) => c.id === id))
+      return next.length === s.length ? s : next
+    })
   }, [live])
 
   const liveTracks = useMemo(() => compTracks(live), [live])
@@ -877,14 +979,14 @@ export function TimelinePanel({
 
   const editSelected = useCallback(
     (patch: Partial<ClipEdits>, doCommit: boolean): void => {
-      const id = selRef.current
+      const id = selId()
       const base = compRefLive.current
       if (!id || !base.clips.some((x) => x.id === id)) return
       const next = setClipEdits(base, id, patch)
       if (doCommit) commit(next)
       else setPending(next)
     },
-    [commit]
+    [commit, selId]
   )
 
   const originalLength = cue?.region ? cue.region.out - cue.region.in : refDur
@@ -914,8 +1016,8 @@ export function TimelinePanel({
     () => ({
       selectClip: (id) => {
         if (!compRefLive.current.clips.some((c) => c.id === id)) return
-        setSelected(id)
-        selRef.current = id
+        setSelected([id])
+        selRef.current = [id]
         setPickedTrack(null)
       },
       splitAt: (id, at) => splitClip(id, at),
@@ -934,16 +1036,16 @@ export function TimelinePanel({
         return true
       },
       deleteSelected: () => {
-        const id = selRef.current
         const base = compRefLive.current
-        if (!editable || !id || !base.clips.some((c) => c.id === id)) return false
-        commit(removeClip(base, id))
-        setSelected(null)
+        const ids = selRef.current.filter((id) => base.clips.some((c) => c.id === id))
+        if (!editable || ids.length === 0) return false
+        commit(ids.reduce(removeClip, base))
+        setSelected([])
         return true
       },
       split: () => {
         const base = compRefLive.current
-        const id = selRef.current
+        const id = selId()
         const at = posRef.current
         const c =
           base.clips.find((x) => x.id === id && at > x.start && at < clipEnd(x)) ??
@@ -952,15 +1054,14 @@ export function TimelinePanel({
       },
       heal: () => {
         const base = compRefLive.current
+        const picked = selId()
         const id =
-          selRef.current && canHeal(base, selRef.current)
-            ? selRef.current
-            : healableAt(base, posRef.current, Infinity)
+          picked && canHeal(base, picked) ? picked : healableAt(base, posRef.current, Infinity)
         if (id) commit(healCut(base, id))
       },
       crossfade: () => {
         const base = compRefLive.current
-        const id = selRef.current
+        const id = selId()
         if (!id) return
         const i = base.clips.findIndex((c) => c.id === id)
         if (i < 0 || maxCrossfade(base, id) <= 0) return
@@ -975,7 +1076,7 @@ export function TimelinePanel({
       },
       selection: () => {
         const base = compRefLive.current
-        const id = selRef.current
+        const id = selId()
         const c = editable && id ? base.clips.find((x) => x.id === id) : null
         if (!c) return null
         const to = Math.min(clipEnd(c), refDur)
@@ -998,7 +1099,7 @@ export function TimelinePanel({
       editSelected,
       moveSelected: (start, doCommit) => {
         const base = compRefLive.current
-        const id = selRef.current
+        const id = selId()
         if (!id || !base.clips.some((x) => x.id === id)) return
         const next = moveClipTo(base, id, start)
         if (doCommit) commit(next)
@@ -1006,7 +1107,7 @@ export function TimelinePanel({
       },
       trimSelected: (edge, at, doCommit) => {
         const base = compRefLive.current
-        const id = selRef.current
+        const id = selId()
         const c = id ? base.clips.find((x) => x.id === id) : null
         if (!c) return
         const take = takeOf(c)
@@ -1019,7 +1120,7 @@ export function TimelinePanel({
       editTrack,
       fit: (scope) => {
         const base = compRefLive.current
-        const id = selRef.current
+        const id = selId()
         const c = id ? base.clips.find((x) => x.id === id) : null
         if (!c) return
         doFit(scope === 'track' ? trackClips(base, clipTrackId(c)).map((x) => x.id) : [c.id])
@@ -1050,6 +1151,7 @@ export function TimelinePanel({
       refDur,
       refPath,
       regionBase,
+      selId,
       takeOf,
       peaks,
       zoomBy,
@@ -1388,6 +1490,7 @@ export function TimelinePanel({
             max={100}
             value={zoomToSlider(pxPerSec)}
             aria-label="Zoom"
+            data-hint="Zoom"
             onChange={(e) =>
               applyView({ ...viewRef.current, pxPerSec: sliderToZoom(Number(e.target.value)) }, false)
             }
@@ -1403,6 +1506,7 @@ export function TimelinePanel({
             className="field mono tl-units"
             value={units}
             aria-label="Ruler units"
+            data-hint="Ruler units"
             onChange={(e) => setUnits(e.target.value as 'seconds' | 'timecode')}
           >
             <option value="seconds">Seconds</option>
@@ -1427,7 +1531,14 @@ export function TimelinePanel({
         </div>
       </div>
 
-      <div className="tl-lanes" ref={lanesRef}>
+      <div
+        className="tl-lanes"
+        ref={lanesRef}
+        onMouseDownCapture={(e) => {
+          if (e.button === 0) onMonitor('program')
+        }}
+        onMouseDown={onLanesDown}
+      >
         {originalRows.map((row, i) => {
           const ui = laneUi[row.key] ?? {}
           const stem = row.stem
@@ -1463,6 +1574,7 @@ export function TimelinePanel({
                   <span className="tl-ms">
                     <button
                       className={'tl-sm' + (ui.solo === true ? ' on' : '')}
+                      data-hint="Solo"
                       onClick={() => setUi({ solo: ui.solo !== true })}
                       aria-pressed={ui.solo === true}
                     >
@@ -1470,6 +1582,7 @@ export function TimelinePanel({
                     </button>
                     <button
                       className={'tl-sm' + (ui.muted === true ? ' on' : '')}
+                      data-hint="Mute"
                       onClick={() => setUi({ muted: ui.muted !== true })}
                       aria-pressed={ui.muted === true}
                     >
@@ -1479,6 +1592,7 @@ export function TimelinePanel({
                   <button
                     className={'ico sm' + (previewOn ? ' on' : '')}
                     aria-label={`Preview ${row.name}`}
+                    data-hint="Preview"
                     aria-pressed={previewOn}
                     onClick={() =>
                       stem
@@ -1576,11 +1690,7 @@ export function TimelinePanel({
                   </div>
                 )}
               </div>
-              <div
-                className="tl-body"
-                {...(i === 0 ? { ref: bodyRef } : {})}
-                onMouseDown={startScrub}
-              >
+              <div className="tl-body" {...(i === 0 ? { ref: bodyRef } : {})}>
                 {grid}
                 {!stem && context}
                 {row.path && laneDur > 0 && (
@@ -1630,15 +1740,15 @@ export function TimelinePanel({
                 if (hoverTrackRef.current === track.id) hoverTrackRef.current = null
               }}
               onContextMenu={(e) => {
-                setSelected(null)
-                selRef.current = null
+                setSelected([])
+                selRef.current = []
                 setPickedTrack(track.id)
                 menu.open(e, trackMenu(track, i))
               }}
               onMouseDown={(e) => {
                 if (e.button !== 0) return
-                setSelected(null)
-                selRef.current = null
+                setSelected([])
+                selRef.current = []
                 setPickedTrack(track.id)
               }}
             >
@@ -1646,6 +1756,7 @@ export function TimelinePanel({
                 <button
                   className={'tl-badge' + (track.id === resolveTargetTrack(comp, targetTrackId) ? ' on' : '')}
                   onClick={() => onTargetTrack(track.id)}
+                  data-hint="Target track"
                   aria-label={`Target track ${i + 1}`}
                 >
                   {i + 1}
@@ -1661,6 +1772,7 @@ export function TimelinePanel({
                 <span className="tl-ms">
                   <button
                     className={'tl-sm' + (track.solo ? ' on' : '')}
+                    data-hk="soloTrack"
                     aria-pressed={track.solo}
                     disabled={!cue}
                     onClick={() => editTrack(track.id, { solo: !track.solo })}
@@ -1669,6 +1781,7 @@ export function TimelinePanel({
                   </button>
                   <button
                     className={'tl-sm' + (track.muted ? ' on' : '')}
+                    data-hk="muteTrack"
                     aria-pressed={track.muted}
                     disabled={!cue}
                     onClick={() => editTrack(track.id, { muted: !track.muted })}
@@ -1696,7 +1809,6 @@ export function TimelinePanel({
             <div
               className="tl-body"
               data-track={track.id}
-              onMouseDown={deselect}
               onDragOver={(e) => {
                 if (!e.dataTransfer.types.includes(DRAG_TYPE)) return
                 e.preventDefault()
@@ -1725,13 +1837,14 @@ export function TimelinePanel({
                     peaks={peaks}
                     view={view}
                     color={WAVE_COLORS[i % WAVE_COLORS.length]}
-                    selected={c.id === selected}
+                    selected={selected.includes(c.id)}
                     busy={busyClipId === c.id}
                     gainDrag={gainDrag && gainDrag.id === c.id ? gainDrag.db : null}
                     onDown={onClipDown}
+                    onOpen={openClip}
                     onContext={(e, clip) => {
-                      setSelected(clip.id)
-                      selRef.current = clip.id
+                      setSelected([clip.id])
+                      selRef.current = [clip.id]
                       setPickedTrack(null)
                       menu.open(e, clipMenu(clip))
                     }}
@@ -1743,6 +1856,12 @@ export function TimelinePanel({
           </div>
         ))}
 
+        {marquee && (
+          <span
+            className="tl-marq"
+            style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
+          />
+        )}
         <span className="tl-ph" ref={headRef} />
       </div>
 
@@ -1758,7 +1877,7 @@ export function TimelinePanel({
           <button
             key={t.id}
             className={'ico' + (tool === t.id ? ' on' : '')}
-            {...(t.hk ? { 'data-hk': t.hk } : {})}
+            {...(t.hk ? { 'data-hk': t.hk } : { 'data-hint': t.name })}
             aria-label={t.name}
             aria-pressed={tool === t.id}
             onClick={() => setTool(t.id)}
@@ -1770,6 +1889,7 @@ export function TimelinePanel({
         <button
           className={'ico' + (snapUnit === 'words' ? ' on' : '')}
           aria-label="Snap"
+          data-hint="Snap"
           aria-pressed={snapUnit === 'words'}
           onClick={() => setSnapUnit((v) => (v === 'words' ? 'off' : 'words'))}
         >
@@ -1859,6 +1979,7 @@ interface ClipProps {
   gainDrag: number | null
   onDown: (e: ReactMouseEvent, clip: CompClip) => void
   onContext: (e: ReactMouseEvent, clip: CompClip) => void
+  onOpen: (clip: CompClip) => void
   onVersion: (clip: CompClip, takeId: string, duration: number) => void
 }
 
@@ -1874,6 +1995,7 @@ function Clip({
   gainDrag,
   onDown,
   onContext,
+  onOpen,
   onVersion,
 }: ClipProps) {
   const found = cue ? resolveTake(project, cue, clip.sourceTakeId) : undefined
@@ -1893,6 +2015,7 @@ function Clip({
       style={{ left, width }}
       data-clip={clip.id}
       onMouseDown={(e) => onDown(e, clip)}
+      onDoubleClick={() => onOpen(clip)}
       onContextMenu={(e) => onContext(e, clip)}
     >
       <span className="cn">

@@ -973,6 +973,14 @@ input.tl-name:focus {
   will-change: transform;
 }
 
+.tl-marq {
+  position: absolute;
+  z-index: 6;
+  border: 1px solid var(--ac);
+  background: rgba(130, 172, 236, 0.12);
+  pointer-events: none;
+}
+
 .tl-ph::before {
   content: '';
   position: absolute;
