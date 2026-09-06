@@ -15,6 +15,7 @@ export interface ResolvedOriginal {
   offset?: number
   duration?: number
   duckDb?: number
+  start?: number
 }
 
 export interface ResolvedComp {

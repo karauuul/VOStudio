@@ -1,14 +1,14 @@
-import { compDuration, compEffectsTail, compHasPitch } from '@shared/comp'
+import { compDuration, compHasPitch } from '@shared/comp'
 import { emptyEdits, type CompTrack } from '@shared/domain'
 import {
   buildClipGraph,
-  originalVoiceLength,
+  originalVoiceEnd,
   scheduleComp,
   type CompSource,
   type OriginalVoice,
 } from './clip-graph'
 import type { ResolvedComp } from './comp-source'
-import { resumeAt } from '@shared/resume'
+import { playBounds, resumeAt } from '@shared/resume'
 import { Lru } from './lru'
 import { ensurePitchModule } from './pitch-node'
 
@@ -566,6 +566,7 @@ export async function playComp(
         ...(o.offset === undefined ? {} : { offset: o.offset }),
         ...(o.duration === undefined ? {} : { duration: o.duration }),
         ...(o.duckDb === undefined ? {} : { duckDb: o.duckDb }),
+        ...(o.start === undefined ? {} : { start: o.start }),
       }))
     )
   } catch (e) {
@@ -578,16 +579,12 @@ export async function playComp(
 
   const dur = Math.max(
     compDuration({ clips: sources.map((s) => s.clip) }),
-    ...originals.map((o) => originalVoiceLength(o)),
+    ...originals.map((o) => originalVoiceEnd(o)),
     0
   )
   if (!(dur > 0)) return
 
-  const r = resolved.region
-  const from = r ? Math.min(Math.max(0, r.in), dur) : 0
-  const until = r
-    ? Math.min(Math.max(from, r.out), dur)
-    : dur + compEffectsTail(sources.map((s) => s.clip), resolved.tracks)
+  const { from, until } = playBounds(dur, resolved.region)
 
   mode = 'comp'
   cur = null

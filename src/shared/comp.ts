@@ -3,6 +3,7 @@ import {
   emptyEdits,
   envelopeDbAt,
   sanitizeCompTracks,
+  sanitizeOriginalStart,
   type CompTrack,
   type ClipEdits,
   type CompClip,
@@ -175,11 +176,50 @@ export function normalizeComp(comp: CueComp): CueComp {
     .sort((a, b) => a.start - b.start || a.id.localeCompare(b.id))
   const region = normalizeRegion(comp.region, compDuration({ clips }))
   const tracks = sanitizeCompTracks(comp.tracks)
+  const originalStart = sanitizeOriginalStart(comp.originalStart)
   return {
     clips,
     ...(region ? { region } : {}),
     ...(tracks ? { tracks } : {}),
+    ...(originalStart === undefined ? {} : { originalStart }),
   }
+}
+
+export function compOriginalStart(comp: CueComp | null | undefined): number {
+  return sanitizeOriginalStart(comp?.originalStart) ?? 0
+}
+
+export function setOriginalStart(comp: CueComp, at: number): CueComp {
+  const start = sanitizeOriginalStart(at)
+  if (start === undefined) {
+    if (comp.originalStart === undefined) return comp
+    const { originalStart: _drop, ...rest } = comp
+    return normalizeComp(rest)
+  }
+  return normalizeComp({ ...comp, originalStart: start })
+}
+
+export function cutCandidate(
+  comp: CueComp,
+  at: number,
+  trackId: string,
+  selectedId?: string | null
+): CompClip | null {
+  const spans = (c: CompClip): boolean =>
+    at > c.start + COMP_EPS && at < clipEnd(c) - COMP_EPS
+  return (
+    comp.clips.find((c) => clipTrackId(c) === trackId && spans(c)) ??
+    (selectedId ? comp.clips.find((c) => c.id === selectedId && spans(c)) : undefined) ??
+    null
+  )
+}
+
+export function compRegionBounds(
+  comp: CueComp | null | undefined,
+  fallbackOut: number
+): CompRegion {
+  const r = comp?.region
+  return { in: r?.in ?? 0, out: r?.out ?? Math.max(0, fallbackOut) }
 }
 
 export function compProblem(comp: CueComp): string | null {

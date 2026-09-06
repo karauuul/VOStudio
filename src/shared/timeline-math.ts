@@ -8,6 +8,11 @@ export const MAX_PX_PER_SEC = 2000
 
 export const SNAP_PX = 6
 
+export const EDGE_PX = 8
+export const FADE_BAND_PX = 14
+export const FADE_HANDLE_PX = 10
+export const GAIN_GRAB_PX = 6
+
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
 
 export function timeToX(view: TimelineView, t: number): number {
@@ -46,6 +51,47 @@ export function clampView(
 export function clampPlayhead(t: number, extent: number): number {
   if (!(t > 0)) return 0
   return extent > 0 && t > extent ? extent : t
+}
+
+export function playheadX(
+  view: TimelineView,
+  t: number,
+  strip: number,
+  bodyWidth: number
+): number | null {
+  const x = timeToX(view, t)
+  return x < 0 || x > bodyWidth ? null : strip + x
+}
+
+export type ClipZone = 'trimStart' | 'trimEnd' | 'fadeIn' | 'fadeOut' | 'gain' | 'move'
+
+export interface ClipZoneInput {
+  width: number
+  lx: number
+  ly: number
+  fadeInPx: number
+  fadeOutPx: number
+  gainY: number
+}
+
+export function clipZone(z: ClipZoneInput): ClipZone {
+  if (z.ly <= FADE_BAND_PX) {
+    if (Math.abs(z.lx - z.fadeInPx) <= FADE_HANDLE_PX) return 'fadeIn'
+    if (Math.abs(z.lx - (z.width - z.fadeOutPx)) <= FADE_HANDLE_PX) return 'fadeOut'
+  }
+  if (z.lx <= EDGE_PX) return 'trimStart'
+  if (z.lx >= z.width - EDGE_PX) return 'trimEnd'
+  if (Math.abs(z.ly - z.gainY) <= GAIN_GRAB_PX) return 'gain'
+  return 'move'
+}
+
+export const ZONE_CURSOR: Record<ClipZone, string> = {
+  trimStart: 'ew-resize',
+  trimEnd: 'ew-resize',
+  fadeIn: 'pointer',
+  fadeOut: 'pointer',
+  gain: 'ns-resize',
+  move: 'grab',
 }
 
 export type WheelIntent =

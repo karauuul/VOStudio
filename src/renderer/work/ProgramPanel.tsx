@@ -55,6 +55,7 @@ export interface ProgramPanelProps {
   source: ProgramSourceView | null
   onInsert: () => void
   onReplace: () => void
+  onHoverPlace?: (kind: 'insert' | 'replace' | null) => void
   canReplace: boolean
   programRef: MutableRefObject<ProgramApi | null>
 }
@@ -79,6 +80,7 @@ export function ProgramPanel({
   source,
   onInsert,
   onReplace,
+  onHoverPlace,
   canReplace,
   programRef,
 }: ProgramPanelProps) {
@@ -488,7 +490,13 @@ export function ProgramPanel({
           </button>
           {onSource ? (
             <>
-              <button className="btn sm prog-place" data-hk="insertSource" onClick={onInsert}>
+              <button
+                className="btn sm prog-place"
+                data-hk="insertSource"
+                onClick={onInsert}
+                onMouseEnter={() => onHoverPlace?.('insert')}
+                onMouseLeave={() => onHoverPlace?.(null)}
+              >
                 Insert
               </button>
               <button
@@ -496,6 +504,8 @@ export function ProgramPanel({
                 data-hk="replaceSource"
                 disabled={!canReplace}
                 onClick={onReplace}
+                onMouseEnter={() => canReplace && onHoverPlace?.('replace')}
+                onMouseLeave={() => onHoverPlace?.(null)}
               >
                 Replace
               </button>

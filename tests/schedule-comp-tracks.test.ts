@@ -151,6 +151,36 @@ describe('the original lane as a preview voice', () => {
     expect(s.duration).toBe(2)
   })
 
+  it('an offset original starts later and stretches the composition', () => {
+    const { ctx, destination } = fakeContext()
+    const s = scheduleComp(ctx, sources([clip()]), destination, {
+      when: 10,
+      originals: [{ buffer: orig, gainDb: 0, start: 1.5 }],
+    })
+    expect(s.duration).toBe(6.5)
+    expect(s.voices[1].at).toBe(11.5)
+    expect(s.voices[1].duration).toBe(5)
+  })
+
+  it('a seek inside an offset original trims only what has passed', () => {
+    const { ctx, destination } = fakeContext()
+    const s = scheduleComp(ctx, sources([clip()]), destination, {
+      seek: 2,
+      originals: [{ buffer: orig, gainDb: 0, start: 1.5 }],
+    })
+    expect(s.voices[0].at).toBe(0)
+    expect(s.voices[0].duration).toBe(4.5)
+  })
+
+  it('a seek past the end of an offset original leaves it out', () => {
+    const { ctx, destination } = fakeContext()
+    const s = scheduleComp(ctx, sources([clip({ start: 9, srcOut: 2 })]), destination, {
+      seek: 7,
+      originals: [{ buffer: orig, gainDb: 0, start: 1.5 }],
+    })
+    expect(s.voices).toHaveLength(1)
+  })
+
   it('a seek past the end of the original leaves it out', () => {
     const { ctx, destination } = fakeContext()
     const s = scheduleComp(ctx, sources([clip({ start: 6, srcOut: 2 })]), destination, {

@@ -102,6 +102,7 @@ export function CueText({
       generating={cueBusy}
       genDisabled={cueBusy || providerBlocked}
       onGenerate={onGenerate}
+      onHoverGenerate={(on) => compRef.current?.ghost(on ? { generate: true } : null)}
       onRecord={v2v.toggleRec}
       recording={v2v.rec.phase !== 'idle'}
       recordDisabled={v2v.converting}

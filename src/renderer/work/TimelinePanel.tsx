@@ -17,6 +17,9 @@ import {
   GAIN_MAX_DB,
   GAIN_MIN_DB,
   compDuration,
+  compOriginalStart,
+  compRegionBounds,
+  cutCandidate,
   DEFAULT_CROSSFADE,
   effectiveCrossfade,
   healableAt,
@@ -28,6 +31,7 @@ import {
   trackIsFree,
   setClipEdits,
   setCrossfade,
+  setOriginalStart,
   setRegionEdge,
   slipClip,
   splitClipAt,
@@ -82,10 +86,13 @@ import { DragNumber } from '../cue/DragNumber'
 import {
   clampPlayhead,
   clampView,
+  clipZone,
   fitView,
   marqueeHits,
   MAX_PX_PER_SEC,
   MIN_PX_PER_SEC,
+  playheadX,
+  snap,
   snapDelta,
   SNAP_PX,
   tickLabel,
@@ -94,9 +101,11 @@ import {
   timeToX,
   wheelIntent,
   xToTime,
+  ZONE_CURSOR,
   zoomAt,
   type TimelineView,
 } from '@shared/timeline-math'
+import { ghostPlacement, type GhostPlacement } from '@shared/generation'
 import { useCompEdit, sameComp } from '../cue/useCompEdit'
 import { useWire } from '../cue/useWire'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
@@ -141,7 +150,11 @@ export interface CompApi {
   zoom: (factor: number) => void
   selectTool: () => void
   place: (next: CueComp) => void
+  splitAtPlayhead: () => void
+  ghost: (request: GhostRequest | null) => void
 }
+
+export type GhostRequest = { takeId: string; replaceClipId?: string } | { generate: true }
 
 export type Tool = 'select' | 'razor' | 'trim' | 'fade' | 'slip'
 
@@ -150,10 +163,7 @@ const STEP_SECONDS = 0.1
 const RESCHEDULE_MS = 80
 const ORIG_H = 150
 const TRACK_H = 165
-const EDGE_PX = 6
-const FADE_GRAB = 10
 const GAIN_SPAN = 24
-const GAIN_GRAB = 6
 const NO_STEMS: Stem[] = []
 const TRACK_COLORS = ['var(--l1)', 'var(--l2)']
 const WAVE_COLORS = ['#3fb8a8', '#a58cf0']
@@ -275,6 +285,8 @@ export function TimelinePanel({
   const [gainDrag, setGainDrag] = useState<{ id: string; db: number } | null>(null)
   const [pickedTrack, setPickedTrack] = useState<string | null>(null)
   const [playingId, setPlayingId] = useState<string | null>(null)
+  const [cutAt, setCutAt] = useState<number | null>(null)
+  const [ghost, setGhost] = useState<GhostRequest | null>(null)
 
   const cueId = cue?.id ?? ''
   const [shownCue, setShownCue] = useState(cueId)
@@ -288,6 +300,8 @@ export function TimelinePanel({
     setOrigGainDb(savedView?.originalGainDb ?? 0)
     setLaneUi({})
     setArmSplit(false)
+    setCutAt(null)
+    setGhost(null)
     setUnits(cue?.region ? 'timecode' : 'seconds')
   }
 
@@ -324,7 +338,8 @@ export function TimelinePanel({
     ? srcRegion.out - srcRegion.in
     : (refPeaks?.duration ?? cue?.referenceDuration ?? 0)
   const compDur = compDuration(comp)
-  const contentDur = Math.max(refDur, compDur)
+  const origStart = compOriginalStart(comp)
+  const contentDur = Math.max(origStart + refDur, compDur)
 
   const liveRef = useRef(live)
   liveRef.current = live
@@ -403,7 +418,11 @@ export function TimelinePanel({
     posRef.current = at
     playback.setPos(at)
     const el = headRef.current
-    if (el) el.style.transform = `translateX(${(STRIP + timeToX(viewRef.current, at)).toFixed(2)}px)`
+    if (el) {
+      const x = playheadX(viewRef.current, at, STRIP, bodyRef.current?.clientWidth ?? 0)
+      el.style.visibility = x === null ? 'hidden' : 'visible'
+      if (x !== null) el.style.transform = `translateX(${x.toFixed(2)}px)`
+    }
     return at
   }, [])
 
@@ -414,6 +433,7 @@ export function TimelinePanel({
   useEffect(() => {
     const apply = (s: TransportState): void => {
       const mine = !!transportId && s.clipId === transportId
+      if (mine && s.playing) setCutAt(null)
       if (mine && !scrubRef.current) paintHead(s.pos)
       setPlayingId(s.playing ? s.clipId : null)
     }
@@ -469,10 +489,22 @@ export function TimelinePanel({
         gainDb: row.stem ? (ui.gainDb ?? 0) : origGainDb,
         ...(!row.stem && srcRegion ? { offset: srcRegion.in, duration: refDur } : {}),
         ...(duckDb === undefined ? {} : { duckDb }),
+        ...(origStart > 0 ? { start: origStart } : {}),
       })
     }
     return out
-  }, [originalRows, laneUi, anyTrackSolo, anyLaneSolo, original, laneDuck, origGainDb, srcRegion, refDur])
+  }, [
+    originalRows,
+    laneUi,
+    anyTrackSolo,
+    anyLaneSolo,
+    original,
+    laneDuck,
+    origGainDb,
+    srcRegion,
+    refDur,
+    origStart,
+  ])
 
   const resolved = useMemo(() => {
     if (!cue) return null
@@ -483,8 +515,7 @@ export function TimelinePanel({
   }, [cue, project, comp, tracks, anyLaneSolo, anyTrackSolo, originals])
 
   const region = comp.region
-  const regionIn = region?.in ?? 0
-  const regionOut = region?.out ?? (compDur > 0 ? compDur : refDur)
+  const { in: regionIn, out: regionOut } = compRegionBounds(comp, compDur > 0 ? compDur : refDur)
   extentRef.current = Math.max(regionOut, contentDur)
   const rawDelta = compDelta(comp.clips.length > 0 ? comp : undefined, refDur)
   const delta = rawDelta !== null && Math.abs(rawDelta) < COMP_EPS ? 0 : rawDelta
@@ -664,8 +695,11 @@ export function TimelinePanel({
       if (e.button !== 0) return
       e.preventDefault()
       scrubRef.current = true
-      const at = (clientX: number, exact: boolean): void =>
-        seek(xToTime(viewRef.current, clientX - bodyLeft()), exact)
+      const at = (clientX: number, exact: boolean): void => {
+        const t = xToTime(viewRef.current, clientX - bodyLeft())
+        setCutAt(t)
+        seek(t, exact)
+      }
       startDrag(
         (ev) => at(ev.clientX, false),
         (ev) => {
@@ -711,18 +745,29 @@ export function TimelinePanel({
       if (tool === 'trim') return lx < w / 2 ? 'trimStart' : 'trimEnd'
       if (tool === 'fade') return lx < w / 2 ? 'fadeIn' : 'fadeOut'
       const pps = viewRef.current.pxPerSec
-      const fi = c.edits.fadeIn.duration * pps
-      const fo = c.edits.fadeOut.duration * pps
-      if (ly <= 18) {
-        if (Math.abs(lx - fi) <= FADE_GRAB) return 'fadeIn'
-        if (Math.abs(lx - (w - fo)) <= FADE_GRAB) return 'fadeOut'
-      }
-      if (lx <= EDGE_PX) return 'trimStart'
-      if (lx >= w - EDGE_PX) return 'trimEnd'
-      if (Math.abs(ly - (gainTop(c.edits.gainDb) / 100) * h) <= GAIN_GRAB) return 'gain'
-      return 'move'
+      const speed = clipSpeed(c.edits)
+      return clipZone({
+        width: w,
+        lx,
+        ly,
+        fadeInPx: (c.edits.fadeIn.duration / speed) * pps,
+        fadeOutPx: (c.edits.fadeOut.duration / speed) * pps,
+        gainY: (gainTop(c.edits.gainDb) / 100) * h,
+      })
     },
     [tool]
+  )
+
+  const onClipMove = useCallback(
+    (e: ReactMouseEvent, c: CompClip): void => {
+      if (dragRef.current) return
+      const box = e.currentTarget.getBoundingClientRect()
+      const zone = gestureFor(c, box.width, box.height, e.clientX - box.left, e.clientY - box.top)
+      const el = e.currentTarget as HTMLElement
+      el.style.cursor =
+        zone === 'split' ? 'crosshair' : zone === 'slip' ? 'ew-resize' : ZONE_CURSOR[zone]
+    },
+    [gestureFor]
   )
 
   const onClipDown = useCallback(
@@ -918,6 +963,54 @@ export function TimelinePanel({
       startScrub(e)
     },
     [onMonitor, startScrub]
+  )
+
+  const startMarker = useCallback(
+    (e: ReactMouseEvent, edge: 'in' | 'out'): void => {
+      if (e.button !== 0 || !editable) return
+      e.preventDefault()
+      e.stopPropagation()
+      const base = compRefLive.current
+      const targets = snapPoints(null)
+      let next = base
+      startDrag(
+        (ev) => {
+          const pps = viewRef.current.pxPerSec
+          const tol = ev.altKey || snapUnit === 'off' ? 0 : SNAP_PX / pps
+          const raw = Math.max(0, xToTime(viewRef.current, ev.clientX - bodyLeft()))
+          next = setRegionEdge(base, edge, snap(raw, targets, tol), refDur)
+          setPending(next)
+        },
+        () => commit(next)
+      )
+    },
+    [editable, snapPoints, snapUnit, bodyLeft, refDur, startDrag, commit]
+  )
+
+  const startOriginalDrag = useCallback(
+    (e: ReactMouseEvent): void => {
+      if (e.button !== 0 || !editable || tool !== 'select') return
+      e.preventDefault()
+      e.stopPropagation()
+      const base = compRefLive.current
+      if (base.clips.length === 0) return
+      const from = compOriginalStart(base)
+      const targets = snapPoints(null)
+      const x0 = e.clientX
+      let next = base
+      startDrag(
+        (ev) => {
+          const pps = viewRef.current.pxPerSec
+          const tol = ev.altKey || snapUnit === 'off' ? 0 : SNAP_PX / pps
+          const raw = (ev.clientX - x0) / pps
+          const d = snapDelta([from, from + refDur], raw, targets, tol)
+          next = setOriginalStart(base, Math.max(0, from + d))
+          setPending(next)
+        },
+        () => commit(next)
+      )
+    },
+    [editable, tool, snapPoints, snapUnit, refDur, startDrag, commit]
   )
 
   const editTrack = useCallback(
@@ -1139,7 +1232,17 @@ export function TimelinePanel({
       },
       zoom: zoomBy,
       selectTool: () => setTool('select'),
-      place: (next) => commit(next),
+      place: (next) => {
+        setGhost(null)
+        commit(next)
+      },
+      splitAtPlayhead: () => {
+        const base = compRefLive.current
+        const at = posRef.current
+        const c = cutCandidate(base, at, resolveTargetTrack(base, targetTrackId), selId())
+        if (c) splitClip(c.id, at)
+      },
+      ghost: setGhost,
     }),
     [
       editable,
@@ -1156,8 +1259,44 @@ export function TimelinePanel({
       takeOf,
       peaks,
       zoomBy,
+      targetTrackId,
     ]
   )
+
+  const cutClip = useMemo(
+    () =>
+      cutAt === null ? null : cutCandidate(comp, cutAt, resolveTargetTrack(comp, targetTrackId)),
+    [cutAt, comp, targetTrackId]
+  )
+
+  const ghostBox = useMemo<GhostPlacement | null>(() => {
+    if (!ghost || !cue) return null
+    const replaceClipId =
+      'generate' in ghost ? (selectedClip?.id ?? undefined) : ghost.replaceClipId
+    const take = 'generate' in ghost ? undefined : resolveTake(project, cue, ghost.takeId)?.take
+    const duration =
+      'generate' in ghost
+        ? (replaceClipId ? 0 : originalLength)
+        : ((take && peaks[take.file.relPath]?.duration) || take?.duration || 0)
+    if (replaceClipId) {
+      const c = comp.clips.find((x) => x.id === replaceClipId)
+      return c
+        ? {
+            trackId: clipTrackId(c),
+            start: c.start,
+            end: clipEnd(c),
+            replaceClipId,
+          }
+        : null
+    }
+    return ghostPlacement({
+      comp,
+      takeId: 'generate' in ghost ? 'ghost' : ghost.takeId,
+      duration,
+      targetTrackId,
+      playhead: posRef.current,
+    })
+  }, [ghost, cue, project, comp, peaks, targetTrackId, originalLength, selectedClip])
 
   useWire(compRef, api)
 
@@ -1526,8 +1665,24 @@ export function TimelinePanel({
               {units === 'timecode' ? timecode(regionBase + t) : tickLabel(t, step)}
             </i>
           ))}
-          {region && (
-            <span className="tl-io" style={{ left: xOf(region.in), width: xOf(region.out) - xOf(region.in) }} />
+          {regionShade}
+          {compDur > 0 && (
+            <>
+              <span
+                className="tl-io"
+                style={{ left: xOf(regionIn), width: Math.max(0, xOf(regionOut) - xOf(regionIn)) }}
+              />
+              <b
+                className="tl-mk in"
+                style={{ left: xOf(regionIn) }}
+                onMouseDown={(e) => startMarker(e, 'in')}
+              />
+              <b
+                className="tl-mk out"
+                style={{ left: xOf(regionOut) }}
+                onMouseDown={(e) => startMarker(e, 'out')}
+              />
+            </>
           )}
         </div>
       </div>
@@ -1696,8 +1851,12 @@ export function TimelinePanel({
                 {!stem && context}
                 {row.path && laneDur > 0 && (
                   <div
-                    className="tl-clip tl-orig"
-                    style={{ left: xOf(0), width: Math.max(2, laneDur * pxPerSec) }}
+                    className={
+                      'tl-clip tl-orig' +
+                      (editable && compDur > 0 && tool === 'select' ? ' tl-move' : '')
+                    }
+                    style={{ left: xOf(origStart), width: Math.max(2, laneDur * pxPerSec) }}
+                    onMouseDown={startOriginalDrag}
                   >
                     <span className="cn">
                       <span className="w">{stem ? stem.name : originalName}</span>
@@ -1840,8 +1999,11 @@ export function TimelinePanel({
                     color={WAVE_COLORS[i % WAVE_COLORS.length]}
                     selected={selected.includes(c.id)}
                     busy={busyClipId === c.id}
+                    cut={cutClip?.id === c.id}
+                    replaced={ghostBox?.replaceClipId === c.id}
                     gainDrag={gainDrag && gainDrag.id === c.id ? gainDrag.db : null}
                     onDown={onClipDown}
+                    onMove={onClipMove}
                     onOpen={openClip}
                     onContext={(e, clip) => {
                       setSelected([clip.id])
@@ -1852,10 +2014,46 @@ export function TimelinePanel({
                     onVersion={switchVersion}
                   />
                 ))}
+              {ghostBox && !ghostBox.replaceClipId && ghostBox.trackId === track.id && (
+                <span
+                  className="tl-ghost"
+                  style={{
+                    left: xOf(ghostBox.start),
+                    width: Math.max(2, (ghostBox.end - ghostBox.start) * pxPerSec),
+                  }}
+                />
+              )}
               {regionShade}
             </div>
           </div>
         ))}
+
+        {ghostBox && !ghostBox.replaceClipId && !tracks.some((t) => t.id === ghostBox.trackId) && (
+          <div
+            className="tl-lane"
+            style={{
+              ['--c' as string]: TRACK_COLORS[tracks.length % TRACK_COLORS.length],
+              height: TRACK_H,
+            }}
+          >
+            <div className="tl-strip">
+              <div className="r1">
+                <span className="tl-badge">{tracks.length + 1}</span>
+                <span className="tl-nm">New track</span>
+              </div>
+            </div>
+            <div className="tl-body">
+              {grid}
+              <span
+                className="tl-ghost"
+                style={{
+                  left: xOf(ghostBox.start),
+                  width: Math.max(2, (ghostBox.end - ghostBox.start) * pxPerSec),
+                }}
+              />
+            </div>
+          </div>
+        )}
 
         {marquee && (
           <span
@@ -1977,8 +2175,11 @@ interface ClipProps {
   color: string
   selected: boolean
   busy: boolean
+  cut: boolean
+  replaced: boolean
   gainDrag: number | null
   onDown: (e: ReactMouseEvent, clip: CompClip) => void
+  onMove: (e: ReactMouseEvent, clip: CompClip) => void
   onContext: (e: ReactMouseEvent, clip: CompClip) => void
   onOpen: (clip: CompClip) => void
   onVersion: (clip: CompClip, takeId: string, duration: number) => void
@@ -1993,8 +2194,11 @@ function Clip({
   color,
   selected,
   busy,
+  cut,
+  replaced,
   gainDrag,
   onDown,
+  onMove,
   onContext,
   onOpen,
   onVersion,
@@ -2010,12 +2214,22 @@ function Clip({
   const speed = clipSpeed(clip.edits)
   const db = gainDrag ?? clip.edits.gainDb
 
+  const fadeInPx = (clip.edits.fadeIn.duration / speed) * view.pxPerSec
+  const fadeOutPx = (clip.edits.fadeOut.duration / speed) * view.pxPerSec
+
   return (
     <div
-      className={'tl-clip' + (selected ? ' sel' : '') + (busy ? ' busy' : '')}
+      className={
+        'tl-clip' +
+        (selected ? ' sel' : '') +
+        (busy ? ' busy' : '') +
+        (cut ? ' cut' : '') +
+        (replaced ? ' rep' : '')
+      }
       style={{ left, width }}
       data-clip={clip.id}
       onMouseDown={(e) => onDown(e, clip)}
+      onMouseMove={(e) => onMove(e, clip)}
       onDoubleClick={() => onOpen(clip)}
       onContextMenu={(e) => onContext(e, clip)}
     >
@@ -2046,12 +2260,10 @@ function Clip({
         to={clip.srcOut}
         color={color}
       />
-      {clip.edits.fadeIn.duration > 0 && (
-        <span className="fi" style={{ width: (clip.edits.fadeIn.duration / speed) * view.pxPerSec }} />
-      )}
-      {clip.edits.fadeOut.duration > 0 && (
-        <span className="fo" style={{ width: (clip.edits.fadeOut.duration / speed) * view.pxPerSec }} />
-      )}
+      {clip.edits.fadeIn.duration > 0 && <span className="fi" style={{ width: fadeInPx }} />}
+      {clip.edits.fadeOut.duration > 0 && <span className="fo" style={{ width: fadeOutPx }} />}
+      <span className="fh" style={{ left: Math.max(0, fadeInPx - 5) }} />
+      <span className="fh" style={{ right: Math.max(0, fadeOutPx - 5) }} />
       <span className="gl" style={{ top: `${gainTop(db)}%` }} />
       <span className="dur">
         {gainDrag === null ? `${secs(tl)}s` : `${db >= 0 ? '+' : ''}${db.toFixed(1)} dB`}

@@ -1,4 +1,4 @@
-import { emptyEdits, type Cue, type CueComp } from './domain'
+import { clipSpeed, emptyEdits, type Cue, type CueComp } from './domain'
 import { clipText, placeClip, resolveTake, resolveTargetTrack, type TakeLookup } from './library'
 
 export type GenTarget =
@@ -90,6 +90,26 @@ export function placeTake(req: PlaceTakeRequest): {
     edits: emptyEdits(),
     ...(req.replaceClipId ? { replaceClipId: req.replaceClipId } : {}),
   })
+}
+
+export interface GhostPlacement {
+  trackId: string
+  start: number
+  end: number
+  replaceClipId?: string
+}
+
+export function ghostPlacement(req: PlaceTakeRequest): GhostPlacement | null {
+  if (!(req.duration > 0)) return null
+  const placed = placeTake({ ...req, takeId: req.takeId || 'ghost' })
+  const clip = placed.comp.clips.find((c) => c.id === placed.clipId)
+  if (!clip) return null
+  return {
+    trackId: placed.trackId,
+    start: clip.start,
+    end: clip.start + (clip.srcOut - clip.srcIn) / clipSpeed(clip.edits),
+    ...(req.replaceClipId === placed.clipId ? { replaceClipId: placed.clipId } : {}),
+  }
 }
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)

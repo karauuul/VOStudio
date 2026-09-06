@@ -55,6 +55,7 @@ function resolveJobComp(job: ExportJob, plan: CompPlan): ResolvedComp {
             offset: o.offset,
             duration: o.duration,
             ...(o.duckDb === undefined ? {} : { duckDb: o.duckDb }),
+            ...(o.start === undefined ? {} : { start: o.start }),
           })),
         }
       : {}),

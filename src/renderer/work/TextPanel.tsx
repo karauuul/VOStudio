@@ -36,6 +36,7 @@ export interface TextPanelProps {
   onCharacter?: (characterId: string) => void
   onVoiceChange?: (patch: Partial<VoiceSettings>) => void
   onGenerate?: (kind: GenTarget['kind']) => void
+  onHoverGenerate?: (on: boolean) => void
   generating?: boolean
   genDisabled?: boolean
   hasRange?: boolean
@@ -267,6 +268,7 @@ export function TextPanel({
   onCharacter,
   onVoiceChange,
   onGenerate,
+  onHoverGenerate,
   generating,
   genDisabled,
   hasRange = false,
@@ -323,6 +325,8 @@ export function TextPanel({
               data-hk="generate"
               disabled={genOff}
               onClick={() => onGenerate?.(target?.kind ?? 'all')}
+              onMouseEnter={() => !genOff && onHoverGenerate?.(true)}
+              onMouseLeave={() => onHoverGenerate?.(false)}
             >
               {generating ? <span className="spin" /> : <span className="play" />}
               Generate

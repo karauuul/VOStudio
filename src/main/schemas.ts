@@ -1,6 +1,12 @@
 import { z } from 'zod'
 import { isProjectDirIn, isValidProjectName } from '@shared/project-summary'
-import { DUCK_MAX_DB, DUCK_MIN_DB, TRACK_GAIN_MAX_DB, TRACK_GAIN_MIN_DB } from '@shared/domain'
+import {
+  DUCK_MAX_DB,
+  DUCK_MIN_DB,
+  ORIGINAL_START_MAX,
+  TRACK_GAIN_MAX_DB,
+  TRACK_GAIN_MIN_DB,
+} from '@shared/domain'
 import {
   DELAY_FEEDBACK_MAX,
   DELAY_FEEDBACK_MIN,
@@ -166,6 +172,7 @@ export const compSchema = z
       .refine((r) => r.out > r.in, { message: 'region out must be greater than in' })
       .optional(),
     tracks: z.array(compTrackSchema).min(1).max(100).optional(),
+    originalStart: finite.min(0).max(ORIGINAL_START_MAX).optional(),
   })
   .nullable()
 

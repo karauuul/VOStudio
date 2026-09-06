@@ -1359,6 +1359,15 @@ export default function App() {
         )
       }
     },
+    onHoverPlace: (kind) =>
+      compRef.current?.ghost(
+        kind && sourceTake
+          ? {
+              takeId: sourceTake.id,
+              ...(kind === 'replace' && clipTarget ? { replaceClipId: clipTarget.clipId } : {}),
+            }
+          : null
+      ),
     canReplace: !!clipTarget,
     programRef,
   }

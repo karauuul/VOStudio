@@ -186,6 +186,14 @@ export interface CueComp {
   clips: CompClip[]
   region?: CompRegion
   tracks?: CompTrack[]
+  originalStart?: number
+}
+
+export const ORIGINAL_START_MAX = 36000
+
+export function sanitizeOriginalStart(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !(value > 0)) return undefined
+  return Math.min(value, ORIGINAL_START_MAX)
 }
 
 export const DUCK_MIN_DB = -60
