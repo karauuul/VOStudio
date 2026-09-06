@@ -1024,8 +1024,7 @@ input.tl-name:focus {
 
 .work-center {
   display: grid;
-  grid-template-rows: 410px minmax(0, 1fr);
-  gap: 8px;
+  grid-template-rows: 410px 8px minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
 }
@@ -1056,6 +1055,7 @@ input.tl-name:focus {
   display: grid;
   grid-template-rows: var(--hd) minmax(0, 1fr) 44px;
   min-height: 0;
+  min-width: 0;
 }
 
 .prog .phd {

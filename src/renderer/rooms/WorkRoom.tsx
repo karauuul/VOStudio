@@ -8,13 +8,31 @@ import { TimelinePanel, timecode } from '../work/TimelinePanel'
 import { LibraryPanel } from '../work/LibraryPanel'
 import { PropertiesPanel } from '../work/PropertiesPanel'
 
-const LINES = { key: 'vo.lines.w', def: 280, min: 240, max: 400 }
-const PROPS = { key: 'vo.props.w', def: 380, min: 320, max: 480 }
-const LIB = { key: 'vo.lib.h', def: 500, min: 160, max: 800 }
+const PANES = {
+  lines: { key: 'vo.lines.w', def: 280, min: 240, max: 400 },
+  props: { key: 'vo.props.w', def: 380, min: 320, max: 480 },
+  lib: { key: 'vo.lib.h', def: 500, min: 160, max: 800 },
+  prog: { key: 'vo.prog.w', def: 620, min: 360, max: 900 },
+  upper: { key: 'vo.upper.h', def: 410, min: 240, max: 600 },
+} as const
+
+type Pane = keyof typeof PANES
+type Sizes = Record<Pane, number>
+
+const VERTICAL: Pane[] = ['lib', 'upper']
+const INVERTED: Pane[] = ['props', 'prog']
+const KEEP = 160
 
 const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
 
-function stored({ key, def, min, max }: typeof LINES): number {
+interface PaneConfig {
+  key: string
+  def: number
+  min: number
+  max: number
+}
+
+function stored({ key, def, min, max }: PaneConfig): number {
   try {
     const v = parseInt(localStorage.getItem(key) ?? '', 10)
     return Number.isFinite(v) ? clamp(v, min, max) : def
@@ -48,31 +66,44 @@ export function WorkRoom({
   library,
   properties,
 }: Props) {
-  const [linesW, setLinesW] = useState(() => stored(LINES))
-  const [propsW, setPropsW] = useState(() => stored(PROPS))
-  const [libH, setLibH] = useState(() => stored(LIB))
+  const [size, setSize] = useState<Sizes>(
+    () =>
+      Object.fromEntries(
+        Object.entries(PANES).map(([pane, cfg]) => [pane, stored(cfg)])
+      ) as Sizes
+  )
 
   useEffect(() => {
     try {
-      localStorage.setItem(LINES.key, String(linesW))
-      localStorage.setItem(PROPS.key, String(propsW))
-      localStorage.setItem(LIB.key, String(libH))
+      for (const [pane, cfg] of Object.entries(PANES)) {
+        localStorage.setItem(cfg.key, String(size[pane as Pane]))
+      }
     } catch {
     }
-  }, [linesW, propsW, libH])
+  }, [size])
 
   const startDrag = useCallback(
-    (side: 'left' | 'right' | 'lib') => (e: ReactMouseEvent) => {
+    (pane: Pane) => (e: ReactMouseEvent) => {
       e.preventDefault()
-      const vertical = side === 'lib'
+      const cfg = PANES[pane]
+      const vertical = VERTICAL.includes(pane)
+      const inverted = INVERTED.includes(pane)
       const p0 = vertical ? e.clientY : e.clientX
-      const cfg = side === 'left' ? LINES : side === 'right' ? PROPS : LIB
-      const v0 = side === 'left' ? linesW : side === 'right' ? propsW : libH
-      const set = side === 'left' ? setLinesW : side === 'right' ? setPropsW : setLibH
+      const v0 = size[pane]
+      const neighbor = inverted
+        ? e.currentTarget.previousElementSibling
+        : e.currentTarget.nextElementSibling
+      const room =
+        neighbor instanceof HTMLElement
+          ? vertical
+            ? neighbor.offsetHeight
+            : neighbor.offsetWidth
+          : Infinity
+      const max = Math.min(cfg.max, Math.max(v0, v0 + room - KEEP))
       document.body.classList.add('resizing')
       const move = (ev: MouseEvent): void => {
-        const d = side === 'right' ? p0 - ev.clientX : (vertical ? ev.clientY : ev.clientX) - p0
-        set(clamp(v0 + d, cfg.min, cfg.max))
+        const d = inverted ? p0 - ev.clientX : (vertical ? ev.clientY : ev.clientX) - p0
+        setSize((s) => ({ ...s, [pane]: clamp(v0 + d, cfg.min, max) }))
       }
       const up = (): void => {
         document.body.classList.remove('resizing')
@@ -82,7 +113,7 @@ export function WorkRoom({
       window.addEventListener('mousemove', move)
       window.addEventListener('mouseup', up)
     },
-    [linesW, propsW, libH]
+    [size]
   )
 
   const cue = text.cue
@@ -93,7 +124,7 @@ export function WorkRoom({
     <div
       className="main work-grid"
       hidden={hidden}
-      style={{ gridTemplateColumns: `${linesW}px 8px minmax(0, 1fr) 8px ${propsW}px` }}
+      style={{ gridTemplateColumns: `${size.lines}px 8px minmax(0, 1fr) 8px ${size.props}px` }}
     >
       <section className="panel">
         <div className="phd">
@@ -102,10 +133,16 @@ export function WorkRoom({
         <LinesPanel {...lines} />
       </section>
 
-      <div className="splitter col" onMouseDown={startDrag('left')} />
+      <div className="splitter col" onMouseDown={startDrag('lines')} />
 
-      <div className="work-center">
-        <div className="work-upper">
+      <div
+        className="work-center"
+        style={{ gridTemplateRows: `${size.upper}px 8px minmax(0, 1fr)` }}
+      >
+        <div
+          className="work-upper"
+          style={{ gridTemplateColumns: `minmax(0, 1fr) 8px ${size.prog}px` }}
+        >
           <section className="panel text">
             <div className="phd">
               Text{' '}
@@ -116,17 +153,19 @@ export function WorkRoom({
             <div className="ed-script">{cueText ? <CueText {...cueText} /> : <TextPanel {...text} />}</div>
           </section>
 
-          <div className="gutter" />
+          <div className="splitter col" onMouseDown={startDrag('prog')} />
 
           <ProgramPanel {...program} />
         </div>
 
+        <div className="splitter row" onMouseDown={startDrag('upper')} />
+
         <TimelinePanel {...timeline} />
       </div>
 
-      <div className="splitter col" onMouseDown={startDrag('right')} />
+      <div className="splitter col" onMouseDown={startDrag('props')} />
 
-      <div className="work-right" style={{ gridTemplateRows: `${libH}px 8px minmax(0, 1fr)` }}>
+      <div className="work-right" style={{ gridTemplateRows: `${size.lib}px 8px minmax(0, 1fr)` }}>
         <LibraryPanel {...library} />
 
         <div className="splitter row" onMouseDown={startDrag('lib')} />

@@ -124,6 +124,7 @@ export interface CompApi {
   muteHovered: () => boolean
   soloHovered: () => boolean
   split: () => void
+  splitAtPlayhead: () => void
   heal: () => void
   crossfade: () => void
   undo: () => void
@@ -1053,6 +1054,18 @@ export function TimelinePanel({
           base.clips.find((x) => at > x.start && at < clipEnd(x))
         if (c) splitClip(c.id, at)
       },
+      splitAtPlayhead: () => {
+        const base = compRefLive.current
+        const at = posRef.current
+        const spans = (c: CompClip): boolean =>
+          at > c.start + COMP_EPS && at < clipEnd(c) - COMP_EPS
+        const target = resolveTargetTrack(base, targetTrackId)
+        const id = selId()
+        const c =
+          base.clips.find((x) => clipTrackId(x) === target && spans(x)) ??
+          base.clips.find((x) => x.id === id && spans(x))
+        if (c) splitClip(c.id, at)
+      },
       heal: () => {
         const base = compRefLive.current
         const picked = selId()
@@ -1156,6 +1169,7 @@ export function TimelinePanel({
       takeOf,
       peaks,
       zoomBy,
+      targetTrackId,
     ]
   )
 
@@ -1296,11 +1310,7 @@ export function TimelinePanel({
         hotkey: hotkeyText('muteTrack'),
         onClick: () => editTrack(track.id, { muted: !track.muted }),
       },
-      {
-        label: 'Solo',
-        hotkey: hotkeyText('soloTrack'),
-        onClick: () => editTrack(track.id, { solo: !track.solo }),
-      },
+      { label: 'Solo', onClick: () => editTrack(track.id, { solo: !track.solo }) },
       { sep: true },
       { label: 'Track effects…', onClick: () => setPickedTrack(track.id) },
       {
@@ -1773,7 +1783,7 @@ export function TimelinePanel({
                 <span className="tl-ms">
                   <button
                     className={'tl-sm' + (track.solo ? ' on' : '')}
-                    data-hk="soloTrack"
+                    data-hint="Solo"
                     aria-pressed={track.solo}
                     disabled={!cue}
                     onClick={() => editTrack(track.id, { solo: !track.solo })}
