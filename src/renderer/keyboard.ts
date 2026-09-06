@@ -39,6 +39,7 @@ export type KeyAction =
   | 'makeFinal'
   | 'deleteClip'
   | 'splitClip'
+  | 'splitAtPlayhead'
   | 'healClip'
   | 'crossfadeClip'
   | 'undo'
@@ -133,8 +134,8 @@ export const BINDINGS: Binding[] = [
   { action: 'restartActive', codes: ['Enter', 'NumpadEnter'], scopes: WORK, label: 'Play from in' },
   { action: 'goIn', codes: ['Home'], scopes: WORK, label: 'Go to in' },
   { action: 'goOut', codes: ['End'], scopes: WORK, label: 'Go to out' },
-  { action: 'setIn', codes: ['KeyI'], scopes: TIMELINE, label: 'Set in' },
-  { action: 'setOut', codes: ['KeyO'], scopes: TIMELINE, label: 'Set out' },
+  { action: 'setIn', codes: ['KeyI'], scopes: WORK, label: 'Set in' },
+  { action: 'setOut', codes: ['KeyO'], scopes: WORK, label: 'Set out' },
   {
     action: 'zoomIn',
     codes: ['Equal', 'NumpadAdd'],
@@ -156,10 +157,7 @@ export const BINDINGS: Binding[] = [
   { action: 'acceptSuggestion', codes: ['KeyY'], scopes: WORK, label: 'Accept suggestion' },
   { action: 'rejectSuggestion', codes: ['KeyN'], scopes: WORK, label: 'Reject suggestion' },
   { action: 'muteTrack', codes: ['KeyM'], scopes: TIMELINE, label: 'Mute hovered track' },
-  { action: 'soloTrack', codes: ['KeyS'], scopes: TIMELINE, label: 'Solo hovered track' },
-  { action: 'copySource', codes: ['KeyS'], scopes: WORK, label: 'Copy source' },
-  { action: 'copyTranslation', codes: ['KeyT'], scopes: WORK, label: 'Copy translation' },
-  { action: 'copyPrompt', codes: ['KeyP'], scopes: WORK, label: 'Copy prompt' },
+  { action: 'splitAtPlayhead', codes: ['KeyS'], scopes: WORK, label: 'Cut at playhead' },
   { action: 'insertSource', codes: ['Comma'], scopes: WORK, label: 'Insert source' },
   { action: 'replaceSource', codes: ['Period'], scopes: WORK, label: 'Replace with source' },
   { action: 'splitClip', codes: ['KeyC'], scopes: TIMELINE, label: 'Cut' },
@@ -268,6 +266,7 @@ export interface KeyboardHandlers {
   makeFinal: () => void
   deleteClip: () => void
   splitClip: () => void
+  splitAtPlayhead: () => void
   healClip: () => void
   crossfadeClip: () => void
   undo: () => void

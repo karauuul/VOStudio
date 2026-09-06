@@ -135,10 +135,10 @@ Menus are 230px wide, 26px rows, hotkeys mono on the right, separators between g
 
 - **Clip**: Play clip `Shift+Space`, Regenerate `Ctrl+G`, Version ▸ (v1 4.88s, v2 5.02s, ✓ v3 4.70s, New from text…) | Split at playhead `C`, Split by words, Fit to original length, Reset fades and gain | Move to track ▸, Pin source to all lines, Show in Library | Delete `Del`.
 - **Library source**: Audition `Space`, Insert at playhead `,`, Replace selected clip `.` | Regenerate with same settings, Pin to all lines, Show where used | Copy text, Reveal file | Delete `Del`.
-- **Line**: Open `Enter`, Play original, Play translation | Generate `Ctrl+G`, Copy original `S`, Copy translation `T`, Copy as prompt `P` | Exclude from export, Reveal source file | Reset line.
-- **Track strip**: Rename, Set as target, Mute `M`, Solo `S` | Track effects…, Duplicate track, Move up, Move down | Delete track.
+- **Line**: Open `Enter`, Play original, Play translation | Generate `Ctrl+G`, Copy original, Copy translation, Copy as prompt | Exclude from export, Reveal source file | Reset line.
+- **Track strip**: Rename, Set as target, Mute `M`, Solo | Track effects…, Duplicate track, Move up, Move down | Delete track.
 - **Translation text**: Generate selection `Ctrl+G`, Find on timeline, Split clip here | Cut, Copy, Paste.
 
 ## Hotkeys
 
-`Space` play/pause always, in every focus state except while typing in a text field. `Shift+Space` plays the selected clip. `Ctrl+G` generate. `C` razor, `V` select, `Del` delete. `M` mute, `S` solo on the hovered track. `,` insert, `.` replace from the Source monitor. `Ctrl+1/2/3` rooms. `I`/`O` set in/out. Hotkeys use `e.code`.
+`Space` play/pause always, in every focus state except while typing in a text field. `Shift+Space` plays the selected clip. `Ctrl+G` generate. `C` razor, `V` select, `Del` delete. `M` mute on the hovered track. `S` cuts the clip under the playhead on the target track. `,` insert, `.` replace from the Source monitor. `Ctrl+1/2/3` rooms. `I`/`O` set in/out from anywhere in Work. Hotkeys use `e.code`.

@@ -263,18 +263,26 @@ describe('scope precedence', () => {
     }
   })
 
-  it('hovered-track mute and solo belong to the timeline scope', () => {
+  it('hovered-track mute belongs to the timeline scope', () => {
     expect(action({ code: 'KeyM', scope: 'timeline' })).toBe('muteTrack')
-    expect(action({ code: 'KeyS', scope: 'timeline' })).toBe('soloTrack')
     expect(action({ code: 'KeyM', scope: 'workspace' })).toBeNull()
-    expect(action({ code: 'KeyS', scope: 'workspace' })).toBe('copySource')
     expect(keyText(of('muteTrack'))).toBe('M')
-    expect(keyText(of('soloTrack'))).toBe('S')
     expect(groupOf(of('muteTrack'))).toBe('Timeline')
   })
 
+  it('S cuts at the playhead everywhere in work and copying has no hotkey', () => {
+    expect(action({ code: 'KeyS', scope: 'timeline' })).toBe('splitAtPlayhead')
+    expect(action({ code: 'KeyS', scope: 'workspace' })).toBe('splitAtPlayhead')
+    expect(keyText(of('splitAtPlayhead'))).toBe('S')
+    expect(groupOf(of('splitAtPlayhead'))).toBe('Work')
+    for (const code of ['KeyT', 'KeyP']) {
+      expect(action({ code, scope: 'timeline' })).toBeNull()
+      expect(action({ code, scope: 'workspace' })).toBeNull()
+    }
+  })
+
   it('timeline edits exist only in the timeline scope', () => {
-    for (const code of ['KeyC', 'KeyH', 'KeyX', 'Delete', 'KeyI', 'KeyO', 'KeyV', 'Equal', 'Minus']) {
+    for (const code of ['KeyC', 'KeyH', 'KeyX', 'Delete', 'KeyV', 'Equal', 'Minus']) {
       expect(action({ code, scope: 'timeline' })).not.toBeNull()
       expect(action({ code, scope: 'workspace' })).toBeNull()
     }
@@ -283,9 +291,11 @@ describe('scope precedence', () => {
   })
 
   it('workspace actions stay available in the timeline scope', () => {
-    for (const code of ['Space', 'KeyJ', 'KeyF', 'Home', 'End']) {
+    for (const code of ['Space', 'KeyJ', 'KeyF', 'Home', 'End', 'KeyI', 'KeyO']) {
       expect(action({ code, scope: 'timeline' })).toBe(action({ code, scope: 'workspace' }))
     }
+    expect(action({ code: 'KeyI', scope: 'workspace' })).toBe('setIn')
+    expect(action({ code: 'KeyO', scope: 'workspace' })).toBe('setOut')
   })
 
   it('every binding declares at least one scope and no scope is unreachable', () => {

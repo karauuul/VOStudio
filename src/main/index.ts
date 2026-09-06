@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, protocol, session, shell } from 'electron'
 import path from 'path'
 import { createReadStream, promises as fs } from 'fs'
 import { Readable } from 'stream'
@@ -106,6 +106,12 @@ function createWindow(): void {
 
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   win.webContents.on('will-navigate', (e) => e.preventDefault())
+
+  if (!app.isPackaged) {
+    win.webContents.on('before-input-event', (_e, input) => {
+      if (input.type === 'keyDown' && input.code === 'F12') win.webContents.toggleDevTools()
+    })
+  }
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -953,6 +959,7 @@ void app.whenReady().then(() => {
     cb(permission === 'media' || permission === 'speaker-selection' || permission === 'clipboard-sanitized-write')
   })
 
+  Menu.setApplicationMenu(null)
   registerHandlers()
   createWindow()
   initializeUpdater((next) => emit('updater:status', next))
