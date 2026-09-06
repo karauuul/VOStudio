@@ -8,7 +8,7 @@ export interface ParsedCsv {
   rawRows: string[][]
 }
 
-export function parseCsv(raw: string): ParsedCsv {
+export function parseCsv(raw: string, delimiter: ',' | '\t' = ','): ParsedCsv {
   const hadBom = raw.charCodeAt(0) === 0xfeff
   if (hadBom) raw = raw.slice(1)
   const newline: '\r\n' | '\n' = raw.includes('\r\n') ? '\r\n' : '\n'
@@ -54,7 +54,7 @@ export function parseCsv(raw: string): ParsedCsv {
     } else if (c === '"') {
       inQuotes = true
       rawCell += c
-    } else if (c === ',') {
+    } else if (c === delimiter) {
       pushCell()
     } else if (c === '\n' || c === '\r') {
       if (c === '\r' && raw[i + 1] === '\n') i++

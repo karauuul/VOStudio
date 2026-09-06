@@ -402,11 +402,18 @@ export interface TimelineViewState {
   originalGainDb?: number
 }
 
+export type MatchRule = 'id' | 'exportName' | 'tableId'
+
+export function sanitizeMatchRule(value: unknown): MatchRule | undefined {
+  return value === 'id' || value === 'exportName' || value === 'tableId' ? value : undefined
+}
+
 export interface UiSessionState {
   activeCueId?: string
   filter: string
   search: string
   scrollIndex?: number
+  matchBy?: MatchRule
   targetTrack?: Record<string, string>
   timeline?: Record<string, TimelineViewState>
 }
@@ -465,6 +472,19 @@ export function sanitizeTerms(rows: unknown): Term[] | undefined {
   return out.length > 0 ? out : undefined
 }
 
+export interface ProjectLanguages {
+  source: string
+  target: string
+}
+
+export function sanitizeLanguages(value: unknown): ProjectLanguages | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const row = value as Partial<ProjectLanguages>
+  const source = typeof row.source === 'string' ? row.source.trim().slice(0, 20) : ''
+  const target = typeof row.target === 'string' ? row.target.trim().slice(0, 20) : ''
+  return source && target ? { source, target } : undefined
+}
+
 export interface Project {
   id: string
   schemaVersion: number
@@ -483,6 +503,7 @@ export interface Project {
   csvBinding?: CsvBinding
   exportTemplate: string
   terms?: Term[]
+  languages?: ProjectLanguages
   alienMigrated?: true
   ui: UiSessionState
 }

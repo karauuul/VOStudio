@@ -316,76 +316,6 @@
   border-color: rgba(229, 101, 95, 0.35);
 }
 
-.tpl-chars {
-  margin-top: 8px;
-}
-
-.tpl-scroll {
-  margin-top: 16px;
-  overflow-x: auto;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-}
-
-.tpl-table {
-  width: 100%;
-  border-collapse: collapse;
-  font: 12px var(--sans);
-}
-
-.tpl-table th {
-  text-align: left;
-  padding: 8px 12px;
-  color: var(--tx3);
-  font: 500 11px var(--mono);
-  background: var(--raise);
-  white-space: nowrap;
-}
-
-.tpl-table td {
-  padding: 8px 12px;
-  border-top: 1px solid var(--line);
-  color: var(--tx2);
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tpl-table tr.off td {
-  color: var(--tx3);
-  text-decoration: line-through;
-}
-
-.tpl-issues {
-  list-style: none;
-  margin-top: 16px;
-  max-height: 180px;
-  overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-}
-
-.tpl-issues li {
-  display: flex;
-  gap: 8px;
-  padding: 6px 12px;
-  font-size: 12px;
-  border-bottom: 1px solid var(--line);
-}
-
-.tpl-issues li:last-child {
-  border-bottom: none;
-}
-
-.tpl-issues.err li .mono {
-  color: var(--err);
-}
-
-.tpl-issues.warn li .mono {
-  color: var(--warn);
-}
-
 .home-time {
   color: var(--tx3);
   font: 11px var(--mono);
@@ -533,68 +463,6 @@
   word-break: break-word;
 }
 
-.md {
-  display: grid;
-  grid-template-columns: 200px 1fr;
-  gap: 16px;
-  min-height: 0;
-}
-
-.md-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  overflow-y: auto;
-  border-right: 1px solid var(--line);
-  padding-right: 8px;
-}
-
-.md-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: var(--r);
-  background: transparent;
-  color: var(--tx2);
-  font: 13px var(--sans);
-  text-align: left;
-  cursor: pointer;
-}
-
-.md-item:hover {
-  background: var(--raise);
-}
-
-.md-item.on {
-  background: var(--ac-dim);
-  color: var(--tx);
-}
-
-.md-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.md-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-}
-
-.md-detail input[type='text'] {
-  height: 28px;
-  min-width: 140px;
-}
-
-.md-actions {
-  margin-top: 8px;
-}
-
 .home-state {
   display: flex;
   align-items: center;
@@ -604,16 +472,6 @@
 
 .home-row.on {
   border-color: var(--ac);
-}
-
-.tpl-more {
-  margin-top: 12px;
-}
-
-.tpl-more summary {
-  cursor: pointer;
-  color: var(--tx2);
-  font-size: 12px;
 }
 
 .cmenu-wrap {

@@ -47,6 +47,7 @@ export const projectFileSchema = z
     pronunciationRules: z.string(),
     exportTemplate: z.string(),
     terms: z.array(z.unknown()).optional(),
+    languages: z.object({ source: z.string(), target: z.string() }).optional(),
     alienMigrated: z.literal(true).optional(),
   })
   .passthrough()
@@ -258,4 +259,10 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   characterId.extend({ type: z.literal('character.delete'), reassignTo: z.string().max(200) }),
   z.object({ type: z.literal('rules.set'), text: z.string().max(100_000) }),
   z.object({ type: z.literal('project.rename'), name: z.string().min(1).max(200) }),
+  z.object({
+    type: z.literal('project.setLanguages'),
+    languages: z
+      .object({ source: z.string().min(1).max(20), target: z.string().min(1).max(20) })
+      .nullable(),
+  }),
 ])

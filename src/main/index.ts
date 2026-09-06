@@ -22,7 +22,7 @@ import { setApiKey, hasApiKey } from './secrets'
 import { runFfmpeg } from './ffmpeg'
 import { parseCsv } from '@shared/csv'
 import { applyRules } from '@shared/pronunciation'
-import { changeTakeOutput } from '@shared/approval'
+import { changeCueSourceText, changeTakeOutput } from '@shared/approval'
 import {
   cueVoiceUnchanged,
   emptyEdits,
@@ -36,16 +36,15 @@ import type { Project } from '@shared/domain'
 import type { AppSettings, TakeDurationUpdate } from '@shared/ipc'
 import {
   createProjectFromTemplate,
-  reimportBlockers,
   reimportTemplate,
-  summarizeDiff,
   toPreview,
   validateTemplate,
 } from './template-import'
-import { diffTemplate } from '@shared/template-reimport'
 import * as migration from './migration'
 import { GENERATED_DIR } from './migration'
 import { syncCsv } from './csv-sync'
+import { importAudio } from './audio-import'
+import { importTable } from './table-import'
 import {
   copyJob,
   encodeJob,
@@ -125,6 +124,36 @@ function flushPersist(): Promise<void> {
 const batchExportSchema = z.object({
   scope: z.enum(['approved', 'all-final']),
   collisionStrategy: z.record(z.enum(['suffix-wemid', 'skip', 'reuse'])).optional(),
+})
+
+const filePath = z.string().min(1).max(4096).refine((p) => path.isAbsolute(p), {
+  message: 'Path must be absolute',
+})
+
+const matchRuleSchema = z.enum(['id', 'exportName', 'tableId'])
+
+const audioImportSchema = z.object({
+  paths: z.array(filePath).min(1).max(200),
+  rule: matchRuleSchema,
+})
+
+const tableImportSchema = z.object({
+  path: filePath,
+  rule: matchRuleSchema,
+  mapping: z
+    .object({
+      id: z.number().int().min(0).max(4096).optional(),
+      text: z.number().int().min(0).max(4096).optional(),
+      translation: z.number().int().min(0).max(4096).optional(),
+      character: z.number().int().min(0).max(4096).optional(),
+    })
+    .optional(),
+  replaceTranslations: z.boolean().optional(),
+})
+
+const transcribeSchema = z.object({
+  cueIds: z.array(z.string().min(1).max(200)).min(1).max(500),
+  overwrite: z.boolean().optional(),
 })
 
 const settingsSchema = z.object({
@@ -366,19 +395,64 @@ function registerHandlers(): void {
     })
   )
 
-  typedHandle('project:previewReimport', async (dir: string) => {
-    const target = pickedTemplateDir(dir)
-    const project = requireProject()
-    const validation = await validateTemplate(target, true)
-    return {
-      preview: { ...toPreview(validation), fatalErrors: reimportBlockers(validation, project) },
-      diff: summarizeDiff(diffTemplate(project, validation.rows)),
-    }
+  typedHandle('import:pick', async (kind) => {
+    const parsed = z.enum(['files', 'folder', 'table']).parse(kind)
+    const options: Electron.OpenDialogOptions =
+      kind === 'folder'
+        ? { title: 'Import folder', properties: ['openDirectory'] }
+        : parsed === 'table'
+          ? {
+              title: 'Import text table',
+              properties: ['openFile'],
+              filters: [{ name: 'Tables', extensions: ['csv', 'tsv', 'txt'] }],
+            }
+          : {
+              title: 'Import audio files',
+              properties: ['openFile', 'multiSelections'],
+              filters: [{ name: 'Audio', extensions: ['wav', 'mp3', 'ogg'] }],
+            }
+    const win = BrowserWindow.getFocusedWindow()
+    const picked = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    return picked.canceled ? [] : picked.filePaths
   })
 
-  typedHandle('project:applyReimport', (dir: string) =>
+  typedHandle('import:audio', (req) =>
     serialLifecycle(async () => {
-      const target = pickedTemplateDir(dir)
+      const parsed = audioImportSchema.parse(req)
+      const repository = projectRepository
+      const projectDir = store.getProjectDir()
+      if (!repository || !projectDir) throw new Error('No project is open')
+      const { result, changes } = await importAudio(
+        repository.projectForMain(),
+        projectDir,
+        parsed.paths,
+        parsed.rule
+      )
+      emit('project:changed', await repository.commit(changes))
+      return result
+    })
+  )
+
+  typedHandle('import:table', (req) =>
+    serialLifecycle(async () => {
+      const parsed = tableImportSchema.parse(req)
+      const repository = projectRepository
+      if (!repository) throw new Error('No project is open')
+      const { result, changes } = await importTable(
+        repository.projectForMain(),
+        parsed.path,
+        parsed.rule,
+        parsed.mapping,
+        parsed.replaceTranslations === true
+      )
+      emit('project:changed', await repository.commit(changes))
+      return result
+    })
+  )
+
+  typedHandle('import:template', (dir: string) =>
+    serialLifecycle(async () => {
+      const target = templateDirSchema.parse(dir)
       const repository = projectRepository
       const projectDir = store.getProjectDir()
       if (!repository || !projectDir) throw new Error('No project is open')
@@ -589,6 +663,40 @@ function registerHandlers(): void {
     pushUsage()
     return take
   })
+
+  typedHandle('provider:transcribe', async (req) => {
+    const parsed = transcribeSchema.parse(req)
+    const repository = projectRepository
+    if (!repository) throw new Error('No project is open')
+    const project = repository.projectForMain()
+    const changed: Cue[] = []
+    let skipped = 0
+    for (const cueId of parsed.cueIds) {
+      const cue = project.cues.find((c) => c.id === cueId)
+      const ref = cue?.referenceAudio
+      if (!cue || !ref || (!parsed.overwrite && cue.sourceText.trim())) {
+        skipped++
+        continue
+      }
+      const text = await eleven.stt({
+        audio: await fs.readFile(ref.relPath),
+        filename: path.basename(ref.relPath),
+      })
+      if (!text) {
+        skipped++
+        continue
+      }
+      Object.assign(cue, changeCueSourceText(cue, text, project))
+      changed.push(cue)
+    }
+    if (changed.length > 0) {
+      emit('project:changed', await repository.commit({ cues: structuredClone(changed) }))
+    }
+    pushUsage()
+    return { updated: changed.length, skipped }
+  })
+
+  typedHandle('provider:voices', () => eleven.voices())
 
   typedHandle('provider:testVoice', async (characterId: string) => {
     const id = z.string().min(1).max(200).parse(characterId)

@@ -3,6 +3,8 @@ import { promises as fs, type Dirent } from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
 import {
+  sanitizeLanguages,
+  sanitizeMatchRule,
   sanitizeProjectSources,
   sanitizeTargetTrack,
   sanitizeTimelineViews,
@@ -75,8 +77,10 @@ const uiPath = (dir: string): string => path.join(dir, 'ui.json')
 export async function saveUi(raw: UiSessionState): Promise<void> {
   const targetTrack = sanitizeTargetTrack(raw.targetTrack)
   const timeline = sanitizeTimelineViews(raw.timeline)
-  const { targetTrack: _drop, timeline: _dropTimeline, ...base } = raw
-  const rest = timeline ? { ...base, timeline } : base
+  const matchBy = sanitizeMatchRule(raw.matchBy)
+  const { targetTrack: _drop, timeline: _dropTimeline, matchBy: _dropMatch, ...base } = raw
+  const withMatch = matchBy ? { ...base, matchBy } : base
+  const rest = timeline ? { ...withMatch, timeline } : withMatch
   const next = targetTrack ? { ...rest, targetTrack } : rest
   ui = next
   if (current) current.ui = next
@@ -205,6 +209,11 @@ export async function openProjectDir(dir: string): Promise<Project> {
     const versions = sanitizeVersions(p.versions)
     if (versions) p.versions = versions
     else delete p.versions
+  }
+  if (p.languages !== undefined) {
+    const languages = sanitizeLanguages(p.languages)
+    if (languages) p.languages = languages
+    else delete p.languages
   }
   ui = await loadUi(dir, p.ui)
   p.ui = ui
