@@ -23,6 +23,25 @@ function project(): Project {
   }
 }
 
+describe('project rename', () => {
+  it('trims the display name, rejects empty, and reaches the renderer through the change set', () => {
+    const p = project()
+    const command: ProjectCommand = { type: 'project.rename', name: '  Satisfactory ADA  ' }
+    expect(projectCommandSchema.parse(command)).toEqual(command)
+    expect(() => projectCommandSchema.parse({ type: 'project.rename', name: '' })).toThrow()
+    const changes = applyProjectCommand(p, command)
+    expect(changes).toEqual({ name: 'Satisfactory ADA' })
+    expect(p.name).toBe('Satisfactory ADA')
+    expect(() => applyProjectCommand(p, { type: 'project.rename', name: '   ' })).toThrow()
+    expect(applyChangeSet(project(), changes).name).toBe('Satisfactory ADA')
+  })
+
+  it('carries saved versions to the renderer', () => {
+    const versions = [{ n: 1, createdAt: 'now' }]
+    expect(applyChangeSet(project(), { versions }).versions).toEqual(versions)
+  })
+})
+
 describe('project commands', () => {
   it('validates the command boundary without stripping command data', () => {
     const command: ProjectCommand = { type: 'cue.saveText', cueId: 'c', text: 'Changed' }

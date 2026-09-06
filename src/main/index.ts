@@ -76,7 +76,7 @@ function createWindow(): void {
     width: 1400,
     height: 900,
     title: 'VO Studio',
-    backgroundColor: '#141416',
+    backgroundColor: '#191b1e',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: true,
@@ -398,7 +398,9 @@ function registerHandlers(): void {
       const parsed = saveVersionSchema.parse(req)
       requireProject()
       await flushPersist()
-      return store.saveVersion(parsed.name)
+      const versions = await store.saveVersion(parsed.name)
+      if (projectRepository) emit('project:changed', await projectRepository.commit({ versions }))
+      return versions
     })
   )
 

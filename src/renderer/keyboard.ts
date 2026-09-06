@@ -14,9 +14,9 @@ export type Scope =
 export type KeyAction =
   | 'settings'
   | 'shortcuts'
+  | 'routeImport'
   | 'routeWork'
-  | 'routeProject'
-  | 'routeDeliver'
+  | 'routeExport'
   | 'focusSearch'
   | 'gridNext'
   | 'gridPrev'
@@ -92,20 +92,20 @@ export const BINDINGS: Binding[] = [
   },
   { action: 'settings', codes: ['Comma'], mod: true, scopes: APP, label: 'Settings' },
   { action: 'shortcuts', codes: ['F1'], scopes: APP, label: 'Shortcuts' },
-  { action: 'routeWork', codes: ['Digit1', 'Numpad1'], mod: true, scopes: ROUTES, label: 'Work' },
   {
-    action: 'routeProject',
-    codes: ['Digit2', 'Numpad2'],
+    action: 'routeImport',
+    codes: ['Digit1', 'Numpad1'],
     mod: true,
     scopes: ROUTES,
-    label: 'Project',
+    label: 'Import',
   },
+  { action: 'routeWork', codes: ['Digit2', 'Numpad2'], mod: true, scopes: ROUTES, label: 'Work' },
   {
-    action: 'routeDeliver',
+    action: 'routeExport',
     codes: ['Digit3', 'Numpad3'],
     mod: true,
     scopes: ROUTES,
-    label: 'Deliver',
+    label: 'Export',
   },
   { action: 'focusSearch', codes: ['KeyF'], mod: true, scopes: SEARCHABLE, label: 'Focus search' },
   { action: 'gridNext', codes: ['ArrowDown'], scopes: GRID, repeat: true, label: 'Next row' },
@@ -196,9 +196,9 @@ export function keyText(b: Binding): string {
 export const SHORTCUT_GROUPS: { scope: Scope; title: string }[] = [
   { scope: 'home', title: 'App' },
   { scope: 'workspace', title: 'Work' },
-  { scope: 'grid', title: 'Project' },
+  { scope: 'grid', title: 'Import' },
   { scope: 'timeline', title: 'Timeline' },
-  { scope: 'deliver', title: 'Deliver' },
+  { scope: 'deliver', title: 'Export' },
 ]
 
 export function groupOf(b: Binding): string {
@@ -222,9 +222,9 @@ export function resolveKey(e: KeyInput): Binding | null {
 export interface KeyboardHandlers {
   settings: () => void
   shortcuts: () => void
+  routeImport: () => void
   routeWork: () => void
-  routeProject: () => void
-  routeDeliver: () => void
+  routeExport: () => void
   focusSearch: () => void
   gridNext: () => void
   gridPrev: () => void
@@ -275,7 +275,6 @@ const NATIVE = 'button, a[href], select, [role="separator"], [role="button"], su
 const NATIVE_CODES = [
   'Enter',
   'NumpadEnter',
-  'Space',
   'ArrowUp',
   'ArrowDown',
   'ArrowLeft',
@@ -286,6 +285,19 @@ function isEditor(el: HTMLElement | null): boolean {
   if (!el) return false
   const tag = el.tagName
   return tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT' || el.isContentEditable
+}
+
+export function keyScope(
+  target: { code: string; editor: boolean; native: boolean },
+  ctx: KeyboardScopes
+): Scope | null {
+  if (ctx.home) return 'home'
+  if (ctx.decision()) return 'decision'
+  if (ctx.deliver) return 'deliver'
+  if (target.editor) return ctx.grid ? 'gridText' : 'text'
+  if (target.native && NATIVE_CODES.includes(target.code)) return null
+  if (ctx.grid) return 'grid'
+  return ctx.timeline ? 'timeline' : 'workspace'
 }
 
 export function useKeyboard(
@@ -303,15 +315,11 @@ export function useKeyboard(
     const onKey = (e: KeyboardEvent): void => {
       const el = e.target instanceof HTMLElement ? e.target : null
       if (el?.closest(LOCAL)) return
-      const ctx = scopeRef.current
-      let scope: Scope
-      if (ctx.home) scope = 'home'
-      else if (ctx.decision()) scope = 'decision'
-      else if (ctx.deliver) scope = 'deliver'
-      else if (isEditor(el)) scope = ctx.grid ? 'gridText' : 'text'
-      else if (el?.closest(NATIVE) && NATIVE_CODES.includes(e.code)) return
-      else if (ctx.grid) scope = 'grid'
-      else scope = ctx.timeline ? 'timeline' : 'workspace'
+      const scope = keyScope(
+        { code: e.code, editor: isEditor(el), native: !!el?.closest(NATIVE) },
+        scopeRef.current
+      )
+      if (!scope) return
 
       const b = resolveKey({
         code: e.code,

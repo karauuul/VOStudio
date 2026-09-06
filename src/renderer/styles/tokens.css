@@ -1,24 +1,34 @@
 :root {
-  --bg: #141416;
-  --panel: #1c1c1f;
-  --raise: #242428;
-  --line: #2e2e33;
-  --line-hi: #3b3b43;
+  --bg: #191b1e;
+  --panel: #222428;
+  --raise: #2b2e33;
+  --raise2: #34383e;
+  --line: #35383e;
+  --line2: #42464d;
 
-  --tx: #ececf1;
-  --tx2: #9a9aa5;
-  --tx3: #5f5f6b;
+  --tx: #e3e6eb;
+  --tx2: #a3aab5;
+  --tx3: #6f7680;
 
-  --ac: #6d9ff2;
-  --ac-hi: #8bb4f6;
-  --ac-dim: rgba(109, 159, 242, 0.12);
-  --ok: #46c98c;
-  --warn: #e6a23c;
+  --ac: #82acec;
+  --ac-bg: #243247;
   --err: #e5655f;
-  --on-ac: #10131a;
+  --ok: #46c98c;
 
-  --mono: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
-  --sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --orig: #8f97a8;
+  --l1: #3fb8a8;
+  --l2: #a58cf0;
 
-  --r: 6px;
+  --mono: 'Cascadia Mono', Consolas, monospace;
+  --sans: 'Segoe UI', system-ui, sans-serif;
+
+  --ctl: 28px;
+  --hd: 36px;
+  --r: 4px;
+
+  --line-hi: var(--line2);
+  --ac-hi: #9dc0f2;
+  --ac-dim: rgba(130, 172, 236, 0.12);
+  --warn: #e6a23c;
+  --on-ac: #0f1622;
 }

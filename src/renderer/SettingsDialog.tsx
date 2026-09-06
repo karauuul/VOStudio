@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { UsageInfo } from '@shared/domain'
 import type { AppSettings } from '@shared/ipc'
 import type { UpdateStatus } from '@shared/updater'
 import { api } from './api'
@@ -19,6 +20,7 @@ interface Props {
   onKeySaved: () => void
   settings: AppSettings
   onSettings: (next: AppSettings) => void
+  usage: UsageInfo | null
   updateStatus: UpdateStatus | null
   onUpdateStatus: (next: UpdateStatus) => void
   onShortcuts: () => void
@@ -31,6 +33,7 @@ export function SettingsDialog({
   onKeySaved,
   settings,
   onSettings,
+  usage,
   updateStatus,
   onUpdateStatus,
   onShortcuts,
@@ -92,6 +95,15 @@ export function SettingsDialog({
           <button className="btn primary" onClick={saveKey} disabled={saving || !keyInput.trim()}>
             Save key
           </button>
+        </div>
+
+        <div className="set-row">
+          <span className="set-l">Credits</span>
+          <span className="mono">
+            {usage
+              ? `${usage.remaining.toLocaleString('en-US')} / ${usage.limit.toLocaleString('en-US')} chars`
+              : '—'}
+          </span>
         </div>
 
         <div className="sec-h">Defaults</div>

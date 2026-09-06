@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   BINDINGS,
   groupOf,
+  keyScope,
   keyText,
   resolveKey,
   SHORTCUT_GROUPS,
   type Binding,
   type KeyInput,
+  type KeyboardScopes,
   type Scope,
 } from '../src/renderer/keyboard'
 
@@ -89,8 +91,8 @@ describe('repeat blocking', () => {
 describe('routes', () => {
   it('switches routes and focuses search from every route scope', () => {
     for (const scope of ['workspace', 'timeline', 'text', 'grid', 'gridText'] as Scope[]) {
-      expect(action({ code: 'Digit1', ctrlKey: true, scope })).toBe('routeWork')
-      expect(action({ code: 'Numpad2', ctrlKey: true, scope })).toBe('routeProject')
+      expect(action({ code: 'Digit1', ctrlKey: true, scope })).toBe('routeImport')
+      expect(action({ code: 'Numpad2', ctrlKey: true, scope })).toBe('routeWork')
       expect(action({ code: 'KeyF', ctrlKey: true, scope })).toBe('focusSearch')
     }
   })
@@ -100,13 +102,13 @@ describe('routes', () => {
     expect(action({ code: 'KeyF', ctrlKey: true, scope: 'decision' })).toBeNull()
     expect(action({ code: 'Digit1' })).toBe('selectTake')
     expect(action({ code: 'KeyF' })).toBe('makeFinal')
-    expect(action({ code: 'Digit3', ctrlKey: true })).toBe('routeDeliver')
+    expect(action({ code: 'Digit3', ctrlKey: true })).toBe('routeExport')
     expect(action({ code: 'Digit4', ctrlKey: true })).toBeNull()
   })
 
   it('leaves Deliver only its route keys and Escape', () => {
-    expect(action({ code: 'Digit3', ctrlKey: true, scope: 'deliver' })).toBe('routeDeliver')
-    expect(action({ code: 'Digit1', ctrlKey: true, scope: 'deliver' })).toBe('routeWork')
+    expect(action({ code: 'Digit3', ctrlKey: true, scope: 'deliver' })).toBe('routeExport')
+    expect(action({ code: 'Digit1', ctrlKey: true, scope: 'deliver' })).toBe('routeImport')
     expect(action({ code: 'Escape', scope: 'deliver' })).toBe('escape')
     for (const code of ['KeyA', 'KeyF', 'KeyR', 'KeyD', 'Space', 'Enter', 'Digit1', 'ArrowDown']) {
       expect(action({ code, scope: 'deliver' })).toBeNull()
@@ -174,7 +176,8 @@ describe('shortcuts table', () => {
     expect(keyText(of('promptFragment'))).toBe('Ctrl+Shift+G')
     expect(keyText(of('settings'))).toBe('Ctrl+,')
     expect(keyText(of('shortcuts'))).toBe('F1')
-    expect(keyText(of('routeWork'))).toBe('Ctrl+1')
+    expect(keyText(of('routeImport'))).toBe('Ctrl+1')
+    expect(keyText(of('routeWork'))).toBe('Ctrl+2')
     expect(keyText(of('gridNext'))).toBe('↓')
     expect(keyText(of('deleteClip'))).toBe('Del')
     expect(keyText(of('selectTake'))).toBe('1…9')
@@ -187,7 +190,7 @@ describe('shortcuts table', () => {
     }
     expect(groupOf(of('settings'))).toBe('App')
     expect(groupOf(of('approve'))).toBe('Work')
-    expect(groupOf(of('gridToggle'))).toBe('Project')
+    expect(groupOf(of('gridToggle'))).toBe('Import')
     expect(groupOf(of('healClip'))).toBe('Timeline')
   })
 })
@@ -307,5 +310,35 @@ describe('take selection', () => {
       })
     }
     expect(action({ code: 'Digit0' })).toBeNull()
+  })
+})
+
+describe('focused controls', () => {
+  const ctx = (over: Partial<KeyboardScopes> = {}): KeyboardScopes => ({
+    home: false,
+    timeline: false,
+    grid: false,
+    deliver: false,
+    decision: () => false,
+    ...over,
+  })
+
+  it('Space reaches play/pause from a focused button', () => {
+    const scope = keyScope({ code: 'Space', editor: false, native: true }, ctx())
+    expect(scope).toBe('workspace')
+    expect(action({ code: 'Space', scope: scope! })).toBe('playPause')
+  })
+
+  it('Enter and arrows stay with the focused button', () => {
+    for (const code of ['Enter', 'NumpadEnter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) {
+      expect(keyScope({ code, editor: false, native: true }, ctx())).toBeNull()
+    }
+  })
+
+  it('a focused text field still owns every key', () => {
+    expect(keyScope({ code: 'Space', editor: true, native: false }, ctx())).toBe('text')
+    expect(keyScope({ code: 'Space', editor: true, native: false }, ctx({ grid: true }))).toBe(
+      'gridText'
+    )
   })
 })

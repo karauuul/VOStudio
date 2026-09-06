@@ -15,6 +15,7 @@ import {
   type CueRegion,
   type OriginalLane,
   type Project,
+  type ProjectVersion,
   type VoiceSettings,
 } from './domain'
 import { referencedByOtherComp, resolveTake } from './library'
@@ -38,8 +39,11 @@ export type ProjectCommand =
   | { type: 'character.setProvider'; characterId: string; voiceId?: string; ttsModel?: string; stsModel?: string }
   | { type: 'character.delete'; characterId: string; reassignTo: string }
   | { type: 'rules.set'; text: string }
+  | { type: 'project.rename'; name: string }
 
 export interface ChangeSet {
+  name?: string
+  versions?: ProjectVersion[]
   cues?: Cue[]
   characters?: Project['characters']
   charactersReplace?: boolean
@@ -149,6 +153,12 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
     project.pronunciationRules = command.text
     return { pronunciationRules: command.text }
   }
+  if (command.type === 'project.rename') {
+    const name = command.name.trim()
+    if (!name) throw new Error('Project name cannot be empty')
+    project.name = name
+    return { name }
+  }
   const cue = cueById(project, command.cueId)
   switch (command.type) {
     case 'cue.saveText':
@@ -257,6 +267,8 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
 
 export function applyChangeSet(project: Project, changes: ChangeSet): Project {
   let next = project
+  if (changes.name !== undefined) next = { ...next, name: changes.name }
+  if (changes.versions) next = { ...next, versions: structuredClone(changes.versions) }
   if (changes.cues) {
     const replacements = new Map(changes.cues.map((cue) => [cue.id, cue]))
     const known = new Set(next.cues.map((cue) => cue.id))
