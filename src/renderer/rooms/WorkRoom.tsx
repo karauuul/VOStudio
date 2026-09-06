@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ComponentProps, type MouseEvent 
 import { LinesPanel } from '../work/LinesPanel'
 import { CueText } from '../work/CueText'
 import { TextPanel, type TextPanelProps } from '../work/TextPanel'
+import { ProgramPanel } from '../work/ProgramPanel'
 import { TimelinePanel } from '../work/TimelinePanel'
 import { Inspector } from '../cue/Inspector'
 
@@ -25,11 +26,12 @@ interface Props {
   total: number
   text: TextPanelProps
   cueText: ComponentProps<typeof CueText> | null
+  program: ComponentProps<typeof ProgramPanel>
   timeline: ComponentProps<typeof TimelinePanel>
   inspector: ComponentProps<typeof Inspector>
 }
 
-export function WorkRoom({ hidden, lines, total, text, cueText, timeline, inspector }: Props) {
+export function WorkRoom({ hidden, lines, total, text, cueText, program, timeline, inspector }: Props) {
   const [linesW, setLinesW] = useState(() => storedWidth(LINES))
   const [propsW, setPropsW] = useState(() => storedWidth(PROPS))
 
@@ -82,12 +84,18 @@ export function WorkRoom({ hidden, lines, total, text, cueText, timeline, inspec
       <div className="splitter col" onMouseDown={startDrag('left')} />
 
       <div className="work-center">
-        <section className="panel text">
-          <div className="phd">
-            Text {cue && <span className="n">{cue.fields['EventName'] || cue.key}</span>}
-          </div>
-          <div className="ed-script">{cueText ? <CueText {...cueText} /> : <TextPanel {...text} />}</div>
-        </section>
+        <div className="work-upper">
+          <section className="panel text">
+            <div className="phd">
+              Text {cue && <span className="n">{cue.fields['EventName'] || cue.key}</span>}
+            </div>
+            <div className="ed-script">{cueText ? <CueText {...cueText} /> : <TextPanel {...text} />}</div>
+          </section>
+
+          <div className="gutter" />
+
+          <ProgramPanel {...program} />
+        </div>
 
         <TimelinePanel {...timeline} />
       </div>

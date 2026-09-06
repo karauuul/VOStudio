@@ -151,8 +151,8 @@ function normalizeRegion(region: CompRegion | undefined, total: number): CompReg
   if (!Number.isFinite(region.in) || !Number.isFinite(region.out)) return undefined
   const max = Number.isFinite(total) && total > 0 ? total : 0
   const from = clamp(Math.max(0, region.in), 0, max)
-  const to = clamp(region.out, from, max)
-  return to - from > COMP_EPS ? { in: from, out: to } : undefined
+  const to = Math.max(region.out, from)
+  return max > 0 && to - from > COMP_EPS ? { in: from, out: to } : undefined
 }
 
 function withClips(comp: CueComp, clips: CompClip[]): CueComp {
@@ -229,16 +229,25 @@ export function setRegion(comp: CueComp, region: CompRegion | null): CueComp {
   return normalizeComp({ ...comp, region: { in: lo, out: hi } })
 }
 
-export function setRegionEdge(comp: CueComp, edge: 'in' | 'out', t: number): CueComp {
+export const REGION_HEADROOM = 60
+
+export function setRegionEdge(
+  comp: CueComp,
+  edge: 'in' | 'out',
+  t: number,
+  originalDuration = 0
+): CueComp {
   if (!Number.isFinite(t)) return comp
   const total = compDuration(comp)
   if (!(total > 0)) return comp
   const cur = comp.region
-  const at = clamp(Math.max(0, t), 0, total)
   if (edge === 'in') {
+    const at = clamp(Math.max(0, t), 0, total)
     const out = cur && cur.out > at ? cur.out : total
     return setRegion(comp, { in: at, out })
   }
+  const ceiling = Math.max(total, originalDuration > 0 ? originalDuration : 0) + REGION_HEADROOM
+  const at = clamp(Math.max(0, t), 0, ceiling)
   const from = cur && cur.in < at ? cur.in : 0
   return setRegion(comp, { in: from, out: at })
 }
