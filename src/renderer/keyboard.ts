@@ -301,6 +301,8 @@ const NATIVE_CODES = [
   'ArrowRight',
 ]
 
+const RANGE_CODES = ['Home', 'End', 'PageUp', 'PageDown']
+
 const TEXT_INPUT_TYPES = ['text', 'search', 'number', 'url', 'email', 'password', 'tel']
 
 export interface EditorTarget {
@@ -318,13 +320,14 @@ export function isEditor(el: EditorTarget | null): boolean {
 }
 
 export function keyScope(
-  target: { code: string; editor: boolean; native: boolean; select?: boolean },
+  target: { code: string; editor: boolean; native: boolean; select?: boolean; range?: boolean },
   ctx: KeyboardScopes
 ): Scope | null {
   if (ctx.home) return 'home'
   if (ctx.deliver) return 'deliver'
   if (target.editor) return ctx.grid ? 'gridText' : 'text'
   if (target.select && target.code !== 'Space') return null
+  if (target.range && RANGE_CODES.includes(target.code)) return null
   if (target.native && NATIVE_CODES.includes(target.code)) return null
   if (ctx.grid) return 'grid'
   return ctx.timeline ? 'timeline' : 'workspace'
@@ -351,6 +354,7 @@ export function useKeyboard(
           editor: isEditor(el),
           native: !!el?.closest(NATIVE),
           select: el?.tagName === 'SELECT',
+          range: el instanceof HTMLInputElement && el.type === 'range',
         },
         scopeRef.current
       )

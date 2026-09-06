@@ -394,4 +394,11 @@ describe('focused controls', () => {
       expect(keyScope({ code, editor: false, native: true, select: true }, ctx())).toBeNull()
     }
   })
+
+  it('slider keeps Home, End and paging, gives up Space', () => {
+    expect(keyScope({ code: 'Space', editor: false, native: true, range: true }, ctx())).toBe('workspace')
+    for (const code of ['Home', 'End', 'PageUp', 'PageDown']) {
+      expect(keyScope({ code, editor: false, native: true, range: true }, ctx())).toBeNull()
+    }
+  })
 })
