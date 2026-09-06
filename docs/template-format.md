@@ -70,7 +70,7 @@ Validation rules:
    - `status` other than empty or `excluded`
    - `refAudio` outside `audio/`, in an unsupported format, or resolving through a link outside `audio/`
 3. A `refAudio` that does not resolve is not fatal; the cue is imported and flagged as missing audio.
-4. The first rows are shown as a preview before the project is created.
+4. Fatal errors are reported before the project is created; there is no preview step.
 5. Re-importing `index.csv` into an existing project matches rows on `cueId` (= `cue.key`). `project-meta.json` must name the open project. Takes, comps, approvals, voice overrides and notes are never touched.
    - unknown `cueId` — a new cue, with its reference audio copied and its character created if new
    - changed `sourceText` — written to the cue; any approval goes stale
