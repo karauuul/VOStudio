@@ -905,7 +905,7 @@ export function TimelinePanel({
         return
       }
       if (e.button !== 0) return
-      const t = e.target instanceof HTMLElement ? e.target : null
+      const t = e.target instanceof Element ? e.target : null
       if (t?.closest('.tl-strip') || t?.closest('[data-clip]')) return
       startMarquee(e)
     },
