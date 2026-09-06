@@ -387,12 +387,43 @@ export interface CsvBinding {
   mapping: ColumnMapping
 }
 
+export interface TimelineViewState {
+  pxPerSec: number
+  scroll: number
+  originalGainDb?: number
+}
+
 export interface UiSessionState {
   activeCueId?: string
   filter: string
   search: string
   scrollIndex?: number
   targetTrack?: Record<string, string>
+  timeline?: Record<string, TimelineViewState>
+}
+
+export const TIMELINE_PX_MIN = 2
+export const TIMELINE_PX_MAX = 2000
+
+export function sanitizeTimelineViews(
+  value: unknown
+): Record<string, TimelineViewState> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: Record<string, TimelineViewState> = {}
+  for (const [cueId, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!cueId || !raw || typeof raw !== 'object') continue
+    const row = raw as Partial<TimelineViewState>
+    if (typeof row.pxPerSec !== 'number' || !Number.isFinite(row.pxPerSec)) continue
+    const gain = row.originalGainDb
+    out[cueId] = {
+      pxPerSec: clampTo(row.pxPerSec, TIMELINE_PX_MIN, TIMELINE_PX_MAX),
+      scroll: Math.max(0, finiteOr(row.scroll, 0)),
+      ...(typeof gain === 'number' && Number.isFinite(gain)
+        ? { originalGainDb: clampTo(gain, TRACK_GAIN_MIN_DB, TRACK_GAIN_MAX_DB) }
+        : {}),
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined
 }
 
 export function sanitizeTargetTrack(value: unknown): Record<string, string> | undefined {

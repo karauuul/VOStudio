@@ -31,13 +31,13 @@ describe('exact modifier matching', () => {
     expect(action({ code: 'KeyA' })).toBe('approve')
     expect(action({ code: 'KeyA', shiftKey: true })).toBe('approveNext')
     expect(action({ code: 'Space' })).toBe('playPause')
-    expect(action({ code: 'KeyB' })).toBe('compare')
+    expect(action({ code: 'Space', shiftKey: true })).toBe('playClip')
   })
 
   it('rejects Alt and AltGr combinations', () => {
     expect(action({ code: 'KeyA', altKey: true })).toBeNull()
     expect(action({ code: 'KeyG', ctrlKey: true, altKey: true })).toBeNull()
-    expect(action({ code: 'KeyB', ctrlKey: true, altKey: true })).toBeNull()
+    expect(action({ code: 'Space', ctrlKey: true, altKey: true })).toBeNull()
   })
 
   it('does not fire unmodified actions while Ctrl or Meta is held', () => {
@@ -83,7 +83,7 @@ describe('repeat blocking', () => {
     expect(action({ code: 'KeyJ', repeat: true })).toBe('next')
     expect(action({ code: 'ArrowUp', repeat: true })).toBe('prev')
     expect(action({ code: 'Space', repeat: true })).toBeNull()
-    expect(action({ code: 'KeyB', repeat: true })).toBeNull()
+    expect(action({ code: 'Equal', scope: 'timeline', repeat: true })).toBe('zoomIn')
   })
 })
 
@@ -208,7 +208,7 @@ describe('project grid', () => {
   })
 
   it('does not reach Work commands', () => {
-    for (const code of ['KeyA', 'KeyJ', 'KeyK', 'KeyF', 'KeyO', 'KeyB', 'KeyR', 'Digit1']) {
+    for (const code of ['KeyA', 'KeyJ', 'KeyK', 'KeyF', 'KeyR', 'Digit1']) {
       expect(action({ code, scope: 'grid' })).toBeNull()
     }
     expect(action({ code: 'KeyG', ctrlKey: true, scope: 'grid' })).toBeNull()
@@ -255,7 +255,7 @@ describe('scope precedence', () => {
   })
 
   it('timeline edits exist only in the timeline scope', () => {
-    for (const code of ['KeyC', 'KeyH', 'KeyX', 'Delete']) {
+    for (const code of ['KeyC', 'KeyH', 'KeyX', 'Delete', 'KeyI', 'KeyO', 'KeyV', 'Equal', 'Minus']) {
       expect(action({ code, scope: 'timeline' })).not.toBeNull()
       expect(action({ code, scope: 'workspace' })).toBeNull()
     }
@@ -264,7 +264,7 @@ describe('scope precedence', () => {
   })
 
   it('workspace actions stay available in the timeline scope', () => {
-    for (const code of ['Space', 'KeyB', 'KeyJ', 'KeyO', 'KeyF']) {
+    for (const code of ['Space', 'KeyJ', 'KeyF', 'Home', 'End']) {
       expect(action({ code, scope: 'timeline' })).toBe(action({ code, scope: 'workspace' }))
     }
   })

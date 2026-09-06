@@ -6,9 +6,6 @@ export interface TimelineView {
 export const MIN_PX_PER_SEC = 2
 export const MAX_PX_PER_SEC = 2000
 
-export const EDGE_PX = 6
-export const HANDLE_PX = 9
-export const FADE_ZONE_PX = 12
 export const SNAP_PX = 6
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
@@ -111,95 +108,4 @@ export function snapDelta(
     }
   }
   return best
-}
-
-export interface SnapClip {
-  id: string
-  start: number
-  end: number
-}
-
-export function snapTargets(
-  clips: readonly SnapClip[],
-  excludeId: string | null,
-  extra: readonly number[] = []
-): number[] {
-  const out: number[] = [0]
-  for (const c of clips) {
-    if (c.id === excludeId) continue
-    out.push(c.start, c.end)
-  }
-  for (const e of extra) if (Number.isFinite(e) && e >= 0) out.push(e)
-  return [...new Set(out)].sort((a, b) => a - b)
-}
-
-export interface HitClip extends SnapClip {
-  fadeIn: number
-  fadeOut: number
-  crossfade: number
-}
-
-export type HitKind = 'clip' | 'trimStart' | 'trimEnd' | 'fadeIn' | 'fadeOut' | 'crossfade'
-export interface Hit {
-  kind: HitKind
-  id: string
-}
-
-export function hitTest(
-  clips: readonly HitClip[],
-  t: number,
-  pxPerSec: number,
-  top: boolean
-): Hit | null {
-  if (!(pxPerSec > 0)) return null
-  const edge = EDGE_PX / pxPerSec
-  const handle = HANDLE_PX / pxPerSec
-  for (let i = clips.length - 1; i >= 0; i--) {
-    const c = clips[i]
-    if (top) {
-      if (Math.abs(t - (c.start + c.fadeIn)) <= handle) return { kind: 'fadeIn', id: c.id }
-      if (Math.abs(t - (c.end - c.fadeOut)) <= handle) return { kind: 'fadeOut', id: c.id }
-    }
-  }
-  if (!top) {
-    for (let i = clips.length - 1; i >= 0; i--) {
-      const c = clips[i]
-      if (c.crossfade > 0 && t >= c.end - c.crossfade - edge && t <= c.end + edge) {
-        return { kind: 'crossfade', id: c.id }
-      }
-    }
-  }
-  for (let i = clips.length - 1; i >= 0; i--) {
-    const c = clips[i]
-    if (Math.abs(t - c.start) <= edge) return { kind: 'trimStart', id: c.id }
-    if (Math.abs(t - c.end) <= edge) return { kind: 'trimEnd', id: c.id }
-  }
-  for (let i = clips.length - 1; i >= 0; i--) {
-    const c = clips[i]
-    if (t >= c.start && t <= c.end) return { kind: 'clip', id: c.id }
-  }
-  return null
-}
-
-export function clipAt(clips: readonly SnapClip[], t: number): string | null {
-  for (const c of clips) if (t > c.start && t < c.end) return c.id
-  return null
-}
-
-export const REGION_BAND_PX = 11
-
-export type RegionGrab = 'in' | 'out' | 'new'
-
-export function regionHit(
-  region: { in: number; out: number } | undefined,
-  t: number,
-  pxPerSec: number
-): RegionGrab {
-  if (!region || !(pxPerSec > 0)) return 'new'
-  const edge = HANDLE_PX / pxPerSec
-  const dIn = Math.abs(t - region.in)
-  const dOut = Math.abs(t - region.out)
-  if (dIn <= edge && dIn <= dOut) return 'in'
-  if (dOut <= edge) return 'out'
-  return 'new'
 }

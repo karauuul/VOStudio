@@ -5,10 +5,9 @@ import type { AppSettings } from '@shared/ipc'
 import { api, audioUrl } from '../api'
 import { useRecorder, type RecorderApi } from '../audio/recorder'
 import { clipId, transport } from '../audio/transport'
-import { playback } from '../playback'
 import { useCueBusy, useJobsStore } from '../jobs/store'
 import { credits } from './shared'
-import type { ClipSelection } from './WaveLanes'
+import type { ClipSelection } from '../work/TimelinePanel'
 
 interface Options {
   cue: Cue
@@ -78,7 +77,6 @@ export function useVoiceToVoice({
   }, [recError, clearRecError, onStatus])
 
   const startRec = useCallback(() => {
-    playback.cancelCompare()
     const sel = selection()
     if (!sel) {
       targetRef.current = null

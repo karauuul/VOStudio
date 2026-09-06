@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   compProblem,
   compRenderPlan,
-  moveClip,
+  moveClipTo,
   normalizeComp,
   setClipEdits,
   setRegion,
@@ -82,7 +82,7 @@ describe('normalizeComp keeps tracks', () => {
       tracks: twoTracks,
     }
     expect(splitClipAt(comp, 'a', 1).tracks).toEqual(twoTracks)
-    expect(moveClip(comp, 'a', 3).tracks).toEqual(twoTracks)
+    expect(moveClipTo(comp, 'a', 3).tracks).toEqual(twoTracks)
     expect(setClipEdits(comp, 'a', { gainDb: -3 }).tracks).toEqual(twoTracks)
     expect(setRegion(comp, null).tracks).toEqual(twoTracks)
     expect(setRegion(comp, { in: 0, out: 2 }).tracks).toEqual(twoTracks)

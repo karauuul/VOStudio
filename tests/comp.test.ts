@@ -19,7 +19,10 @@ import {
   GAIN_MAX_DB,
   GAIN_MIN_DB,
   isEmptyComp,
-  moveClip,
+  moveClipTo,
+  slipClip,
+  switchClipVersion,
+  compDelta,
   MIN_CLIP_SRC,
   normalizeComp,
   canHeal,
@@ -284,7 +287,7 @@ describe('splitClipAt', () => {
   })
 })
 
-describe('moveClip — neighbours as walls', () => {
+describe('moveClipTo — one track has no overlaps', () => {
   const three = comp(
     clip({ id: 'a', srcOut: 2, start: 0 }),
     clip({ id: 'b', srcOut: 2, start: 3 }),
@@ -292,44 +295,105 @@ describe('moveClip — neighbours as walls', () => {
   )
 
   it('moves within a free window', () => {
-    const c = moveClip(three, 'b', 4)
+    const c = moveClipTo(three, 'b', 4)
     expect(c.clips.find((x) => x.id === 'b')!.start).toBe(4)
     expectValid(c)
   })
 
-  it('the left wall is the end of the previous clip', () => {
-    expect(moveClip(three, 'b', 0).clips.find((x) => x.id === 'b')!.start).toBe(2)
+  it('a move onto the previous clip is refused', () => {
+    expect(moveClipTo(three, 'b', 0).clips.find((x) => x.id === 'b')!.start).toBe(3)
   })
 
-  it('the right wall is the start of the next clip minus the length', () => {
-    expect(moveClip(three, 'b', 99).clips.find((x) => x.id === 'b')!.start).toBe(6)
+  it('a move onto the next clip is refused', () => {
+    expect(moveClipTo(three, 'b', 7).clips.find((x) => x.id === 'b')!.start).toBe(3)
+  })
+
+  it('butting up against a neighbour is allowed', () => {
+    expect(moveClipTo(three, 'b', 2).clips.find((x) => x.id === 'b')!.start).toBe(2)
+    expect(moveClipTo(three, 'b', 6).clips.find((x) => x.id === 'b')!.start).toBe(6)
   })
 
   it('the first clip does not go past zero', () => {
-    expect(moveClip(three, 'a', -5).clips[0].start).toBe(0)
+    expect(moveClipTo(three, 'a', -5).clips[0].start).toBe(0)
   })
 
   it('the last clip has no right wall', () => {
-    expect(moveClip(three, 'c', 100).clips.find((x) => x.id === 'c')!.start).toBe(100)
+    expect(moveClipTo(three, 'c', 100).clips.find((x) => x.id === 'c')!.start).toBe(100)
   })
 
-  it('window narrower than the clip — we stick to the left wall, without overlapping the left neighbour', () => {
-    const tight = comp(
-      clip({ id: 'a', srcOut: 2, start: 0 }),
-      clip({ id: 'b', srcOut: 2, start: 2 }),
-      clip({ id: 'c', srcOut: 2, start: 3 })
-    )
-    const moved = moveClip(tight, 'b', 99)
-    expect(moved.clips.find((x) => x.id === 'b')!.start).toBe(2)
-  })
-
-  it('a move does not change clip order', () => {
-    expect(moveClip(three, 'a', 99).clips.map((x) => x.id)).toEqual(['a', 'b', 'c'])
+  it('another track is free ground: the same seconds are allowed there', () => {
+    const two = normalizeComp({
+      clips: [
+        { ...clip({ id: 'a', srcOut: 2, start: 0 }), trackId: 'track-1' },
+        { ...clip({ id: 'b', srcOut: 2, start: 3 }), trackId: 'track-1' },
+      ],
+      tracks: [
+        { id: 'track-1', name: 'Track 1', gainDb: 0, muted: false, solo: false },
+        { id: 'track-2', name: 'Track 2', gainDb: 0, muted: false, solo: false },
+      ],
+    })
+    const moved = moveClipTo(two, 'b', 0, 'track-2')
+    const b = moved.clips.find((x) => x.id === 'b')!
+    expect(b.start).toBe(0)
+    expect(b.trackId).toBe('track-2')
+    expectValid(moved)
   })
 
   it('unknown clip and NaN — no-op', () => {
-    expect(moveClip(three, 'nope', 1)).toBe(three)
-    expect(moveClip(three, 'b', NaN)).toBe(three)
+    expect(moveClipTo(three, 'nope', 1)).toBe(three)
+    expect(moveClipTo(three, 'b', NaN)).toBe(three)
+  })
+})
+
+describe('slipClip — the window slides over the source', () => {
+  const one = comp(clip({ id: 'a', srcIn: 1, srcOut: 3, start: 2 }))
+
+  it('moves srcIn and srcOut together and keeps start', () => {
+    const c = slipClip(one, 'a', 0.5, 10)
+    expect(c.clips[0].srcIn).toBeCloseTo(1.5, 9)
+    expect(c.clips[0].srcOut).toBeCloseTo(3.5, 9)
+    expect(c.clips[0].start).toBe(2)
+  })
+
+  it('stops at the head and the tail of the source', () => {
+    expect(slipClip(one, 'a', -99, 10).clips[0].srcIn).toBe(0)
+    expect(slipClip(one, 'a', 99, 4).clips[0].srcOut).toBe(4)
+  })
+})
+
+describe('switchClipVersion — the same slot, another take', () => {
+  const two = comp(clip({ id: 'a', srcOut: 2, start: 0 }), clip({ id: 'b', srcOut: 2, start: 5 }))
+
+  it('keeps start and track, resets the source window', () => {
+    const c = switchClipVersion(two, 'a', 't9', 3)
+    const a = c.clips.find((x) => x.id === 'a')!
+    expect(a.sourceTakeId).toBe('t9')
+    expect(a.srcIn).toBe(0)
+    expect(a.srcOut).toBe(3)
+    expect(a.start).toBe(0)
+    expect(c.clips.find((x) => x.id === 'b')!.start).toBe(5)
+  })
+
+  it('refuses a version that would overlap the neighbour', () => {
+    expect(switchClipVersion(two, 'a', 't9', 6).clips[0].sourceTakeId).toBe('t1')
+  })
+
+  it('unknown clip and a zero-length take — no-op', () => {
+    expect(switchClipVersion(two, 'nope', 't9', 3)).toBe(two)
+    expect(switchClipVersion(two, 'a', 't9', 0)).toBe(two)
+  })
+})
+
+describe('compDelta', () => {
+  it('signed difference between the composition and the original', () => {
+    expect(compDelta(comp(clip({ id: 'a', srcOut: 2 })), 1.5)).toBeCloseTo(0.5, 9)
+    expect(compDelta(comp(clip({ id: 'a', srcOut: 2 })), 3)).toBeCloseTo(-1, 9)
+  })
+
+  it('no composition or no original — nothing to compare', () => {
+    expect(compDelta(undefined, 3)).toBeNull()
+    expect(compDelta({ clips: [] }, 3)).toBeNull()
+    expect(compDelta(comp(clip({ id: 'a', srcOut: 2 })), 0)).toBeNull()
   })
 })
 
@@ -595,7 +659,7 @@ describe('mutators mutate nothing', () => {
 
   it('after a full editing cycle the input is unchanged', () => {
     splitClipAt(src, 'a', 2)
-    moveClip(src, 'b', 99)
+    moveClipTo(src, 'b', 99)
     trimClipEdge(src, 'a', 'end', 1, 10)
     setClipEdits(src, 'a', { gainDb: -3, timeStretch: 2 })
     replaceClipSource(src, 'a', 't9', 7)
@@ -882,12 +946,12 @@ describe('crossfade: render plan', () => {
 
   it('a seam that came apart makes the transition INERT but does not erase the field', () => {
     const on = setCrossfade(butted(), 'l', 0.2)
-    const moved = moveClip(on, 'r', 2.5)
+    const moved = moveClipTo(on, 'r', 2.5)
     expect(moved.clips[0].crossfade).toBeCloseTo(0.2, 9)
     const plan = compRenderPlan(moved.clips)
     expect(plan[0].crossfadeOut).toBe(0)
     expect(plan[1].clip.start).toBe(2.5)
-    const back = compRenderPlan(moveClip(moved, 'r', 2).clips)
+    const back = compRenderPlan(moveClipTo(moved, 'r', 2).clips)
     expect(back[0].crossfadeOut).toBeCloseTo(0.2, 9)
   })
 
@@ -1085,7 +1149,7 @@ describe('region survives EVERY mutator', () => {
     })
   }
 
-  survives('moveClip', moveClip(base, 'b', 2.5))
+  survives('moveClipTo', moveClipTo(base, 'b', 2.5))
   survives('splitClipAt', splitClipAt(base, 'a', 1))
   survives('healCut', healCut(splitClipAt(base, 'a', 1), 'a'))
   survives('setClipEdits', setClipEdits(base, 'a', { gainDb: -3 }))

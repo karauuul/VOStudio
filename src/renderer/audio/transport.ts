@@ -116,6 +116,7 @@ interface CompState {
   id: string
   sources: CompSource[]
   tracks?: CompTrack[]
+  original?: { buffer: AudioBuffer; gainDb: number }
   dur: number
   from: number
   until: number
@@ -199,14 +200,15 @@ function makeCompBus(
   when: number,
   seek: number,
   until = Infinity,
-  tracks?: CompTrack[]
+  tracks?: CompTrack[],
+  original?: { buffer: AudioBuffer; gainDb: number }
 ): Bus {
   const c = ac()
   const gain = c.createGain()
   gain.gain.setValueAtTime(0, when)
   gain.gain.linearRampToValueAtTime(1, when + FADE_IN)
   gain.connect(fx as GainNode)
-  const s = scheduleComp(c, sources, gain, { when, seek, tracks })
+  const s = scheduleComp(c, sources, gain, { when, seek, tracks, original })
   const voices = s.voices.map((v) => v.source)
   if (Number.isFinite(until)) {
     const endAt = when + Math.max(0, until - seek)
@@ -418,7 +420,7 @@ function startComp(pos: number, rewindAtEnd: boolean): void {
   const when = c.currentTime + LEAD_IN
   s.at = when
   s.startPos = p
-  s.bus = makeCompBus(s.sources, when, p, p < s.until ? s.until : Infinity, s.tracks)
+  s.bus = makeCompBus(s.sources, when, p, p < s.until ? s.until : Infinity, s.tracks, s.original)
   playing = true
   pausedPos = p
   emit({ clipId: s.id, playing: true, pos: p, dur: s.dur })
@@ -462,12 +464,19 @@ export async function playComp(
   halt()
   dropComp()
   const g = ++gen
-  if (resolved.clips.length === 0) return
+  if (resolved.clips.length === 0 && !resolved.original) return
   const urls = compUrls(resolved)
-  pin(urls)
+  pin(resolved.original ? [...urls, resolved.original.url] : urls)
   let sources: CompSource[]
+  let original: { buffer: AudioBuffer; gainDb: number } | undefined
   try {
     sources = await loadCompSources(resolved)
+    if (resolved.original) {
+      original = {
+        buffer: await getBuffer(resolved.original.url),
+        gainDb: resolved.original.gainDb,
+      }
+    }
   } catch (e) {
     console.error(e)
     return
@@ -476,7 +485,10 @@ export async function playComp(
   if (!(await pitchReady(sources))) return
   if (g !== gen) return
 
-  const dur = compDuration({ clips: sources.map((s) => s.clip) })
+  const dur = Math.max(
+    compDuration({ clips: sources.map((s) => s.clip) }),
+    original?.buffer.duration ?? 0
+  )
   if (!(dur > 0)) return
 
   const r = resolved.region
@@ -488,9 +500,10 @@ export async function playComp(
   mode = 'comp'
   cur = null
   comp = {
-    id: opts.id ?? 'comp:' + urls[0],
+    id: opts.id ?? 'comp:' + (urls[0] ?? resolved.original?.url ?? ''),
     sources,
     ...(resolved.tracks ? { tracks: resolved.tracks } : {}),
+    ...(original ? { original } : {}),
     dur,
     from,
     until,

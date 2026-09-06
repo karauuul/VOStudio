@@ -117,3 +117,24 @@ describe('ui.json target track', () => {
     expect(await readJson(path.join(DIR, 'ui.json'))).toEqual({ filter: '', search: '' })
   })
 })
+
+describe('ui.json timeline view', () => {
+  const DIR = path.join(H.root, 'VOStudio', 'versions-test.vostudio')
+
+  it('survives a save and comes back clamped, and an empty map leaves no key', async () => {
+    await store.openProjectDir(DIR)
+    await store.saveUi({
+      filter: '',
+      search: '',
+      timeline: { 'cue-1': { pxPerSec: 9e9, scroll: 1.5, originalGainDb: -3 } },
+    })
+    expect(await readJson(path.join(DIR, 'ui.json'))).toEqual({
+      filter: '',
+      search: '',
+      timeline: { 'cue-1': { pxPerSec: 2000, scroll: 1.5, originalGainDb: -3 } },
+    })
+
+    await store.saveUi({ filter: '', search: '', timeline: {} })
+    expect(await readJson(path.join(DIR, 'ui.json'))).toEqual({ filter: '', search: '' })
+  })
+})

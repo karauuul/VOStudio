@@ -1,5 +1,6 @@
 import {
   clipSpeed,
+  emptyEdits,
   envelopeDbAt,
   type ClipEdits,
   type CompClip,
@@ -206,6 +207,7 @@ export interface ScheduledComp {
 
 export interface ScheduleCompOptions extends ClipGraphOptions {
   tracks?: CompTrack[]
+  original?: { buffer: AudioBuffer; gainDb: number }
 }
 
 function trackBuses(
@@ -264,5 +266,21 @@ export function scheduleComp(
     voices.push({ source: graph.source, output: graph.output, at, duration: graph.duration })
   }
 
-  return { voices, duration: Math.max(0, compDuration({ clips: sources.map((s) => s.clip) }) - seek) }
+  const orig = opts.original
+  if (orig && orig.buffer.duration > seek) {
+    const graph = buildClipGraph(ctx, orig.buffer, { ...emptyEdits(), gainDb: orig.gainDb }, {
+      when,
+      seek,
+    })
+    if (graph.duration > 0) {
+      graph.output.connect(destination)
+      graph.source.start(when, graph.offset)
+      graph.source.stop(when + graph.duration)
+      voices.push({ source: graph.source, output: graph.output, at: when, duration: graph.duration })
+    }
+  }
+
+  const clipEnd = compDuration({ clips: sources.map((s) => s.clip) })
+  const end = Math.max(clipEnd, orig ? orig.buffer.duration : 0)
+  return { voices, duration: Math.max(0, end - seek) }
 }

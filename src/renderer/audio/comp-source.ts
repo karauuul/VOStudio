@@ -12,14 +12,16 @@ export interface ResolvedComp {
   clips: ResolvedCompClip[]
   region?: CompRegion
   tracks?: CompTrack[]
+  original?: { url: string; gainDb: number }
 }
 
 export function resolveComp(
   project: TakeLookup | undefined,
   cue: Cue,
-  comp: CueComp | null | undefined
+  comp: CueComp | null | undefined,
+  original?: { url: string; gainDb: number }
 ): ResolvedComp | null {
-  if (isEmptyComp(comp ?? undefined)) return null
+  if (isEmptyComp(comp ?? undefined)) return original ? { clips: [], original } : null
   const clips = comp!.clips.map((clip) => {
     const found = resolveTake(project, cue, clip.sourceTakeId)
     if (!found) throw new Error(`Composition clip "${clip.id}": take ${clip.sourceTakeId} is gone`)
@@ -29,16 +31,18 @@ export function resolveComp(
     clips,
     ...(comp!.region ? { region: comp!.region } : {}),
     ...(comp!.tracks ? { tracks: comp!.tracks } : {}),
+    ...(original ? { original } : {}),
   }
 }
 
 export function tryResolveComp(
   project: TakeLookup | undefined,
   cue: Cue,
-  comp: CueComp | null | undefined
+  comp: CueComp | null | undefined,
+  original?: { url: string; gainDb: number }
 ): ResolvedComp | null {
   try {
-    return resolveComp(project, cue, comp)
+    return resolveComp(project, cue, comp, original)
   } catch {
     return null
   }
