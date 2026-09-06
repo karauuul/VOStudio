@@ -9,6 +9,7 @@ import {
   maxCrossfade,
   setCrossfade,
   setRegion,
+  REGION_HEADROOM,
   setRegionEdge,
   clipTimelineDuration,
   compClipEdits,
@@ -1090,9 +1091,13 @@ describe('region: normalization and validation', () => {
     expect('region' in normalizeComp(two)).toBe(false)
   })
 
-  it('clamped to comp duration', () => {
+  it('IN is clamped to comp duration, OUT may sit past it', () => {
     const out = normalizeComp({ clips: two.clips, region: { in: -3, out: 99 } })
-    expect(out.region).toEqual({ in: 0, out: 4 })
+    expect(out.region).toEqual({ in: 0, out: 99 })
+    expect(normalizeComp({ clips: two.clips, region: { in: 9, out: 99 } }).region).toEqual({
+      in: 4,
+      out: 99,
+    })
   })
 
   it('a degenerate window is dropped entirely', () => {
@@ -1132,6 +1137,13 @@ describe('region: normalization and validation', () => {
     expect(setRegionEdge(on, 'in', 3.5).region).toEqual({ in: 3.5, out: 4 })
     expect(setRegionEdge(on, 'out', 0.5).region).toEqual({ in: 0, out: 0.5 })
   })
+
+  it('OUT reaches past the comp, up to the longer of comp and original plus the headroom', () => {
+    expect(setRegionEdge(two, 'out', 20).region).toEqual({ in: 0, out: 20 })
+    expect(setRegionEdge(two, 'out', 500).region).toEqual({ in: 0, out: 4 + REGION_HEADROOM })
+    expect(setRegionEdge(two, 'out', 500, 30).region).toEqual({ in: 0, out: 30 + REGION_HEADROOM })
+    expect(setRegionEdge(two, 'in', 20).region).toBeUndefined()
+  })
 })
 
 describe('region survives EVERY mutator', () => {
@@ -1157,14 +1169,15 @@ describe('region survives EVERY mutator', () => {
   survives('setCrossfade', setCrossfade(base, 'a', 0.08))
   survives('insertClipFromTake', insertClipFromTake(base, 't', 0.5, 10))
 
-  it('replaceClipSource too, and it clamps the region to the new length', () => {
+  it('replaceClipSource too, and OUT stays where the user put it', () => {
     const out = replaceClipSource(base, 'b', 't2', 0.5)
-    expect(out.region).toEqual({ in: 0.5, out: 2.5 })
+    expect(compDuration(out)).toBe(2.5)
+    expect(out.region).toEqual({ in: 0.5, out: 3.5 })
   })
 
-  it('removing material under OUT pulls it in instead of leaving it past the edge', () => {
+  it('removing material under OUT leaves OUT past the edge', () => {
     const out = removeClip(base, 'b')
     expect(compDuration(out)).toBe(2)
-    expect(out.region).toEqual({ in: 0.5, out: 2 })
+    expect(out.region).toEqual({ in: 0.5, out: 3.5 })
   })
 })

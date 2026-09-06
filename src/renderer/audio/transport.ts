@@ -35,16 +35,34 @@ const SCRUB_SEEK_MS = 60
 
 let ctx: AudioContext | null = null
 let fx: GainNode | null = null
+let monitor: GainNode | null = null
+let monitorGain = 1
+let looping = false
+
+export function setMonitorGain(v: number): void {
+  monitorGain = Math.min(1, Math.max(0, v))
+  if (monitor && ctx) monitor.gain.setTargetAtTime(monitorGain, ctx.currentTime, 0.01)
+}
+
+export function setLoop(on: boolean): void {
+  looping = on
+}
+
+export function getLoop(): boolean {
+  return looping
+}
 
 function ac(): AudioContext {
   if (ctx) return ctx
   const c = new AudioContext()
   const f = c.createGain()
   const m = c.createGain()
+  m.gain.value = monitorGain
   f.connect(m)
   m.connect(c.destination)
   ctx = c
   fx = f
+  monitor = m
   void ensurePitchModule(c).catch(() => {})
   const wake = (): void => {
     void c.resume().catch(() => {})
@@ -403,6 +421,10 @@ function onClipEnded(): void {
   const c = cur
   teardown()
   pausedPos = 0
+  if (looping && c?.buf) {
+    startClip(0, false)
+    return
+  }
   emit({ clipId: c?.id ?? null, playing: false, pos: 0, dur: c?.dur ?? 0 })
 }
 
@@ -646,6 +668,10 @@ function tick(): void {
     if (now >= s.at + (stopAt - s.startPos)) {
       teardown()
       pausedPos = stopAt >= s.dur ? s.from : stopAt
+      if (looping) {
+        startComp(s.from, false)
+        return
+      }
       emit({ clipId: s.id, playing: false, pos: pausedPos, dur: s.dur })
       return
     }
@@ -673,4 +699,7 @@ export const transport = {
   sourceLabel,
   getBuffer,
   release,
+  setLoop,
+  getLoop,
+  setMonitorGain,
 }

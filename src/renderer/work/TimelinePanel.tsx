@@ -12,6 +12,7 @@ import {
   clipTimelineDuration,
   clipTrackId,
   compDelta,
+  COMP_EPS,
   GAIN_MAX_DB,
   GAIN_MIN_DB,
   compDuration,
@@ -113,6 +114,8 @@ export interface CompApi {
 export type Tool = 'select' | 'razor' | 'trim' | 'fade' | 'slip'
 
 const STRIP = 190
+const STEP_SECONDS = 0.1
+const RESCHEDULE_MS = 80
 const ORIG_H = 150
 const TRACK_H = 165
 const EDGE_PX = 6
@@ -315,6 +318,7 @@ export function TimelinePanel({
 
   const paintHead = useCallback((t: number): void => {
     posRef.current = t
+    playback.setPos(t)
     const el = headRef.current
     if (el) el.style.transform = `translateX(${(STRIP + timeToX(viewRef.current, t)).toFixed(2)}px)`
   }, [])
@@ -400,9 +404,53 @@ export function TimelinePanel({
       },
       goIn: () => seek(regionIn, true),
       goOut: () => seek(regionOut, true),
+      seek: (t) => seek(t, true),
+      step: (dir) => {
+        const at = posRef.current
+        const words =
+          cue && comp.clips.some((c) => takeOf(c)?.words)
+            ? wordSnapPoints(comp, cue, project)
+            : []
+        const next =
+          dir < 0
+            ? [...words].reverse().find((p) => p < at - COMP_EPS)
+            : words.find((p) => p > at + COMP_EPS)
+        seek(next ?? Math.max(0, at + dir * STEP_SECONDS), true)
+      },
     }),
-    [transportId, playingId, playFrom, regionIn, regionOut, comp, takeOf, seek]
+    [transportId, playingId, playFrom, regionIn, regionOut, comp, takeOf, seek, cue, project]
   )
+
+  const audioSig = useMemo(
+    () =>
+      JSON.stringify([
+        tracks.map((t) => [t.id, t.gainDb, t.muted, t.solo, t.effects ?? null]),
+        [origAudible, origGainDb, origSolo, origMuted],
+        live.clips.map((c) => [
+          c.id,
+          c.start,
+          c.srcIn,
+          c.srcOut,
+          c.sourceTakeId,
+          c.edits,
+          c.crossfade ?? 0,
+          clipTrackId(c),
+        ]),
+        live.region ?? null,
+      ]),
+    [tracks, origAudible, origGainDb, origSolo, origMuted, live]
+  )
+
+  const sigRef = useRef(audioSig)
+  const rescheduleRef = useRef(0)
+  useEffect(() => () => window.clearTimeout(rescheduleRef.current), [])
+  useEffect(() => {
+    if (sigRef.current === audioSig) return
+    sigRef.current = audioSig
+    if (!transportId || playingId !== transportId) return
+    window.clearTimeout(rescheduleRef.current)
+    rescheduleRef.current = window.setTimeout(() => playFrom(posRef.current), RESCHEDULE_MS)
+  }, [audioSig, transportId, playingId, playFrom])
 
   useEffect(() => {
     playback.setOps(ops)
@@ -803,11 +851,11 @@ export function TimelinePanel({
       },
       setIn: () => {
         const base = compRefLive.current
-        commit(setRegionEdge(base, 'in', posRef.current))
+        commit(setRegionEdge(base, 'in', posRef.current, refDur))
       },
       setOut: () => {
         const base = compRefLive.current
-        commit(setRegionEdge(base, 'out', posRef.current))
+        commit(setRegionEdge(base, 'out', posRef.current, refDur))
       },
       zoom: zoomBy,
       selectTool: () => setTool('select'),

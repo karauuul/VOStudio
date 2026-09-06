@@ -52,6 +52,8 @@ export type KeyAction =
   | 'copySource'
   | 'copyTranslation'
   | 'copyPrompt'
+  | 'insertSource'
+  | 'replaceSource'
   | 'escape'
 
 export interface Binding {
@@ -158,6 +160,8 @@ export const BINDINGS: Binding[] = [
   { action: 'copySource', codes: ['KeyS'], scopes: WORK, label: 'Copy source' },
   { action: 'copyTranslation', codes: ['KeyT'], scopes: WORK, label: 'Copy translation' },
   { action: 'copyPrompt', codes: ['KeyP'], scopes: WORK, label: 'Copy prompt' },
+  { action: 'insertSource', codes: ['Comma'], scopes: WORK, label: 'Insert source' },
+  { action: 'replaceSource', codes: ['Period'], scopes: WORK, label: 'Replace with source' },
   { action: 'splitClip', codes: ['KeyC'], scopes: TIMELINE, label: 'Cut' },
   { action: 'healClip', codes: ['KeyH'], scopes: TIMELINE, label: 'Heal' },
   { action: 'crossfadeClip', codes: ['KeyX'], scopes: TIMELINE, label: 'Crossfade' },
@@ -180,6 +184,7 @@ const CODE_NAMES: Record<string, string> = {
   ArrowLeft: '←',
   ArrowRight: '→',
   Comma: ',',
+  Period: '.',
   Equal: '=',
   Minus: '-',
   Escape: 'Esc',
@@ -267,6 +272,8 @@ export interface KeyboardHandlers {
   copySource: () => void
   copyTranslation: () => void
   copyPrompt: () => void
+  insertSource: () => void
+  replaceSource: () => void
   escape: () => boolean
   stopPlayback: () => void
 }

@@ -128,13 +128,22 @@ describe('app surfaces', () => {
   })
 
   it('they need their exact modifiers and stay out of blocking surfaces', () => {
-    expect(action({ code: 'Comma' })).toBeNull()
+    expect(action({ code: 'Comma', scope: 'grid' })).toBeNull()
     expect(action({ code: 'Comma', ctrlKey: true, shiftKey: true })).toBeNull()
     expect(action({ code: 'F1', ctrlKey: true })).toBeNull()
     for (const scope of ['popover'] as Scope[]) {
       expect(action({ code: 'Comma', ctrlKey: true, scope })).toBeNull()
       expect(action({ code: 'F1', scope })).toBeNull()
     }
+  })
+
+  it('bare comma and period place the selected source, only in the Work room', () => {
+    expect(action({ code: 'Comma' })).toBe('insertSource')
+    expect(action({ code: 'Period' })).toBe('replaceSource')
+    expect(action({ code: 'Comma', scope: 'timeline' })).toBe('insertSource')
+    expect(action({ code: 'Period', scope: 'timeline' })).toBe('replaceSource')
+    expect(action({ code: 'Comma', scope: 'text' })).toBeNull()
+    expect(action({ code: 'Period', scope: 'grid' })).toBeNull()
   })
 
   it('Home has no Work, grid or route commands, only Escape', () => {

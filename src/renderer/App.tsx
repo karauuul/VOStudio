@@ -40,6 +40,7 @@ import { useProjectSession, type StatusKind } from './useProjectSession'
 import type { EffectName, EffectsTarget } from './cue/ClipParams'
 import { Inspector, type InspectorTab } from './cue/Inspector'
 import type { CompApi } from './work/TimelinePanel'
+import { ProgramPanel, type ProgramApi } from './work/ProgramPanel'
 import { CueText } from './work/CueText'
 import { TimelinePanel } from './work/TimelinePanel'
 import { CharactersDialog } from './CharactersDialog'
@@ -62,7 +63,8 @@ import {
   shouldSelectCandidate,
   type PreviewSource,
 } from '@shared/workspace-source'
-import { isEmptyComp } from '@shared/comp'
+import { compDuration, isEmptyComp } from '@shared/comp'
+import { versionLabel } from '@shared/library'
 import type { ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
 import { buildPrompt } from '@shared/prompt'
 import {
@@ -70,6 +72,7 @@ import {
   deriveGenTarget,
   placeTake,
   targetText,
+  toPercent,
   type GenTarget,
   type TextRange,
 } from '@shared/generation'
@@ -105,10 +108,12 @@ export default function App() {
   const [timelineView, setTimelineView] = useState<Record<string, TimelineViewState>>({})
   const [exported, setExported] = useState<ReadonlySet<string>>(() => new Set())
   const [textSel, setTextSel] = useState<TextRange | null>(null)
+  const [sourceTakeId, setSourceTakeId] = useState<string | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
 
   const compRef = useRef<CompApi | null>(null)
+  const programRef = useRef<ProgramApi | null>(null)
   const recRef = useRef<(() => void) | null>(null)
   const escRef = useRef<(() => boolean) | null>(null)
   const recActiveRef = useRef<(() => boolean) | null>(null)
@@ -282,6 +287,7 @@ export default function App() {
   if (previewCueId !== activeCue?.id) {
     setPreviewCueId(activeCue?.id)
     setPreviewSource(activeCue ? initialPreviewSource(activeCue) : { kind: 'none' })
+    setSourceTakeId(null)
   } else if (activeCue && previewSource.kind === 'comp' && isEmptyComp(activeCue.comp)) {
     setPreviewSource(initialPreviewSource(activeCue))
   }
@@ -433,6 +439,7 @@ export default function App() {
         pushStatus('err', 'The final take cannot be deleted')
         return
       }
+      if (sourceTakeId === takeId) setSourceTakeId(null)
       if (previewSource.kind === 'take' && previewSource.takeId === takeId) {
         const rest = liveTakes(cue).filter((t) => t.id !== takeId)
         setPreviewSource(rest[0] ? { kind: 'take', takeId: rest[0].id } : { kind: 'none' })
@@ -441,7 +448,7 @@ export default function App() {
         pushStatus('err', String(e))
       )
     },
-    [activeCue, previewSource, dispatch, pushStatus]
+    [activeCue, previewSource, sourceTakeId, dispatch, pushStatus]
   )
 
   const onVoiceChange = useCallback(
@@ -872,7 +879,9 @@ export default function App() {
       generate: () => generate(genTarget.kind),
       approve: () => void onApprove(true),
       approveNext: onApproveNext,
-      playPause: () => playback.toggle(),
+      playPause: () => {
+        if (!programRef.current?.toggle()) playback.toggle()
+      },
       playClip: () => playback.playClip(),
       restartActive: () => playback.restart(),
       goIn: () => playback.goIn(),
@@ -885,8 +894,12 @@ export default function App() {
       stopPlayback: () => playback.stop(),
       selectTake: (n) => {
         const t = activeTakes[n]
-        if (t) selectSource({ kind: 'take', takeId: t.id })
+        if (!t) return
+        selectSource({ kind: 'take', takeId: t.id })
+        setSourceTakeId(t.id)
       },
+      insertSource: () => programRef.current?.insert(),
+      replaceSource: () => programRef.current?.replace(),
       makeFinal,
       deleteClip: () => {
         compRef.current?.deleteSelected()
@@ -1050,6 +1063,56 @@ export default function App() {
       }
     : null
 
+  const sourceTake = sourceTakeId
+    ? activeTakes.find((t) => t.id === sourceTakeId)
+    : undefined
+  const compDur = activeCue?.comp ? compDuration(activeCue.comp) : 0
+  const refDur = activeCue?.referenceDuration ?? 0
+  const sourceVoice = sourceTake?.meta.voiceSettings ?? resolveVoiceSettings(activeCharacter, activeCue)
+
+  const program: ComponentProps<typeof ProgramPanel> = {
+    sourceText: activeCue?.sourceText ?? '',
+    text: activeCue?.text ?? '',
+    duration: Math.max(compDur, refDur),
+    referenceDuration: refDur,
+    compDuration: compDur,
+    monitorId: activeCueId ? clipId.comp(activeCueId) : null,
+    source:
+      activeCue && sourceTake
+        ? {
+            takeId: sourceTake.id,
+            label: versionLabel(activeCue, project, sourceTake.id),
+            duration: sourceTake.duration,
+            relPath: sourceTake.file.relPath,
+            text: sourceTake.meta.text?.trim() || activeCue.text,
+            settings: [
+              activeCharacter?.name ?? 'No character',
+              toPercent(sourceVoice.stability),
+              toPercent(sourceVoice.similarity),
+              toPercent(sourceVoice.style),
+              sourceVoice.speed.toFixed(2),
+            ].join(' · '),
+            color: '#3fb8a8',
+            ...(sourceTake.words ? { words: sourceTake.words } : {}),
+          }
+        : null,
+    onInsert: () => {
+      if (activeCue && sourceTake) {
+        void placeOnComp(activeCue.id, sourceTake).catch((e: unknown) => pushStatus('err', String(e)))
+      }
+    },
+    onReplace: () => {
+      const target = compRef.current?.selection()?.clipId
+      if (activeCue && sourceTake && target) {
+        void placeOnComp(activeCue.id, sourceTake, target).catch((e: unknown) =>
+          pushStatus('err', String(e))
+        )
+      }
+    },
+    canReplace: !!clipTarget,
+    programRef,
+  }
+
   const timeline: ComponentProps<typeof TimelinePanel> = {
     cue: activeCue ?? null,
     cues: project.cues,
@@ -1140,6 +1203,7 @@ export default function App() {
         total={project.cues.length}
         text={text}
         cueText={cueText}
+        program={program}
         timeline={timeline}
         inspector={inspector}
       />
