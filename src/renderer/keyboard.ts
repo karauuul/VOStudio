@@ -295,7 +295,7 @@ export interface KeyboardScopes {
 }
 
 const LOCAL = '[role="menu"], [role="dialog"], .modal'
-const NATIVE = 'button, a[href], select, [role="separator"], [role="button"], summary'
+const NATIVE = 'button, a[href], select, input, [role="separator"], [role="button"], summary'
 const NATIVE_CODES = [
   'Enter',
   'NumpadEnter',
@@ -305,19 +305,33 @@ const NATIVE_CODES = [
   'ArrowRight',
 ]
 
-function isEditor(el: HTMLElement | null): boolean {
+const RANGE_CODES = ['Home', 'End', 'PageUp', 'PageDown']
+
+const TEXT_INPUT_TYPES = ['text', 'search', 'number', 'url', 'email', 'password', 'tel']
+
+export interface EditorTarget {
+  tagName: string
+  type?: string
+  isContentEditable?: boolean
+}
+
+export function isEditor(el: EditorTarget | null): boolean {
   if (!el) return false
-  const tag = el.tagName
-  return tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT' || el.isContentEditable
+  if (el.isContentEditable) return true
+  if (el.tagName === 'TEXTAREA') return true
+  if (el.tagName !== 'INPUT') return false
+  return TEXT_INPUT_TYPES.includes(el.type ?? 'text')
 }
 
 export function keyScope(
-  target: { code: string; editor: boolean; native: boolean },
+  target: { code: string; editor: boolean; native: boolean; select?: boolean; range?: boolean },
   ctx: KeyboardScopes
 ): Scope | null {
   if (ctx.home) return 'home'
   if (ctx.deliver) return 'deliver'
   if (target.editor) return ctx.grid ? 'gridText' : 'text'
+  if (target.select && target.code !== 'Space') return null
+  if (target.range && RANGE_CODES.includes(target.code)) return null
   if (target.native && NATIVE_CODES.includes(target.code)) return null
   if (ctx.grid) return 'grid'
   return ctx.timeline ? 'timeline' : 'workspace'
@@ -339,7 +353,13 @@ export function useKeyboard(
       const el = e.target instanceof HTMLElement ? e.target : null
       if (el?.closest(LOCAL)) return
       const scope = keyScope(
-        { code: e.code, editor: isEditor(el), native: !!el?.closest(NATIVE) },
+        {
+          code: e.code,
+          editor: isEditor(el),
+          native: !!el?.closest(NATIVE),
+          select: el?.tagName === 'SELECT',
+          range: el instanceof HTMLInputElement && el.type === 'range',
+        },
         scopeRef.current
       )
       if (!scope) return

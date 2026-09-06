@@ -12,6 +12,7 @@ import {
   projectDirSchema,
   projectNameSchema,
   batchExportSchema,
+  appSettingsSchema,
   detectSchema,
   saveVersionSchema,
   stemsSchema,
@@ -192,12 +193,6 @@ const tableImportSchema = z.object({
 const transcribeSchema = z.object({
   cueIds: z.array(z.string().min(1).max(200)).min(1).max(500),
   overwrite: z.boolean().optional(),
-})
-
-const settingsSchema = z.object({
-  micDeviceId: z.string().max(500).optional(),
-  countIn: z.boolean(),
-  autoReference: z.boolean(),
 })
 
 const stamp = (): string => new Date().toISOString().replace(/[:.]/g, '-')
@@ -874,7 +869,7 @@ function registerHandlers(): void {
 
   typedHandle('settings:get', () => store.getSettings())
   typedHandle('settings:set', async (s: AppSettings) => {
-    await store.setSettings(settingsSchema.parse(s))
+    await store.setSettings(appSettingsSchema.parse(s))
   })
   typedHandle('updater:getStatus', async () => getUpdateStatus())
   typedHandle('updater:check', () => checkForUpdates())
@@ -955,7 +950,7 @@ void app.whenReady().then(() => {
   })
 
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {
-    cb(permission === 'media' || permission === 'clipboard-sanitized-write')
+    cb(permission === 'media' || permission === 'speaker-selection' || permission === 'clipboard-sanitized-write')
   })
 
   registerHandlers()

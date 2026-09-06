@@ -89,7 +89,12 @@ export function LinesPanel({
         ref={vRef}
         className="lines"
         groupCounts={counts}
-        groupContent={(i) => <div className="grp">{groups[i]?.name.toUpperCase()}</div>}
+        groupContent={(i) => (
+          <div className="grp">
+            <span>{groups[i]?.name.toUpperCase()}</span>
+            <span>{groups[i]?.count}</span>
+          </div>
+        )}
         itemContent={(i) => {
           const cue = cues[i]
           if (!cue) return null

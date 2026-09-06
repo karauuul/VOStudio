@@ -39,6 +39,8 @@ export interface StsRequest {
 
 export interface AppSettings {
   micDeviceId?: string
+  micDeviceLabel?: string
+  outputDeviceLabel?: string
   countIn: boolean
   autoReference: boolean
 }

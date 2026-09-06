@@ -17,6 +17,7 @@ import { timecode } from './TimelinePanel'
 
 const STEP_SECONDS = 0.1
 const GAIN_KEY = 'vo.monitor.gain'
+const METER_DECAY = 0.86
 
 export interface ProgramSourceView {
   takeId: string
@@ -93,6 +94,7 @@ export function ProgramPanel({
   const [fill, setFill] = useState(false)
   const [aspect, setAspect] = useState('source')
   const videoRef = useRef<HTMLVideoElement>(null)
+  const meterRef = useRef<HTMLElement>(null)
 
   const sourceId = source?.takeId ?? null
   if (shownSource !== sourceId) {
@@ -142,6 +144,10 @@ export function ProgramPanel({
     if (!source || !auditionId) return
     if (state.playing && state.clipId === auditionId) {
       transport.pause()
+      return
+    }
+    if (transport.currentClipId() === auditionId) {
+      transport.play()
       return
     }
     void transport.playClip({ id: auditionId, url: audioUrl(source.relPath) })
@@ -218,6 +224,26 @@ export function ProgramPanel({
     window.addEventListener('mousedown', onDown)
     return () => window.removeEventListener('mousedown', onDown)
   }, [gainOpen])
+
+  useEffect(() => {
+    const level = (v: number): void => {
+      const el = meterRef.current
+      if (el) el.style.transform = `scaleX(${v.toFixed(3)})`
+    }
+    if (!state.playing) {
+      level(0)
+      return
+    }
+    let raf = 0
+    let held = 0
+    const loop = (): void => {
+      held = Math.min(1, Math.max(transport.monitorPeak(), held * METER_DECAY))
+      level(held)
+      raf = requestAnimationFrame(loop)
+    }
+    loop()
+    return () => cancelAnimationFrame(raf)
+  }, [state.playing])
 
   const subtitle = useMemo(() => {
     if (onSource || !sourceText || !(referenceDuration > 0)) return null
@@ -491,16 +517,43 @@ export function ProgramPanel({
                   />
                 </svg>
               </button>
+              <span className="prog-meter" aria-hidden="true">
+                <i ref={meterRef} />
+              </span>
               <span className="prog-vol">
                 <button
                   className={'ico' + (gainOpen ? ' on' : '')}
-                  aria-label="Monitor volume"
+                  aria-label={gain === 0 ? 'Monitor volume, muted' : 'Monitor volume'}
                   data-hint="Volume"
                   onClick={() => setGainOpen((v) => !v)}
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14">
                     <path d="M1 5h3l4-3v10l-4-3H1z" fill="currentColor" />
-                    <path d="M10 4a4 4 0 0 1 0 6" fill="none" stroke="currentColor" strokeWidth="1.4" />
+                    {gain === 0 ? (
+                      <path
+                        d="M10 4.5l3.2 5M13.2 4.5l-3.2 5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                      />
+                    ) : (
+                      <>
+                        <path
+                          d="M9.8 5.2a2.6 2.6 0 0 1 0 3.6"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.4"
+                        />
+                        {gain >= 0.5 && (
+                          <path
+                            d="M11.9 3.4a5.2 5.2 0 0 1 0 7.2"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.4"
+                          />
+                        )}
+                      </>
+                    )}
                   </svg>
                 </button>
                 {gainOpen && (

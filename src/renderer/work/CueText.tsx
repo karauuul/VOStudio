@@ -21,7 +21,6 @@ export interface CueTextProps {
   guardRef: MutableRefObject<((proceed: () => void) => boolean) | null>
   focusTextRef: MutableRefObject<(() => void) | null>
   appSettings: AppSettings
-  onAppSettings: (s: AppSettings) => void
   onTakeAdded: (cueId: string, take: Take, explicit?: boolean) => void
   onStatus: (kind: 'ok' | 'err' | 'info', text: string) => void
   isActiveCue: (cueId: string) => boolean
@@ -43,7 +42,6 @@ export function CueText({
   guardRef,
   focusTextRef,
   appSettings,
-  onAppSettings,
   onTakeAdded,
   onStatus,
   isActiveCue,
@@ -107,10 +105,6 @@ export function CueText({
       onRecord={v2v.toggleRec}
       recording={v2v.rec.phase !== 'idle'}
       recordDisabled={v2v.converting}
-      devices={v2v.rec.devices}
-      deviceId={appSettings.micDeviceId}
-      onDevice={(micDeviceId) => onAppSettings({ ...appSettings, micDeviceId })}
-      onRefreshDevices={v2v.rec.refreshDevices}
     />
   )
 }
