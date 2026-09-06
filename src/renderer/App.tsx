@@ -19,6 +19,7 @@ import {
   type VoiceSettings,
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
+import { pickHistory, redoStale } from '@shared/undo-route'
 import type { UpdateStatus } from '@shared/updater'
 import { api, audioUrl } from './api'
 import { clipId, setOutputDevice, transport } from './audio/transport'
@@ -92,6 +93,16 @@ import { getPeaks, sourceColor } from './Waveform'
 
 type CopyKind = 'source' | 'translation' | 'prompt'
 
+const FX_HISTORY_LIMIT = 100
+
+interface TakeEffectsEdit {
+  cueId: string
+  takeId: string
+  prev: ClipEffects | undefined
+  next: ClipEffects | undefined
+  at: number
+}
+
 export default function App() {
   const [activeCueId, setActiveCueId] = useState<string | undefined>(undefined)
   const [filter, setFilter] = useState(DEFAULT_FILTER)
@@ -140,6 +151,8 @@ export default function App() {
   const selectSeqRef = useRef(0)
   const statusSeq = useRef(0)
   const activeCueIdRef = useRef<string | undefined>(undefined)
+  const fxUndoRef = useRef<TakeEffectsEdit[]>([])
+  const fxRedoRef = useRef<TakeEffectsEdit[]>([])
   const exportingRef = useRef(false)
   const targetTrackRef = useRef<Record<string, string>>({})
   targetTrackRef.current = targetTrack
@@ -152,6 +165,8 @@ export default function App() {
 
   useEffect(() => {
     activeCueIdRef.current = activeCueId
+    fxUndoRef.current = []
+    fxRedoRef.current = []
   }, [activeCueId])
 
   const isActiveCue = useCallback((cueId: string) => activeCueIdRef.current === cueId, [])
@@ -917,20 +932,61 @@ export default function App() {
     void api['provider:models']().then(setProviderModels, () => setProviderModels([]))
   }, [])
 
+  const applyTakeEffects = useCallback(
+    (cueId: string, takeId: string, effects: ClipEffects | undefined): boolean => {
+      const p = projectRef.current
+      const owner = p?.cues.find((c) => c.id === cueId)
+      if (!p || !owner || !resolveTake(p, owner, takeId)) return false
+      void dispatch({
+        type: 'cue.setTakeEffects',
+        cueId,
+        takeId,
+        effects: effects ?? null,
+      }).catch((e: unknown) => pushStatus('err', String(e)))
+      return true
+    },
+    [projectRef, dispatch, pushStatus]
+  )
+
   const onTakeEffects = useCallback(
     (takeId: string, effects: ClipEffects | undefined) => {
       const p = projectRef.current
       const cue = p?.cues.find((c) => c.id === activeCueIdRef.current)
-      const owner = cue && p ? resolveTake(p, cue, takeId)?.cue : undefined
-      if (!owner) return
-      void dispatch({
-        type: 'cue.setTakeEffects',
-        cueId: owner.id,
-        takeId,
-        effects: effects ?? null,
-      }).catch((e: unknown) => pushStatus('err', String(e)))
+      const found = cue && p ? resolveTake(p, cue, takeId) : undefined
+      if (!found) return
+      const prev = found.take.edits.effects
+      if (JSON.stringify(prev ?? null) !== JSON.stringify(effects ?? null)) {
+        fxUndoRef.current.push({ cueId: found.cue.id, takeId, prev, next: effects, at: Date.now() })
+        if (fxUndoRef.current.length > FX_HISTORY_LIMIT) fxUndoRef.current.shift()
+        fxRedoRef.current = []
+      }
+      applyTakeEffects(found.cue.id, takeId, effects)
     },
-    [projectRef, dispatch, pushStatus]
+    [projectRef, applyTakeEffects]
+  )
+
+  const historyStep = useCallback(
+    (dir: 'undo' | 'redo') => {
+      const comp = compRef.current
+      const topAt = (stack: TakeEffectsEdit[]): number | null => stack[stack.length - 1]?.at ?? null
+      if (redoStale(topAt(fxRedoRef.current), comp?.lastEditAt('undo') ?? null)) fxRedoRef.current = []
+      if (redoStale(comp?.lastEditAt('redo') ?? null, topAt(fxUndoRef.current))) comp?.dropRedo()
+      const from = dir === 'undo' ? fxUndoRef : fxRedoRef
+      const side = pickHistory({ comp: comp?.lastEditAt(dir) ?? null, fx: topAt(from.current) }, dir)
+      if (side === 'comp') {
+        if (dir === 'undo') comp?.undo()
+        else comp?.redo()
+        return
+      }
+      if (side !== 'fx') return
+      const entry = from.current.pop()
+      if (!entry) return
+      const to = dir === 'undo' ? fxRedoRef : fxUndoRef
+      if (applyTakeEffects(entry.cueId, entry.takeId, dir === 'undo' ? entry.prev : entry.next)) {
+        to.current.push(entry)
+      }
+    },
+    [applyTakeEffects]
   )
 
   const move = useCallback(
@@ -990,8 +1046,8 @@ export default function App() {
       splitAtPlayhead: () => compRef.current?.splitAtPlayhead(),
       healClip: () => compRef.current?.heal(),
       crossfadeClip: () => compRef.current?.crossfade(),
-      undo: () => compRef.current?.undo(),
-      redo: () => compRef.current?.redo(),
+      undo: () => historyStep('undo'),
+      redo: () => historyStep('redo'),
       acceptSuggestion: onAcceptSuggestion,
       rejectSuggestion: onRejectSuggestion,
       toggleRecord: () => recRef.current?.(),
@@ -1028,6 +1084,7 @@ export default function App() {
       onCopy,
       sourceTakeId,
       deleteSelectedSource,
+      historyStep,
     ]
   )
 

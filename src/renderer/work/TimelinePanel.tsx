@@ -143,6 +143,8 @@ export interface CompApi {
   crossfade: () => void
   undo: () => void
   redo: () => void
+  lastEditAt: (dir: 'undo' | 'redo') => number | null
+  dropRedo: () => void
   selection: () => ClipSelection | null
   playhead: () => number
   editSelected: (patch: Partial<ClipEdits>, commit: boolean) => void
@@ -1185,6 +1187,8 @@ export function TimelinePanel({
       redo: () => {
         if (editable) edit.redo()
       },
+      lastEditAt: (dir) => (editable ? edit.lastAt(dir) : null),
+      dropRedo: () => edit.dropRedo(),
       selection: () => {
         const base = compRefLive.current
         const id = selId()
