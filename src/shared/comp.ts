@@ -26,6 +26,26 @@ export function clipTrackId(clip: CompClip): string {
   return clip.trackId ?? DEFAULT_TRACK_ID
 }
 
+export function trackClips(comp: CueComp, trackId: string): CompClip[] {
+  return comp.clips
+    .filter((c) => clipTrackId(c) === trackId)
+    .sort((a, b) => a.start - b.start || a.id.localeCompare(b.id))
+}
+
+interface Siblings {
+  clip: CompClip
+  prev?: CompClip
+  next?: CompClip
+}
+
+function siblings(comp: CueComp, clipId: string): Siblings | null {
+  const clip = comp.clips.find((c) => c.id === clipId)
+  if (!clip) return null
+  const row = trackClips(comp, clipTrackId(clip))
+  const k = row.findIndex((c) => c.id === clipId)
+  return { clip, prev: row[k - 1], next: row[k + 1] }
+}
+
 function groupByTrack(clips: readonly CompClip[]): Map<string, number[]> {
   const groups = new Map<string, number[]>()
   for (let i = 0; i < clips.length; i++) {
@@ -231,10 +251,9 @@ export function crossfadeRoom(a: CompClip, b: CompClip): number {
 }
 
 export function maxCrossfade(comp: CueComp, clipId: string): number {
-  const norm = normalizeComp(comp)
-  const i = indexOf(norm, clipId)
-  if (i < 0 || i >= norm.clips.length - 1) return 0
-  return crossfadeRoom(norm.clips[i], norm.clips[i + 1])
+  const pair = siblings(normalizeComp(comp), clipId)
+  if (!pair?.next) return 0
+  return crossfadeRoom(pair.clip, pair.next)
 }
 
 export function effectiveCrossfade(a: CompClip, b: CompClip | undefined): number {
@@ -254,10 +273,11 @@ function stripCrossfade(c: CompClip): CompClip {
 
 export function setCrossfade(comp: CueComp, clipId: string, seconds: number): CueComp {
   const norm = normalizeComp(comp)
+  const pair = siblings(norm, clipId)
+  if (!pair?.next || !Number.isFinite(seconds)) return comp
   const i = indexOf(norm, clipId)
-  if (i < 0 || i >= norm.clips.length - 1 || !Number.isFinite(seconds)) return comp
-  const c = norm.clips[i]
-  const room = crossfadeRoom(c, norm.clips[i + 1])
+  const c = pair.clip
+  const room = crossfadeRoom(c, pair.next)
   const v = clamp(seconds, 0, room)
   const next = v > MIN_CROSSFADE ? { ...c, crossfade: v } : stripCrossfade(c)
   if (next.crossfade === c.crossfade) return norm
@@ -416,10 +436,10 @@ function splitEnvelope(
 
 export function healPair(comp: CueComp, leftClipId: string): [CompClip, CompClip] | null {
   const norm = normalizeComp(comp)
-  const i = indexOf(norm, leftClipId)
-  if (i < 0 || i >= norm.clips.length - 1) return null
-  const left = norm.clips[i]
-  const right = norm.clips[i + 1]
+  const pair = siblings(norm, leftClipId)
+  if (!pair?.next) return null
+  const left = pair.clip
+  const right = pair.next
   if (left.sourceTakeId !== right.sourceTakeId) return null
   if (Math.abs(clipSpeed(left.edits) - clipSpeed(right.edits)) > COMP_EPS) return null
   if (Math.abs(right.srcIn - left.srcOut) > COMP_EPS) return null
@@ -451,7 +471,6 @@ export function healCut(comp: CueComp, leftClipId: string): CueComp {
   if (!pair) return comp
   const [left, right] = pair
   const norm = normalizeComp(comp)
-  const i = indexOf(norm, left.id)
 
   const envelope = joinEnvelope(
     left.edits.gainEnvelope,
@@ -473,8 +492,7 @@ export function healCut(comp: CueComp, leftClipId: string): CueComp {
     merged.edits = rest
   }
 
-  const clips = [...norm.clips]
-  clips.splice(i, 2, merged)
+  const clips = norm.clips.filter((c) => c.id !== right.id).map((c) => (c.id === left.id ? merged : c))
   return withClips(norm, clips)
 }
 
@@ -502,20 +520,97 @@ function joinEnvelope(
   return out.length > 0 ? out : null
 }
 
-export function moveClip(comp: CueComp, clipId: string, newStart: number): CueComp {
+export function trackIsFree(
+  comp: CueComp,
+  trackId: string,
+  from: number,
+  to: number,
+  exceptClipId?: string
+): boolean {
+  return !comp.clips.some(
+    (c) =>
+      c.id !== exceptClipId &&
+      clipTrackId(c) === trackId &&
+      c.start < to - COMP_EPS &&
+      clipEnd(c) > from + COMP_EPS
+  )
+}
+
+export function moveClipTo(
+  comp: CueComp,
+  clipId: string,
+  newStart: number,
+  trackId?: string
+): CueComp {
   const norm = normalizeComp(comp)
   const i = indexOf(norm, clipId)
   if (i < 0 || !Number.isFinite(newStart)) return comp
   const c = norm.clips[i]
-  const tl = clipTimelineDuration(c)
-  const lo = i > 0 ? clipEnd(norm.clips[i - 1]) : 0
-  const hiRaw = i < norm.clips.length - 1 ? norm.clips[i + 1].start - tl : Infinity
-  const hi = Math.max(lo, hiRaw)
-  const start = clamp(newStart, lo, hi)
-  if (start === c.start) return norm
+  const track = trackId ?? clipTrackId(c)
+  const start = Math.max(0, newStart)
+  if (start === c.start && track === clipTrackId(c)) return norm
+  if (!trackIsFree(norm, track, start, start + clipTimelineDuration(c), clipId)) return norm
   const clips = [...norm.clips]
-  clips[i] = { ...c, start }
+  clips[i] = { ...c, start, ...(norm.tracks || trackId !== undefined ? { trackId: track } : {}) }
   return withClips(norm, clips)
+}
+
+export function slipClip(
+  comp: CueComp,
+  clipId: string,
+  delta: number,
+  sourceDuration = Infinity
+): CueComp {
+  const norm = normalizeComp(comp)
+  const i = indexOf(norm, clipId)
+  if (i < 0 || !Number.isFinite(delta)) return comp
+  const c = norm.clips[i]
+  const speed = clipSpeed(c.edits)
+  const maxSrc = Number.isFinite(sourceDuration) && sourceDuration > 0 ? sourceDuration : Infinity
+  const d = clamp(delta * speed, -c.srcIn, maxSrc - c.srcOut)
+  if (Math.abs(d) <= COMP_EPS) return norm
+  const clips = [...norm.clips]
+  clips[i] = { ...c, srcIn: c.srcIn + d, srcOut: c.srcOut + d }
+  return withClips(norm, clips)
+}
+
+export function switchClipVersion(
+  comp: CueComp,
+  clipId: string,
+  takeId: string,
+  takeDuration: number
+): CueComp {
+  const norm = normalizeComp(comp)
+  const i = indexOf(norm, clipId)
+  if (i < 0 || !Number.isFinite(takeDuration) || takeDuration < MIN_CLIP_SRC) return comp
+  const c = norm.clips[i]
+  if (!trackIsFree(norm, clipTrackId(c), c.start, c.start + takeDuration, clipId)) return norm
+
+  let fadeIn = clamp(Math.max(0, c.edits.fadeIn.duration), 0, takeDuration)
+  let fadeOut = clamp(Math.max(0, c.edits.fadeOut.duration), 0, takeDuration)
+  if (fadeIn + fadeOut > takeDuration) fadeOut = Math.max(0, takeDuration - fadeIn)
+
+  const { gainEnvelope: _drop, ...edits } = c.edits
+  const clips = [...norm.clips]
+  clips[i] = {
+    ...c,
+    sourceTakeId: takeId,
+    srcIn: 0,
+    srcOut: takeDuration,
+    edits: {
+      ...edits,
+      timeStretch: 1,
+      fadeIn: { ...c.edits.fadeIn, duration: fadeIn },
+      fadeOut: { ...c.edits.fadeOut, duration: fadeOut },
+    },
+  }
+  return withClips(norm, clips)
+}
+
+export function compDelta(comp: CueComp | undefined, originalDuration: number): number | null {
+  if (!comp || comp.clips.length === 0) return null
+  if (!Number.isFinite(originalDuration) || originalDuration <= 0) return null
+  return compDuration(comp) - originalDuration
 }
 
 export const SPEED_MIN = 0.25
@@ -531,7 +626,7 @@ export function setClipEdits(comp: CueComp, clipId: string, patch: Partial<ClipE
   const merged: ClipEdits = { ...c.edits, ...patch }
 
   const srcLen = c.srcOut - c.srcIn
-  const nextStart = i < norm.clips.length - 1 ? norm.clips[i + 1].start : Infinity
+  const nextStart = siblings(norm, clipId)?.next?.start ?? Infinity
   const room = nextStart - c.start
   const lo = Math.max(SPEED_MIN, Number.isFinite(room) && room > 0 ? srcLen / room : 0)
   const hi = Math.max(lo, SPEED_MAX)
@@ -615,15 +710,16 @@ export function trimClipEdge(
   const speed = clipSpeed(c.edits)
   const maxSrc = Number.isFinite(sourceDuration) && sourceDuration > 0 ? sourceDuration : Infinity
 
+  const row = siblings(norm, clipId)
   const clips = [...norm.clips]
   if (edge === 'start') {
-    const prevEnd = i > 0 ? clipEnd(norm.clips[i - 1]) : 0
+    const prevEnd = row?.prev ? clipEnd(row.prev) : 0
     const loByStart = Math.max(prevEnd - c.start, -c.srcIn / speed)
     const hi = (c.srcOut - MIN_CLIP_SRC - c.srcIn) / speed
     const d = clamp(delta, Math.min(loByStart, hi), hi)
     clips[i] = { ...c, start: c.start + d, srcIn: c.srcIn + d * speed }
   } else {
-    const nextStart = i < norm.clips.length - 1 ? norm.clips[i + 1].start : Infinity
+    const nextStart = row?.next?.start ?? Infinity
     const lo = (c.srcIn + MIN_CLIP_SRC - c.srcOut) / speed
     const hiBySource = (maxSrc - c.srcOut) / speed
     const hiByNeighbour = nextStart - clipEnd(c)

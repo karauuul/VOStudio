@@ -122,3 +122,41 @@ describe('scheduleComp with tracks', () => {
     expect(busOf(s.voices[1], destination).gain.value).toBeCloseTo(dbToGain(-3), 6)
   })
 })
+
+describe('the original lane as a preview voice', () => {
+  const orig = { duration: 5, numberOfChannels: 1, sampleRate: 48000 } as unknown as AudioBuffer
+
+  it('rides straight on the destination, past the track buses', () => {
+    const { ctx, destination } = fakeContext()
+    const s = scheduleComp(ctx, sources([clip()]), destination, {
+      tracks: [track('track-1', { muted: true })],
+      original: { buffer: orig, gainDb: -6 },
+    })
+    expect(s.voices).toHaveLength(2)
+    expect((s.voices[1].output as unknown as FakeNode).to).toEqual([destination])
+  })
+
+  it('the composition runs to the end of the longer original', () => {
+    const { ctx, destination } = fakeContext()
+    const s = scheduleComp(ctx, sources([clip()]), destination, {
+      original: { buffer: orig, gainDb: 0 },
+    })
+    expect(s.duration).toBe(5)
+  })
+
+  it('without an original nothing extra is scheduled', () => {
+    const { ctx, destination } = fakeContext()
+    const s = scheduleComp(ctx, sources([clip()]), destination, {})
+    expect(s.voices).toHaveLength(1)
+    expect(s.duration).toBe(2)
+  })
+
+  it('a seek past the end of the original leaves it out', () => {
+    const { ctx, destination } = fakeContext()
+    const s = scheduleComp(ctx, sources([clip({ start: 6, srcOut: 2 })]), destination, {
+      seek: 5.5,
+      original: { buffer: orig, gainDb: 0 },
+    })
+    expect(s.voices).toHaveLength(1)
+  })
+})

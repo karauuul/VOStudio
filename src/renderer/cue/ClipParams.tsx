@@ -36,7 +36,6 @@ interface Props {
   onEdit: (patch: ClipEditPatch, commit: boolean) => void
   onTrim: (edge: 'start' | 'end', at: number, commit: boolean) => void
   onEffect: (which: EffectName) => void
-  onEditAsComposition?: () => void
 }
 
 export function ClipParams({
@@ -45,20 +44,12 @@ export function ClipParams({
   onEdit,
   onTrim,
   onEffect,
-  onEditAsComposition,
 }: Props) {
   if (!target) {
     return (
       <div className="insp-pad">
         <div className="insp-h">Target</div>
         <div className="fx-target">{emptyLabel}</div>
-        {onEditAsComposition && (
-          <div className="insp-actions">
-            <button className="btn ghost" onClick={onEditAsComposition}>
-              Edit as composition <kbd>D</kbd>
-            </button>
-          </div>
-        )}
       </div>
     )
   }

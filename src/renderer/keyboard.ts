@@ -27,10 +27,16 @@ export type KeyAction =
   | 'generate'
   | 'approve'
   | 'approveNext'
-  | 'playOriginal'
   | 'playPause'
+  | 'playClip'
   | 'restartActive'
-  | 'compare'
+  | 'goIn'
+  | 'goOut'
+  | 'setIn'
+  | 'setOut'
+  | 'zoomIn'
+  | 'zoomOut'
+  | 'toolSelect'
   | 'selectTake'
   | 'makeFinal'
   | 'deleteClip'
@@ -42,7 +48,6 @@ export type KeyAction =
   | 'acceptSuggestion'
   | 'rejectSuggestion'
   | 'toggleRecord'
-  | 'toggleTimeline'
   | 'focusText'
   | 'copySource'
   | 'copyTranslation'
@@ -121,16 +126,33 @@ export const BINDINGS: Binding[] = [
     repeat: true,
     label: 'Previous cue',
   },
-  { action: 'playOriginal', codes: ['KeyO'], scopes: WORK, label: 'Play original' },
   { action: 'playPause', codes: ['Space'], scopes: WORK, label: 'Play / pause' },
-  { action: 'restartActive', codes: ['Enter', 'NumpadEnter'], scopes: WORK, label: 'Play active' },
-  { action: 'compare', codes: ['KeyB'], scopes: WORK, label: 'Compare' },
+  { action: 'playClip', codes: ['Space'], shift: true, scopes: WORK, label: 'Play clip' },
+  { action: 'restartActive', codes: ['Enter', 'NumpadEnter'], scopes: WORK, label: 'Play from in' },
+  { action: 'goIn', codes: ['Home'], scopes: WORK, label: 'Go to in' },
+  { action: 'goOut', codes: ['End'], scopes: WORK, label: 'Go to out' },
+  { action: 'setIn', codes: ['KeyI'], scopes: TIMELINE, label: 'Set in' },
+  { action: 'setOut', codes: ['KeyO'], scopes: TIMELINE, label: 'Set out' },
+  {
+    action: 'zoomIn',
+    codes: ['Equal', 'NumpadAdd'],
+    scopes: TIMELINE,
+    repeat: true,
+    label: 'Zoom in',
+  },
+  {
+    action: 'zoomOut',
+    codes: ['Minus', 'NumpadSubtract'],
+    scopes: TIMELINE,
+    repeat: true,
+    label: 'Zoom out',
+  },
+  { action: 'toolSelect', codes: ['KeyV'], scopes: TIMELINE, label: 'Select tool' },
   { action: 'makeFinal', codes: ['KeyF'], scopes: WORK, label: 'Set final' },
   { action: 'approve', codes: ['KeyA'], scopes: WORK, label: 'Approve' },
   { action: 'approveNext', codes: ['KeyA'], shift: true, scopes: WORK, label: 'Approve & next' },
   { action: 'focusText', codes: ['KeyE'], scopes: WORK, label: 'Focus translation' },
   { action: 'toggleRecord', codes: ['KeyR'], scopes: WORK, label: 'Record' },
-  { action: 'toggleTimeline', codes: ['KeyD'], scopes: WORK, label: 'Timeline / review' },
   { action: 'acceptSuggestion', codes: ['KeyY'], scopes: WORK, label: 'Accept suggestion' },
   { action: 'rejectSuggestion', codes: ['KeyN'], scopes: WORK, label: 'Reject suggestion' },
   { action: 'copySource', codes: ['KeyS'], scopes: WORK, label: 'Copy source' },
@@ -158,6 +180,8 @@ const CODE_NAMES: Record<string, string> = {
   ArrowLeft: '←',
   ArrowRight: '→',
   Comma: ',',
+  Equal: '=',
+  Minus: '-',
   Escape: 'Esc',
   Delete: 'Del',
 }
@@ -218,10 +242,16 @@ export interface KeyboardHandlers {
   generate: () => void
   approve: () => void
   approveNext: () => void
-  playOriginal: () => void
   playPause: () => void
+  playClip: () => void
   restartActive: () => void
-  compare: () => void
+  goIn: () => void
+  goOut: () => void
+  setIn: () => void
+  setOut: () => void
+  zoomIn: () => void
+  zoomOut: () => void
+  toolSelect: () => void
   selectTake: (index: number) => void
   makeFinal: () => void
   deleteClip: () => void
@@ -233,7 +263,6 @@ export interface KeyboardHandlers {
   acceptSuggestion: () => void
   rejectSuggestion: () => void
   toggleRecord: () => void
-  toggleTimeline: () => void
   focusText: () => void
   copySource: () => void
   copyTranslation: () => void

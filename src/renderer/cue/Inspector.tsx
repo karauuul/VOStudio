@@ -26,7 +26,6 @@ interface Props {
   onClipEdit: (patch: ClipEditPatch, commit: boolean) => void
   onClipTrim: (edge: 'start' | 'end', at: number, commit: boolean) => void
   onClipEffect: (which: EffectName) => void
-  onEditAsComposition?: () => void
 }
 
 export function Inspector({
@@ -43,7 +42,6 @@ export function Inspector({
   onClipEdit,
   onClipTrim,
   onClipEffect,
-  onEditAsComposition,
 }: Props) {
   return (
     <div className="insp">
@@ -78,7 +76,6 @@ export function Inspector({
             onEdit={onClipEdit}
             onTrim={onClipTrim}
             onEffect={onClipEffect}
-            onEditAsComposition={onEditAsComposition}
           />
         )}
       </div>

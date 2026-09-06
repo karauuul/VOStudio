@@ -1,5 +1,5 @@
 import { emptyEdits, type Cue, type CueComp } from './domain'
-import { clipWords, compTracks, placeClip, resolveTake, type TakeLookup } from './library'
+import { clipText, compTracks, placeClip, resolveTake, type TakeLookup } from './library'
 
 export type GenTarget =
   | { kind: 'all' }
@@ -64,11 +64,7 @@ export function clipTargetText(
   const clip = cue.comp?.clips.find((c) => c.id === clipId)
   if (!clip) return ''
   const found = resolveTake(project, cue, clip.sourceTakeId)
-  if (!found) return ''
-  return clipWords(found.take, clip.srcIn, clip.srcOut)
-    .map((w) => w.text)
-    .join(' ')
-    .trim()
+  return found ? clipText(found.take, clip.srcIn, clip.srcOut) : ''
 }
 
 export interface PlaceTakeRequest {

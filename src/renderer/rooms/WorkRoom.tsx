@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from 'react'
 import { LinesPanel } from '../work/LinesPanel'
+import { CueText } from '../work/CueText'
 import { TextPanel, type TextPanelProps } from '../work/TextPanel'
-import { CueEditor } from '../CueEditor'
+import { TimelinePanel } from '../work/TimelinePanel'
 import { Inspector } from '../cue/Inspector'
 
 const LINES = { key: 'vo.lines.w', def: 280, min: 240, max: 400 }
@@ -23,11 +24,12 @@ interface Props {
   lines: ComponentProps<typeof LinesPanel>
   total: number
   text: TextPanelProps
-  editor: ComponentProps<typeof CueEditor> | null
+  cueText: ComponentProps<typeof CueText> | null
+  timeline: ComponentProps<typeof TimelinePanel>
   inspector: ComponentProps<typeof Inspector>
 }
 
-export function WorkRoom({ hidden, lines, total, text, editor, inspector }: Props) {
+export function WorkRoom({ hidden, lines, total, text, cueText, timeline, inspector }: Props) {
   const [linesW, setLinesW] = useState(() => storedWidth(LINES))
   const [propsW, setPropsW] = useState(() => storedWidth(PROPS))
 
@@ -79,24 +81,22 @@ export function WorkRoom({ hidden, lines, total, text, editor, inspector }: Prop
 
       <div className="splitter col" onMouseDown={startDrag('left')} />
 
-      <section className="panel text">
-        <div className="phd">
-          Text {cue && <span className="n">{cue.fields['EventName'] || cue.key}</span>}
-        </div>
-        {editor ? (
-          <CueEditor {...editor} />
-        ) : (
-          <div className="ed-script lonely">
-            <TextPanel {...text} />
+      <div className="work-center">
+        <section className="panel text">
+          <div className="phd">
+            Text {cue && <span className="n">{cue.fields['EventName'] || cue.key}</span>}
           </div>
-        )}
-      </section>
+          <div className="ed-script">{cueText ? <CueText {...cueText} /> : <TextPanel {...text} />}</div>
+        </section>
+
+        <TimelinePanel {...timeline} />
+      </div>
 
       <div className="splitter col" onMouseDown={startDrag('right')} />
 
       <section className="panel">
         <div className="phd">Properties</div>
-        {editor && <Inspector {...inspector} />}
+        {cueText && <Inspector {...inspector} />}
       </section>
     </div>
   )

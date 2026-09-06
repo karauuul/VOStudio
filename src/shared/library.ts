@@ -1,5 +1,14 @@
-import { clipEnd, clipTrackId, COMP_EPS, DEFAULT_TRACK_ID, newCompClipId, normalizeComp } from './comp'
 import {
+  clipEnd,
+  clipTrackId,
+  COMP_EPS,
+  DEFAULT_TRACK_ID,
+  newCompClipId,
+  normalizeComp,
+  splitClipAt,
+} from './comp'
+import {
+  clipSpeed,
   liveTakes,
   sanitizeWords,
   type ClipEdits,
@@ -126,6 +135,98 @@ export function clipWords(take: Take, srcIn: number, srcOut: number): WordTiming
   return take.words
     .filter((w) => w.end > srcIn && w.start < srcOut)
     .map((w) => ({ text: w.text, start: w.start - srcIn, end: w.end - srcIn }))
+}
+
+export function clipText(take: Take, srcIn: number, srcOut: number): string {
+  return clipWords(take, srcIn, srcOut)
+    .map((w) => w.text)
+    .join(' ')
+    .trim()
+}
+
+export function clipVersions(
+  cue: Cue,
+  project: TakeLookup,
+  takeId: string
+): { takeId: string; label: string; duration: number; current: boolean }[] {
+  for (const group of libraryGroups(cue, project)) {
+    if (!group.rows.some((r) => r.take.id === takeId)) continue
+    return group.rows.map((r) => ({
+      takeId: r.take.id,
+      label: r.label,
+      duration: r.take.duration,
+      current: r.take.id === takeId,
+    }))
+  }
+  return []
+}
+
+export function versionLabel(cue: Cue, project: TakeLookup, takeId: string): string {
+  return clipVersions(cue, project, takeId).find((v) => v.current)?.label ?? ''
+}
+
+export function wordSnapPoints(comp: CueComp, cue: Cue, project: TakeLookup): number[] {
+  const out: number[] = [0]
+  for (const clip of comp.clips) {
+    const end = clipEnd(clip)
+    out.push(clip.start, end)
+    const found = resolveTake(project, cue, clip.sourceTakeId)
+    if (!found?.take.words) continue
+    const speed = clipSpeed(clip.edits)
+    for (const w of clipWords(found.take, clip.srcIn, clip.srcOut)) {
+      for (const t of [clip.start + w.start / speed, clip.start + w.end / speed]) {
+        if (t > clip.start + COMP_EPS && t < end - COMP_EPS) out.push(t)
+      }
+    }
+  }
+  return [...new Set(out.map((t) => Math.round(t * 1e6) / 1e6))].sort((a, b) => a - b)
+}
+
+export function nearestPoint(points: readonly number[], t: number, tolerance = Infinity): number {
+  let best = t
+  let bestD = tolerance
+  for (const p of points) {
+    const d = Math.abs(p - t)
+    if (d < bestD) {
+      bestD = d
+      best = p
+    }
+  }
+  return best
+}
+
+export function splitClipByWord(
+  comp: CueComp,
+  cue: Cue,
+  project: TakeLookup,
+  clipId: string,
+  at: number
+): CueComp {
+  const clip = comp.clips.find((c) => c.id === clipId)
+  if (!clip) return comp
+  const inside = wordSnapPoints(comp, cue, project).filter(
+    (p) => p > clip.start + COMP_EPS && p < clipEnd(clip) - COMP_EPS
+  )
+  return splitClipAt(comp, clipId, inside.length > 0 ? nearestPoint(inside, at) : at)
+}
+
+export function addTrack(comp: CueComp): CueComp {
+  const tracks = compTracks(comp)
+  return normalizeComp({ ...comp, tracks: [...tracks, freshTrack(tracks)] })
+}
+
+export function updateTrack(
+  comp: CueComp,
+  trackId: string,
+  patch: Partial<Omit<CompTrack, 'id'>>
+): CueComp {
+  const tracks = compTracks(comp)
+  if (!tracks.some((t) => t.id === trackId)) return comp
+  return normalizeComp({
+    ...comp,
+    tracks: tracks.map((t) => (t.id === trackId ? { ...t, ...patch } : t)),
+    clips: comp.clips.map((c) => ({ ...c, trackId: clipTrackId(c) })),
+  })
 }
 
 export interface PlaceClipRequest {

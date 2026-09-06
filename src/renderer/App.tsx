@@ -9,6 +9,7 @@ import {
   type CueComp,
   type Project,
   type Take,
+  type TimelineViewState,
   type UsageInfo,
   type VoiceSettings,
 } from '@shared/domain'
@@ -28,7 +29,6 @@ import {
   useJobsStore,
 } from './jobs/store'
 import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues, groupByCharacter } from '@shared/cue-filter'
-import { CueEditor } from './CueEditor'
 import { LinesPanel } from './work/LinesPanel'
 import type { TextPanelProps } from './work/TextPanel'
 import { ProjectTable, type GridApi } from './ProjectTable'
@@ -39,8 +39,9 @@ import { ExportRoom } from './rooms/ExportRoom'
 import { useProjectSession, type StatusKind } from './useProjectSession'
 import type { EffectName, EffectsTarget } from './cue/ClipParams'
 import { Inspector, type InspectorTab } from './cue/Inspector'
-import { compositionLabel } from './cue/shared'
-import type { CompApi } from './cue/WaveLanes'
+import type { CompApi } from './work/TimelinePanel'
+import { CueText } from './work/CueText'
+import { TimelinePanel } from './work/TimelinePanel'
 import { CharactersDialog } from './CharactersDialog'
 import { RulesDialog } from './RulesPanel'
 import { ProjectHome } from './ProjectHome'
@@ -99,9 +100,9 @@ export default function App() {
   const [previewCueId, setPreviewCueId] = useState<string | undefined>(undefined)
   const [previewSource, setPreviewSource] = useState<PreviewSource>({ kind: 'none' })
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('take')
-  const [timelineOpen, setTimelineOpen] = useState(false)
   const [effects, setEffects] = useState<EffectsTarget | null>(null)
   const [targetTrack, setTargetTrack] = useState<Record<string, string>>({})
+  const [timelineView, setTimelineView] = useState<Record<string, TimelineViewState>>({})
   const [exported, setExported] = useState<ReadonlySet<string>>(() => new Set())
   const [textSel, setTextSel] = useState<TextRange | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
@@ -147,6 +148,7 @@ export default function App() {
     setFilter(p.ui.filter || DEFAULT_FILTER)
     setSearch(p.ui.search ?? '')
     setTargetTrack(p.ui.targetTrack ?? {})
+    setTimelineView(p.ui.timeline ?? {})
     setActiveCueId(p.ui.activeCueId)
   }, [])
 
@@ -303,8 +305,8 @@ export default function App() {
 
   useEffect(() => {
     if (!project) return
-    saveUi({ activeCueId, filter, search, targetTrack })
-  }, [saveUi, activeCueId, filter, search, targetTrack, project !== null])
+    saveUi({ activeCueId, filter, search, targetTrack, timeline: timelineView })
+  }, [saveUi, activeCueId, filter, search, targetTrack, timelineView, project !== null])
 
   useEffect(() => setTextSel(null), [activeCueId])
 
@@ -598,7 +600,11 @@ export default function App() {
         takeId: take.id,
         duration,
         targetTrackId: targetTrackRef.current[cueId],
-        playhead: state.clipId === clipId.comp(cueId) ? state.pos : 0,
+        playhead: isActiveCue(cueId)
+          ? (compRef.current?.playhead() ?? 0)
+          : state.clipId === clipId.comp(cueId)
+            ? state.pos
+            : 0,
         ...(replace ? { replaceClipId: replace } : {}),
       })
       setTargetTrack((m) => (m[cueId] === placed.trackId ? m : { ...m, [cueId]: placed.trackId }))
@@ -769,9 +775,9 @@ export default function App() {
   const leaveProject = useCallback(async () => {
     if (!(await session.close())) return
     setActiveCueId(undefined)
-    setTimelineOpen(false)
     setEffects(null)
     setTargetTrack({})
+    setTimelineView({})
     setExported(new Set())
     setRoute('work')
     setReviewIds(null)
@@ -826,16 +832,6 @@ export default function App() {
     void api['provider:usage']().then(setUsage)
   }, [])
 
-  const toggleTimeline = useCallback(() => setTimelineOpen((v) => !v), [])
-
-  const openTimeline = useCallback(() => setTimelineOpen(true), [])
-
-  useEffect(() => {
-    if (!timelineOpen) return
-    const cue = projectRef.current?.cues.find((c) => c.id === activeCueIdRef.current)
-    if (cue && !isEmptyComp(cue.comp)) selectSource({ kind: 'comp' })
-  }, [timelineOpen, activeCueId, selectSource, projectRef])
-
   const onClipEdit = useCallback((patch: ClipEditPatch, commit: boolean) => {
     compRef.current?.editSelected(patch, commit)
   }, [])
@@ -876,10 +872,16 @@ export default function App() {
       generate: () => generate(genTarget.kind),
       approve: () => void onApprove(true),
       approveNext: onApproveNext,
-      playOriginal: () => playback.toggle('orig'),
-      playPause: () => playback.toggleTarget(),
-      restartActive: () => playback.restart('active'),
-      compare: () => playback.compare(),
+      playPause: () => playback.toggle(),
+      playClip: () => playback.playClip(),
+      restartActive: () => playback.restart(),
+      goIn: () => playback.goIn(),
+      goOut: () => playback.goOut(),
+      setIn: () => compRef.current?.setIn(),
+      setOut: () => compRef.current?.setOut(),
+      zoomIn: () => compRef.current?.zoom(1.5),
+      zoomOut: () => compRef.current?.zoom(1 / 1.5),
+      toolSelect: () => compRef.current?.selectTool(),
       stopPlayback: () => playback.stop(),
       selectTake: (n) => {
         const t = activeTakes[n]
@@ -897,7 +899,6 @@ export default function App() {
       acceptSuggestion: onAcceptSuggestion,
       rejectSuggestion: onRejectSuggestion,
       toggleRecord: () => recRef.current?.(),
-      toggleTimeline,
       escape: () => escRef.current?.() ?? false,
       focusText: () => focusTextRef.current?.(),
       copySource: () => onCopy('source'),
@@ -918,7 +919,6 @@ export default function App() {
       onAcceptSuggestion,
       onRejectSuggestion,
       onCopy,
-      toggleTimeline,
     ]
   )
 
@@ -932,13 +932,9 @@ export default function App() {
     tableOverlay ||
     reimport.open
 
-  useEffect(() => {
-    if (blocked) playback.cancelCompare()
-  }, [blocked])
-
   useKeyboard(handlers, !blocked, {
     home: !project,
-    timeline: timelineOpen,
+    timeline: route === 'work' && !!activeCueId,
     grid: route === 'import',
     deliver: route === 'export',
   })
@@ -1030,25 +1026,15 @@ export default function App() {
     hasClip: !!clipTarget,
   }
 
-  const editor: ComponentProps<typeof CueEditor> | null = activeCue
+  const cueText: ComponentProps<typeof CueText> | null = activeCue
     ? {
         cue: activeCue,
-        cues: project.cues,
         character: activeCharacter,
-        preview,
-        onSelectSource: selectSource,
         onGenerate: generate,
-        onDetails: () => setInspectorTab('take'),
-        onDeleteTake,
         onSubmit: noteSubmit,
         cueBusy: activeCueBusy,
         compRef,
-        onComp: onSetComp,
         onPlace: placeOnComp,
-        replaceClipId: clipTarget?.clipId,
-        timelineOpen,
-        onTimeline: toggleTimeline,
-        onEffectsTarget: setEffects,
         recRef,
         escRef,
         recActiveRef,
@@ -1064,6 +1050,30 @@ export default function App() {
       }
     : null
 
+  const timeline: ComponentProps<typeof TimelinePanel> = {
+    cue: activeCue ?? null,
+    cues: project.cues,
+    targetTrackId: activeCueId ? targetTrack[activeCueId] : undefined,
+    onTargetTrack: (trackId) => {
+      if (activeCueId) setTargetTrack((m) => ({ ...m, [activeCueId]: trackId }))
+    },
+    view: activeCueId ? timelineView[activeCueId] : undefined,
+    onView: (v) => {
+      if (activeCueId) setTimelineView((m) => ({ ...m, [activeCueId]: v }))
+    },
+    onComp: onSetComp,
+    onOriginal: (original) => {
+      if (!activeCueId) return
+      void dispatch({ type: 'cue.setOriginal', cueId: activeCueId, original }).catch((e: unknown) =>
+        pushStatus('err', String(e))
+      )
+    },
+    onStatus: pushStatus,
+    onEffectsTarget: setEffects,
+    compRef,
+    busyClipId: activeCueBusy ? (clipTarget?.clipId ?? null) : null,
+  }
+
   const inspector: ComponentProps<typeof Inspector> = {
     tab: inspectorTab,
     onTab: setInspectorTab,
@@ -1074,18 +1084,10 @@ export default function App() {
     onSetFinal: makeFinal,
     onDelete: () => shownTake && onDeleteTake(shownTake.id),
     effects,
-    effectsLabel: timelineOpen && activeCue ? compositionLabel(activeCue) : 'Composition',
+    effectsLabel: 'Composition',
     onClipEdit,
     onClipTrim,
     onClipEffect,
-    onEditAsComposition:
-      !timelineOpen &&
-      activeCue &&
-      (previewSource.kind === 'comp'
-        ? !isEmptyComp(activeCue.comp)
-        : !!shownTake && shownTake.kind !== 'recording')
-        ? openTimeline
-        : undefined,
   }
 
   const table: Omit<ComponentProps<typeof ProjectTable>, 'hidden'> = {
@@ -1137,7 +1139,8 @@ export default function App() {
         lines={lines}
         total={project.cues.length}
         text={text}
-        editor={editor}
+        cueText={cueText}
+        timeline={timeline}
         inspector={inspector}
       />
 

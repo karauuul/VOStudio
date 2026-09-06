@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto'
 import {
   sanitizeProjectSources,
   sanitizeTargetTrack,
+  sanitizeTimelineViews,
   sanitizeTerms,
   sanitizeVersions,
   type Project,
@@ -73,7 +74,9 @@ const uiPath = (dir: string): string => path.join(dir, 'ui.json')
 
 export async function saveUi(raw: UiSessionState): Promise<void> {
   const targetTrack = sanitizeTargetTrack(raw.targetTrack)
-  const { targetTrack: _drop, ...rest } = raw
+  const timeline = sanitizeTimelineViews(raw.timeline)
+  const { targetTrack: _drop, timeline: _dropTimeline, ...base } = raw
+  const rest = timeline ? { ...base, timeline } : base
   const next = targetTrack ? { ...rest, targetTrack } : rest
   ui = next
   if (current) current.ui = next

@@ -7,6 +7,7 @@ import {
   sanitizePinned,
   sanitizeProjectSources,
   sanitizeTargetTrack,
+  sanitizeTimelineViews,
   sanitizeVersions,
   sanitizeWords,
   type Cue,
@@ -243,6 +244,26 @@ describe('sanitizers for the new fields', () => {
     expect(sanitizeTargetTrack({ c1: 'track-2', c2: 3, c3: '' })).toEqual({ c1: 'track-2' })
     expect(sanitizeTargetTrack({})).toBeUndefined()
     expect(sanitizeTargetTrack([])).toBeUndefined()
+  })
+
+  it('the per-line timeline view keeps only usable numbers', () => {
+    expect(
+      sanitizeTimelineViews({
+        c1: { pxPerSec: 120, scroll: 2.5, originalGainDb: -3 },
+        c2: { pxPerSec: 9e9, scroll: -4 },
+        c3: { pxPerSec: 'x' },
+        c4: null,
+      })
+    ).toEqual({
+      c1: { pxPerSec: 120, scroll: 2.5, originalGainDb: -3 },
+      c2: { pxPerSec: 2000, scroll: 0 },
+    })
+  })
+
+  it('an absent or empty timeline view stays absent', () => {
+    expect(sanitizeTimelineViews(undefined)).toBeUndefined()
+    expect(sanitizeTimelineViews({})).toBeUndefined()
+    expect(sanitizeTimelineViews([])).toBeUndefined()
   })
 })
 
