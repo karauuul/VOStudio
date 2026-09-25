@@ -794,18 +794,20 @@ function registerHandlers(): void {
     return take
   })
 
-  typedHandle('provider:transcribe', async (req) => {
-    const parsed = transcribeSchema.parse(req)
-    const result = await transcribeCues(
-      requireRepository(),
-      parsed.cueIds,
-      parsed.overwrite === true,
-      async (ref) => eleven.stt({ audio: await fs.readFile(ref.relPath), filename: path.basename(ref.relPath) }),
-      emitChange
-    )
-    pushUsage()
-    return result
-  })
+  typedHandle('provider:transcribe', (req) =>
+    serialLifecycle(async () => {
+      const parsed = transcribeSchema.parse(req)
+      const result = await transcribeCues(
+        requireRepository(),
+        parsed.cueIds,
+        parsed.overwrite === true,
+        async (ref) => eleven.stt({ audio: await fs.readFile(ref.relPath), filename: path.basename(ref.relPath) }),
+        emitChange
+      )
+      pushUsage()
+      return result
+    })
+  )
 
   typedHandle('provider:voices', () => eleven.voices())
   typedHandle('provider:models', () => eleven.models())
