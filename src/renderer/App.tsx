@@ -754,7 +754,7 @@ export default function App() {
           duration: durations[0],
           hidden: punch.hidden,
           at: punch.at,
-          targetTrackId: trackId,
+          targetTrackId: punch.trackId ?? trackId,
         })
         if (!punched) throw new Error('nothing was recorded after the punch point')
         comp = punched.comp

@@ -20,6 +20,7 @@ interface Options {
   noVoiceReason: string
   selection: () => ClipSelection | null
   playhead: () => number
+  targetTrack: () => string | undefined
   preroll: (at: number, lead: number) => Promise<number>
   onPlace: (
     cueId: string,
@@ -33,6 +34,7 @@ interface Options {
 export interface PunchPlacement {
   at: number
   hidden: number
+  trackId?: string
 }
 
 export const PUNCH_PREROLL_SECONDS = 5
@@ -58,6 +60,7 @@ export function useVoiceToVoice({
   noVoiceReason,
   selection,
   playhead,
+  targetTrack,
   preroll,
   onPlace,
 }: Options): VoiceToVoice {
@@ -71,6 +74,7 @@ export function useVoiceToVoice({
   const preGen = useRef(0)
   const targetRef = useRef<string | null>(null)
   const punchRef = useRef<number | null>(null)
+  const punchTrackRef = useRef<string | undefined>(undefined)
   const savingRef = useRef(false)
   const savedClipRef = useRef<RecordedClip | null>(null)
 
@@ -171,7 +175,8 @@ export function useVoiceToVoice({
     const cueId = cue.id
     const target = targetRef.current
     const at = punchRef.current
-    const punch = at === null ? undefined : { at, hidden: rec.clip?.hidden ?? 0 }
+    const trackId = punchTrackRef.current
+    const punch = at === null ? undefined : { at, hidden: rec.clip?.hidden ?? 0, ...(trackId ? { trackId } : {}) }
     void saveClip(target).then((take) => {
       punchRef.current = null
       if (!take) return
@@ -249,6 +254,7 @@ export function useVoiceToVoice({
     const at = Math.max(0, playhead())
     targetRef.current = null
     punchRef.current = at
+    punchTrackRef.current = targetTrack()
     rec.start({
       cueId: cue.id,
       device: appSettings.micDeviceLabel ?? appSettings.micDeviceId,
@@ -256,7 +262,7 @@ export function useVoiceToVoice({
       autoReference: false,
       preroll: () => preroll(at, Math.min(PUNCH_PREROLL_SECONDS, at)),
     })
-  }, [converting, rec, playhead, preroll, cue.id, appSettings])
+  }, [converting, rec, playhead, targetTrack, preroll, cue.id, appSettings])
 
   const recStop = rec.stop
   const recLive = rec.live

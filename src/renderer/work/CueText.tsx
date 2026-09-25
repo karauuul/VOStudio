@@ -74,6 +74,7 @@ export function CueText({
     [compRef]
   )
   const playhead = useCallback((): number => compRef.current?.playhead() ?? 0, [compRef])
+  const targetTrack = useCallback((): string | undefined => compRef.current?.targetTrack(), [compRef])
   const preroll = useCallback(
     (at: number, lead: number): Promise<number> =>
       compRef.current?.preroll(at, lead) ?? Promise.resolve(performance.now()),
@@ -91,6 +92,7 @@ export function CueText({
     noVoiceReason,
     selection,
     playhead,
+    targetTrack,
     preroll,
     onPlace,
   })
