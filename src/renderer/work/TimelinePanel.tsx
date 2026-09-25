@@ -158,6 +158,7 @@ export interface CompApi {
   zoom: (factor: number) => void
   selectTool: () => void
   place: (next: CueComp) => void
+  current: () => CueComp
   splitAtPlayhead: () => void
   ghost: (request: GhostRequest | null) => void
 }
@@ -327,6 +328,8 @@ export function TimelinePanel({
   const edit = useCompEdit(cueId, cue?.comp, onComp, onProblem)
 
   const stored = useMemo<CueComp>(() => cue?.comp ?? { clips: [] }, [cue?.comp])
+  const storedRef = useRef(stored)
+  storedRef.current = stored
   const queued = edit.pending()
   const live = queued === undefined ? stored : (queued ?? { clips: [] })
   const comp = pending ?? live
@@ -1253,6 +1256,10 @@ export function TimelinePanel({
       place: (next) => {
         setGhost(null)
         commit(next)
+      },
+      current: () => {
+        const queued = edit.pending()
+        return queued === undefined ? storedRef.current : (queued ?? { clips: [] })
       },
       splitAtPlayhead: () => {
         const base = compRefLive.current

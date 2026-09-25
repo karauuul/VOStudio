@@ -51,7 +51,7 @@ export interface ProjectSession {
   close: () => Promise<boolean>
   onText: (cueId: string, text: string) => void
   flushText: () => Promise<boolean>
-  flushVoice: () => Promise<unknown>
+  flushVoice: () => Promise<boolean>
   debounceVoice: (key: string, fn: () => Promise<unknown>) => void
   cancelCharacterVoice: (characterId: string) => void
   saveUi: (next: UiSessionState) => void
@@ -156,9 +156,12 @@ export function useProjectSession(o: {
       voiceTimer.current = null
     }
     const p = pendingVoice.current
-    if (!p) return Promise.resolve()
+    if (!p) return Promise.resolve(true)
     pendingVoice.current = null
-    return p.fn()
+    return p.fn().then(
+      () => true,
+      () => false
+    )
   }, [])
 
   const debounceVoice = useCallback(
@@ -171,7 +174,7 @@ export function useProjectSession(o: {
         voiceTimer.current = null
         const p = pendingVoice.current
         pendingVoice.current = null
-        void p?.fn()
+        void p?.fn().catch(() => undefined)
       }, 400)
     },
     [flushVoice]

@@ -21,6 +21,7 @@ import {
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
 import { pickHistory, redoStale, type UndoSide } from '@shared/undo-route'
 import { planScriptPaste } from '@shared/lines'
+import { keyedQueue } from '@shared/keyed-queue'
 import type { UpdateStatus } from '@shared/updater'
 import { api, audioUrl } from './api'
 import { clipId, setOutputDevice, transport } from './audio/transport'
@@ -107,7 +108,7 @@ import {
 import { originalRef } from '@shared/export-plan'
 import { splitStems } from './audio/stems'
 import { runPlan } from './export/run-export'
-import { reportTakeDuration } from './audio/duration-backfill'
+import { durationQueue, reportTakeDuration } from './audio/duration-backfill'
 import { getPeaks, sourceColor } from './Waveform'
 
 type CopyKind = 'source' | 'translation' | 'prompt'
@@ -533,9 +534,10 @@ export default function App() {
         return { ...c, voiceSettingsOverride: next }
       })
       debounceVoice(`cue:${cue.id}`, () =>
-        dispatch({ type: 'cue.setVoiceOverride', cueId: cue.id, override: next }).catch(
-          (e: unknown) => pushStatus('err', String(e))
-        )
+        dispatch({ type: 'cue.setVoiceOverride', cueId: cue.id, override: next }).catch((e: unknown) => {
+          pushStatus('err', String(e))
+          throw e
+        })
       )
     },
     [
@@ -563,9 +565,10 @@ export default function App() {
           : p
       )
       debounceVoice(`char:${characterId}`, () =>
-        dispatch({ type: 'character.setVoiceSettings', characterId, settings }).catch(
-          (e: unknown) => pushStatus('err', String(e))
-        )
+        dispatch({ type: 'character.setVoiceSettings', characterId, settings }).catch((e: unknown) => {
+          pushStatus('err', String(e))
+          throw e
+        })
       )
     },
     [setProject, debounceVoice, pushStatus, dispatch, refuseWhileExporting]
@@ -698,13 +701,16 @@ export default function App() {
     )
   }, [activeCue, dispatch, pushStatus])
 
+  const placeQueue = useMemo(() => keyedQueue(), [])
+  const lastPlacedRef = useRef(new Map<string, { base: CueComp | undefined; comp: CueComp }>())
+
   const placeOnComp = useCallback(
-    async (
+    (
       cueId: string,
       take: Take | Take[],
       replaceClipId?: string,
       drop?: { trackId: string; at: number }
-    ): Promise<void> => {
+    ): Promise<void> => placeQueue(cueId, async () => {
       const takes = Array.isArray(take) ? take : [take]
       const durations: number[] = []
       for (const item of takes) {
@@ -717,11 +723,13 @@ export default function App() {
       const cue = projectRef.current?.cues.find((c) => c.id === cueId)
       if (!cue) return
       const state = transport.getState()
+      const recent = lastPlacedRef.current.get(cueId)
+      const stored = recent && recent.base === cue.comp ? recent.comp : cue.comp
+      let comp = isActiveCue(cueId) && compRef.current ? compRef.current.current() : stored
       const replace =
-        replaceClipId && cue.comp?.clips.some((c) => c.id === replaceClipId)
+        replaceClipId && comp?.clips.some((c) => c.id === replaceClipId)
           ? replaceClipId
           : undefined
-      let comp = cue.comp
       let trackId = drop?.trackId ?? targetTrackRef.current[cueId]
       let playhead =
         drop?.at ??
@@ -754,8 +762,9 @@ export default function App() {
         return
       }
       await dispatch({ type: 'cue.setComp', cueId, comp: placedComp })
-    },
-    [projectRef, dispatch, isActiveCue, selectSource]
+      lastPlacedRef.current.set(cueId, { base: cue.comp, comp: placedComp })
+    }),
+    [placeQueue, projectRef, dispatch, isActiveCue, selectSource]
   )
 
   const pinTake = useCallback(
@@ -1112,21 +1121,38 @@ export default function App() {
     []
   )
 
-  const deleteLine = useCallback(
-    async (cueId: string): Promise<void> => {
-      if (refuseWhileExporting()) return
-      const block = lineRemovalBlock([cueId])
+  const flushPending = useCallback(
+    async (): Promise<boolean> =>
+      (await flushText()) &&
+      (await flushVoice()) &&
+      (await durationQueue.flushNow().then(
+        () => true,
+        () => false
+      )),
+    [flushText, flushVoice]
+  )
+
+  const prepareLineRemoval = useCallback(
+    async (ids: string[]): Promise<boolean> => {
+      const block = lineRemovalBlock(ids)
       if (block) {
         pushStatus('info', block)
-        return
+        return false
       }
-      if (!(await flushText())) return
+      return flushPending()
+    },
+    [lineRemovalBlock, pushStatus, flushPending]
+  )
+
+  const deleteLine = useCallback(
+    async (cueId: string): Promise<void> => {
+      if (refuseWhileExporting() || !(await prepareLineRemoval([cueId]))) return
       const target = survivorNear([cueId], false)
       const changes = await execute({ type: 'cue.delete', cueIds: [cueId] })
       pushLineEdit({ kind: 'cues', undoRemoves: false, ids: [cueId], snapshots: changes.removedCues ?? [], focus: cueId })
       if (activeCueIdRef.current === cueId) await selectCue(target)
     },
-    [refuseWhileExporting, lineRemovalBlock, pushStatus, flushText, survivorNear, execute, pushLineEdit, selectCue]
+    [refuseWhileExporting, prepareLineRemoval, survivorNear, execute, pushLineEdit, selectCue]
   )
 
   const removeLine = useCallback(
@@ -1169,14 +1195,10 @@ export default function App() {
 
   const lineStep = useCallback(
     async (dir: 'undo' | 'redo'): Promise<void> => {
-      if (!(await flushText())) return
       const stack = dir === 'undo' ? linesRef.current.undo : linesRef.current.redo
       const top = stack[stack.length - 1]
-      const block = top && top.kind === 'cues' && removesLines(top, dir) ? lineRemovalBlock(top.ids) : null
-      if (block) {
-        pushStatus('info', block)
-        return
-      }
+      const removal = top?.kind === 'cues' && removesLines(top, dir) ? top.ids : null
+      if (!(await (removal ? prepareLineRemoval(removal) : flushPending()))) return
       let select: string | undefined
       let next: LineEdit | null
       try {
@@ -1204,7 +1226,7 @@ export default function App() {
       if (!next) return
       await selectCue(select).catch((e: unknown) => pushStatus('err', String(e)))
     },
-    [flushText, lineRemovalBlock, survivorNear, projectRef, execute, selectCue, pushStatus]
+    [prepareLineRemoval, flushPending, survivorNear, projectRef, execute, selectCue, pushStatus]
   )
 
   const historyStep = useCallback(
