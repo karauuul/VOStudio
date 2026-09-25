@@ -21,7 +21,7 @@ interface Options {
   selection: () => ClipSelection | null
   playhead: () => number
   targetTrack: () => string | undefined
-  preroll: (at: number, lead: number) => Promise<number>
+  preroll: (at: number, lead: number, onInterrupt: () => void) => Promise<number>
   onPlace: (
     cueId: string,
     take: Take,
@@ -260,7 +260,10 @@ export function useVoiceToVoice({
       device: appSettings.micDeviceLabel ?? appSettings.micDeviceId,
       countIn: false,
       autoReference: false,
-      preroll: () => preroll(at, Math.min(PUNCH_PREROLL_SECONDS, at)),
+      preroll: () =>
+        preroll(at, Math.min(PUNCH_PREROLL_SECONDS, at), () => {
+          if (punchRef.current === at) rec.cancel()
+        }),
     })
   }, [converting, rec, playhead, targetTrack, preroll, cue.id, appSettings])
 

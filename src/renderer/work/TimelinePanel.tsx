@@ -150,7 +150,7 @@ export interface CompApi {
   selection: () => ClipSelection | null
   playhead: () => number
   targetTrack: () => string
-  preroll: (at: number, lead: number) => Promise<number>
+  preroll: (at: number, lead: number, onInterrupt: () => void) => Promise<number>
   editSelected: (patch: Partial<ClipEdits>, commit: boolean) => void
   moveSelected: (start: number, commit: boolean) => void
   trimSelected: (edge: 'start' | 'end', at: number, commit: boolean) => void
@@ -174,6 +174,7 @@ export type Tool = 'select' | 'razor' | 'trim' | 'fade' | 'slip'
 const STRIP = 190
 const STEP_SECONDS = 0.1
 const RESCHEDULE_MS = 80
+const PREROLL_EARLY_MS = 30
 const ORIG_H = 150
 const TRACK_H = 165
 const GAIN_SPAN = 24
@@ -1217,7 +1218,7 @@ export function TimelinePanel({
       },
       playhead: () => posRef.current,
       targetTrack: () => resolveTargetTrack(compRefLive.current, targetTrackId),
-      preroll: (at, lead) =>
+      preroll: (at, lead, onInterrupt) =>
         new Promise<number>((resolve, reject) => {
           const from = Math.max(0, at - lead)
           if (!resolved || !transportId || !(at > from)) {
@@ -1225,13 +1226,14 @@ export function TimelinePanel({
             resolve(performance.now())
             return
           }
-          let started = false
+          let punchMs: number | null = null
           const settle = (): void => {
-            started = true
-            resolve(transport.timeOf(at) ?? performance.now())
+            punchMs = transport.timeOf(at) ?? performance.now()
+            resolve(punchMs)
           }
           const interrupted = (): void => {
-            if (!started) reject(new Error('Punch pre-roll was interrupted'))
+            if (punchMs === null) reject(new Error('Punch pre-roll was interrupted'))
+            else if (performance.now() < punchMs - PREROLL_EARLY_MS) onInterrupt()
           }
           void transport
             .playComp({ ...resolved, region: { in: from, out: at } }, { id: transportId, seek: from, once: true, onStart: settle })
