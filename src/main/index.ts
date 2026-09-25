@@ -35,6 +35,7 @@ import {
   type Cue,
   type ProjectVersion,
   type Stem,
+  type Take,
   type UiSessionState,
 } from '@shared/domain'
 import type { Project } from '@shared/domain'
@@ -60,6 +61,7 @@ import {
   finishVideoExport,
   planBatchExport,
   planVideoExport,
+  exportDir,
   exportInfo,
 } from './export'
 import { detectLines, importSources, splitMediaPaths } from './sources'
@@ -67,10 +69,11 @@ import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
 import { transcribeCues } from './transcribe'
-import { appendTake, type TakeSession } from './take-append'
-import type { ChangeSet, CommandResult } from '@shared/project-commands'
+import { appendTake, importTakeFile, type TakeSession } from './take-append'
+import { audioWithinRoots, type ChangeSet, type CommandResult } from '@shared/project-commands'
 import { setupImportedProject, setupOpenedProject } from './project-import'
-import { normalizePath, PROJECT_SUFFIX } from '@shared/project-summary'
+import { isInsideDir, normalizePath, PROJECT_SUFFIX, uniqueProjectName } from '@shared/project-summary'
+import { TAKE_FILE_EXTENSIONS } from '@shared/take-import'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'vostudio', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
@@ -84,8 +87,12 @@ function fileStream(abs: string, start?: number, end?: number): ReadableStream<U
   return Readable.toWeb(createReadStream(abs, options)) as ReadableStream<Uint8Array>
 }
 
+function trustedAudioRoots(): string[] {
+  return [store.getProjectDir(), REFERENCE_DIR_ENV, GENERATED_DIR].filter(Boolean) as string[]
+}
+
 function isAllowedPath(abs: string): boolean {
-  const roots = [store.getProjectDir(), REFERENCE_DIR_ENV, GENERATED_DIR].filter(Boolean) as string[]
+  const roots = trustedAudioRoots()
   const norm = path.resolve(abs).toLowerCase()
   if (roots.some((r) => norm.startsWith(path.resolve(r).toLowerCase() + path.sep))) return true
   const project = store.getProject()
@@ -99,6 +106,12 @@ function isAllowedPath(abs: string): boolean {
         path.resolve(cue.referenceAudio.relPath).toLowerCase() === norm) ||
       cue.takes.some((take) => path.resolve(take.file.relPath).toLowerCase() === norm)
   )
+}
+
+function isInsideExportDir(abs: string): boolean {
+  const project = store.getProject()
+  const dir = store.getProjectDir()
+  return !!project && !!dir && isInsideDir(path.resolve(abs), exportDir(project, dir))
 }
 
 function createWindow(): void {
@@ -217,12 +230,18 @@ const tableImportSchema = z.object({
   replaceTranslations: z.boolean().optional(),
 })
 
+const takeImportSchema = z.object({
+  cueId: z.string().min(1).max(200),
+  paths: z.array(filePath).min(1).max(200),
+})
+
 const transcribeSchema = z.object({
   cueIds: z.array(z.string().min(1).max(200)).min(1).max(500),
   overwrite: z.boolean().optional(),
 })
 
 const stamp = (): string => new Date().toISOString().replace(/[:.]/g, '-')
+const takeBase = (): string => `t_${stamp()}_${randomUUID().slice(0, 8)}`
 
 let projectRepository: SerialProjectRepository | null = null
 function resetRepository(project: Project): SerialProjectRepository {
@@ -261,6 +280,13 @@ function serialLifecycle<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 const dirExists = (dir: string): Promise<boolean> => fs.stat(dir).then(() => true, () => false)
+
+async function projectFolderNames(): Promise<string[]> {
+  const entries = await fs.readdir(store.defaultProjectsRoot()).catch(() => [])
+  return entries
+    .filter((name) => name.toLowerCase().endsWith(PROJECT_SUFFIX))
+    .map((name) => name.slice(0, -PROJECT_SUFFIX.length))
+}
 
 function requireRepository(): SerialProjectRepository {
   if (!projectRepository) throw new Error('No project is open')
@@ -380,7 +406,7 @@ const emptyProjectBase = (name: string): Omit<Project, 'id' | 'schemaVersion' | 
   cues: [],
   sessions: [],
   pronunciationRules: '',
-  exportTemplate: '{EventName}__{WemId}.{ext}',
+  exportTemplate: '{EventName}.{ext}',
   ui: { filter: '', search: '' },
 })
 
@@ -409,9 +435,9 @@ function registerHandlers(): void {
     })
   )
 
-  typedHandle('project:create', (name: string) =>
+  typedHandle('project:create', (name?: string) =>
     serialLifecycle(async () => {
-      const projectName = projectNameSchema.parse(name)
+      const projectName = name === undefined ? uniqueProjectName(await projectFolderNames()) : projectNameSchema.parse(name)
       const dir = path.join(store.defaultProjectsRoot(), `${projectName}${PROJECT_SUFFIX}`)
       if (await dirExists(dir)) throw new Error(`Project "${projectName}" already exists`)
       await detachCurrentRepository()
@@ -466,23 +492,29 @@ function registerHandlers(): void {
   )
 
   typedHandle('import:pick', async (kind) => {
-    const parsed = z.enum(['files', 'folder', 'table']).parse(kind)
+    const parsed = z.enum(['files', 'folder', 'table', 'audio']).parse(kind)
     const options: Electron.OpenDialogOptions =
       kind === 'folder'
         ? { title: 'Import folder', properties: ['openDirectory'] }
-        : parsed === 'table'
+        : parsed === 'audio'
           ? {
-              title: 'Import text table',
-              properties: ['openFile'],
-              filters: [{ name: 'Tables', extensions: ['csv', 'tsv', 'txt'] }],
-            }
-          : {
-              title: 'Import audio files',
+              title: 'Add audio',
               properties: ['openFile', 'multiSelections'],
-              filters: [
-                { name: 'Media', extensions: ['wav', 'mp3', 'ogg', 'm4a', 'mp4', 'mov', 'mkv'] },
-              ],
+              filters: [{ name: 'Audio', extensions: TAKE_FILE_EXTENSIONS }],
             }
+          : parsed === 'table'
+            ? {
+                title: 'Import text table',
+                properties: ['openFile'],
+                filters: [{ name: 'Tables', extensions: ['csv', 'tsv', 'txt'] }],
+              }
+            : {
+                title: 'Import audio files',
+                properties: ['openFile', 'multiSelections'],
+                filters: [
+                  { name: 'Media', extensions: ['wav', 'mp3', 'ogg', 'm4a', 'mp4', 'mov', 'mkv'] },
+                ],
+              }
     const win = BrowserWindow.getFocusedWindow()
     const picked = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
     return picked.canceled ? [] : picked.filePaths
@@ -560,7 +592,9 @@ function registerHandlers(): void {
 
   typedHandle('project:command', (command) => {
     if (!projectRepository) throw new Error('No project is open')
-    return projectRepository.execute(projectCommandSchema.parse(command))
+    const parsed = projectCommandSchema.parse(command)
+    if (!audioWithinRoots(parsed, trustedAudioRoots())) throw new Error('Audio is outside this project')
+    return projectRepository.execute(parsed)
   })
 
   typedHandle('project:saveVersion', (req) =>
@@ -590,7 +624,7 @@ function registerHandlers(): void {
   })
 
   typedHandle('shell:reveal', async (absPath: string) => {
-    if (!isAllowedPath(absPath)) throw new Error('Path is outside the allowlist')
+    if (!isAllowedPath(absPath) && !isInsideExportDir(absPath)) throw new Error('Path is outside the allowlist')
     shell.showItemInFolder(path.resolve(absPath))
   })
 
@@ -602,7 +636,7 @@ function registerHandlers(): void {
     const cue = session.repository.projectForMain().cues.find((c) => c.id === parsed.cueId)
     if (!cue) throw new Error('Cue not found')
 
-    const fileName = `t_${stamp()}_rec.wav`
+    const fileName = `${takeBase()}_rec.wav`
     return appendTake(session, cue.id, fileName, bytes, emitChange, (target, abs) => ({
       take: {
         id: randomUUID(),
@@ -622,6 +656,22 @@ function registerHandlers(): void {
       },
       select: false,
     }))
+  })
+
+  typedHandle('take:importFiles', async (cueId, paths) => {
+    const parsed = takeImportSchema.parse({ cueId, paths })
+    const session = requireSession()
+    const takes: Take[] = []
+    const failed: string[] = []
+    const base = takeBase()
+    for (const [i, src] of parsed.paths.entries()) {
+      try {
+        takes.push(await importTakeFile(session, parsed.cueId, src, `${base}_${i + 1}_imp`, emitChange))
+      } catch (e) {
+        failed.push(`${path.basename(src)}: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+    return { takes, failed }
   })
 
   typedHandle('take:setDurations', async (items) => {
@@ -656,23 +706,7 @@ function registerHandlers(): void {
     const rest = wavBytes(restWav)
     const project = requireProject()
     if (!project.cues.some((c) => c.id === id)) throw new Error('Cue not found')
-    const voicePath = await store.writeStemFile(id, 'voice.wav', voice)
-    const restPath = await store.writeStemFile(id, 'rest.wav', rest)
-    const stems: Stem[] = [
-      {
-        id: `${id}-voice`,
-        name: 'Voice',
-        file: { fileId: `${id}/voice.wav`, relPath: voicePath, format: 'wav' },
-        exportMode: 'off',
-      },
-      {
-        id: `${id}-rest`,
-        name: 'Music & SFX',
-        file: { fileId: `${id}/rest.wav`, relPath: restPath, format: 'wav' },
-        exportMode: 'on',
-        duckDb: 0,
-      },
-    ]
+    const stems = await store.saveStems(id, voice, rest)
     return stemsSchema.parse(stems) as Stem[]
   })
 
@@ -701,7 +735,7 @@ function registerHandlers(): void {
         : {}),
       settings: parsed.voiceSettings,
     })
-    const fileName = `t_${stamp()}_tts.mp3`
+    const fileName = `${takeBase()}_tts.mp3`
     const take = await appendTake(
       session,
       parsed.cueId,
@@ -762,7 +796,7 @@ function registerHandlers(): void {
       settings: parsed.voiceSettings,
     })
 
-    const fileName = `t_${stamp()}_sts.mp3`
+    const fileName = `${takeBase()}_sts.mp3`
     const take = await appendTake(
       session,
       parsed.cueId,

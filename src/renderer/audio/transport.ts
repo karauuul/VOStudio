@@ -10,6 +10,7 @@ import {
 import type { ResolvedComp } from './comp-source'
 import { playBounds, resumeAt } from '@shared/resume'
 import { Lru } from './lru'
+import { DECODE_BUDGET_BYTES } from '@shared/take-import'
 import { ensurePitchModule } from './pitch-node'
 
 export interface TransportState {
@@ -140,11 +141,10 @@ function ac(): AudioContext {
 }
 
 const MAX_BUFFERS = 40
-const MAX_BUFFER_BYTES = 300 * 1024 * 1024
 
 const buffers = new Lru<AudioBuffer>({
   maxEntries: MAX_BUFFERS,
-  maxCost: MAX_BUFFER_BYTES,
+  maxCost: DECODE_BUDGET_BYTES,
   cost: (b) => b.length * b.numberOfChannels * 4,
 })
 const inflight = new Map<string, Promise<AudioBuffer>>()

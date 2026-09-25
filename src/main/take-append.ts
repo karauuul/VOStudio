@@ -1,9 +1,13 @@
-import { promises as fs } from 'fs'
+import { constants, promises as fs } from 'fs'
+import path from 'path'
+import { randomUUID } from 'crypto'
 import { changeTakeOutput } from '@shared/approval'
-import { cueVoiceUnchanged, type Cue, type Take } from '@shared/domain'
+import { cueVoiceUnchanged, emptyEdits, type AudioRef, type Cue, type Take } from '@shared/domain'
 import type { CommandResult } from '@shared/project-commands'
+import { DECODE_BUDGET_BYTES, importProblem, takeFileKind } from '@shared/take-import'
 import type { SerialProjectRepository } from './project-repository'
-import { writeTakeFile } from './project-store'
+import { writeTakeFile, type AudioWriter } from './project-store'
+import { probeMedia, runFfmpeg } from './ffmpeg'
 
 export interface TakeSession {
   repository: SerialProjectRepository
@@ -14,12 +18,12 @@ export async function appendTake(
   session: TakeSession,
   cueId: string,
   fileName: string,
-  bytes: Buffer,
+  data: AudioWriter,
   publish: (result: CommandResult) => void,
   build: (cue: Cue, abs: string) => { take: Take; select: boolean },
   voice?: { characterId: string; voiceId: string }
 ): Promise<Take> {
-  const abs = await writeTakeFile(session.dir, cueId, fileName, bytes)
+  const abs = await writeTakeFile(session.dir, cueId, fileName, data)
   let added!: Take
   let result: CommandResult | null
   try {
@@ -41,4 +45,42 @@ export async function appendTake(
   }
   if (result) publish(result)
   return added
+}
+
+async function transcode(src: string, abs: string): Promise<void> {
+  await runFfmpeg(['-i', src, '-vn', '-c:a', 'pcm_s16le', '-fs', String(DECODE_BUDGET_BYTES), abs])
+  if ((await fs.stat(abs)).size >= DECODE_BUDGET_BYTES) throw new Error('Converted audio is too large')
+}
+
+export async function importTakeFile(
+  session: TakeSession,
+  cueId: string,
+  src: string,
+  baseName: string,
+  publish: (result: CommandResult) => void
+): Promise<Take> {
+  const kind = takeFileKind(src)
+  if (kind === 'video') throw new Error('Video goes to Import')
+  if (kind === 'unsupported') throw new Error('Unsupported file type')
+  await fs.access(src)
+  const probe = await probeMedia(src)
+  if (!probe.hasAudio) throw new Error('No audio in file')
+  const problem = importProblem(probe)
+  if (problem) throw new Error(problem)
+  const duration = probe.duration
+  const format: AudioRef['format'] = kind === 'keep' ? (path.extname(src).slice(1).toLowerCase() as AudioRef['format']) : 'wav'
+  const fileName = `${baseName}.${format}`
+  const write = kind === 'keep' ? (abs: string) => fs.copyFile(src, abs, constants.COPYFILE_EXCL) : (abs: string) => transcode(src, abs)
+  return appendTake(session, cueId, fileName, write, publish, (cue, abs) => ({
+    take: {
+      id: randomUUID(),
+      kind: 'imported',
+      createdAt: new Date().toISOString(),
+      file: { fileId: `${cue.id}/${fileName}`, relPath: abs, format },
+      duration: duration ?? 0,
+      meta: {},
+      edits: emptyEdits(),
+    },
+    select: false,
+  }))
 }

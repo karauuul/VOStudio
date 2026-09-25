@@ -36,7 +36,38 @@ export function ffmpegInfo(file: string): Promise<string> {
 
 const DURATION_RE = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/
 const SIZE_RE = /\b(\d{2,5})x(\d{2,5})\b/
-const CHANNELS_RE = /,\s*(mono|stereo|(\d+)\s+channels)/
+const CHANNELS_RE = /Hz,\s*([^,]+)/
+const LAYOUT_CHANNELS: Record<string, number> = {
+  mono: 1,
+  stereo: 2,
+  '2.1': 3,
+  '3.0': 3,
+  '3.0(back)': 3,
+  quad: 4,
+  'quad(side)': 4,
+  '4.0': 4,
+  '4.1': 5,
+  '5.0': 5,
+  '5.0(side)': 5,
+  '5.1': 6,
+  '5.1(side)': 6,
+  '6.0': 6,
+  '6.1': 7,
+  '6.1(back)': 7,
+  '7.0': 7,
+  '7.1': 8,
+  '7.1(wide)': 8,
+  '7.1(wide-side)': 8,
+}
+const UNKNOWN_LAYOUT_CHANNELS = 8
+
+export function layoutChannels(layout: string): number {
+  const name = layout.trim().toLowerCase()
+  const counted = /^(\d+)\s+channels?/.exec(name)
+  if (counted) return Number(counted[1])
+  return LAYOUT_CHANNELS[name] ?? UNKNOWN_LAYOUT_CHANNELS
+}
+const RATE_RE = /,\s*(\d{4,6})\s+Hz/
 const VIDEO_RE = /Stream #.*Video:/
 const AUDIO_RE = /Stream #.*Audio:/
 const BRACKETS_RE = /\[[^\]]*\]/g
@@ -46,6 +77,7 @@ export interface MediaProbe {
   width?: number
   height?: number
   channels?: number
+  sampleRate?: number
   hasVideo: boolean
   hasAudio: boolean
 }
@@ -70,9 +102,9 @@ export function parseProbe(stderr: string): MediaProbe {
     if (AUDIO_RE.test(line)) {
       out.hasAudio = true
       const ch = CHANNELS_RE.exec(line)
-      if (ch && out.channels === undefined) {
-        out.channels = ch[1] === 'mono' ? 1 : ch[1] === 'stereo' ? 2 : Number(ch[2])
-      }
+      if (ch && out.channels === undefined) out.channels = layoutChannels(ch[1])
+      const rate = RATE_RE.exec(line)
+      if (rate && out.sampleRate === undefined) out.sampleRate = Number(rate[1])
     }
   }
   return out

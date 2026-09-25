@@ -69,3 +69,21 @@ export function isProjectDirIn(root: string, dir: string): boolean {
   if (cut <= 0) return false
   return d.slice(0, cut) === normalizePath(root) && d.length - cut - 1 > PROJECT_SUFFIX.length
 }
+
+export function uniqueProjectName(taken: string[], base = 'Untitled'): string {
+  const used = new Set(taken.map((name) => name.toLowerCase()))
+  if (!used.has(base.toLowerCase())) return base
+  let n = 2
+  while (used.has(`${base} ${n}`.toLowerCase())) n++
+  return `${base} ${n}`
+}
+
+export function isInsideDir(file: string, dir: string): boolean {
+  const target = normalizePath(file)
+  const root = normalizePath(dir)
+  return root.length > 0 && target.startsWith(root + '/') && !target.split('/').includes('..')
+}
+
+export function isSafeId(id: unknown): id is string {
+  return typeof id === 'string' && isSafeFileName(id) && !id.includes('..')
+}

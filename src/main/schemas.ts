@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { isProjectDirIn, isValidProjectName } from '@shared/project-summary'
+import { isProjectDirIn, isSafeId, isValidProjectName } from '@shared/project-summary'
+import { CREATE_LINES_MAX, LINE_TEXT_MAX } from '@shared/lines'
 import {
   DUCK_MAX_DB,
   DUCK_MIN_DB,
@@ -25,6 +26,8 @@ import {
 } from '@shared/effects'
 
 export const finite = z.number().finite()
+
+const safeId = z.string().min(1).max(200).refine(isSafeId, { message: 'Invalid id' })
 
 export const projectDirSchema = (root: string) =>
   z
@@ -279,13 +282,62 @@ export function autoSelectsOutput(
   return !approved
 }
 
+const takeSchema = z
+  .object({
+    id: safeId,
+    kind: z.enum(['tts', 'sts', 'recording', 'imported', 'composite']),
+    createdAt: z.string(),
+    file: audioRefSchema,
+    duration: finite.min(0),
+    meta: z
+      .object({
+        text: z.string().optional(),
+        voiceSettings: voiceSettingsSchema.optional(),
+        sourceTakeId: z.string().optional(),
+        provider: z.string().optional(),
+        model: z.string().optional(),
+      })
+      .passthrough(),
+    edits: clipEditsSchema,
+    words: z.array(z.object({ text: z.string(), start: finite, end: finite })).optional(),
+    rating: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
+    fragment: z.literal(true).optional(),
+    pinned: z.literal(true).optional(),
+    deletedAt: z.string().min(1).optional(),
+  })
+  .passthrough()
+
+export const cueSchema = z
+  .object({
+    id: safeId,
+    characterId: z.string().max(200),
+    key: z.string().max(4096),
+    fields: z.record(z.string()),
+    sourceText: z.string(),
+    text: z.string(),
+    suggestedText: z.string().optional(),
+    status: z.enum(['empty', 'translated', 'generated', 'approved', 'excluded']),
+    notes: z.string(),
+    referenceAudio: audioRefSchema.optional(),
+    referenceDuration: finite.min(0).optional(),
+    original: originalLaneSchema.unwrap().optional(),
+    stems: stemsSchema.unwrap().optional(),
+    region: cueRegionSchema.unwrap().optional(),
+    takes: z.array(takeSchema).max(100_000),
+    finalTakeId: z.string().min(1).max(200).optional(),
+    comp: compSchema.unwrap().optional(),
+    voiceSettingsOverride: voiceSettingsSchema.partial().optional(),
+  })
+  .merge(cueRevisionFieldsSchema)
+  .passthrough()
+
 const cueId = z.object({ cueId: z.string().min(1).max(200) })
 const characterId = z.object({ characterId: z.string().min(1).max(200) })
 const characterName = z.string().min(1).max(120)
 const modelId = z.string().min(1).max(120)
 
 export const projectCommandSchema = z.discriminatedUnion('type', [
-  cueId.extend({ type: z.literal('cue.saveText'), text: z.string().max(5000) }),
+  cueId.extend({ type: z.literal('cue.saveText'), text: z.string().max(LINE_TEXT_MAX), ifText: z.string().max(LINE_TEXT_MAX).optional() }),
   cueId.extend({ type: z.literal('cue.approve'), approved: z.boolean(), approvedAt: z.string().min(1).optional() }),
   cueId.extend({ type: z.literal('cue.setFinalTake'), takeId: z.string().min(1).max(200) }),
   cueId.extend({ type: z.literal('cue.setComp'), comp: compSchema }),
@@ -308,6 +360,29 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   cueId.extend({ type: z.literal('cue.deleteTake'), takeId: z.string().min(1).max(200), deletedAt: z.string().min(1).optional() }),
   cueId.extend({ type: z.literal('cue.setCharacter'), characterId: z.string().max(200) }),
   cueId.extend({ type: z.literal('cue.setExcluded'), excluded: z.boolean() }),
+  z.object({
+    type: z.literal('cue.create'),
+    afterCueId: z.string().min(1).max(200).nullable(),
+    lines: z
+      .array(z.object({ id: safeId, text: z.string().max(LINE_TEXT_MAX) }))
+      .min(1)
+      .max(CREATE_LINES_MAX),
+  }),
+  z.object({ type: z.literal('cue.delete'), cueIds: z.array(z.string().min(1).max(200)).min(1).max(100_000) }),
+  z.object({
+    type: z.literal('cue.restore'),
+    cues: z.array(z.object({ cue: cueSchema, index: z.number().int().min(0).max(10_000_000) })).min(1).max(100_000),
+  }),
+  cueId.extend({ type: z.literal('cue.useTakeAsOriginal'), takeId: z.string().min(1).max(200) }),
+  cueId.extend({
+    type: z.literal('cue.restoreOriginal'),
+    referenceAudio: audioRefSchema.nullable(),
+    referenceDuration: finite.min(0).nullable(),
+    status: z.enum(['empty', 'translated', 'generated', 'approved', 'excluded']),
+    output: cueOutputSchema.optional(),
+    approval: cueApprovalSchema.optional(),
+    whenOutputRevision: revisionSchema,
+  }),
   characterId.extend({ type: z.literal('character.setVoiceSettings'), settings: voiceSettingsSchema }),
   z.object({ type: z.literal('character.create'), id: z.string().min(1).max(200), name: characterName }),
   characterId.extend({ type: z.literal('character.rename'), name: characterName }),

@@ -8,10 +8,12 @@ type Status = (kind: 'ok' | 'err' | 'info', text: string) => void
 
 export function ProjectHome({
   onOpen,
+  onNew,
   onStatus,
   onSettings,
 }: {
   onOpen: (snapshot: ProjectSnapshot) => void
+  onNew: () => Promise<void>
   onStatus: Status
   onSettings: () => void
 }) {
@@ -94,6 +96,9 @@ export function ProjectHome({
       <div className="home-bar">
         <span className="boot-mark">VO Studio</span>
         <div className="home-actions">
+          <button className="btn ghost" data-hk="newProject" disabled={busy} onClick={() => run(onNew)}>
+            New
+          </button>
           <button
             className={empty ? 'btn ghost' : 'btn primary'}
             disabled={busy || !selected}

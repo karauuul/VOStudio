@@ -1933,3 +1933,37 @@ input.tl-name:focus {
   font-size: 11px;
   color: var(--tx3);
 }
+
+.phd .add-line {
+  height: 22px;
+  margin-left: auto;
+  padding: 0 8px;
+}
+
+.work-empty {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 12px;
+  width: 260px;
+  margin: 0 auto;
+}
+
+.work-empty .btn {
+  justify-content: center;
+}
+
+.work-empty .btn kbd {
+  margin-left: 4px;
+}
+
+.work-empty .drop {
+  margin: 0;
+  height: 96px;
+  background: transparent;
+  font: 500 12px var(--sans);
+  cursor: pointer;
+}

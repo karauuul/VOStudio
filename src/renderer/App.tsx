@@ -19,7 +19,9 @@ import {
   type VoiceSettings,
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
-import { pickHistory, redoStale } from '@shared/undo-route'
+import { pickHistory, redoStale, type UndoSide } from '@shared/undo-route'
+import { planScriptPaste } from '@shared/lines'
+import { keyedQueue } from '@shared/keyed-queue'
 import type { UpdateStatus } from '@shared/updater'
 import { api, audioUrl } from './api'
 import { clipId, setOutputDevice, transport } from './audio/transport'
@@ -70,7 +72,23 @@ import {
 import { hasValidVoicedOutput } from '@shared/approval'
 import { compDuration, isEmptyComp } from '@shared/comp'
 import { libraryRow, lineLabel, locateText, resolveTake, type LibraryRow } from '@shared/library'
-import type { ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
+import type { ChangeSet, ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
+import {
+  lineStepCommand,
+  originalStateOf,
+  outputRevisionIn,
+  recordLineEdit,
+  removalBlock,
+  removesLines,
+  runLineStep,
+  steppedEdit,
+  textFieldStep,
+  textStepCommand,
+  afterTextStep,
+  type LineChange,
+  type LineEdit,
+  type LineHistory,
+} from '@shared/line-history'
 import { buildPrompt } from '@shared/prompt'
 import {
   clipTargetText,
@@ -89,12 +107,19 @@ import {
 } from '@shared/provider-models'
 import { originalRef } from '@shared/export-plan'
 import { splitStems } from './audio/stems'
-import { reportTakeDuration } from './audio/duration-backfill'
+import { runPlan } from './export/run-export'
+import { durationQueue, reportTakeDuration } from './audio/duration-backfill'
 import { getPeaks, sourceColor } from './Waveform'
 
 type CopyKind = 'source' | 'translation' | 'prompt'
 
 const FX_HISTORY_LIMIT = 100
+
+const createLinesCommand = (texts: string[], afterCueId: string | null): Extract<ProjectCommand, { type: 'cue.create' }> => ({
+  type: 'cue.create',
+  afterCueId,
+  lines: texts.map((text) => ({ id: crypto.randomUUID(), text })),
+})
 
 interface TakeEffectsEdit {
   cueId: string
@@ -154,6 +179,10 @@ export default function App() {
   const activeCueIdRef = useRef<string | undefined>(undefined)
   const fxUndoRef = useRef<TakeEffectsEdit[]>([])
   const fxRedoRef = useRef<TakeEffectsEdit[]>([])
+  const linesRef = useRef<LineHistory>({ undo: [], redo: [] })
+  const replayRef = useRef(0)
+  const afterSelectRef = useRef<{ cueId: string; then: 'focus' | 'record' } | null>(null)
+  const creatingRef = useRef(false)
   const exportingRef = useRef(false)
   const targetTrackRef = useRef<Record<string, string>>({})
   targetTrackRef.current = targetTrack
@@ -208,7 +237,13 @@ export default function App() {
     )
   }, [])
 
-  const session = useProjectSession({ onStatus: pushStatus, onBootstrap })
+  const onEdit = useCallback(() => {
+    fxRedoRef.current = []
+    linesRef.current.redo = []
+    compRef.current?.dropRedo()
+  }, [])
+
+  const session = useProjectSession({ onStatus: pushStatus, onBootstrap, onEdit })
   const {
     project,
     projectRef,
@@ -228,12 +263,17 @@ export default function App() {
     return true
   }, [pushStatus])
 
-  const dispatch = useCallback(
-    (command: ProjectCommand): Promise<void> =>
+  const execute = useCallback(
+    (command: ProjectCommand, replay = false): Promise<ChangeSet> =>
       exportingRef.current
         ? Promise.reject(new Error('Export in progress'))
-        : sessionDispatch(command),
+        : sessionDispatch(command, replay || replayRef.current > 0),
     [sessionDispatch]
+  )
+
+  const dispatch = useCallback(
+    (command: ProjectCommand): Promise<void> => execute(command).then(() => undefined),
+    [execute]
   )
 
   const beginExport = useCallback(async (): Promise<boolean> => {
@@ -259,8 +299,16 @@ export default function App() {
     refreshExported()
   }, [refreshExported])
 
+  const resetHistory = useCallback(() => {
+    fxUndoRef.current = []
+    fxRedoRef.current = []
+    linesRef.current = { undo: [], redo: [] }
+    afterSelectRef.current = null
+  }, [])
+
   const enterProject = useCallback(
     (snapshot: ProjectSnapshot) => {
+      resetHistory()
       setCharacterFilter(ALL_CHARACTERS)
       setRoute('work')
       setReviewIds(null)
@@ -268,7 +316,7 @@ export default function App() {
       session.enter(snapshot)
       refreshExported()
     },
-    [session, refreshExported]
+    [session, refreshExported, resetHistory]
   )
 
   useEffect(() => {
@@ -486,9 +534,10 @@ export default function App() {
         return { ...c, voiceSettingsOverride: next }
       })
       debounceVoice(`cue:${cue.id}`, () =>
-        dispatch({ type: 'cue.setVoiceOverride', cueId: cue.id, override: next }).catch(
-          (e: unknown) => pushStatus('err', String(e))
-        )
+        dispatch({ type: 'cue.setVoiceOverride', cueId: cue.id, override: next }).catch((e: unknown) => {
+          pushStatus('err', String(e))
+          throw e
+        })
       )
     },
     [
@@ -516,9 +565,10 @@ export default function App() {
           : p
       )
       debounceVoice(`char:${characterId}`, () =>
-        dispatch({ type: 'character.setVoiceSettings', characterId, settings }).catch(
-          (e: unknown) => pushStatus('err', String(e))
-        )
+        dispatch({ type: 'character.setVoiceSettings', characterId, settings }).catch((e: unknown) => {
+          pushStatus('err', String(e))
+          throw e
+        })
       )
     },
     [setProject, debounceVoice, pushStatus, dispatch, refuseWhileExporting]
@@ -651,47 +701,70 @@ export default function App() {
     )
   }, [activeCue, dispatch, pushStatus])
 
+  const placeQueue = useMemo(() => keyedQueue(), [])
+  const lastPlacedRef = useRef(new Map<string, { base: CueComp | undefined; comp: CueComp }>())
+
   const placeOnComp = useCallback(
-    async (
+    (
       cueId: string,
-      take: Take,
+      take: Take | Take[],
       replaceClipId?: string,
       drop?: { trackId: string; at: number }
-    ): Promise<void> => {
-      const peaks = await getPeaks(take.file.relPath)
-      reportTakeDuration(cueId, take, peaks.duration)
-      const duration = take.duration > 0 ? take.duration : peaks.duration
-      if (!(duration > 0)) throw new Error('the new take decoded to nothing')
+    ): Promise<void> => placeQueue(cueId, async () => {
+      const takes = Array.isArray(take) ? take : [take]
+      const durations: number[] = []
+      for (const item of takes) {
+        const peaks = await getPeaks(item.file.relPath)
+        reportTakeDuration(cueId, item, peaks.duration)
+        const duration = item.duration > 0 ? item.duration : peaks.duration
+        if (!(duration > 0)) throw new Error('the new take decoded to nothing')
+        durations.push(duration)
+      }
       const cue = projectRef.current?.cues.find((c) => c.id === cueId)
       if (!cue) return
       const state = transport.getState()
+      const recent = lastPlacedRef.current.get(cueId)
+      const stored = recent && recent.base === cue.comp ? recent.comp : cue.comp
+      let comp = isActiveCue(cueId) && compRef.current ? compRef.current.current() : stored
       const replace =
-        replaceClipId && cue.comp?.clips.some((c) => c.id === replaceClipId)
+        replaceClipId && comp?.clips.some((c) => c.id === replaceClipId)
           ? replaceClipId
           : undefined
-      const placed = placeTake({
-        comp: cue.comp,
-        takeId: take.id,
-        duration,
-        targetTrackId: drop?.trackId ?? targetTrackRef.current[cueId],
-        playhead:
-          drop?.at ??
-          (isActiveCue(cueId)
-            ? (compRef.current?.playhead() ?? 0)
-            : state.clipId === clipId.comp(cueId)
-              ? state.pos
-              : 0),
-        ...(replace ? { replaceClipId: replace } : {}),
+      let trackId = drop?.trackId ?? targetTrackRef.current[cueId]
+      let playhead =
+        drop?.at ??
+        (isActiveCue(cueId)
+          ? (compRef.current?.playhead() ?? 0)
+          : state.clipId === clipId.comp(cueId)
+            ? state.pos
+            : 0)
+      takes.forEach((item, i) => {
+        const placed = placeTake({
+          comp,
+          takeId: item.id,
+          duration: durations[i],
+          targetTrackId: trackId,
+          playhead,
+          ...(replace ? { replaceClipId: replace } : {}),
+        })
+        comp = placed.comp
+        trackId = placed.trackId
+        const clip = placed.comp.clips.find((c) => c.id === placed.clipId)
+        playhead = (clip?.start ?? playhead) + durations[i]
       })
-      setTargetTrack((m) => (m[cueId] === placed.trackId ? m : { ...m, [cueId]: placed.trackId }))
+      if (!comp || !trackId) return
+      const placedTrack = trackId
+      const placedComp = comp
+      setTargetTrack((m) => (m[cueId] === placedTrack ? m : { ...m, [cueId]: placedTrack }))
       if (isActiveCue(cueId) && compRef.current) {
-        compRef.current.place(placed.comp)
+        compRef.current.place(placedComp)
         selectSource({ kind: 'comp' })
         return
       }
-      await dispatch({ type: 'cue.setComp', cueId, comp: placed.comp })
-    },
-    [projectRef, dispatch, isActiveCue, selectSource]
+      await dispatch({ type: 'cue.setComp', cueId, comp: placedComp })
+      lastPlacedRef.current.set(cueId, { base: cue.comp, comp: placedComp })
+    }),
+    [placeQueue, projectRef, dispatch, isActiveCue, selectSource]
   )
 
   const pinTake = useCallback(
@@ -897,6 +970,7 @@ export default function App() {
 
   const leaveProject = useCallback(async () => {
     if (!(await session.close())) return
+    resetHistory()
     setActiveCueId(undefined)
     setSelection(null)
     setTargetTrack({})
@@ -904,7 +978,7 @@ export default function App() {
     setExported(new Set())
     setRoute('work')
     setReviewIds(null)
-  }, [session])
+  }, [session, resetHistory])
 
   const goHome = useCallback(() => {
     if (refuseWhileExporting()) return
@@ -980,29 +1054,322 @@ export default function App() {
     [projectRef, applyTakeEffects]
   )
 
+  const pushLineEdit = useCallback((change: LineChange) => recordLineEdit(linesRef.current, change, Date.now()), [])
+
+  const activeLineId = useCallback((): string | null => {
+    const id = activeCueIdRef.current
+    return id && projectRef.current?.cues.some((c) => c.id === id) ? id : null
+  }, [projectRef])
+
+  const survivorNear = useCallback(
+    (ids: string[], preferBefore: boolean): string | undefined => {
+      const active = activeCueIdRef.current
+      if (!active || !ids.includes(active)) return active
+      const gone = new Set(ids)
+      const at = visible.findIndex((c) => c.id === active)
+      const after = visible.slice(at + 1).find((c) => !gone.has(c.id))
+      const before = visible
+        .slice(0, Math.max(0, at))
+        .reverse()
+        .find((c) => !gone.has(c.id))
+      return (preferBefore ? (before ?? after) : (after ?? before))?.id
+    },
+    [visible]
+  )
+
+  const openNewLine = useCallback(
+    async (then?: 'focus' | 'record'): Promise<string | undefined> => {
+      if (refuseWhileExporting() || !(await flushText())) return undefined
+      const create = createLinesCommand([''], activeLineId())
+      await execute(create)
+      const id = create.lines[0].id
+      pushLineEdit({ kind: 'cues', undoRemoves: true, ids: [id], snapshots: [], focus: id })
+      afterSelectRef.current = then ? { cueId: id, then } : null
+      await selectCue(id)
+      return id
+    },
+    [refuseWhileExporting, flushText, activeLineId, execute, pushLineEdit, selectCue]
+  )
+
+  const addLine = useCallback(() => {
+    void openNewLine('focus').catch((e: unknown) => pushStatus('err', String(e)))
+  }, [openNewLine, pushStatus])
+
+  const recordLine = useCallback(() => {
+    if (recRef.current) {
+      recRef.current()
+      return
+    }
+    if (projectRef.current?.cues.length !== 0) return
+    void openNewLine('record').catch((e: unknown) => pushStatus('err', String(e)))
+  }, [projectRef, openNewLine, pushStatus])
+
+  useEffect(() => {
+    const next = afterSelectRef.current
+    if (!next || next.cueId !== activeCue?.id) return
+    afterSelectRef.current = null
+    if (next.then === 'focus') focusTextRef.current?.()
+    else recRef.current?.()
+  }, [activeCue?.id])
+
+  const lineRemovalBlock = useCallback(
+    (ids: string[]): string | null =>
+      removalBlock(ids, {
+        busy: isCueBusyNow,
+        recordingCueId: recActiveRef.current?.() ? (activeCueIdRef.current ?? null) : null,
+      }),
+    []
+  )
+
+  const flushPending = useCallback(
+    async (): Promise<boolean> =>
+      (await flushText()) &&
+      (await flushVoice()) &&
+      (await durationQueue.flushNow().then(
+        () => true,
+        () => false
+      )),
+    [flushText, flushVoice]
+  )
+
+  const prepareLineRemoval = useCallback(
+    async (ids: string[]): Promise<boolean> => {
+      const block = lineRemovalBlock(ids)
+      if (block) {
+        pushStatus('info', block)
+        return false
+      }
+      return flushPending()
+    },
+    [lineRemovalBlock, pushStatus, flushPending]
+  )
+
+  const deleteLine = useCallback(
+    async (cueId: string): Promise<void> => {
+      if (refuseWhileExporting() || !(await prepareLineRemoval([cueId]))) return
+      const target = survivorNear([cueId], false)
+      const changes = await execute({ type: 'cue.delete', cueIds: [cueId] })
+      pushLineEdit({ kind: 'cues', undoRemoves: false, ids: [cueId], snapshots: changes.removedCues ?? [], focus: cueId })
+      if (activeCueIdRef.current === cueId) await selectCue(target)
+    },
+    [refuseWhileExporting, prepareLineRemoval, survivorNear, execute, pushLineEdit, selectCue]
+  )
+
+  const removeLine = useCallback(
+    (cueId: string) => void deleteLine(cueId).catch((e: unknown) => pushStatus('err', String(e))),
+    [deleteLine, pushStatus]
+  )
+
+  const pasteScript = useCallback(
+    (parts: string[]) => {
+      const cue = activeCue
+      if (!cue || refuseWhileExporting()) return
+      const plan = planScriptPaste(cue.id, parts, () => crypto.randomUUID())
+      if ('problem' in plan) {
+        pushStatus('err', plan.problem)
+        return
+      }
+      const run = async (): Promise<void> => {
+        if (!(await flushText())) return
+        const before = projectRef.current?.cues.find((c) => c.id === cue.id)?.text ?? cue.text
+        await execute(plan.create)
+        const lines: LineChange = {
+          kind: 'cues',
+          undoRemoves: true,
+          ids: plan.create.lines.map((line) => line.id),
+          snapshots: [],
+          focus: cue.id,
+        }
+        try {
+          await execute(plan.text)
+        } catch (e) {
+          pushLineEdit(lines)
+          throw e
+        }
+        pushLineEdit({ ...lines, text: { cueId: cue.id, before, after: plan.text.text } })
+      }
+      void run().catch((e: unknown) => pushStatus('err', String(e)))
+    },
+    [activeCue, refuseWhileExporting, flushText, projectRef, execute, pushLineEdit, pushStatus]
+  )
+
+  const lineStep = useCallback(
+    async (dir: 'undo' | 'redo'): Promise<void> => {
+      const stack = dir === 'undo' ? linesRef.current.undo : linesRef.current.redo
+      const top = stack[stack.length - 1]
+      const removal = top?.kind === 'cues' && removesLines(top, dir) ? top.ids : null
+      if (!(await (removal ? prepareLineRemoval(removal) : flushPending()))) return
+      let select: string | undefined
+      let next: LineEdit | null
+      try {
+        next = await runLineStep(linesRef.current, dir, async (edit) => {
+          const target =
+            edit.kind === 'original'
+              ? edit.cueId
+              : removesLines(edit, dir)
+                ? survivorNear(edit.ids, edit.undoRemoves)
+                : edit.focus
+          const owner = edit.kind === 'original' ? projectRef.current?.cues.find((c) => c.id === edit.cueId) : undefined
+          const current = owner ? structuredClone(owner) : undefined
+          const changes = await execute(lineStepCommand(edit, dir), true)
+          select = target
+          const next = steppedEdit(edit, dir, changes, current)
+          const textCommand = textStepCommand(next, dir)
+          if (!textCommand) return next
+          const textChanges = await execute(textCommand, true).catch((): ChangeSet => ({}))
+          return afterTextStep(next, dir, textChanges)
+        })
+      } catch (e) {
+        pushStatus('err', String(e))
+        return
+      }
+      if (!next) return
+      await selectCue(select).catch((e: unknown) => pushStatus('err', String(e)))
+    },
+    [prepareLineRemoval, flushPending, survivorNear, projectRef, execute, selectCue, pushStatus]
+  )
+
   const historyStep = useCallback(
     (dir: 'undo' | 'redo') => {
       const comp = compRef.current
-      const topAt = (stack: TakeEffectsEdit[]): number | null => stack[stack.length - 1]?.at ?? null
-      if (redoStale(topAt(fxRedoRef.current), comp?.lastEditAt('undo') ?? null)) fxRedoRef.current = []
-      if (redoStale(comp?.lastEditAt('redo') ?? null, topAt(fxUndoRef.current))) comp?.dropRedo()
+      const topAt = (stack: { at: number }[]): number | null => stack[stack.length - 1]?.at ?? null
+      const undoAt: Record<UndoSide, number | null> = {
+        comp: comp?.lastEditAt('undo') ?? null,
+        fx: topAt(fxUndoRef.current),
+        line: topAt(linesRef.current.undo),
+      }
+      const newestOther = (side: UndoSide): number | null => {
+        const others = (Object.keys(undoAt) as UndoSide[]).flatMap((k) => (k === side ? [] : (undoAt[k] ?? [])))
+        return others.length > 0 ? Math.max(...others) : null
+      }
+      if (redoStale(topAt(fxRedoRef.current), newestOther('fx'))) fxRedoRef.current = []
+      if (redoStale(comp?.lastEditAt('redo') ?? null, newestOther('comp'))) comp?.dropRedo()
+      if (redoStale(topAt(linesRef.current.redo), newestOther('line'))) linesRef.current.redo = []
       const from = dir === 'undo' ? fxUndoRef : fxRedoRef
-      const side = pickHistory({ comp: comp?.lastEditAt(dir) ?? null, fx: topAt(from.current) }, dir)
-      if (side === 'comp') {
-        if (dir === 'undo') comp?.undo()
-        else comp?.redo()
+      const side = pickHistory(
+        {
+          comp: comp?.lastEditAt(dir) ?? null,
+          fx: topAt(from.current),
+          line: topAt(dir === 'undo' ? linesRef.current.undo : linesRef.current.redo),
+        },
+        dir
+      )
+      if (side === 'line') {
+        void lineStep(dir)
         return
       }
-      if (side !== 'fx') return
-      const entry = from.current.pop()
-      if (!entry) return
-      const to = dir === 'undo' ? fxRedoRef : fxUndoRef
-      if (applyTakeEffects(entry.cueId, entry.takeId, dir === 'undo' ? entry.prev : entry.next)) {
-        to.current.push(entry)
+      replayRef.current++
+      try {
+        if (side === 'comp') {
+          if (dir === 'undo') comp?.undo()
+          else comp?.redo()
+          return
+        }
+        if (side !== 'fx') return
+        const entry = from.current.pop()
+        if (!entry) return
+        const to = dir === 'undo' ? fxRedoRef : fxUndoRef
+        if (applyTakeEffects(entry.cueId, entry.takeId, dir === 'undo' ? entry.prev : entry.next)) {
+          to.current.push(entry)
+        }
+      } finally {
+        replayRef.current--
       }
     },
-    [applyTakeEffects]
+    [applyTakeEffects, lineStep]
   )
+
+  const textHistoryKey = useCallback(
+    (dir: 'undo' | 'redo'): boolean => {
+      const cue = activeCue
+      if (!cue || !textFieldStep(linesRef.current, dir, cue.id, cue.text)) return false
+      historyStep(dir)
+      return true
+    },
+    [activeCue, historyStep]
+  )
+
+  const importFiles = useCallback(
+    async (paths: string[], drop?: { trackId: string; at: number }): Promise<void> => {
+      if (paths.length === 0 || refuseWhileExporting()) return
+      let cueId = activeLineId()
+      if (!cueId) {
+        if ((projectRef.current?.cues.length ?? 0) > 0) {
+          pushStatus('err', 'No line selected')
+          return
+        }
+        cueId = (await openNewLine()) ?? null
+        if (!cueId) return
+      }
+      const { takes, failed } = await api['take:importFiles'](cueId, paths)
+      if (takes.length > 0) await placeOnComp(cueId, takes, undefined, drop)
+      if (failed.length > 0) pushStatus('err', failed.join(' · '))
+    },
+    [refuseWhileExporting, activeLineId, projectRef, pushStatus, openNewLine, placeOnComp]
+  )
+
+  const dropFiles = useCallback(
+    (files: File[], drop?: { trackId: string; at: number }) =>
+      void importFiles(api.pathsFor(files), drop).catch((e: unknown) => pushStatus('err', String(e))),
+    [importFiles, pushStatus]
+  )
+
+  const pickAudio = useCallback(() => {
+    void api['import:pick']('audio')
+      .then((paths) => importFiles(paths))
+      .catch((e: unknown) => pushStatus('err', String(e)))
+  }, [importFiles, pushStatus])
+
+  const exportLine = useCallback(
+    async (cueId: string): Promise<void> => {
+      if (!(await beginExport())) return
+      try {
+        const plan = await api['export:planBatch']({ cueIds: [cueId] })
+        const job = plan.jobs[0]
+        if (!job) {
+          pushStatus('err', 'Nothing to export')
+          return
+        }
+        const result = await runPlan(plan)
+        const failure = result.failed[0]
+        if (failure) {
+          pushStatus('err', failure.error)
+          return
+        }
+        pushStatus('ok', `Exported ${job.name}`)
+        void api['shell:reveal'](`${plan.outDir}/audio/${job.name}`).catch(() => undefined)
+      } catch (e) {
+        pushStatus('err', String(e))
+      } finally {
+        endExport()
+      }
+    },
+    [beginExport, endExport, pushStatus]
+  )
+
+  const originalFromTake = useCallback(
+    (cueId: string, takeId: string) => {
+      const cue = projectRef.current?.cues.find((c) => c.id === cueId)
+      if (!cue || refuseWhileExporting()) return
+      const before = originalStateOf(cue)
+      void execute({ type: 'cue.useTakeAsOriginal', cueId, takeId })
+        .then((changes) =>
+          pushLineEdit({ kind: 'original', cueId, takeId, before, whenOutputRevision: outputRevisionIn(changes, cueId) })
+        )
+        .catch((e: unknown) => pushStatus('err', String(e)))
+    },
+    [projectRef, refuseWhileExporting, execute, pushLineEdit, pushStatus]
+  )
+
+  const newProject = useCallback(async (): Promise<void> => {
+    if (creatingRef.current) return
+    creatingRef.current = true
+    try {
+      enterProject(await api['project:create']())
+    } finally {
+      creatingRef.current = false
+    }
+  }, [enterProject])
 
   const move = useCallback(
     (delta: number) => {
@@ -1076,6 +1443,10 @@ export default function App() {
       deleteClip: () => {
         const el = document.activeElement
         if (el instanceof HTMLElement && el.closest('.panel.lib') && deleteSelectedSource()) return
+        if (el instanceof HTMLElement && el.closest('.lines')) {
+          if (activeCueIdRef.current) removeLine(activeCueIdRef.current)
+          return
+        }
         compRef.current?.deleteSelected()
       },
       splitClip: () => compRef.current?.split(),
@@ -1086,7 +1457,7 @@ export default function App() {
       redo: () => historyStep('redo'),
       acceptSuggestion: onAcceptSuggestion,
       rejectSuggestion: onRejectSuggestion,
-      toggleRecord: () => recRef.current?.(),
+      toggleRecord: recordLine,
       escape: () => {
         if (escRef.current?.()) return true
         if (sourceTakeId === null) return false
@@ -1105,6 +1476,11 @@ export default function App() {
       copyPrompt: () => onCopy('prompt'),
       copyEffects: () => propsRef.current?.copyEffects(),
       pasteEffects: () => propsRef.current?.pasteEffects(),
+      newProject: () => void newProject().catch((e: unknown) => pushStatus('err', String(e))),
+      addLine: () => {
+        const el = document.activeElement
+        if (el instanceof HTMLElement && el.closest('.blk.t')) addLine()
+      },
     }),
     [
       goRoute,
@@ -1122,6 +1498,11 @@ export default function App() {
       sourceTakeId,
       deleteSelectedSource,
       historyStep,
+      removeLine,
+      recordLine,
+      newProject,
+      addLine,
+      pushStatus,
     ]
   )
 
@@ -1159,6 +1540,7 @@ export default function App() {
       <>
         <ProjectHome
           onOpen={enterProject}
+          onNew={newProject}
           onStatus={pushStatus}
           onSettings={() => setShowSettings(true)}
         />
@@ -1218,12 +1600,19 @@ export default function App() {
       label: cue.status === 'excluded' ? 'Include in export' : 'Exclude from export',
       onClick: () => setExcluded(cue.id, cue.status !== 'excluded'),
     },
+    { label: 'Export line', onClick: () => void exportLine(cue.id) },
     {
       label: 'Reveal source file',
       disabled: !cue.referenceAudio,
       onClick: () => revealFile(cue.referenceAudio?.relPath),
     },
     { sep: true },
+    {
+      label: 'Delete line',
+      hotkey: hotkeyText('deleteClip'),
+      danger: true,
+      onClick: () => removeLine(cue.id),
+    },
     {
       label: 'Reset line',
       confirm: 'Reset line?',
@@ -1285,6 +1674,13 @@ export default function App() {
         label: take.pinned === true ? 'Unpin' : 'Pin to all lines',
         onClick: () => {
           void pinTake(row.cueId, take.id, take.pinned !== true).catch(() => {})
+        },
+      },
+      {
+        label: 'Use as original',
+        disabled: !activeCue,
+        onClick: () => {
+          if (activeCue) originalFromTake(activeCue.id, take.id)
         },
       },
       {
@@ -1403,6 +1799,8 @@ export default function App() {
     onSelection: setTextSel,
     onAcceptSuggestion,
     onRejectSuggestion,
+    onPasteScript: pasteScript,
+    onHistoryKey: textHistoryKey,
     onCharacter: onCueCharacter,
     onVoiceChange,
     hasRange: !!textSel,
@@ -1558,6 +1956,7 @@ export default function App() {
       const row = activeCue ? libraryRow(activeCue, project, takeId) : undefined
       if (row) insertSource(row, { trackId, at })
     },
+    onDropFiles: (files, trackId, at) => dropFiles(files, { trackId, at }),
     onRegenerateClip: (clipId) => generate('clip', clipId),
     onPinSource: (takeId, pinned) => {
       const row = activeCue ? libraryRow(activeCue, project, takeId) : undefined
@@ -1661,6 +2060,10 @@ export default function App() {
         timeline={timeline}
         library={library}
         properties={properties}
+        onAddLine={addLine}
+        onRecord={recordLine}
+        onPickAudio={pickAudio}
+        onDropFiles={dropFiles}
       />
 
       <ExportRoom

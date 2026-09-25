@@ -251,12 +251,12 @@ export interface TakeDurationUpdate {
 export interface IpcApi {
   'project:list': () => Promise<ProjectSummary[]>
   'project:open': (dir: string) => Promise<ProjectSnapshot>
-  'project:create': (name: string) => Promise<ProjectSnapshot>
+  'project:create': (name?: string) => Promise<ProjectSnapshot>
   'project:delete': (dir: string) => Promise<void>
   'project:close': () => Promise<void>
   'project:pickTemplate': () => Promise<TemplatePreview | null>
   'project:importTemplate': (dir: string) => Promise<TemplateImportResult>
-  'import:pick': (kind: 'files' | 'folder' | 'table') => Promise<string[]>
+  'import:pick': (kind: 'files' | 'folder' | 'table' | 'audio') => Promise<string[]>
   'import:audio': (req: { paths: string[]; rule: MatchRule }) => Promise<AudioImportResult>
   'import:table': (req: {
     path: string
@@ -285,6 +285,8 @@ export interface IpcApi {
     sampleRate: number,
     fragment?: boolean
   ) => Promise<Take>
+
+  'take:importFiles': (cueId: string, paths: string[]) => Promise<{ takes: Take[]; failed: string[] }>
 
   'take:setDurations': (items: TakeDurationUpdate[]) => Promise<{ updated: number }>
 

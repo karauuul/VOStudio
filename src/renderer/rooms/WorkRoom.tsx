@@ -79,6 +79,10 @@ interface Props {
   timeline: ComponentProps<typeof TimelinePanel>
   library: ComponentProps<typeof LibraryPanel>
   properties: ComponentProps<typeof PropertiesPanel>
+  onAddLine: () => void
+  onRecord: () => void
+  onPickAudio: () => void
+  onDropFiles: (files: File[]) => void
 }
 
 export function WorkRoom({
@@ -92,7 +96,12 @@ export function WorkRoom({
   timeline,
   library,
   properties,
+  onAddLine,
+  onRecord,
+  onPickAudio,
+  onDropFiles,
 }: Props) {
+  const [over, setOver] = useState(false)
   const [size, setSize] = useState<Sizes>(
     () =>
       Object.fromEntries(
@@ -176,10 +185,25 @@ export function WorkRoom({
       className="main work-grid"
       hidden={hidden}
       style={{ gridTemplateColumns: `${fitted.lines}px 8px minmax(0, 1fr) 8px ${fitted.props}px` }}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes('Files')) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'copy'
+      }}
+      onDrop={(e) => {
+        const files = [...e.dataTransfer.files]
+        if (files.length === 0) return
+        e.preventDefault()
+        setOver(false)
+        onDropFiles(files)
+      }}
     >
       <section className="panel">
         <div className="phd">
           Lines <span className="n">{source ? `${total} · ${source.name}` : total}</span>
+          <button className="btn ghost add-line" onClick={onAddLine}>
+            + Line
+          </button>
         </div>
         <LinesPanel {...lines} />
       </section>
@@ -231,7 +255,26 @@ export function WorkRoom({
                 ))}
               </span>
             </div>
-            <div className="ed-script">{cueText ? <CueText {...cueText} /> : <TextPanel {...text} />}</div>
+            {total === 0 ? (
+              <div className="work-empty">
+                <button className="btn ghost" onClick={onAddLine}>
+                  + Line
+                </button>
+                <button className="btn rec" data-hk="toggleRecord" onClick={onRecord}>
+                  Record <kbd>R</kbd>
+                </button>
+                <button
+                  className={'drop' + (over ? ' over' : '')}
+                  onClick={onPickAudio}
+                  onDragEnter={() => setOver(true)}
+                  onDragLeave={() => setOver(false)}
+                >
+                  Drop audio
+                </button>
+              </div>
+            ) : (
+              <div className="ed-script">{cueText ? <CueText {...cueText} /> : <TextPanel {...text} />}</div>
+            )}
           </section>
 
           <div className="splitter col" onMouseDown={startDrag('prog')} />
