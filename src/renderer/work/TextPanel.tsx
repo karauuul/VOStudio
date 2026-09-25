@@ -35,6 +35,16 @@ import {
 import { replacesWholeText, splitParagraphs } from '@shared/lines'
 import { DragNumber } from '../cue/DragNumber'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
+import { clockOf } from '@shared/timeline-math'
+
+const REMAINING_SHOWN_SECONDS = 60
+
+export interface RecMeter {
+  elapsed: number
+  level: number
+  clipped: boolean
+  limit: number
+}
 
 const SOURCE_LANG = 'EN'
 const TARGET_LANG = 'UK'
@@ -63,6 +73,7 @@ export interface TextPanelProps {
   onRecord?: () => void
   recording?: boolean
   recordDisabled?: boolean
+  recMeter?: RecMeter
   originalMenu?: () => MenuEntry[]
   translationMenu?: (range: TextRange, el: HTMLTextAreaElement) => MenuEntry[]
   onCopy?: (kind: 'source' | 'translation' | 'prompt') => void
@@ -359,6 +370,7 @@ export function TextPanel({
   onRecord,
   recording,
   recordDisabled,
+  recMeter,
   originalMenu,
   translationMenu,
   mode = 'tts',
@@ -402,6 +414,21 @@ export function TextPanel({
     </button>
   )
 
+  const meter = recMeter && (
+    <>
+      <span className={'prog-meter rec-meter' + (recMeter.clipped ? ' clip' : '')} aria-hidden="true">
+        <i style={{ transform: `scaleX(${Math.min(1, recMeter.level).toFixed(3)})` }} />
+      </span>
+      {recMeter.clipped && <span className="rec-clip">CLIP</span>}
+      <span className="n">
+        {clockOf(recMeter.elapsed)}
+        {recMeter.limit > 0 && recMeter.limit - recMeter.elapsed <= REMAINING_SHOWN_SECONDS
+          ? ` · ${clockOf(recMeter.limit - recMeter.elapsed)} left`
+          : ''}
+      </span>
+    </>
+  )
+
   return (
     <>
       {showAi && <Original cue={cue} terms={terms} menu={originalMenu} />}
@@ -420,7 +447,12 @@ export function TextPanel({
 
       {!ai && (
         <div className="gen">
-          {!(expanded && mode === 'sts') && <div className="g w2">{recordButton}</div>}
+          {!(expanded && mode === 'sts') && (
+            <div className="g w2">
+              {meter && <span className="lh">{meter}</span>}
+              {recordButton}
+            </div>
+          )}
           <button
             className={'btn ghost ai-tog' + (expanded ? ' on' : '')}
             aria-expanded={expanded}
@@ -502,9 +534,11 @@ export function TextPanel({
             <div className="g w2">
               <span className="lh">
                 <span className="lab">Record</span>
-                <span className="n">
-                  {remaining !== undefined ? `${count(remaining)} left` : ''}
-                </span>
+                {meter ?? (
+                  <span className="n">
+                    {remaining !== undefined ? `${count(remaining)} left` : ''}
+                  </span>
+                )}
               </span>
               {recordButton}
             </div>

@@ -9,6 +9,9 @@ import type { SerialProjectRepository } from './project-repository'
 import { writeTakeFile, type AudioWriter } from './project-store'
 import { probeMedia, runFfmpeg } from './ffmpeg'
 
+const stamp = (): string => new Date().toISOString().replace(/[:.]/g, '-')
+export const takeBase = (): string => `t_${stamp()}_${randomUUID().slice(0, 8)}`
+
 export interface TakeSession {
   repository: SerialProjectRepository
   dir: string

@@ -165,11 +165,11 @@ describe('ring: take marks and preroll', () => {
 })
 
 describe('ring: sizes for a real stream', () => {
-  it('a 6.5 min ring holds the full STS limit with room to spare', () => {
+  it('the ring only buffers pre-roll and streaming latency, not the take', () => {
     const r = createRingForRate(48_000)
-    expect(RING_SECONDS).toBeGreaterThan(300)
+    expect(RING_SECONDS).toBeLessThanOrEqual(30)
     expect(r.capacity).toBe(Math.ceil(RING_SECONDS * 48_000))
-    expect(r.capacity).toBeGreaterThan((300 + PREROLL_SECONDS) * 48_000)
+    expect(r.capacity).toBeGreaterThan((PREROLL_SECONDS + MAX_GAP_SECONDS + 1) * 48_000)
   })
 
   it('warm-up constants stay within sane bounds', () => {

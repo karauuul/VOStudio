@@ -37,6 +37,7 @@ interface Msg {
   samples?: Float32Array
   at?: number
   rms?: number
+  peak?: number
   flushed?: boolean
   token?: number
   frame?: number
@@ -153,6 +154,17 @@ describe('capture.worklet: processor behavior', () => {
     const { proc, out } = instantiate()
     run(proc, 16)
     expect(out.some((m) => typeof m.rms === 'number')).toBe(true)
+  })
+
+  it('reports the absolute peak of each meter window and resets it', () => {
+    const { proc, out } = instantiate()
+    const quiet = new Float32Array(QUANTUM).fill(0.25)
+    const hot = new Float32Array(QUANTUM).fill(0.1)
+    hot[5] = -0.995
+    for (let q = 0; q < 8; q++) proc.process([[q === 3 ? hot : quiet]])
+    for (let q = 0; q < 8; q++) proc.process([[quiet]])
+    const meters = out.filter((m) => typeof m.rms === 'number')
+    expect(meters.map((m) => m.peak)).toEqual([Math.fround(0.995), 0.25])
   })
 
   it('a silent input (no channel) does not crash the processor', () => {

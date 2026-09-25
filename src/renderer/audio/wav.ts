@@ -1,8 +1,6 @@
-export const WAV_HEADER_BYTES = 44
+import { WAV_FLOAT, WAV_HEADER_BYTES, wavHeader } from '@shared/wav-header'
 
-function writeAscii(view: DataView, offset: number, text: string): void {
-  for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i))
-}
+export { WAV_HEADER_BYTES }
 
 export function floatToPcm16(v: number): number {
   if (!Number.isFinite(v)) return 0
@@ -10,36 +8,18 @@ export function floatToPcm16(v: number): number {
   return c < 0 ? Math.round(c * 0x8000) : Math.round(c * 0x7fff)
 }
 
+export function pcm16(samples: Float32Array): Int16Array {
+  const out = new Int16Array(samples.length)
+  for (let i = 0; i < samples.length; i++) out[i] = floatToPcm16(samples[i])
+  return out
+}
+
 export function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
-  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
-    throw new Error(`Invalid sampleRate: ${sampleRate}`)
-  }
-  const channels = 1
-  const bitsPerSample = 16
-  const bytesPerSample = bitsPerSample / 8
-  const blockAlign = channels * bytesPerSample
-  const byteRate = sampleRate * blockAlign
-  const dataBytes = samples.length * bytesPerSample
-
+  const dataBytes = samples.length * 2
+  const header = wavHeader(dataBytes, sampleRate)
   const buffer = new ArrayBuffer(WAV_HEADER_BYTES + dataBytes)
+  new Uint8Array(buffer).set(header)
   const view = new DataView(buffer)
-
-  writeAscii(view, 0, 'RIFF')
-  view.setUint32(4, 36 + dataBytes, true)
-  writeAscii(view, 8, 'WAVE')
-
-  writeAscii(view, 12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true)
-  view.setUint16(22, channels, true)
-  view.setUint32(24, sampleRate, true)
-  view.setUint32(28, byteRate, true)
-  view.setUint16(32, blockAlign, true)
-  view.setUint16(34, bitsPerSample, true)
-
-  writeAscii(view, 36, 'data')
-  view.setUint32(40, dataBytes, true)
-
   let off = WAV_HEADER_BYTES
   for (let i = 0; i < samples.length; i++) {
     view.setInt16(off, floatToPcm16(samples[i]), true)
@@ -47,8 +27,6 @@ export function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffe
   }
   return buffer
 }
-
-const FORMAT_FLOAT = 3
 
 export function interleave(channels: Float32Array[]): Float32Array {
   if (channels.length === 0) return new Float32Array(0)
@@ -71,29 +49,10 @@ export function encodeWavFloat32(channels: Float32Array[], sampleRate: number): 
   }
   if (channels.length === 0) throw new Error('No channels to encode')
   const samples = interleave(channels)
-  const numChannels = channels.length
-  const bytesPerSample = 4
-  const blockAlign = numChannels * bytesPerSample
-  const dataBytes = samples.length * bytesPerSample
-
+  const dataBytes = samples.length * 4
   const buffer = new ArrayBuffer(WAV_HEADER_BYTES + dataBytes)
+  new Uint8Array(buffer).set(wavHeader(dataBytes, sampleRate, channels.length, 32, WAV_FLOAT))
   const view = new DataView(buffer)
-
-  writeAscii(view, 0, 'RIFF')
-  view.setUint32(4, 36 + dataBytes, true)
-  writeAscii(view, 8, 'WAVE')
-
-  writeAscii(view, 12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, FORMAT_FLOAT, true)
-  view.setUint16(22, numChannels, true)
-  view.setUint32(24, sampleRate, true)
-  view.setUint32(28, sampleRate * blockAlign, true)
-  view.setUint16(32, blockAlign, true)
-  view.setUint16(34, bytesPerSample * 8, true)
-
-  writeAscii(view, 36, 'data')
-  view.setUint32(40, dataBytes, true)
 
   let off = WAV_HEADER_BYTES
   for (let i = 0; i < samples.length; i++) {

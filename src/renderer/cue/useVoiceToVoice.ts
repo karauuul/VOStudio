@@ -3,7 +3,7 @@ import { MAX_STS_SECONDS, type Cue, type Take, type VoiceSettings } from '@share
 import { recordingGuard } from '@shared/recording-guard'
 import type { AppSettings } from '@shared/ipc'
 import { api, audioUrl } from '../api'
-import { useRecorder, type RecorderApi } from '../audio/recorder'
+import { useRecorder, type RecordedClip, type RecorderApi } from '../audio/recorder'
 import { clipId, transport } from '../audio/transport'
 import { useCueBusy, useJobsStore } from '../jobs/store'
 import { credits } from './shared'
@@ -53,6 +53,7 @@ export function useVoiceToVoice({
   const preGen = useRef(0)
   const targetRef = useRef<string | null>(null)
   const savingRef = useRef(false)
+  const savedClipRef = useRef<RecordedClip | null>(null)
 
   const cancelPre = useCallback((): void => {
     preGen.current++
@@ -81,6 +82,7 @@ export function useVoiceToVoice({
     if (!sel) {
       targetRef.current = null
       rec.start({
+        cueId: cue.id,
         device: appSettings.micDeviceLabel ?? appSettings.micDeviceId,
         countIn: appSettings.countIn,
         autoReference: appSettings.autoReference,
@@ -98,6 +100,7 @@ export function useVoiceToVoice({
       if (token !== preGen.current) return
       preRef.current = false
       rec.start({
+        cueId: cue.id,
         device: appSettings.micDeviceLabel ?? appSettings.micDeviceId,
         countIn: appSettings.countIn,
         autoReference: false,
@@ -110,24 +113,19 @@ export function useVoiceToVoice({
     } else {
       armed()
     }
-  }, [rec, appSettings, cue.referenceAudio, selection])
+  }, [rec, appSettings, cue.id, cue.referenceAudio, selection])
 
   const saveClip = useCallback(
     async (target: string | null): Promise<Take | null> => {
       const clip = rec.clip
-      if (!clip || savingRef.current) return null
+      if (!clip || savingRef.current || savedClipRef.current === clip) return null
       const cueId = cue.id
+      savedClipRef.current = clip
       savingRef.current = true
       setSaving(true)
       useJobsStore.getState().beginSave()
       try {
-        const take = await api['take:saveRecording'](
-          cueId,
-          clip.wav,
-          clip.durationSec,
-          clip.sampleRate,
-          target ? true : undefined
-        )
+        const take = await clip.finish(!!target)
         targetRef.current = null
         rec.cancel()
         onTakeAdded(cueId, take, true)

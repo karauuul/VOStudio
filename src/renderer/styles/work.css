@@ -1978,6 +1978,16 @@ input.tl-name:focus {
   cursor: pointer;
 }
 
+.rec-meter {
+  margin-right: 0;
+}
+.rec-meter.clip i {
+  background: var(--err);
+}
+.rec-clip {
+  font: 600 10px var(--mono);
+  color: var(--err);
+}
 .work-grid.drop-over {
   box-shadow: inset 0 0 0 2px var(--ac);
 }

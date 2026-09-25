@@ -155,6 +155,11 @@ export function ticks(view: TimelineView, width: number, minPx = 64): number[] {
   return out
 }
 
+export function clockOf(sec: number): string {
+  const total = Math.round(Number.isFinite(sec) && sec > 0 ? sec : 0)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
 export function tickLabel(t: number, step: number): string {
   if (step >= 1) {
     const m = Math.floor(t / 60)

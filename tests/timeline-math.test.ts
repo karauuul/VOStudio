@@ -16,6 +16,7 @@ import {
   xToTime,
   zoomAt,
   type TimelineView,
+  clockOf,
 } from '../src/shared/timeline-math'
 
 const view = (pxPerSec: number, scroll = 0): TimelineView => ({ pxPerSec, scroll })
@@ -240,5 +241,15 @@ describe('marqueeHits', () => {
 
   it('touching an edge is not an intersection', () => {
     expect(marqueeHits(clips, 2, 3, ['t1'])).toEqual([])
+  })
+})
+
+describe('clockOf', () => {
+  it('formats whole seconds as m:ss and clamps invalid input to zero', () => {
+    expect(clockOf(0)).toBe('0:00')
+    expect(clockOf(59.6)).toBe('1:00')
+    expect(clockOf(1638)).toBe('27:18')
+    expect(clockOf(-3)).toBe('0:00')
+    expect(clockOf(Number.NaN)).toBe('0:00')
   })
 })

@@ -14,6 +14,7 @@ class VoCaptureProcessor extends AudioWorkletProcessor {
     this.at = -1
     this.acc = 0
     this.accN = 0
+    this.peak = 0
     this.port.onmessage = (e) => {
       const m = e.data
       if (m && m.cmd === 'flush') {
@@ -37,16 +38,21 @@ class VoCaptureProcessor extends AudioWorkletProcessor {
     if (!ch) return true
 
     let sum = 0
+    let peak = this.peak
     for (let i = 0; i < ch.length; i++) {
       const v = ch[i]
       sum += v * v
+      const a = v < 0 ? -v : v
+      if (a > peak) peak = a
     }
+    this.peak = peak
     this.acc += sum
     this.accN += ch.length
     if (this.accN >= METER_SAMPLES) {
-      this.port.postMessage({ rms: Math.sqrt(this.acc / this.accN) })
+      this.port.postMessage({ rms: Math.sqrt(this.acc / this.accN), peak: this.peak })
       this.acc = 0
       this.accN = 0
+      this.peak = 0
     }
 
     for (let i = 0; i < ch.length; i++) {
