@@ -119,3 +119,49 @@ describe('transcoded take import', () => {
     expect(await exists(path.join(dir, 'audio', 'takes', 'c', 't_1_imp.wav'))).toBe(false)
   })
 })
+
+describe('exclusive take files', () => {
+  it('two imports racing for the same name leave one intact file and one clean failure', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-race-'))
+    const first = path.join(dir, 'first.wav')
+    const second = path.join(dir, 'second.wav')
+    await fs.writeFile(first, Buffer.from('FIRST'))
+    await fs.writeFile(second, Buffer.from('SECOND'))
+    const repository = new SerialProjectRepository(project('a'), vi.fn(), 1)
+    const results = await Promise.allSettled([
+      importTakeFile({ repository, dir }, 'c', first, 't_same', vi.fn()),
+      importTakeFile({ repository, dir }, 'c', second, 't_same', vi.fn()),
+    ])
+    const ok = results.filter((r): r is PromiseFulfilledResult<Take> => r.status === 'fulfilled')
+    const failed = results.filter((r) => r.status === 'rejected')
+    expect(ok).toHaveLength(1)
+    expect(failed).toHaveLength(1)
+    const target = path.join(dir, 'audio', 'takes', 'c', 't_same.wav')
+    const winner = results[0].status === 'fulfilled' ? 'FIRST' : 'SECOND'
+    expect(await fs.readFile(target, 'utf8')).toBe(winner)
+    expect(repository.snapshot().project.cues[0].takes).toEqual([ok[0].value])
+    expect((await fs.readdir(path.dirname(target))).filter((n) => n.startsWith('.part-'))).toEqual([])
+  })
+
+  it('a failed or colliding write never removes a file that was already there', async () => {
+    const { writeTakeFile } = await import('../src/main/project-store')
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-excl-'))
+    const existing = await writeTakeFile(dir, 'c', 'x.wav', Buffer.from('KEEP'))
+    await expect(writeTakeFile(dir, 'c', 'x.wav', Buffer.from('NEW'))).rejects.toMatchObject({ code: 'EEXIST' })
+    await expect(writeTakeFile(dir, 'c', 'x.wav', (abs) => fs.writeFile(abs, 'NEW'))).rejects.toMatchObject({ code: 'EEXIST' })
+    await expect(writeTakeFile(dir, 'c', 'x.wav', async () => { throw new Error('boom') })).rejects.toThrow('boom')
+    expect(await fs.readFile(existing, 'utf8')).toBe('KEEP')
+    expect(await fs.readdir(path.dirname(existing))).toEqual(['x.wav'])
+  })
+
+  it('a take whose line is gone removes only its own new file', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-own-'))
+    const src = path.join(dir, 'v.wav')
+    await fs.writeFile(src, Buffer.from('NEW'))
+    const { writeTakeFile } = await import('../src/main/project-store')
+    const existing = await writeTakeFile(dir, 'missing', 't_1.wav', Buffer.from('KEEP'))
+    const repository = new SerialProjectRepository(project('a'), vi.fn(), 1)
+    await expect(importTakeFile({ repository, dir }, 'missing', src, 't_1', vi.fn())).rejects.toMatchObject({ code: 'EEXIST' })
+    expect(await fs.readFile(existing, 'utf8')).toBe('KEEP')
+  })
+})

@@ -1,4 +1,4 @@
-import { promises as fs } from 'fs'
+import { constants, promises as fs } from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
 import { changeTakeOutput } from '@shared/approval'
@@ -69,7 +69,7 @@ export async function importTakeFile(
   if (problem) throw new Error(problem)
   const format: AudioRef['format'] = kind === 'keep' ? (path.extname(src).slice(1).toLowerCase() as AudioRef['format']) : 'wav'
   const fileName = `${baseName}.${format}`
-  const write = kind === 'keep' ? (abs: string) => fs.copyFile(src, abs) : (abs: string) => transcode(src, abs)
+  const write = kind === 'keep' ? (abs: string) => fs.copyFile(src, abs, constants.COPYFILE_EXCL) : (abs: string) => transcode(src, abs)
   return appendTake(session, cueId, fileName, write, publish, (cue, abs) => ({
     take: {
       id: randomUUID(),

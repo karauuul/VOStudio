@@ -303,12 +303,21 @@ async function writeAudioFile(
   if (!root) throw new Error('No project is open')
   const abs = audioFilePath(root, kind, cueId, fileName)
   await fs.mkdir(path.dirname(abs), { recursive: true })
+  if (typeof data !== 'function') {
+    try {
+      await fs.writeFile(abs, data, { flag: 'wx' })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') await fs.rm(abs, { force: true }).catch(() => undefined)
+      throw error
+    }
+    return abs
+  }
+  const part = path.join(path.dirname(abs), `.part-${randomUUID()}-${fileName}`)
   try {
-    if (typeof data === 'function') await data(abs)
-    else await fs.writeFile(abs, data)
-  } catch (error) {
-    await fs.rm(abs, { force: true }).catch(() => undefined)
-    throw error
+    await data(part)
+    await fs.link(part, abs)
+  } finally {
+    await fs.rm(part, { force: true }).catch(() => undefined)
   }
   return abs
 }

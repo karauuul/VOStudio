@@ -241,6 +241,7 @@ const transcribeSchema = z.object({
 })
 
 const stamp = (): string => new Date().toISOString().replace(/[:.]/g, '-')
+const takeBase = (): string => `t_${stamp()}_${randomUUID().slice(0, 8)}`
 
 let projectRepository: SerialProjectRepository | null = null
 function resetRepository(project: Project): SerialProjectRepository {
@@ -635,7 +636,7 @@ function registerHandlers(): void {
     const cue = session.repository.projectForMain().cues.find((c) => c.id === parsed.cueId)
     if (!cue) throw new Error('Cue not found')
 
-    const fileName = `t_${stamp()}_rec.wav`
+    const fileName = `${takeBase()}_rec.wav`
     return appendTake(session, cue.id, fileName, bytes, emitChange, (target, abs) => ({
       take: {
         id: randomUUID(),
@@ -662,7 +663,7 @@ function registerHandlers(): void {
     const session = requireSession()
     const takes: Take[] = []
     const failed: string[] = []
-    const base = `t_${stamp()}`
+    const base = takeBase()
     for (const [i, src] of parsed.paths.entries()) {
       try {
         takes.push(await importTakeFile(session, parsed.cueId, src, `${base}_${i + 1}_imp`, emitChange))
@@ -750,7 +751,7 @@ function registerHandlers(): void {
         : {}),
       settings: parsed.voiceSettings,
     })
-    const fileName = `t_${stamp()}_tts.mp3`
+    const fileName = `${takeBase()}_tts.mp3`
     const take = await appendTake(
       session,
       parsed.cueId,
@@ -811,7 +812,7 @@ function registerHandlers(): void {
       settings: parsed.voiceSettings,
     })
 
-    const fileName = `t_${stamp()}_sts.mp3`
+    const fileName = `${takeBase()}_sts.mp3`
     const take = await appendTake(
       session,
       parsed.cueId,
