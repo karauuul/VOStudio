@@ -82,6 +82,7 @@ import {
 import { audioUrl } from '../api'
 import { tryResolveComp, type ResolvedOriginal } from '../audio/comp-source'
 import { playBounds } from '@shared/resume'
+import { hasReference } from '@shared/lines'
 import { reportTakeDuration } from '../audio/duration-backfill'
 import { clipId, transport, type TransportState } from '../audio/transport'
 import { playback, type PlaybackOps } from '../playback'
@@ -397,17 +398,6 @@ export function TimelinePanel({
     }
   }, [refPath, comp, peaks, cue, project])
 
-  useEffect(() => {
-    const el = bodyRef.current
-    if (!el) return
-    const ro = new ResizeObserver(() => {
-      if (el.clientWidth > 0) setWidth(el.clientWidth)
-    })
-    ro.observe(el)
-    setWidth(el.clientWidth)
-    return () => ro.disconnect()
-  }, [])
-
   const fittedRef = useRef('')
 
   const takeOf = useCallback(
@@ -451,9 +441,13 @@ export function TimelinePanel({
 
   const stems = cue?.stems ?? NO_STEMS
 
+  const referenced = !!cue && hasReference(cue)
+
   const originalRows = useMemo<OriginalRow[]>(
     () =>
-      stems.length > 0
+      !referenced
+        ? []
+        : stems.length > 0
         ? stems.map((stem, i) => ({
             key: stem.id,
             badge: `0${String.fromCharCode(97 + i)}`,
@@ -462,8 +456,21 @@ export function TimelinePanel({
             stem,
           }))
         : [{ key: 'original', badge: '0', name: 'Original', path: refPath ?? '', stem: null }],
-    [stems, refPath]
+    [referenced, stems, refPath]
   )
+
+  const bodyKey = originalRows[0]?.key ?? tracks[0].id
+
+  useEffect(() => {
+    const el = bodyRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth > 0) setWidth(el.clientWidth)
+    })
+    ro.observe(el)
+    setWidth(el.clientWidth)
+    return () => ro.disconnect()
+  }, [bodyKey])
 
   const anyTrackSolo = tracks.some((t) => t.solo)
   const anyLaneSolo = originalRows.some((row) => laneUi[row.key]?.solo === true)
@@ -2019,6 +2026,7 @@ export function TimelinePanel({
             <div
               className="tl-body"
               data-track={track.id}
+              {...(originalRows.length === 0 && i === 0 ? { ref: bodyRef } : {})}
               onDragOver={(e) => {
                 const types = e.dataTransfer.types
                 if (!types.includes(DRAG_TYPE) && !types.includes('Files')) return

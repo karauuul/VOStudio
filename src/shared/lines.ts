@@ -41,6 +41,10 @@ export function showsAi(cue: Cue, project: Pick<Project, 'characters' | 'provide
   )
 }
 
+export function hasReference(cue: Pick<Cue, 'referenceAudio' | 'region' | 'stems'>): boolean {
+  return cue.referenceAudio !== undefined || cue.region !== undefined || (cue.stems?.length ?? 0) > 0
+}
+
 export function splitParagraphs(text: string): string[] {
   const normalized = text.replace(/\r\n?/g, '\n')
   const separator = /\n[ \t]*\n/.test(normalized) ? /\n[ \t]*\n/ : /\n/

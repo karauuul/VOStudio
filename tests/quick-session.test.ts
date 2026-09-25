@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyChangeSet, applyProjectCommand, audioWithinRoots, commandAudioPaths, type ProjectCommand } from '../src/shared/project-commands'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 import { cueSchema, projectCommandSchema } from '../src/main/schemas'
-import { newLineCue, nextLineNumber, replacesWholeText, showsAi, splitParagraphs } from '../src/shared/lines'
+import { hasReference, newLineCue, nextLineNumber, replacesWholeText, showsAi, splitParagraphs } from '../src/shared/lines'
 import { isInsideDir, uniqueProjectName } from '../src/shared/project-summary'
 import { takeFileKind } from '../src/shared/take-import'
 import { pickHistory } from '../src/shared/undo-route'
@@ -544,5 +544,14 @@ describe('AI sections visibility', () => {
     expect(showsAi(cue('v', { takes: [take('s', { kind: 'sts' })] }), p)).toBe(true)
     expect(showsAi(cue('m'), { ...p, characters: [ada] })).toBe(true)
     expect(showsAi(cue('m'), { ...p, provider: { tts: { model: 'eleven_v3' } } })).toBe(true)
+  })
+
+  it('has reference audio only with an original, a source region or stems', () => {
+    expect(hasReference(newLineCue('n', 1))).toBe(false)
+    expect(hasReference(newLineCue('n', 1, 'my text'))).toBe(false)
+    expect(hasReference(cue('m', { takes: [take('r', { kind: 'recording' })], referenceDuration: 2 }))).toBe(false)
+    expect(hasReference(cue('a', { referenceAudio: ref }))).toBe(true)
+    expect(hasReference(cue('g', { region: { sourceId: 'src', in: 0, out: 1 } }))).toBe(true)
+    expect(hasReference(cue('s', { stems: [{ id: 'v', name: 'Voice', file: ref, exportMode: 'off' }] }))).toBe(true)
   })
 })

@@ -52,6 +52,7 @@ import {
 import { hasValidVoicedOutput, isDone } from '@shared/approval'
 import { clipText, libraryRow, lineLabel, resolveTake, versionLabel, type TakeLookup } from '@shared/library'
 import { toPercent } from '@shared/generation'
+import { hasReference } from '@shared/lines'
 import { DragNumber } from '../cue/DragNumber'
 import { copiedEffects, copyEffects } from '../effects-clipboard'
 import { useWire } from '../cue/useWire'
@@ -822,6 +823,8 @@ function LineTab({
   const id = lineLabel(cue)
   const duration = Math.max(cue.referenceDuration ?? 0, region.out)
   const split = (cue.stems?.length ?? 0) > 0
+  const referenced = hasReference(cue)
+  const placed = (cue.comp?.clips.length ?? 0) > 0
   const done = isDone(cue, project)
   const voiced = hasValidVoicedOutput(cue, project)
 
@@ -857,80 +860,88 @@ function LineTab({
         </div>
       </Row2>
 
-      <Sec>Original</Sec>
-      <Row2>
-        <div className="cp-num">
-          <span className="cp-k">Export</span>
-          <span className="props-tg">
-            {(['off', 'on'] as const).map((mode) => (
+      {referenced && (
+        <>
+          <Sec>Original</Sec>
+          <Row2>
+            <div className="cp-num">
+              <span className="cp-k">Export</span>
+              <span className="props-tg">
+                {(['off', 'on'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    className={(original?.exportMode ?? 'off') === mode ? 'on' : ''}
+                    disabled={split}
+                    onClick={() => onOriginal({ exportMode: mode })}
+                  >
+                    {mode === 'off' ? 'Off' : 'On'}
+                  </button>
+                ))}
+              </span>
+            </div>
+            <DragNumber
+              label="Duck"
+              unit="dB"
+              value={original?.duckDb ?? DEFAULT_DUCK_DB}
+              min={DUCK_MIN_DB}
+              max={DUCK_MAX_DB}
+              perPx={0.2}
+              decimals={0}
+              disabled={split || original?.exportMode !== 'on'}
+              onInput={() => {}}
+              onCommit={(v) => onOriginal({ duckDb: v })}
+            />
+            <div className="cp-num">
+              <span className="cp-k">Preview</span>
               <button
-                key={mode}
-                className={(original?.exportMode ?? 'off') === mode ? 'on' : ''}
+                className={'ico sm' + (original?.previewMuted === true ? '' : ' on')}
+                aria-label="Preview the original"
+                aria-pressed={original?.previewMuted !== true}
                 disabled={split}
-                onClick={() => onOriginal({ exportMode: mode })}
+                onClick={() =>
+                  onOriginal({ previewMuted: original?.previewMuted === true ? undefined : true })
+                }
               >
-                {mode === 'off' ? 'Off' : 'On'}
+                <svg width="13" height="12" viewBox="0 0 14 13">
+                  <path d="M1 9V7a6 6 0 0 1 12 0v2" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                  <rect x="1" y="8" width="3" height="5" rx="1" fill="currentColor" />
+                  <rect x="10" y="8" width="3" height="5" rx="1" fill="currentColor" />
+                </svg>
               </button>
-            ))}
-          </span>
-        </div>
-        <DragNumber
-          label="Duck"
-          unit="dB"
-          value={original?.duckDb ?? DEFAULT_DUCK_DB}
-          min={DUCK_MIN_DB}
-          max={DUCK_MAX_DB}
-          perPx={0.2}
-          decimals={0}
-          disabled={split || original?.exportMode !== 'on'}
-          onInput={() => {}}
-          onCommit={(v) => onOriginal({ duckDb: v })}
-        />
-        <div className="cp-num">
-          <span className="cp-k">Preview</span>
-          <button
-            className={'ico sm' + (original?.previewMuted === true ? '' : ' on')}
-            aria-label="Preview the original"
-            aria-pressed={original?.previewMuted !== true}
-            disabled={split}
-            onClick={() =>
-              onOriginal({ previewMuted: original?.previewMuted === true ? undefined : true })
-            }
-          >
-            <svg width="13" height="12" viewBox="0 0 14 13">
-              <path d="M1 9V7a6 6 0 0 1 12 0v2" fill="none" stroke="currentColor" strokeWidth="1.5" />
-              <rect x="1" y="8" width="3" height="5" rx="1" fill="currentColor" />
-              <rect x="10" y="8" width="3" height="5" rx="1" fill="currentColor" />
-            </svg>
-          </button>
-        </div>
-      </Row2>
+            </div>
+          </Row2>
+        </>
+      )}
 
-      <Sec>Region</Sec>
-      <Row2>
-        <DragNumber
-          label="In"
-          unit="s"
-          value={region.in}
-          min={0}
-          max={36000}
-          perPx={0.01}
-          decimals={2}
-          onInput={() => {}}
-          onCommit={(v) => compRef.current?.setRegion('in', v)}
-        />
-        <DragNumber
-          label="Out"
-          unit="s"
-          value={region.out}
-          min={0}
-          max={36000}
-          perPx={0.01}
-          decimals={2}
-          onInput={() => {}}
-          onCommit={(v) => compRef.current?.setRegion('out', v)}
-        />
-      </Row2>
+      {(referenced || placed) && (
+        <>
+          <Sec>Region</Sec>
+          <Row2>
+            <DragNumber
+              label="In"
+              unit="s"
+              value={region.in}
+              min={0}
+              max={36000}
+              perPx={0.01}
+              decimals={2}
+              onInput={() => {}}
+              onCommit={(v) => compRef.current?.setRegion('in', v)}
+            />
+            <DragNumber
+              label="Out"
+              unit="s"
+              value={region.out}
+              min={0}
+              max={36000}
+              perPx={0.01}
+              decimals={2}
+              onInput={() => {}}
+              onCommit={(v) => compRef.current?.setRegion('out', v)}
+            />
+          </Row2>
+        </>
+      )}
 
       <Sec>Export</Sec>
       <Row2>
