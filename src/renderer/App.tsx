@@ -20,7 +20,7 @@ import {
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
 import { pickHistory, redoStale, type UndoSide } from '@shared/undo-route'
-import { planScriptPaste } from '@shared/lines'
+import { planScriptPaste, showsAi } from '@shared/lines'
 import { keyedQueue } from '@shared/keyed-queue'
 import type { UpdateStatus } from '@shared/updater'
 import { api, audioUrl } from './api'
@@ -1820,6 +1820,7 @@ export default function App() {
       ? { cost: estimateChars(activeCue.text, genTarget, project.pronunciationRules, genModel) }
       : {}),
     ...(usage ? { remaining: usage.remaining } : {}),
+    ai: !activeCue || showsAi(activeCue, project),
   }
 
   const cueText: ComponentProps<typeof CueText> | null = activeCue
@@ -1974,6 +1975,7 @@ export default function App() {
     clipTakeId: selection?.clip?.sourceTakeId ?? null,
     onSelect: (row) => setSourceTakeId((id) => (id === row.take.id ? null : row.take.id)),
     onInsert: (row) => insertSource(row),
+    onImport: pickAudio,
     menu: libraryMenu,
   }
 

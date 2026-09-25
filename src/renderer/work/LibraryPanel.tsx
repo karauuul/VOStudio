@@ -12,6 +12,7 @@ export interface LibraryPanelProps {
   clipTakeId: string | null
   onSelect: (row: LibraryRow) => void
   onInsert: (row: LibraryRow) => void
+  onImport?: () => void
   menu?: (row: LibraryRow) => MenuEntry[]
 }
 
@@ -24,6 +25,7 @@ export function LibraryPanel({
   clipTakeId,
   onSelect,
   onInsert,
+  onImport,
   menu,
 }: LibraryPanelProps) {
   const [tab, setTab] = useState<Tab>('line')
@@ -100,6 +102,18 @@ export function LibraryPanel({
             </svg>
           </button>
         )}
+        <button
+          className="ico sm"
+          data-hint="Import audio"
+          aria-label="Import audio"
+          disabled={!cue}
+          onClick={onImport}
+        >
+          <svg width="13" height="13" viewBox="0 0 13 13">
+            <path d="M6.5 1.5v7M3.5 5.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.4" />
+            <path d="M1.5 9v2.5h10V9" fill="none" stroke="currentColor" strokeWidth="1.4" />
+          </svg>
+        </button>
       </div>
 
       <div className="lib-scroll" ref={scrollRef}>

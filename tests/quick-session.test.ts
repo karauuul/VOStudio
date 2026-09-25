@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyChangeSet, applyProjectCommand, audioWithinRoots, commandAudioPaths, type ProjectCommand } from '../src/shared/project-commands'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 import { cueSchema, projectCommandSchema } from '../src/main/schemas'
-import { newLineCue, nextLineNumber, replacesWholeText, splitParagraphs } from '../src/shared/lines'
+import { newLineCue, nextLineNumber, replacesWholeText, showsAi, splitParagraphs } from '../src/shared/lines'
 import { isInsideDir, uniqueProjectName } from '../src/shared/project-summary'
 import { takeFileKind } from '../src/shared/take-import'
 import { pickHistory } from '../src/shared/undo-route'
@@ -507,5 +507,42 @@ describe('restore revalidates sources from other lines', () => {
     run(p, { type: 'cue.restore', cues: removed })
     expect(ids(p)).toEqual(['owner', 'user'])
     expect(p.cues[0].takes[0].pinned).toBe(true)
+  })
+})
+
+describe('AI sections visibility', () => {
+  const ref = { fileId: 'r', relPath: '/r.wav', format: 'wav' as const }
+  const ada = {
+    id: 'ada',
+    name: 'ADA',
+    color: '#fff',
+    provider: { providerId: 'elevenlabs' as const, voiceId: 'v', ttsModel: 't', stsModel: 's' },
+    voiceSettings: { stability: 0.5, similarity: 0.5, style: 0, speed: 1, boost: false },
+  }
+
+  it('hides for a manual line recorded or imported by the user', () => {
+    const p = project([])
+    expect(showsAi(newLineCue('n', 1), p)).toBe(false)
+    expect(showsAi(newLineCue('n', 1, 'my text'), p)).toBe(false)
+    const own = cue('m', { takes: [take('r', { kind: 'recording' }), take('i', { kind: 'imported' }), take('c', { kind: 'composite' })] })
+    expect(showsAi(own, p)).toBe(false)
+  })
+
+  it('shows for template, table, audio-import and source lines', () => {
+    const p = project([])
+    expect(showsAi(cue('t', { sourceText: 'Hi', referenceAudio: ref, referenceDuration: 1, characterId: 'ada' }), { ...p, characters: [ada] })).toBe(true)
+    expect(showsAi(cue('s', { sourceText: 'Hi' }), p)).toBe(true)
+    expect(showsAi(cue('a', { referenceAudio: ref }), p)).toBe(true)
+    expect(showsAi(cue('d', { referenceDuration: 2 }), p)).toBe(true)
+    expect(showsAi(cue('g', { region: { sourceId: 'src', in: 0, out: 1 } }), p)).toBe(true)
+    expect(showsAi(cue('c', { characterId: 'ada' }), p)).toBe(true)
+  })
+
+  it('shows once AI was used on the line or configured in the project', () => {
+    const p = project([])
+    expect(showsAi(cue('g', { takes: [take('t')] }), p)).toBe(true)
+    expect(showsAi(cue('v', { takes: [take('s', { kind: 'sts' })] }), p)).toBe(true)
+    expect(showsAi(cue('m'), { ...p, characters: [ada] })).toBe(true)
+    expect(showsAi(cue('m'), { ...p, provider: { tts: { model: 'eleven_v3' } } })).toBe(true)
   })
 })

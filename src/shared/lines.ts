@@ -1,4 +1,4 @@
-import type { Cue } from './domain'
+import type { Cue, Project } from './domain'
 import type { ProjectCommand } from './project-commands'
 
 const LINE_NAME = /^Line (\d+)$/
@@ -26,6 +26,19 @@ export function newLineCue(id: string, n: number, text = ''): Cue {
     notes: '',
     takes: [],
   }
+}
+
+export function showsAi(cue: Cue, project: Pick<Project, 'characters' | 'provider'>): boolean {
+  return (
+    cue.sourceText.trim() !== '' ||
+    cue.referenceAudio !== undefined ||
+    cue.referenceDuration !== undefined ||
+    cue.region !== undefined ||
+    cue.characterId !== '' ||
+    cue.takes.some((t) => t.kind === 'tts' || t.kind === 'sts') ||
+    project.characters.length > 0 ||
+    project.provider !== undefined
+  )
 }
 
 export function splitParagraphs(text: string): string[] {
