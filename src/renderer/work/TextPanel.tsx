@@ -166,6 +166,7 @@ function Translation({
   onPasteScript,
   onHistoryKey,
   menu,
+  ai,
 }: Pick<
   TextPanelProps,
   | 'cue'
@@ -177,7 +178,7 @@ function Translation({
   | 'onRejectSuggestion'
   | 'onPasteScript'
   | 'onHistoryKey'
-> & { menu?: (range: TextRange, el: HTMLTextAreaElement) => MenuEntry[] }) {
+> & { menu?: (range: TextRange, el: HTMLTextAreaElement) => MenuEntry[]; ai: boolean }) {
   const mirrorRef = useRef<HTMLDivElement>(null)
   const pop = useContextMenu()
   const text = cue?.text ?? ''
@@ -190,12 +191,8 @@ function Translation({
     <section className="blk t">
       <div className="lh">
         <span className="k" />
-        <span className="lab">Translation</span>
-        {cue && (
-          <span className="r">
-            {TARGET_LANG} · {text.length}
-          </span>
-        )}
+        <span className="lab">{ai ? 'Translation' : 'Text'}</span>
+        {cue && <span className="r">{ai ? `${TARGET_LANG} · ${text.length}` : text.length}</span>}
       </div>
       <div className="body">
         {cue && (
@@ -443,6 +440,7 @@ export function TextPanel({
         onPasteScript={onPasteScript}
         onHistoryKey={onHistoryKey}
         menu={translationMenu}
+        ai={showAi}
       />
 
       {!ai && (
