@@ -140,6 +140,32 @@ describe('recording session', () => {
     expect(repository.snapshot().project.cues[0].takes).toEqual([take])
   })
 
+  it('completes short positional writes before advancing', async () => {
+    const { dir, repository } = setup()
+    const realOpen = fs.open.bind(fs)
+    const spy = vi.spyOn(fs, 'open').mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await realOpen(...args)
+      const write = handle.write.bind(handle) as (b: Buffer, o: number, l: number, p: number) => Promise<{ bytesWritten: number; buffer: Buffer }>
+      Object.assign(handle, {
+        write: (b: Buffer, o: number, l: number, p: number) => write(b, o, Math.min(l, 1000), p),
+      })
+      return handle
+    })
+    try {
+      const id = await beginRecording({ repository, dir }, 'c', RATE)
+      await appendRecording(id, pcm(2000, 5))
+      await appendRecording(id, pcm(2000, -5))
+      const take = await finishRecording(id, false, () => undefined)
+      const bytes = await fs.readFile(take.file.relPath)
+      expect(bytes.length).toBe(WAV_HEADER_BYTES + 8000)
+      expect(bytes.readInt16LE(WAV_HEADER_BYTES + 3998)).toBe(5)
+      expect(bytes.readInt16LE(WAV_HEADER_BYTES + 4000)).toBe(-5)
+      expect(bytes.readInt16LE(WAV_HEADER_BYTES + 7998)).toBe(-5)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('abort deletes the partial and appends nothing', async () => {
     const { dir, repository } = setup()
     const id = await beginRecording({ repository, dir }, 'c', RATE)

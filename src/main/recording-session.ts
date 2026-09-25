@@ -146,7 +146,12 @@ export async function appendRecording(id: string, pcm: Buffer): Promise<void> {
   const at = WAV_HEADER_BYTES + rec.written
   rec.written += pcm.length
   return enqueue(rec, async () => {
-    await rec.handle.write(pcm, 0, pcm.length, at)
+    let done = 0
+    while (done < pcm.length) {
+      const { bytesWritten } = await rec.handle.write(pcm, done, pcm.length - done, at + done)
+      if (bytesWritten <= 0) throw new Error('Recording write stalled')
+      done += bytesWritten
+    }
   })
 }
 
