@@ -28,13 +28,14 @@ import { runFfmpeg } from './ffmpeg'
 import { parseCsv } from '@shared/csv'
 import { applyRules } from '@shared/pronunciation'
 import { NO_LANGUAGE_CODE_MODEL } from '@shared/provider-models'
-import { changeCueSourceText, changeTakeOutput } from '@shared/approval'
+import { changeTakeOutput } from '@shared/approval'
 import {
   cueVoiceUnchanged,
   emptyEdits,
   singleFlight,
   MAX_STS_SECONDS,
   type Cue,
+  type ProjectVersion,
   type Stem,
   type Take,
   type UiSessionState,
@@ -51,7 +52,7 @@ import * as migration from './migration'
 import { GENERATED_DIR } from './migration'
 import { syncCsv } from './csv-sync'
 import { importAudio, probeTakeDurations } from './audio-import'
-import { applyTakeDurations, pendingTakeDurations } from '@shared/library'
+import { applyTakeDurations, pendingTakeDurations, type TakeDurationEntry } from '@shared/library'
 import { importTable } from './table-import'
 import {
   abortVideoExport,
@@ -68,6 +69,8 @@ import { detectLines, importSources, splitMediaPaths } from './sources'
 import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
+import { transcribeCues } from './transcribe'
+import type { ChangeSet } from '@shared/project-commands'
 import { setupImportedProject, setupOpenedProject } from './project-import'
 import { normalizePath, PROJECT_SUFFIX } from '@shared/project-summary'
 
@@ -170,15 +173,25 @@ function flushPersist(): Promise<void> {
   return projectRepository?.flush() ?? Promise.resolve()
 }
 
+async function recordVersions(
+  save: (previous: ProjectVersion[]) => Promise<ProjectVersion[]>
+): Promise<ProjectVersion[]> {
+  const repository = requireRepository()
+  await repository.flush()
+  const previous = repository.projectForMain().versions ?? []
+  const versions = await save(previous)
+  if (versions === previous) return versions
+  await publish(repository, (project) => {
+    project.versions = versions
+    return { versions }
+  })
+  await repository.flush()
+  return versions
+}
+
 async function stampVersion(): Promise<number> {
-  await flushPersist()
-  const before = store.getProject()?.versions?.length ?? 0
-  const n = await store.ensureVersion()
-  const versions = store.getProject()?.versions
-  if (versions && versions.length !== before && projectRepository) {
-    emit('project:changed', await projectRepository.commit({ versions }))
-  }
-  return n
+  const versions = await recordVersions(store.ensureVersion)
+  return versions[versions.length - 1].n
 }
 
 const filePath = z.string().min(1).max(4096).refine((p) => path.isAbsolute(p), {
@@ -251,9 +264,17 @@ function serialLifecycle<T>(fn: () => Promise<T>): Promise<T> {
 
 const dirExists = (dir: string): Promise<boolean> => fs.stat(dir).then(() => true, () => false)
 
-async function publishCue(cue: Project['cues'][number]): Promise<void> {
+function requireRepository(): SerialProjectRepository {
   if (!projectRepository) throw new Error('No project is open')
-  emit('project:changed', await projectRepository.commit({ cues: [cue] }))
+  return projectRepository
+}
+
+async function publish(
+  repository: SerialProjectRepository,
+  fn: (project: Project) => ChangeSet | null
+): Promise<void> {
+  const result = await repository.mutate(fn)
+  if (result) emit('project:changed', result)
 }
 
 function pushUsage(): void {
@@ -269,9 +290,9 @@ function requireProject(): Project {
   return p
 }
 
-async function autoAdopt(): Promise<void> {
+async function autoAdopt(repository: SerialProjectRepository): Promise<void> {
   try {
-    const r = await migration.apply()
+    const r = await migration.apply(repository)
     if (r.adoptedNormal || r.adoptedComposite) {
       console.log(`auto-adopt: normal ${r.adoptedNormal}, composite ${r.adoptedComposite}`)
     }
@@ -283,43 +304,53 @@ async function autoAdopt(): Promise<void> {
 async function repairTakeDurations(repository: SerialProjectRepository): Promise<void> {
   const entries = await probeTakeDurations(repository.projectForMain())
   if (entries.length === 0) return
-  const current = repository.projectForMain()
-  const stillPending = new Set(pendingTakeDurations(current).map((e) => e.takeId))
-  const { cues, applied } = applyTakeDurations(
-    current,
-    entries.filter((e) => stillPending.has(e.takeId))
-  )
-  if (cues.length === 0) return
-  emit('project:changed', await repository.commit({ cues: structuredClone(cues) }))
-  emit('takes:durations', applied)
+  let applied: TakeDurationEntry[] = []
+  await publish(repository, (current) => {
+    const stillPending = new Set(pendingTakeDurations(current).map((e) => e.takeId))
+    const result = applyTakeDurations(current, entries.filter((e) => stillPending.has(e.takeId)))
+    applied = result.applied
+    return result.cues.length > 0 ? { cues: result.cues } : null
+  })
+  if (applied.length > 0) emit('takes:durations', applied)
 }
 
 async function migrateCharacters(project: Project): Promise<void> {
   if (applyAlienMigration(project)) await store.saveProject(project)
 }
 
-async function writeGuardedTake(
+async function appendTake(
   cueId: string,
-  characterId: string,
-  voiceId: string,
   fileName: string,
-  bytes: Buffer
-): Promise<{ cue: Cue; abs: string }> {
+  bytes: Buffer,
+  build: (cue: Cue, abs: string) => { take: Take; select: boolean },
+  voice?: { characterId: string; voiceId: string }
+): Promise<Take> {
   const abs = await store.writeTakeFile(cueId, fileName, bytes)
-  const project = requireProject()
-  const cue = project.cues.find((c) => c.id === cueId)
-  if (!cue || !cueVoiceUnchanged(project, cueId, characterId, voiceId)) {
+  let added!: Take
+  try {
+    await publish(requireRepository(), (project) => {
+      const cue = project.cues.find((c) => c.id === cueId)
+      if (voice && !cueVoiceUnchanged(project, cueId, voice.characterId, voice.voiceId)) {
+        throw new Error('Discarded: cue reassigned during generation')
+      }
+      if (!cue) throw new Error('Cue not found')
+      const { take, select } = build(cue, abs)
+      const withTake = { ...cue, takes: [...cue.takes, take] }
+      Object.assign(cue, select ? changeTakeOutput(withTake, take.id, project) : withTake)
+      added = take
+      return { cues: [cue] }
+    })
+  } catch (error) {
     await fs.rm(abs, { force: true }).catch(() => undefined)
-    throw new Error('Discarded: cue reassigned during generation')
+    throw error
   }
-  return { cue, abs }
+  return added
 }
 
 async function consumeSuggestionsFile(
   strict: boolean,
-  repository: SerialProjectRepository | null = projectRepository
+  repository: SerialProjectRepository
 ): Promise<{ loaded: number; skipped: number } | null> {
-  const project = requireProject()
   const dir = store.getProjectDir()
   if (!dir) return null
   const file = path.join(dir, 'suggestions.json')
@@ -344,24 +375,19 @@ async function consumeSuggestionsFile(
     return null
   }
 
-  const byKey = new Map(project.cues.map((c) => [c.key, c]))
-  let loaded = 0
-  let skipped = 0
-  const changed = [] as Project['cues']
-  for (const [wemId, suggestion] of Object.entries(parsed.data)) {
-    const cue = byKey.get(wemId)
-    if (!cue || suggestion === cue.text) {
-      skipped++
-      continue
+  const changed: Cue[] = []
+  await publish(repository, (project) => {
+    const byKey = new Map(project.cues.map((c) => [c.key, c]))
+    for (const [wemId, suggestion] of Object.entries(parsed.data)) {
+      const cue = byKey.get(wemId)
+      if (!cue || suggestion === cue.text) continue
+      cue.suggestedText = suggestion
+      changed.push(cue)
     }
-    cue.suggestedText = suggestion
-    changed.push(cue)
-    loaded++
-  }
-  if (loaded > 0) {
-    if (repository) emit('project:changed', await repository.commit({ cues: changed }))
-    else await store.saveProject(project)
-  }
+    return changed.length > 0 ? { cues: changed } : null
+  })
+  const loaded = changed.length
+  const skipped = Object.keys(parsed.data).length - loaded
   try {
     await fs.rename(file, path.join(dir, 'suggestions.imported.json'))
   } catch {
@@ -394,7 +420,7 @@ function registerHandlers(): void {
         resetRepository,
         abandonProject,
         finishOpen: async (repository) => {
-          if (repository.projectForMain().csvBinding) await autoAdopt()
+          if (repository.projectForMain().csvBinding) await autoAdopt(repository)
           await consumeSuggestionsFile(false, repository)
           void repairTakeDurations(repository).catch((e: unknown) =>
             console.warn('duration repair skipped:', e)
@@ -563,18 +589,14 @@ function registerHandlers(): void {
   typedHandle('project:saveVersion', (req) =>
     serialLifecycle(async () => {
       const parsed = saveVersionSchema.parse(req)
-      requireProject()
-      await flushPersist()
-      const versions = await store.saveVersion(parsed.name)
-      if (projectRepository) emit('project:changed', await projectRepository.commit({ versions }))
-      return versions
+      return recordVersions((previous) => store.saveVersion(previous, parsed.name))
     })
   )
 
   typedHandle('ui:save', (ui: UiSessionState) => store.saveUi(ui))
 
   typedHandle('suggestions:load', async () => {
-    const r = await consumeSuggestionsFile(true)
+    const r = await consumeSuggestionsFile(true, requireRepository())
     if (!r) {
       const dir = store.getProjectDir()
       throw new Error(`Suggestions file not found: ${path.join(dir ?? '?', 'suggestions.json')}`)
@@ -604,36 +626,36 @@ function registerHandlers(): void {
     if (!cue) throw new Error('Cue not found')
 
     const fileName = `t_${stamp()}_rec.wav`
-    const abs = await store.writeTakeFile(cue.id, fileName, bytes)
-    const take: Take = {
-      id: randomUUID(),
-      kind: 'recording',
-      createdAt: new Date().toISOString(),
-      file: {
-        fileId: `${cue.id}/${fileName}`,
-        relPath: abs,
-        format: 'wav',
-        sampleRate: parsed.sampleRate,
-        channels: 1,
+    return appendTake(cue.id, fileName, bytes, (target, abs) => ({
+      take: {
+        id: randomUUID(),
+        kind: 'recording',
+        createdAt: new Date().toISOString(),
+        file: {
+          fileId: `${target.id}/${fileName}`,
+          relPath: abs,
+          format: 'wav',
+          sampleRate: parsed.sampleRate,
+          channels: 1,
+        },
+        duration: parsed.durationSec,
+        meta: target.text ? { text: target.text } : {},
+        edits: emptyEdits(),
+        ...(parsed.fragment ? { fragment: true as const } : {}),
       },
-      duration: parsed.durationSec,
-      meta: cue.text ? { text: cue.text } : {},
-      edits: emptyEdits(),
-      ...(parsed.fragment ? { fragment: true as const } : {}),
-    }
-    cue.takes.push(take)
-    await publishCue(cue)
-    return take
+      select: false,
+    }))
   })
 
   typedHandle('take:setDurations', async (items) => {
     const parsed = durationsSchema.parse(items)
-    const { cues, applied } = applyTakeDurations(requireProject(), parsed)
-    if (cues.length > 0) {
-      if (!projectRepository) throw new Error('No project is open')
-      emit('project:changed', await projectRepository.commit({ cues: structuredClone(cues) }))
-      emit('takes:durations', applied)
-    }
+    let applied: TakeDurationEntry[] = []
+    await publish(requireRepository(), (project) => {
+      const result = applyTakeDurations(project, parsed)
+      applied = result.applied
+      return result.cues.length > 0 ? { cues: result.cues } : null
+    })
+    if (applied.length > 0) emit('takes:durations', applied)
     return { updated: applied.length }
   })
 
@@ -702,23 +724,26 @@ function registerHandlers(): void {
       settings: parsed.voiceSettings,
     })
     const fileName = `t_${stamp()}_tts.mp3`
-    const { cue: target, abs } = await writeGuardedTake(parsed.cueId, character.id, voiceId, fileName, audio)
-    const take: Take = {
-      id: randomUUID(),
-      kind: 'tts',
-      createdAt: new Date().toISOString(),
-      file: { fileId: `${target.id}/${fileName}`, relPath: abs, format: 'mp3' },
-      duration: 0,
-      meta: { text: processed, voiceSettings: parsed.voiceSettings, provider: 'elevenlabs', model },
-      edits: emptyEdits(),
-      ...(words ? { words } : {}),
-      ...(parsed.fragment ? { fragment: true as const } : {}),
-    }
-    target.takes.push(take)
-    if (autoSelectsOutput(parsed, false)) {
-      Object.assign(target, changeTakeOutput(target, take.id, project))
-    }
-    await publishCue(target)
+    const take = await appendTake(
+      parsed.cueId,
+      fileName,
+      audio,
+      (target, abs) => ({
+        take: {
+          id: randomUUID(),
+          kind: 'tts',
+          createdAt: new Date().toISOString(),
+          file: { fileId: `${target.id}/${fileName}`, relPath: abs, format: 'mp3' },
+          duration: 0,
+          meta: { text: processed, voiceSettings: parsed.voiceSettings, provider: 'elevenlabs', model },
+          edits: emptyEdits(),
+          ...(words ? { words } : {}),
+          ...(parsed.fragment ? { fragment: true as const } : {}),
+        },
+        select: autoSelectsOutput(parsed, false),
+      }),
+      { characterId: character.id, voiceId }
+    )
     pushUsage()
     return take
   })
@@ -757,62 +782,46 @@ function registerHandlers(): void {
     })
 
     const fileName = `t_${stamp()}_sts.mp3`
-    const { cue: target, abs } = await writeGuardedTake(parsed.cueId, character.id, voiceId, fileName, mp3)
-    const take: Take = {
-      id: randomUUID(),
-      kind: 'sts',
-      createdAt: new Date().toISOString(),
-      file: { fileId: `${target.id}/${fileName}`, relPath: abs, format: 'mp3' },
-      duration: source.duration,
-      meta: {
-        text: target.text,
-        voiceSettings: parsed.voiceSettings,
-        sourceTakeId: source.id,
-        provider: 'elevenlabs',
-        model,
-      },
-      edits: emptyEdits(),
-      ...(parsed.fragment ? { fragment: true as const } : {}),
-    }
-    target.takes.push(take)
-    if (autoSelectsOutput(parsed, target.status === 'approved')) {
-      Object.assign(target, changeTakeOutput(target, take.id, project))
-    }
-    await publishCue(target)
+    const take = await appendTake(
+      parsed.cueId,
+      fileName,
+      mp3,
+      (target, abs) => ({
+        take: {
+          id: randomUUID(),
+          kind: 'sts',
+          createdAt: new Date().toISOString(),
+          file: { fileId: `${target.id}/${fileName}`, relPath: abs, format: 'mp3' },
+          duration: source.duration,
+          meta: {
+            text: target.text,
+            voiceSettings: parsed.voiceSettings,
+            sourceTakeId: source.id,
+            provider: 'elevenlabs',
+            model,
+          },
+          edits: emptyEdits(),
+          ...(parsed.fragment ? { fragment: true as const } : {}),
+        },
+        select: autoSelectsOutput(parsed, target.status === 'approved'),
+      }),
+      { characterId: character.id, voiceId }
+    )
     pushUsage()
     return take
   })
 
   typedHandle('provider:transcribe', async (req) => {
     const parsed = transcribeSchema.parse(req)
-    const repository = projectRepository
-    if (!repository) throw new Error('No project is open')
-    const project = repository.projectForMain()
-    const changed: Cue[] = []
-    let skipped = 0
-    for (const cueId of parsed.cueIds) {
-      const cue = project.cues.find((c) => c.id === cueId)
-      const ref = cue?.referenceAudio
-      if (!cue || !ref || (!parsed.overwrite && cue.sourceText.trim())) {
-        skipped++
-        continue
-      }
-      const text = await eleven.stt({
-        audio: await fs.readFile(ref.relPath),
-        filename: path.basename(ref.relPath),
-      })
-      if (!text) {
-        skipped++
-        continue
-      }
-      Object.assign(cue, changeCueSourceText(cue, text, project))
-      changed.push(cue)
-    }
-    if (changed.length > 0) {
-      emit('project:changed', await repository.commit({ cues: structuredClone(changed) }))
-    }
+    const result = await transcribeCues(
+      requireRepository(),
+      parsed.cueIds,
+      parsed.overwrite === true,
+      async (ref) => eleven.stt({ audio: await fs.readFile(ref.relPath), filename: path.basename(ref.relPath) }),
+      (published) => emit('project:changed', published)
+    )
     pushUsage()
-    return { updated: changed.length, skipped }
+    return result
   })
 
   typedHandle('provider:voices', () => eleven.voices())
@@ -844,10 +853,8 @@ function registerHandlers(): void {
 
   typedHandle('migration:dryRun', () => migration.dryRun())
   typedHandle('migration:apply', async () => {
-    const result = await migration.apply()
-    if ((result.adoptedNormal > 0 || result.adoptedComposite > 0) && projectRepository) {
-      emit('project:changed', await projectRepository.commit({ cues: requireProject().cues }))
-    }
+    const { published, ...result } = await migration.apply(requireRepository())
+    if (published) emit('project:changed', published)
     return result
   })
 
@@ -876,7 +883,7 @@ function registerHandlers(): void {
   typedHandle('export:encode', (outPath, wav) => encodeJob(z.string().min(1).parse(outPath), wav))
   typedHandle('export:finish', async (token, summary) => {
     const parsed = exportSummarySchema.parse(summary)
-    const version = parsed.exported.length > 0 ? await stampVersion() : undefined
+    const version = parsed.exported.length > 0 ? await serialLifecycle(stampVersion) : undefined
     return finishExport(z.string().uuid().parse(token), parsed, version)
   })
 

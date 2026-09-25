@@ -21,30 +21,35 @@ export class SerialProjectRepository {
   projectForMain(): Project { return this.project }
 
   execute(command: ProjectCommand): Promise<CommandResult> {
+    return this.enqueue(() => this.publish(applyProjectCommand(this.project, structuredClone(command))))
+  }
+
+  mutate(fn: (project: Project) => ChangeSet | null): Promise<CommandResult | null> {
+    return this.enqueue(() => {
+      const changes = fn(this.project)
+      return changes && this.publish(structuredClone(changes))
+    })
+  }
+
+  commit(changes: ChangeSet): Promise<CommandResult> {
+    return this.enqueue(() => this.publish(structuredClone(changes)))
+  }
+
+  private enqueue<T>(apply: () => T): Promise<T> {
     if (!this.accepting) return Promise.reject(new Error('Project repository is detached'))
     const run = this.queue.then(() => {
       this.assertAttached()
-      const changes = applyProjectCommand(this.project, structuredClone(command))
-      this.revision++
-      this.dirtyRevision = this.revision
-      this.schedule()
-      return { revision: this.revision, changes }
+      return apply()
     })
     this.queue = run.then(() => undefined, () => undefined)
     return run
   }
 
-  commit(changes: ChangeSet): Promise<CommandResult> {
-    if (!this.accepting) return Promise.reject(new Error('Project repository is detached'))
-    const run = this.queue.then(() => {
-      this.assertAttached()
-      this.revision++
-      this.dirtyRevision = this.revision
-      this.schedule()
-      return { revision: this.revision, changes: structuredClone(changes) }
-    })
-    this.queue = run.then(() => undefined, () => undefined)
-    return run
+  private publish(changes: ChangeSet): CommandResult {
+    this.revision++
+    this.dirtyRevision = this.revision
+    this.schedule()
+    return { revision: this.revision, changes }
   }
 
   private schedule(): void {

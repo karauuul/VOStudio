@@ -245,20 +245,14 @@ export function closeProject(): void {
   rev = 0
 }
 
-export async function saveVersion(name?: string): Promise<ProjectVersion[]> {
-  if (!current || !projectDir) throw new Error('No project is open')
+export async function saveVersion(previous: ProjectVersion[], name?: string): Promise<ProjectVersion[]> {
+  if (!projectDir) throw new Error('No project is open')
   const dir = path.join(projectDir, 'versions')
   await fs.mkdir(dir, { recursive: true })
-  const previous = current.versions ?? []
   const n = (previous[previous.length - 1]?.n ?? 0) + 1
   await fs.copyFile(path.join(projectDir, 'project.json'), path.join(dir, `v${n}.json`))
   const trimmed = name?.trim()
-  current.versions = [
-    ...previous,
-    { n, ...(trimmed ? { name: trimmed } : {}), createdAt: new Date().toISOString() },
-  ]
-  await persistProjectSnapshot(current)
-  return current.versions
+  return [...previous, { n, ...(trimmed ? { name: trimmed } : {}), createdAt: new Date().toISOString() }]
 }
 
 function withoutVersions(raw: string): string {
@@ -280,13 +274,11 @@ async function matchesVersionFile(n: number): Promise<boolean> {
   }
 }
 
-export async function ensureVersion(): Promise<number> {
-  if (!current || !projectDir) throw new Error('No project is open')
-  const previous = current.versions ?? []
+export async function ensureVersion(previous: ProjectVersion[]): Promise<ProjectVersion[]> {
+  if (!projectDir) throw new Error('No project is open')
   const last = previous[previous.length - 1]
-  if (last && (await matchesVersionFile(last.n))) return last.n
-  const versions = await saveVersion()
-  return versions[versions.length - 1].n
+  if (last && (await matchesVersionFile(last.n))) return previous
+  return saveVersion(previous)
 }
 
 async function writeAudioFile(

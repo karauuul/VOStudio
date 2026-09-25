@@ -2,8 +2,10 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import { createHash, randomUUID } from 'crypto'
 import type { MigrationEntry, MigrationReport } from '@shared/ipc'
-import { emptyEdits, type Project } from '@shared/domain'
+import { emptyEdits, type Cue, type Project } from '@shared/domain'
+import type { CommandResult } from '@shared/project-commands'
 import * as store from './project-store'
+import type { SerialProjectRepository } from './project-repository'
 
 export const GENERATED_DIR = process.env.VOSTUDIO_GENERATED_DIR ?? ''
 
@@ -153,10 +155,9 @@ export async function dryRun(): Promise<MigrationReport> {
   }
 }
 
-export async function apply(): Promise<{ adoptedNormal: number; adoptedComposite: number }> {
-  const project = store.getProject()
-  if (!project) throw new Error('No project is open')
-  const p = buildPlan(project, await scanGenerated())
+function adoptGenerated(project: Project, scan: Scan): { adoptedNormal: number; adoptedComposite: number; cues: Cue[] } {
+  const p = buildPlan(project, scan)
+  const changed = new Set<Cue>()
 
   let adoptedNormal = 0
   let adoptedComposite = 0
@@ -177,6 +178,7 @@ export async function apply(): Promise<{ adoptedNormal: number; adoptedComposite
     cue.takes.push(take)
     if (!cue.finalTakeId) cue.finalTakeId = take.id
     if (cue.status === 'translated') cue.status = 'generated'
+    changed.add(cue)
     return true
   }
 
@@ -191,6 +193,18 @@ export async function apply(): Promise<{ adoptedNormal: number; adoptedComposite
     if (any) adoptedComposite++
   }
 
-  if (adoptedNormal > 0 || adoptedComposite > 0) await store.saveProject(project)
-  return { adoptedNormal, adoptedComposite }
+  return { adoptedNormal, adoptedComposite, cues: [...changed] }
+}
+
+export async function apply(
+  repository: SerialProjectRepository
+): Promise<{ adoptedNormal: number; adoptedComposite: number; published: CommandResult | null }> {
+  const scan = await scanGenerated()
+  let adopted = { adoptedNormal: 0, adoptedComposite: 0 }
+  const published = await repository.mutate((project) => {
+    const { cues, ...counts } = adoptGenerated(project, scan)
+    adopted = counts
+    return cues.length > 0 ? { cues } : null
+  })
+  return { ...adopted, published }
 }
