@@ -81,6 +81,7 @@ import {
   removesLines,
   runLineStep,
   steppedEdit,
+  textFieldStep,
   type LineChange,
   type LineEdit,
   type LineHistory,
@@ -1258,14 +1259,15 @@ export default function App() {
     [applyTakeEffects, lineStep]
   )
 
-  const undoPasteKey = useCallback((): boolean => {
-    const top = linesRef.current.undo[linesRef.current.undo.length - 1]
-    const text = top?.kind === 'cues' ? top.text : undefined
-    const cue = activeCue
-    if (!text || !cue || text.cueId !== cue.id || cue.text !== text.after) return false
-    historyStep('undo')
-    return true
-  }, [activeCue, historyStep])
+  const textHistoryKey = useCallback(
+    (dir: 'undo' | 'redo'): boolean => {
+      const cue = activeCue
+      if (!cue || !textFieldStep(linesRef.current, dir, cue.id, cue.text)) return false
+      historyStep(dir)
+      return true
+    },
+    [activeCue, historyStep]
+  )
 
   const importFiles = useCallback(
     async (paths: string[], drop?: { trackId: string; at: number }): Promise<void> => {
@@ -1778,7 +1780,7 @@ export default function App() {
     onAcceptSuggestion,
     onRejectSuggestion,
     onPasteScript: pasteScript,
-    onUndoKey: undoPasteKey,
+    onHistoryKey: textHistoryKey,
     onCharacter: onCueCharacter,
     onVoiceChange,
     hasRange: !!textSel,

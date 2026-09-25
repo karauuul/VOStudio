@@ -93,3 +93,10 @@ export function removalBlock(ids: string[], state: RemovalState): string | null 
   if (ids.some((id) => state.busy(id))) return 'Line is busy'
   return null
 }
+
+export function textFieldStep(history: LineHistory, dir: StepDir, cueId: string, text: string): boolean {
+  const stack = dir === 'undo' ? history.undo : history.redo
+  const top = stack[stack.length - 1]
+  const paste = top?.kind === 'cues' ? top.text : undefined
+  return !!paste && paste.cueId === cueId && text === (dir === 'undo' ? paste.after : paste.before)
+}

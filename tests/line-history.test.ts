@@ -11,6 +11,7 @@ import {
   removalBlock,
   runLineStep,
   steppedEdit,
+  textFieldStep,
   type LineHistory,
   type StepDir,
 } from '../src/shared/line-history'
@@ -172,5 +173,31 @@ describe('script paste validation', () => {
     }
     expect(p).toEqual(before)
     expect(p.cues[0].text).toBe('keep me')
+  })
+})
+
+describe('undo and redo from the text field', () => {
+  const paste = { kind: 'cues' as const, undoRemoves: true, ids: ['n1'], snapshots: [], focus: 'a', text: { cueId: 'a', before: 'old', after: 'One.' }, at: 1 }
+
+  it('undoes a split paste only while the line still shows the pasted text', () => {
+    const history: LineHistory = { undo: [paste], redo: [] }
+    expect(textFieldStep(history, 'undo', 'a', 'One.')).toBe(true)
+    expect(textFieldStep(history, 'undo', 'a', 'One. typed')).toBe(false)
+    expect(textFieldStep(history, 'undo', 'b', 'One.')).toBe(false)
+    expect(textFieldStep(history, 'redo', 'a', 'old')).toBe(false)
+  })
+
+  it('redoes it only while the line still shows the text from before the paste', () => {
+    const history: LineHistory = { undo: [], redo: [paste] }
+    expect(textFieldStep(history, 'redo', 'a', 'old')).toBe(true)
+    expect(textFieldStep(history, 'redo', 'a', 'old!')).toBe(false)
+    expect(textFieldStep(history, 'redo', 'b', 'old')).toBe(false)
+    expect(textFieldStep(history, 'undo', 'a', 'One.')).toBe(false)
+  })
+
+  it('leaves the field alone for other line changes', () => {
+    const plain = { kind: 'cues' as const, undoRemoves: true, ids: ['n1'], snapshots: [], focus: 'n1', at: 1 }
+    expect(textFieldStep({ undo: [plain], redo: [plain] }, 'undo', 'n1', '')).toBe(false)
+    expect(textFieldStep({ undo: [plain], redo: [plain] }, 'redo', 'n1', '')).toBe(false)
   })
 })

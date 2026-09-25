@@ -51,7 +51,7 @@ export interface TextPanelProps {
   onAcceptSuggestion?: () => void
   onRejectSuggestion?: () => void
   onPasteScript?: (parts: string[]) => void
-  onUndoKey?: () => boolean
+  onHistoryKey?: (dir: 'undo' | 'redo') => boolean
   onCharacter?: (characterId: string) => void
   onVoiceChange?: (patch: Partial<VoiceSettings>) => void
   onGenerate?: (kind: GenTarget['kind']) => void
@@ -152,7 +152,7 @@ function Translation({
   onAcceptSuggestion,
   onRejectSuggestion,
   onPasteScript,
-  onUndoKey,
+  onHistoryKey,
   menu,
 }: Pick<
   TextPanelProps,
@@ -164,7 +164,7 @@ function Translation({
   | 'onAcceptSuggestion'
   | 'onRejectSuggestion'
   | 'onPasteScript'
-  | 'onUndoKey'
+  | 'onHistoryKey'
 > & { menu?: (range: TextRange, el: HTMLTextAreaElement) => MenuEntry[] }) {
   const mirrorRef = useRef<HTMLDivElement>(null)
   const pop = useContextMenu()
@@ -207,8 +207,8 @@ function Translation({
                 onPasteScript(parts)
               }}
               onKeyDown={(e) => {
-                if (e.code !== 'KeyZ' || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return
-                if (onUndoKey?.()) e.preventDefault()
+                if (e.code !== 'KeyZ' || !(e.ctrlKey || e.metaKey) || e.altKey) return
+                if (onHistoryKey?.(e.shiftKey ? 'redo' : 'undo')) e.preventDefault()
               }}
               onScroll={(e) => {
                 const mirror = mirrorRef.current
@@ -346,7 +346,7 @@ export function TextPanel({
   onAcceptSuggestion,
   onRejectSuggestion,
   onPasteScript,
-  onUndoKey,
+  onHistoryKey,
   onCharacter,
   onVoiceChange,
   onGenerate,
@@ -399,7 +399,7 @@ export function TextPanel({
         onAcceptSuggestion={onAcceptSuggestion}
         onRejectSuggestion={onRejectSuggestion}
         onPasteScript={onPasteScript}
-        onUndoKey={onUndoKey}
+        onHistoryKey={onHistoryKey}
         menu={translationMenu}
       />
 
