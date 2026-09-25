@@ -298,6 +298,17 @@ describe('scope precedence', () => {
     expect(action({ code: 'KeyO', scope: 'workspace' })).toBe('setOut')
   })
 
+  it('Shift+D punches in from the work scopes only', () => {
+    for (const scope of ['workspace', 'timeline'] as Scope[]) {
+      expect(action({ code: 'KeyD', shiftKey: true, scope })).toBe('punchRecord')
+      expect(action({ code: 'KeyD', scope })).toBeNull()
+      expect(action({ code: 'KeyD', ctrlKey: true, shiftKey: true, scope })).toBeNull()
+    }
+    for (const scope of ['text', 'grid', 'gridText', 'deliver', 'home'] as Scope[]) {
+      expect(action({ code: 'KeyD', shiftKey: true, scope })).toBeNull()
+    }
+  })
+
   it('every binding declares at least one scope and no scope is unreachable', () => {
     for (const b of BINDINGS) expect(b.scopes.length).toBeGreaterThan(0)
     const used = new Set(BINDINGS.flatMap((b) => b.scopes))

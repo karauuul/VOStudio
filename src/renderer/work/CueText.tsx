@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, type MutableRefObject } from 'react'
 import { resolveVoiceSettings, type Character, type Cue, type Take } from '@shared/domain'
 import type { GenTarget } from '@shared/generation'
 import type { AppSettings } from '@shared/ipc'
-import { useVoiceToVoice } from '../cue/useVoiceToVoice'
+import { useVoiceToVoice, type PunchPlacement } from '../cue/useVoiceToVoice'
 import { useWire } from '../cue/useWire'
 import { TextPanel, type TextPanelProps } from './TextPanel'
 import type { ClipSelection, CompApi } from './TimelinePanel'
@@ -14,8 +14,15 @@ export interface CueTextProps {
   onSubmit: (cueId: string) => void
   cueBusy: boolean
   compRef: MutableRefObject<CompApi | null>
-  onPlace: (cueId: string, take: Take, replaceClipId?: string) => Promise<void>
+  onPlace: (
+    cueId: string,
+    take: Take,
+    replaceClipId?: string,
+    drop?: undefined,
+    punch?: PunchPlacement
+  ) => Promise<void>
   recRef: MutableRefObject<(() => void) | null>
+  punchRef: MutableRefObject<(() => void) | null>
   escRef: MutableRefObject<(() => boolean) | null>
   recActiveRef: MutableRefObject<(() => boolean) | null>
   guardRef: MutableRefObject<((proceed: () => void) => boolean) | null>
@@ -37,6 +44,7 @@ export function CueText({
   compRef,
   onPlace,
   recRef,
+  punchRef,
   escRef,
   recActiveRef,
   guardRef,
@@ -65,6 +73,12 @@ export function CueText({
     (): ClipSelection | null => compRef.current?.selection() ?? null,
     [compRef]
   )
+  const playhead = useCallback((): number => compRef.current?.playhead() ?? 0, [compRef])
+  const preroll = useCallback(
+    (at: number, lead: number): Promise<number> =>
+      compRef.current?.preroll(at, lead) ?? Promise.resolve(performance.now()),
+    [compRef]
+  )
 
   const v2v = useVoiceToVoice({
     cue,
@@ -76,6 +90,8 @@ export function CueText({
     isActiveCue,
     noVoiceReason,
     selection,
+    playhead,
+    preroll,
     onPlace,
   })
 
@@ -90,6 +106,7 @@ export function CueText({
   const recActive = useCallback(() => v2v.rec.phase !== 'idle', [v2v.rec.phase])
 
   useWire(recRef, v2v.toggleRec)
+  useWire(punchRef, v2v.punch)
   useWire(escRef, v2v.onEscape)
   useWire(recActiveRef, recActive)
   useWire(guardRef, v2v.guard)

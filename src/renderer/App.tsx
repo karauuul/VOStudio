@@ -49,6 +49,7 @@ import type { CompApi, TimelineSelection } from './work/TimelinePanel'
 import type { LibraryPanel } from './work/LibraryPanel'
 import { ProgramPanel, type ProgramApi } from './work/ProgramPanel'
 import { CueText } from './work/CueText'
+import type { PunchPlacement } from './cue/useVoiceToVoice'
 import { TimelinePanel } from './work/TimelinePanel'
 import { RulesDialog } from './RulesPanel'
 import { ProjectHome } from './ProjectHome'
@@ -71,7 +72,7 @@ import {
 } from '@shared/workspace-source'
 import { hasValidVoicedOutput } from '@shared/approval'
 import { compDuration, isEmptyComp } from '@shared/comp'
-import { libraryRow, lineLabel, locateText, resolveTake, type LibraryRow } from '@shared/library'
+import { libraryRow, lineLabel, locateText, punchClip, resolveTake, type LibraryRow } from '@shared/library'
 import type { ChangeSet, ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
 import {
   lineStepCommand,
@@ -165,6 +166,7 @@ export default function App() {
   const programRef = useRef<ProgramApi | null>(null)
   const propsRef = useRef<PropsApi | null>(null)
   const recRef = useRef<(() => void) | null>(null)
+  const punchRef = useRef<(() => void) | null>(null)
   const escRef = useRef<(() => boolean) | null>(null)
   const recActiveRef = useRef<(() => boolean) | null>(null)
   const guardRef = useRef<((proceed: () => void) => boolean) | null>(null)
@@ -716,7 +718,8 @@ export default function App() {
       cueId: string,
       take: Take | Take[],
       replaceClipId?: string,
-      drop?: { trackId: string; at: number }
+      drop?: { trackId: string; at: number },
+      punch?: PunchPlacement
     ): Promise<void> => placeQueue(cueId, async () => {
       const takes = Array.isArray(take) ? take : [take]
       const durations: number[] = []
@@ -745,20 +748,33 @@ export default function App() {
           : state.clipId === clipId.comp(cueId)
             ? state.pos
             : 0)
-      takes.forEach((item, i) => {
-        const placed = placeTake({
-          comp,
-          takeId: item.id,
-          duration: durations[i],
+      if (punch) {
+        const punched = punchClip(comp, {
+          takeId: takes[0].id,
+          duration: durations[0],
+          hidden: punch.hidden,
+          at: punch.at,
           targetTrackId: trackId,
-          playhead,
-          ...(replace ? { replaceClipId: replace } : {}),
         })
-        comp = placed.comp
-        trackId = placed.trackId
-        const clip = placed.comp.clips.find((c) => c.id === placed.clipId)
-        playhead = (clip?.start ?? playhead) + durations[i]
-      })
+        if (!punched) throw new Error('nothing was recorded after the punch point')
+        comp = punched.comp
+        trackId = punched.trackId
+      } else {
+        takes.forEach((item, i) => {
+          const placed = placeTake({
+            comp,
+            takeId: item.id,
+            duration: durations[i],
+            targetTrackId: trackId,
+            playhead,
+            ...(replace ? { replaceClipId: replace } : {}),
+          })
+          comp = placed.comp
+          trackId = placed.trackId
+          const clip = placed.comp.clips.find((c) => c.id === placed.clipId)
+          playhead = (clip?.start ?? playhead) + durations[i]
+        })
+      }
       if (!comp || !trackId) return
       const placedTrack = trackId
       const placedComp = comp
@@ -1465,6 +1481,7 @@ export default function App() {
       acceptSuggestion: onAcceptSuggestion,
       rejectSuggestion: onRejectSuggestion,
       toggleRecord: recordLine,
+      punchRecord: () => punchRef.current?.(),
       escape: () => {
         if (escRef.current?.()) return true
         if (sourceTakeId === null) return false
@@ -1840,6 +1857,7 @@ export default function App() {
         compRef,
         onPlace: placeOnComp,
         recRef,
+        punchRef,
         escRef,
         recActiveRef,
         guardRef,

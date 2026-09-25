@@ -148,6 +148,7 @@ export interface CompApi {
   dropRedo: () => void
   selection: () => ClipSelection | null
   playhead: () => number
+  preroll: (at: number, lead: number) => Promise<number>
   editSelected: (patch: Partial<ClipEdits>, commit: boolean) => void
   moveSelected: (start: number, commit: boolean) => void
   trimSelected: (edge: 'start' | 'end', at: number, commit: boolean) => void
@@ -1207,6 +1208,18 @@ export function TimelinePanel({
         }
       },
       playhead: () => posRef.current,
+      preroll: (at, lead) =>
+        new Promise<number>((resolve) => {
+          const from = Math.max(0, at - lead)
+          if (!resolved || !transportId || !(at > from)) {
+            resolve(performance.now())
+            return
+          }
+          const settle = (): void => resolve(transport.timeOf(at) ?? performance.now())
+          void transport
+            .playComp({ ...resolved, region: { in: from, out: at } }, { id: transportId, seek: from, onStart: settle })
+            .then(settle, settle)
+        }),
       editSelected,
       moveSelected: (start, doCommit) => {
         const base = compRefLive.current
@@ -1281,6 +1294,8 @@ export function TimelinePanel({
       peaks,
       zoomBy,
       targetTrackId,
+      resolved,
+      transportId,
     ]
   )
 

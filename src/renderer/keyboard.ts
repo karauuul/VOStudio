@@ -48,6 +48,7 @@ export type KeyAction =
   | 'acceptSuggestion'
   | 'rejectSuggestion'
   | 'toggleRecord'
+  | 'punchRecord'
   | 'focusText'
   | 'muteTrack'
   | 'soloTrack'
@@ -162,6 +163,7 @@ export const BINDINGS: Binding[] = [
   { action: 'doneNext', codes: ['KeyA'], shift: true, scopes: WORK, label: 'Done and next' },
   { action: 'focusText', codes: ['KeyE'], scopes: WORK, label: 'Focus translation' },
   { action: 'toggleRecord', codes: ['KeyR'], scopes: WORK, label: 'Record' },
+  { action: 'punchRecord', codes: ['KeyD'], shift: true, scopes: WORK, label: 'Punch and roll' },
   { action: 'acceptSuggestion', codes: ['KeyY'], scopes: WORK, label: 'Accept suggestion' },
   { action: 'rejectSuggestion', codes: ['KeyN'], scopes: WORK, label: 'Reject suggestion' },
   { action: 'muteTrack', codes: ['KeyM'], scopes: TIMELINE, label: 'Mute hovered track' },
@@ -299,6 +301,7 @@ export interface KeyboardHandlers {
   acceptSuggestion: () => void
   rejectSuggestion: () => void
   toggleRecord: () => void
+  punchRecord: () => void
   focusText: () => void
   muteTrack: () => void
   soloTrack: () => void

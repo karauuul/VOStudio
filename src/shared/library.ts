@@ -4,14 +4,17 @@ import {
   compProblem,
   COMP_EPS,
   DEFAULT_TRACK_ID,
+  MIN_CLIP_SRC,
   newCompClipId,
   normalizeComp,
+  setCrossfade,
   SPEED_MAX,
   SPEED_MIN,
   splitClipAt,
 } from './comp'
 import {
   clipSpeed,
+  emptyEdits,
   liveTakes,
   sanitizeWords,
   type ClipEdits,
@@ -557,6 +560,54 @@ export function placeClip(comp: CueComp, req: PlaceClipRequest): PlacedClip {
   }
   const next = added ? { ...comp, tracks: [...tracks, added] } : comp
   return { comp: normalizeComp({ ...next, clips: [...comp.clips, clip] }), clipId: clip.id, trackId }
+}
+
+export const PUNCH_CROSSFADE = 0.01
+
+export interface PunchRequest {
+  takeId: string
+  duration: number
+  hidden: number
+  at: number
+  targetTrackId?: string
+}
+
+export function punchClip(comp: CueComp | undefined, req: PunchRequest): PlacedClip | null {
+  const base = comp ?? { clips: [] }
+  const at = Math.max(0, req.at)
+  const hidden = Math.max(0, req.hidden)
+  if (!Number.isFinite(at) || !Number.isFinite(hidden) || !(req.duration - hidden >= MIN_CLIP_SRC)) {
+    return null
+  }
+  const trackId = resolveTargetTrack(base, req.targetTrackId)
+  const onTrack = (c: CompClip): boolean => clipTrackId(c) === trackId
+  const crossing = base.clips.find(
+    (c) => onTrack(c) && c.start < at - COMP_EPS && clipEnd(c) > at + COMP_EPS
+  )
+  const cut = crossing ? splitClipAt(base, crossing.id, at) : base
+  const kept = cut.clips.flatMap((c): CompClip[] => {
+    if (!onTrack(c)) return [c]
+    if (c.start >= at - COMP_EPS) return []
+    if (clipEnd(c) <= at + COMP_EPS) return [c]
+    const srcOut = c.srcIn + (at - c.start) * clipSpeed(c.edits)
+    return srcOut - c.srcIn < MIN_CLIP_SRC ? [] : [{ ...c, srcOut }]
+  })
+  const clip: CompClip = {
+    id: newCompClipId(),
+    sourceTakeId: req.takeId,
+    srcIn: hidden,
+    srcOut: req.duration,
+    start: at,
+    edits: emptyEdits(),
+    ...(base.tracks ? { trackId } : {}),
+  }
+  const placed = normalizeComp({ ...cut, clips: [...kept, clip] })
+  const joined = placed.clips.find((c) => onTrack(c) && Math.abs(clipEnd(c) - at) <= COMP_EPS)
+  return {
+    comp: joined ? setCrossfade(placed, joined.id, PUNCH_CROSSFADE) : placed,
+    clipId: clip.id,
+    trackId,
+  }
 }
 
 export function wordsFromAlignment(value: unknown): WordTiming[] | undefined {

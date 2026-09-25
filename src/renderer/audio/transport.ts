@@ -546,7 +546,7 @@ function compUrls(resolved: ResolvedComp): string[] {
 
 export async function playComp(
   resolved: ResolvedComp,
-  opts: { id?: string; seek?: number } = {}
+  opts: { id?: string; seek?: number; onStart?: () => void } = {}
 ): Promise<void> {
   halt()
   dropComp()
@@ -599,7 +599,14 @@ export async function playComp(
   }
   const p = new Promise<void>((res) => waiters.push(res))
   startComp(opts.seek ?? from, true)
+  opts.onStart?.()
   return p
+}
+
+export function timeOf(pos: number): number | null {
+  const s = comp
+  if (!s?.bus || !ctx) return null
+  return performance.now() + (s.at + (pos - s.startPos) - ctx.currentTime) * 1000
 }
 
 export function playRange(clip: Clip, from: number, to: number): Promise<void> {
@@ -757,6 +764,7 @@ export const transport = {
   scrubTo,
   playComp,
   playRange,
+  timeOf,
   subscribe,
   getState,
   currentClipId,
