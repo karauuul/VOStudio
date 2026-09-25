@@ -282,25 +282,26 @@ export async function ensureVersion(previous: ProjectVersion[]): Promise<Project
 }
 
 async function writeAudioFile(
+  root: string | null,
   kind: 'takes' | 'stems',
   cueId: string,
   fileName: string,
   data: Buffer
 ): Promise<string> {
-  if (!projectDir) throw new Error('No project is open')
-  const dir = path.join(projectDir, 'audio', kind, cueId)
+  if (!root) throw new Error('No project is open')
+  const dir = path.join(root, 'audio', kind, cueId)
   await fs.mkdir(dir, { recursive: true })
   const abs = path.join(dir, fileName)
   await fs.writeFile(abs, data)
   return abs
 }
 
-export function writeTakeFile(cueId: string, fileName: string, data: Buffer): Promise<string> {
-  return writeAudioFile('takes', cueId, fileName, data)
+export function writeTakeFile(root: string, cueId: string, fileName: string, data: Buffer): Promise<string> {
+  return writeAudioFile(root, 'takes', cueId, fileName, data)
 }
 
 export function writeStemFile(cueId: string, fileName: string, data: Buffer): Promise<string> {
-  return writeAudioFile('stems', cueId, fileName, data)
+  return writeAudioFile(projectDir, 'stems', cueId, fileName, data)
 }
 
 export async function dropUnusedStems(): Promise<void> {

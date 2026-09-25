@@ -28,16 +28,13 @@ import { runFfmpeg } from './ffmpeg'
 import { parseCsv } from '@shared/csv'
 import { applyRules } from '@shared/pronunciation'
 import { NO_LANGUAGE_CODE_MODEL } from '@shared/provider-models'
-import { changeTakeOutput } from '@shared/approval'
 import {
-  cueVoiceUnchanged,
   emptyEdits,
   singleFlight,
   MAX_STS_SECONDS,
   type Cue,
   type ProjectVersion,
   type Stem,
-  type Take,
   type UiSessionState,
 } from '@shared/domain'
 import type { Project } from '@shared/domain'
@@ -70,7 +67,8 @@ import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
 import { transcribeCues } from './transcribe'
-import type { ChangeSet } from '@shared/project-commands'
+import { appendTake, type TakeSession } from './take-append'
+import type { ChangeSet, CommandResult } from '@shared/project-commands'
 import { setupImportedProject, setupOpenedProject } from './project-import'
 import { normalizePath, PROJECT_SUFFIX } from '@shared/project-summary'
 
@@ -269,6 +267,14 @@ function requireRepository(): SerialProjectRepository {
   return projectRepository
 }
 
+function requireSession(): TakeSession {
+  const dir = store.getProjectDir()
+  if (!dir) throw new Error('No project is open')
+  return { repository: requireRepository(), dir }
+}
+
+const emitChange = (result: CommandResult): void => emit('project:changed', result)
+
 async function publish(
   repository: SerialProjectRepository,
   fn: (project: Project) => ChangeSet | null
@@ -316,35 +322,6 @@ async function repairTakeDurations(repository: SerialProjectRepository): Promise
 
 async function migrateCharacters(project: Project): Promise<void> {
   if (applyAlienMigration(project)) await store.saveProject(project)
-}
-
-async function appendTake(
-  cueId: string,
-  fileName: string,
-  bytes: Buffer,
-  build: (cue: Cue, abs: string) => { take: Take; select: boolean },
-  voice?: { characterId: string; voiceId: string }
-): Promise<Take> {
-  const abs = await store.writeTakeFile(cueId, fileName, bytes)
-  let added!: Take
-  try {
-    await publish(requireRepository(), (project) => {
-      const cue = project.cues.find((c) => c.id === cueId)
-      if (voice && !cueVoiceUnchanged(project, cueId, voice.characterId, voice.voiceId)) {
-        throw new Error('Discarded: cue reassigned during generation')
-      }
-      if (!cue) throw new Error('Cue not found')
-      const { take, select } = build(cue, abs)
-      const withTake = { ...cue, takes: [...cue.takes, take] }
-      Object.assign(cue, select ? changeTakeOutput(withTake, take.id, project) : withTake)
-      added = take
-      return { cues: [cue] }
-    })
-  } catch (error) {
-    await fs.rm(abs, { force: true }).catch(() => undefined)
-    throw error
-  }
-  return added
 }
 
 async function consumeSuggestionsFile(
@@ -621,12 +598,12 @@ function registerHandlers(): void {
     const parsed = recordingSchema.parse({ cueId, durationSec, sampleRate, fragment })
     const bytes = wavBytes(wav)
 
-    const project = requireProject()
-    const cue = project.cues.find((c) => c.id === parsed.cueId)
+    const session = requireSession()
+    const cue = session.repository.projectForMain().cues.find((c) => c.id === parsed.cueId)
     if (!cue) throw new Error('Cue not found')
 
     const fileName = `t_${stamp()}_rec.wav`
-    return appendTake(cue.id, fileName, bytes, (target, abs) => ({
+    return appendTake(session, cue.id, fileName, bytes, emitChange, (target, abs) => ({
       take: {
         id: randomUUID(),
         kind: 'recording',
@@ -701,7 +678,8 @@ function registerHandlers(): void {
 
   typedHandle('provider:tts', async (req) => {
     const parsed = ttsSchema.parse(req)
-    const project = requireProject()
+    const session = requireSession()
+    const project = session.repository.projectForMain()
     const cue = project.cues.find((c) => c.id === parsed.cueId)
     if (!cue) throw new Error('Cue not found')
     const character = project.characters.find((c) => c.id === cue.characterId)
@@ -725,9 +703,11 @@ function registerHandlers(): void {
     })
     const fileName = `t_${stamp()}_tts.mp3`
     const take = await appendTake(
+      session,
       parsed.cueId,
       fileName,
       audio,
+      emitChange,
       (target, abs) => ({
         take: {
           id: randomUUID(),
@@ -750,7 +730,8 @@ function registerHandlers(): void {
 
   typedHandle('provider:sts', async (req) => {
     const parsed = stsSchema.parse(req)
-    const project = requireProject()
+    const session = requireSession()
+    const project = session.repository.projectForMain()
     const cue = project.cues.find((c) => c.id === parsed.cueId)
     if (!cue) throw new Error('Cue not found')
     const source = cue.takes.find((t) => t.id === parsed.sourceTakeId)
@@ -783,9 +764,11 @@ function registerHandlers(): void {
 
     const fileName = `t_${stamp()}_sts.mp3`
     const take = await appendTake(
+      session,
       parsed.cueId,
       fileName,
       mp3,
+      emitChange,
       (target, abs) => ({
         take: {
           id: randomUUID(),
@@ -818,7 +801,7 @@ function registerHandlers(): void {
       parsed.cueIds,
       parsed.overwrite === true,
       async (ref) => eleven.stt({ audio: await fs.readFile(ref.relPath), filename: path.basename(ref.relPath) }),
-      (published) => emit('project:changed', published)
+      emitChange
     )
     pushUsage()
     return result
