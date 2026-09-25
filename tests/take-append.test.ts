@@ -104,6 +104,18 @@ describe('take file import', () => {
   })
 })
 
+describe('files without audio', () => {
+  it('refuses a video-only ogg before writing anything', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-noaudio-'))
+    const src = path.join(dir, 'picture.ogg')
+    await runFfmpeg(['-f', 'lavfi', '-i', 'testsrc=duration=0.3:size=64x64', '-c:v', 'libtheora', src])
+    const repository = new SerialProjectRepository(project('a'), vi.fn(), 1)
+    await expect(importTakeFile({ repository, dir }, 'c', src, 't_1_imp', vi.fn())).rejects.toThrow('No audio in file')
+    expect(await exists(path.join(dir, 'audio'))).toBe(false)
+    expect(repository.snapshot().revision).toBe(0)
+  })
+})
+
 describe('decode budget', () => {
   it('refuses audio too long to decode for editing and leaves no file behind', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-long-'))

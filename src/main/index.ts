@@ -706,23 +706,7 @@ function registerHandlers(): void {
     const rest = wavBytes(restWav)
     const project = requireProject()
     if (!project.cues.some((c) => c.id === id)) throw new Error('Cue not found')
-    const voicePath = await store.writeStemFile(id, 'voice.wav', voice)
-    const restPath = await store.writeStemFile(id, 'rest.wav', rest)
-    const stems: Stem[] = [
-      {
-        id: `${id}-voice`,
-        name: 'Voice',
-        file: { fileId: `${id}/voice.wav`, relPath: voicePath, format: 'wav' },
-        exportMode: 'off',
-      },
-      {
-        id: `${id}-rest`,
-        name: 'Music & SFX',
-        file: { fileId: `${id}/rest.wav`, relPath: restPath, format: 'wav' },
-        exportMode: 'on',
-        duckDb: 0,
-      },
-    ]
+    const stems = await store.saveStems(id, voice, rest)
     return stemsSchema.parse(stems) as Stem[]
   })
 

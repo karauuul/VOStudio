@@ -64,6 +64,7 @@ export async function importTakeFile(
   if (kind === 'unsupported') throw new Error('Unsupported file type')
   await fs.access(src)
   const probe = await probeMedia(src)
+  if (!probe.hasAudio) throw new Error('No audio in file')
   const problem = importProblem(probe)
   if (problem) throw new Error(problem)
   const duration = probe.duration

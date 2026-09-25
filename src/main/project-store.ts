@@ -14,6 +14,7 @@ import {
   sanitizeVersions,
   type Project,
   type ProjectVersion,
+  type Stem,
   type UiSessionState,
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
@@ -330,13 +331,47 @@ export function writeStemFile(cueId: string, fileName: string, data: Buffer): Pr
   return writeAudioFile(projectDir, 'stems', cueId, fileName, data)
 }
 
+export async function saveStems(cueId: string, voice: Buffer, rest: Buffer): Promise<Stem[]> {
+  const suffix = randomUUID().slice(0, 8)
+  const voiceName = `voice_${suffix}.wav`
+  const restName = `rest_${suffix}.wav`
+  const voicePath = await writeStemFile(cueId, voiceName, voice)
+  const restPath = await writeStemFile(cueId, restName, rest)
+  return [
+    {
+      id: `${cueId}-voice`,
+      name: 'Voice',
+      file: { fileId: `${cueId}/${voiceName}`, relPath: voicePath, format: 'wav' },
+      exportMode: 'off',
+    },
+    {
+      id: `${cueId}-rest`,
+      name: 'Music & SFX',
+      file: { fileId: `${cueId}/${restName}`, relPath: restPath, format: 'wav' },
+      exportMode: 'on',
+      duckDb: 0,
+    },
+  ]
+}
+
 export async function dropUnusedStems(): Promise<void> {
   if (!projectDir || !current) return
   const root = path.join(projectDir, 'audio', 'stems')
-  const keep = new Set(current.cues.filter((c) => c.stems?.length).map((c) => c.id))
+  const used = new Set(
+    current.cues.flatMap((c) => (c.stems ?? []).map((stem) => path.resolve(stem.file.relPath).toLowerCase()))
+  )
+  const kept = new Set(current.cues.filter((c) => c.stems?.length).map((c) => c.id))
   const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => [])
   for (const entry of entries) {
-    if (!entry.isDirectory() || keep.has(entry.name)) continue
-    await fs.rm(path.join(root, entry.name), { recursive: true, force: true }).catch(() => undefined)
+    if (!entry.isDirectory()) continue
+    const dir = path.join(root, entry.name)
+    if (!kept.has(entry.name)) {
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined)
+      continue
+    }
+    for (const file of await fs.readdir(dir).catch(() => [])) {
+      const abs = path.join(dir, file)
+      if (!used.has(path.resolve(abs).toLowerCase())) await fs.rm(abs, { recursive: true, force: true }).catch(() => undefined)
+    }
   }
 }
