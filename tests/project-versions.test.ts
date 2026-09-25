@@ -1,7 +1,7 @@
 import { mkdirSync, promises as fs } from 'fs'
 import path from 'path'
 import { describe, expect, it, vi } from 'vitest'
-import type { Project } from '../src/shared/domain'
+import type { Project, ProjectVersion } from '../src/shared/domain'
 
 const H = vi.hoisted(() => ({
   root: `${process.env['TEMP'] ?? process.env['TMPDIR'] ?? '/tmp'}/vostudio-versions-${Date.now()}`,
@@ -36,6 +36,13 @@ const base = (): Omit<Project, 'id' | 'schemaVersion' | 'createdAt'> => ({
   ui: { filter: '', search: '' },
 })
 
+async function saveVersion(name?: string): Promise<ProjectVersion[]> {
+  const project = store.getProject()!
+  project.versions = await store.saveVersion(project.versions ?? [], name)
+  await store.persistProjectSnapshot(project)
+  return project.versions
+}
+
 const readJson = async (file: string): Promise<Record<string, unknown>> =>
   JSON.parse(await fs.readFile(file, 'utf-8')) as Record<string, unknown>
 
@@ -44,7 +51,7 @@ describe('project:saveVersion', () => {
 
   it('copies project.json to versions/v1.json and records the entry', async () => {
     await store.createProject('versions-test', base())
-    const versions = await store.saveVersion()
+    const versions = await saveVersion()
 
     expect(versions).toHaveLength(1)
     expect(versions[0]).toMatchObject({ n: 1 })
@@ -58,7 +65,7 @@ describe('project:saveVersion', () => {
   })
 
   it('the next version is the last n plus one and keeps a trimmed name', async () => {
-    const versions = await store.saveVersion('  Draft to review  ')
+    const versions = await saveVersion('  Draft to review  ')
     expect(versions.map((v) => v.n)).toEqual([1, 2])
     expect(versions[1]).toMatchObject({ n: 2, name: 'Draft to review' })
 
@@ -67,13 +74,23 @@ describe('project:saveVersion', () => {
   })
 
   it('a blank name is not stored', async () => {
-    const versions = await store.saveVersion('   ')
+    const versions = await saveVersion('   ')
     expect(versions[2]).not.toHaveProperty('name')
   })
 
   it('the versions survive a reopen', async () => {
     const reopened = await store.openProjectDir(DIR)
     expect(reopened.versions?.map((v) => v.n)).toEqual([1, 2, 3])
+  })
+
+  it('ensureVersion keeps the list while project.json matches the last version', async () => {
+    const project = store.getProject()!
+    const previous = project.versions!
+    expect(await store.ensureVersion(previous)).toBe(previous)
+    project.name = 'renamed'
+    await store.persistProjectSnapshot(project)
+    expect((await store.ensureVersion(previous)).map((v) => v.n)).toEqual([1, 2, 3, 4])
+    expect(project.versions).toBe(previous)
   })
 })
 

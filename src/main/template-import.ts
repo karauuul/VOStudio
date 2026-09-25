@@ -508,19 +508,18 @@ export async function reimportTemplate(
 
   const referenceRoot = path.join(projectDir, 'audio', 'reference')
   const diff = diffTemplate(project, validation.rows)
-  const { idFor, created } = resolveCharacters(project, diff.added)
-  const addedCues = diff.added.map((row) => {
-    const cue = buildCue(row, referenceRoot)
-    cue.characterId = idFor.get(row.character) ?? ''
-    return cue
-  })
-
   const conflicts = await copyReferenceAudio(validation, referenceRoot, diff.added, false)
   const conflictWarnings: TemplateIssue[] = conflicts.map((rel) => ({
     row: null,
     reason: `Reference audio "${rel}" already exists with different content; the project file was kept`,
   }))
 
+  const { idFor, created } = resolveCharacters(project, diff.added)
+  const addedCues = diff.added.map((row) => {
+    const cue = buildCue(row, referenceRoot)
+    cue.characterId = idFor.get(row.character) ?? ''
+    return cue
+  })
   const { changed, warnings } = applyTemplateDiff(project, diff, addedCues)
   if (created.length > 0) project.characters.push(...created)
 

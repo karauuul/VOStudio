@@ -245,20 +245,14 @@ export function closeProject(): void {
   rev = 0
 }
 
-export async function saveVersion(name?: string): Promise<ProjectVersion[]> {
-  if (!current || !projectDir) throw new Error('No project is open')
+export async function saveVersion(previous: ProjectVersion[], name?: string): Promise<ProjectVersion[]> {
+  if (!projectDir) throw new Error('No project is open')
   const dir = path.join(projectDir, 'versions')
   await fs.mkdir(dir, { recursive: true })
-  const previous = current.versions ?? []
   const n = (previous[previous.length - 1]?.n ?? 0) + 1
   await fs.copyFile(path.join(projectDir, 'project.json'), path.join(dir, `v${n}.json`))
   const trimmed = name?.trim()
-  current.versions = [
-    ...previous,
-    { n, ...(trimmed ? { name: trimmed } : {}), createdAt: new Date().toISOString() },
-  ]
-  await persistProjectSnapshot(current)
-  return current.versions
+  return [...previous, { n, ...(trimmed ? { name: trimmed } : {}), createdAt: new Date().toISOString() }]
 }
 
 function withoutVersions(raw: string): string {
@@ -280,35 +274,34 @@ async function matchesVersionFile(n: number): Promise<boolean> {
   }
 }
 
-export async function ensureVersion(): Promise<number> {
-  if (!current || !projectDir) throw new Error('No project is open')
-  const previous = current.versions ?? []
+export async function ensureVersion(previous: ProjectVersion[]): Promise<ProjectVersion[]> {
+  if (!projectDir) throw new Error('No project is open')
   const last = previous[previous.length - 1]
-  if (last && (await matchesVersionFile(last.n))) return last.n
-  const versions = await saveVersion()
-  return versions[versions.length - 1].n
+  if (last && (await matchesVersionFile(last.n))) return previous
+  return saveVersion(previous)
 }
 
 async function writeAudioFile(
+  root: string | null,
   kind: 'takes' | 'stems',
   cueId: string,
   fileName: string,
   data: Buffer
 ): Promise<string> {
-  if (!projectDir) throw new Error('No project is open')
-  const dir = path.join(projectDir, 'audio', kind, cueId)
+  if (!root) throw new Error('No project is open')
+  const dir = path.join(root, 'audio', kind, cueId)
   await fs.mkdir(dir, { recursive: true })
   const abs = path.join(dir, fileName)
   await fs.writeFile(abs, data)
   return abs
 }
 
-export function writeTakeFile(cueId: string, fileName: string, data: Buffer): Promise<string> {
-  return writeAudioFile('takes', cueId, fileName, data)
+export function writeTakeFile(root: string, cueId: string, fileName: string, data: Buffer): Promise<string> {
+  return writeAudioFile(root, 'takes', cueId, fileName, data)
 }
 
 export function writeStemFile(cueId: string, fileName: string, data: Buffer): Promise<string> {
-  return writeAudioFile('stems', cueId, fileName, data)
+  return writeAudioFile(projectDir, 'stems', cueId, fileName, data)
 }
 
 export async function dropUnusedStems(): Promise<void> {
