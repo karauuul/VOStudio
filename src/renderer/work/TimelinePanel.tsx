@@ -1224,7 +1224,7 @@ export function TimelinePanel({
           }
           const settle = (): void => resolve(transport.timeOf(at) ?? performance.now())
           void transport
-            .playComp({ ...resolved, region: { in: from, out: at } }, { id: transportId, seek: from, onStart: settle })
+            .playComp({ ...resolved, region: { in: from, out: at } }, { id: transportId, seek: from, once: true, onStart: settle })
             .then(settle, settle)
         }),
       editSelected,
