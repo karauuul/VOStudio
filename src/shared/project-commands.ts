@@ -181,6 +181,12 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
     if (ids.size === 0 || ids.size !== command.cues.length || project.cues.some((cue) => ids.has(cue.id))) {
       throw new Error('Line id is already used')
     }
+    const lookup = { cues: [...project.cues, ...command.cues.map((placed) => placed.cue)] }
+    for (const { cue } of command.cues) {
+      for (const clip of cue.comp?.clips ?? []) {
+        if (!resolveTake(lookup, cue, clip.sourceTakeId)) throw new Error('A source this line uses is no longer available')
+      }
+    }
     return insertCues(project, structuredClone(command.cues))
   }
   if (command.type === 'cue.delete') return deleteCues(project, command.cueIds)

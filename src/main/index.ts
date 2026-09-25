@@ -61,6 +61,7 @@ import {
   finishVideoExport,
   planBatchExport,
   planVideoExport,
+  exportDir,
   exportInfo,
 } from './export'
 import { detectLines, importSources, splitMediaPaths } from './sources'
@@ -71,7 +72,7 @@ import { transcribeCues } from './transcribe'
 import { appendTake, importTakeFile, type TakeSession } from './take-append'
 import { audioWithinRoots, type ChangeSet, type CommandResult } from '@shared/project-commands'
 import { setupImportedProject, setupOpenedProject } from './project-import'
-import { normalizePath, PROJECT_SUFFIX, uniqueProjectName } from '@shared/project-summary'
+import { isInsideDir, normalizePath, PROJECT_SUFFIX, uniqueProjectName } from '@shared/project-summary'
 import { TAKE_FILE_EXTENSIONS } from '@shared/take-import'
 
 protocol.registerSchemesAsPrivileged([
@@ -105,6 +106,12 @@ function isAllowedPath(abs: string): boolean {
         path.resolve(cue.referenceAudio.relPath).toLowerCase() === norm) ||
       cue.takes.some((take) => path.resolve(take.file.relPath).toLowerCase() === norm)
   )
+}
+
+function isInsideExportDir(abs: string): boolean {
+  const project = store.getProject()
+  const dir = store.getProjectDir()
+  return !!project && !!dir && isInsideDir(path.resolve(abs), exportDir(project, dir))
 }
 
 function createWindow(): void {
@@ -616,7 +623,7 @@ function registerHandlers(): void {
   })
 
   typedHandle('shell:reveal', async (absPath: string) => {
-    if (!isAllowedPath(absPath)) throw new Error('Path is outside the allowlist')
+    if (!isAllowedPath(absPath) && !isInsideExportDir(absPath)) throw new Error('Path is outside the allowlist')
     shell.showItemInFolder(path.resolve(absPath))
   })
 

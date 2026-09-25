@@ -1314,7 +1314,7 @@ export default function App() {
           return
         }
         pushStatus('ok', `Exported ${job.name}`)
-        await api['shell:reveal'](`${plan.outDir}/audio/${job.name}`)
+        void api['shell:reveal'](`${plan.outDir}/audio/${job.name}`).catch(() => undefined)
       } catch (e) {
         pushStatus('err', String(e))
       } finally {

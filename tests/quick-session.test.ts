@@ -414,3 +414,39 @@ describe('trusted audio roots for restoring', () => {
     expect(audioWithinRoots({ type: 'cue.delete', cueIds: ['a'] }, [])).toBe(true)
   })
 })
+
+describe('restore revalidates sources from other lines', () => {
+  const clip = { id: 'c', sourceTakeId: 't', srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits() }
+
+  function deletedUser(pinned: Partial<Take>): { p: Project; removed: NonNullable<ReturnType<typeof applyProjectCommand>['removedCues']> } {
+    const p = project([cue('owner', { takes: [take('t', { pinned: true })] }), cue('user', { comp: { clips: [clip] } })])
+    const removed = applyProjectCommand(p, { type: 'cue.delete', cueIds: ['user'] }).removedCues!
+    Object.assign(p.cues[0].takes[0], pinned)
+    if (pinned.pinned === undefined) delete p.cues[0].takes[0].pinned
+    return { p, removed }
+  }
+
+  it('rejects the whole restore when a clip source was unpinned or deleted meanwhile', () => {
+    for (const change of [{}, { pinned: true as const, deletedAt: 'then' }]) {
+      const { p, removed } = deletedUser(change)
+      const before = structuredClone(p)
+      expect(() => applyProjectCommand(p, { type: 'cue.restore', cues: [...removed, { cue: cue('other'), index: 0 }] })).toThrow('no longer available')
+      expect(p).toEqual(before)
+      expect(p.cues[0].takes[0].pinned).toBe(change.pinned)
+    }
+  })
+
+  it('restores when the pinned source is still there', () => {
+    const { p, removed } = deletedUser({ pinned: true })
+    run(p, { type: 'cue.restore', cues: removed })
+    expect(ids(p)).toEqual(['owner', 'user'])
+  })
+
+  it('restores a line whose own pinned take is used elsewhere, and sources within the same batch', () => {
+    const p = project([cue('owner', { takes: [take('t', { pinned: true })] }), cue('user', { comp: { clips: [clip] } })])
+    const removed = applyProjectCommand(p, { type: 'cue.delete', cueIds: ['owner', 'user'] }).removedCues!
+    run(p, { type: 'cue.restore', cues: removed })
+    expect(ids(p)).toEqual(['owner', 'user'])
+    expect(p.cues[0].takes[0].pinned).toBe(true)
+  })
+})
