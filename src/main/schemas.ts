@@ -365,6 +365,11 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   cueId.extend({ type: z.literal('cue.delete') }),
   z.object({ type: z.literal('cue.restore'), cue: cueSchema, index: z.number().int().min(0).max(10_000_000) }),
   cueId.extend({ type: z.literal('cue.useTakeAsOriginal'), takeId: z.string().min(1).max(200) }),
+  cueId.extend({
+    type: z.literal('cue.restoreOriginal'),
+    referenceAudio: audioRefSchema.nullable(),
+    referenceDuration: finite.min(0).nullable(),
+  }),
   characterId.extend({ type: z.literal('character.setVoiceSettings'), settings: voiceSettingsSchema }),
   z.object({ type: z.literal('character.create'), id: z.string().min(1).max(200), name: characterName }),
   characterId.extend({ type: z.literal('character.rename'), name: characterName }),

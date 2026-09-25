@@ -281,8 +281,17 @@ export default function App() {
     refreshExported()
   }, [refreshExported])
 
+  const resetHistory = useCallback(() => {
+    fxUndoRef.current = []
+    fxRedoRef.current = []
+    lineUndoRef.current = []
+    lineRedoRef.current = []
+    afterSelectRef.current = null
+  }, [])
+
   const enterProject = useCallback(
     (snapshot: ProjectSnapshot) => {
+      resetHistory()
       setCharacterFilter(ALL_CHARACTERS)
       setRoute('work')
       setReviewIds(null)
@@ -290,7 +299,7 @@ export default function App() {
       session.enter(snapshot)
       refreshExported()
     },
-    [session, refreshExported]
+    [session, refreshExported, resetHistory]
   )
 
   useEffect(() => {
@@ -936,6 +945,7 @@ export default function App() {
 
   const leaveProject = useCallback(async () => {
     if (!(await session.close())) return
+    resetHistory()
     setActiveCueId(undefined)
     setSelection(null)
     setTargetTrack({})
@@ -943,7 +953,7 @@ export default function App() {
     setExported(new Set())
     setRoute('work')
     setReviewIds(null)
-  }, [session])
+  }, [session, resetHistory])
 
   const goHome = useCallback(() => {
     if (refuseWhileExporting()) return
@@ -1249,6 +1259,24 @@ export default function App() {
       }
     },
     [beginExport, endExport, pushStatus]
+  )
+
+  const originalFromTake = useCallback(
+    (cueId: string, takeId: string) => {
+      const cue = projectRef.current?.cues.find((c) => c.id === cueId)
+      if (!cue || refuseWhileExporting()) return
+      const previous: ProjectCommand = {
+        type: 'cue.restoreOriginal',
+        cueId,
+        referenceAudio: cue.referenceAudio ?? null,
+        referenceDuration: cue.referenceDuration ?? null,
+      }
+      const command: ProjectCommand = { type: 'cue.useTakeAsOriginal', cueId, takeId }
+      void dispatch(command)
+        .then(() => pushLineEdit({ undo: [previous], redo: [command], select: { undo: cueId, redo: cueId } }))
+        .catch((e: unknown) => pushStatus('err', String(e)))
+    },
+    [projectRef, refuseWhileExporting, dispatch, pushLineEdit, pushStatus]
   )
 
   const newProject = useCallback(async (): Promise<void> => {
@@ -1570,7 +1598,7 @@ export default function App() {
         label: 'Use as original',
         disabled: !activeCue,
         onClick: () => {
-          if (activeCue) runCommand({ type: 'cue.useTakeAsOriginal', cueId: activeCue.id, takeId: take.id })
+          if (activeCue) originalFromTake(activeCue.id, take.id)
         },
       },
       {

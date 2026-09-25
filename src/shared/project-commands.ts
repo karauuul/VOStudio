@@ -13,6 +13,7 @@ import {
   sanitizePinned,
   sanitizeProviderSettings,
   sanitizeStems,
+  type AudioRef,
   type Character,
   type ClipEffects,
   type Cue,
@@ -52,6 +53,7 @@ export type ProjectCommand =
   | { type: 'cue.delete'; cueId: string }
   | { type: 'cue.restore'; cue: Cue; index: number }
   | { type: 'cue.useTakeAsOriginal'; cueId: string; takeId: string }
+  | { type: 'cue.restoreOriginal'; cueId: string; referenceAudio: AudioRef | null; referenceDuration: number | null }
   | { type: 'character.setVoiceSettings'; characterId: string; settings: VoiceSettings }
   | { type: 'character.create'; id: string; name: string }
   | { type: 'character.rename'; characterId: string; name: string }
@@ -378,6 +380,14 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
       if (mixesOriginal(cue)) Object.assign(cue, invalidateVoicedOutput(cue, project))
       break
     }
+    case 'cue.restoreOriginal': {
+      if (command.referenceAudio) cue.referenceAudio = structuredClone(command.referenceAudio)
+      else delete cue.referenceAudio
+      if (command.referenceDuration !== null) cue.referenceDuration = command.referenceDuration
+      else delete cue.referenceDuration
+      if (mixesOriginal(cue)) Object.assign(cue, invalidateVoicedOutput(cue, project))
+      break
+    }
     case 'cue.setCharacter': {
       if (command.characterId) characterById(project, command.characterId)
       if (cue.characterId === command.characterId) break
@@ -387,6 +397,17 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
     }
   }
   return { cues: [structuredClone(cue)] }
+}
+
+export function commandAudioPaths(command: ProjectCommand): string[] {
+  if (command.type === 'cue.restoreOriginal') return command.referenceAudio ? [command.referenceAudio.relPath] : []
+  if (command.type !== 'cue.restore') return []
+  const { cue } = command
+  return [
+    ...cue.takes.map((take) => take.file.relPath),
+    ...(cue.referenceAudio ? [cue.referenceAudio.relPath] : []),
+    ...(cue.stems ?? []).map((stem) => stem.file.relPath),
+  ]
 }
 
 export function applyChangeSet(project: Project, changes: ChangeSet): Project {

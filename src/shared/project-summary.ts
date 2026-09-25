@@ -77,3 +77,9 @@ export function uniqueProjectName(taken: string[], base = 'Untitled'): string {
   while (used.has(`${base} ${n}`.toLowerCase())) n++
   return `${base} ${n}`
 }
+
+export function isInsideDir(file: string, dir: string): boolean {
+  const target = normalizePath(file)
+  const root = normalizePath(dir)
+  return root.length > 0 && target.startsWith(root + '/') && !target.split('/').includes('..')
+}

@@ -69,9 +69,9 @@ import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } 
 import { SerialProjectRepository } from './project-repository'
 import { transcribeCues } from './transcribe'
 import { appendTake, importTakeFile, type TakeSession } from './take-append'
-import type { ChangeSet, CommandResult } from '@shared/project-commands'
+import { commandAudioPaths, type ChangeSet, type CommandResult } from '@shared/project-commands'
 import { setupImportedProject, setupOpenedProject } from './project-import'
-import { normalizePath, PROJECT_SUFFIX, uniqueProjectName } from '@shared/project-summary'
+import { isInsideDir, normalizePath, PROJECT_SUFFIX, uniqueProjectName } from '@shared/project-summary'
 import { TAKE_FILE_EXTENSIONS } from '@shared/take-import'
 
 protocol.registerSchemesAsPrivileged([
@@ -580,7 +580,12 @@ function registerHandlers(): void {
 
   typedHandle('project:command', (command) => {
     if (!projectRepository) throw new Error('No project is open')
-    return projectRepository.execute(projectCommandSchema.parse(command))
+    const parsed = projectCommandSchema.parse(command)
+    const dir = store.getProjectDir()
+    if (commandAudioPaths(parsed).some((file) => !dir || !isInsideDir(file, dir))) {
+      throw new Error('Audio is outside this project')
+    }
+    return projectRepository.execute(parsed)
   })
 
   typedHandle('project:saveVersion', (req) =>

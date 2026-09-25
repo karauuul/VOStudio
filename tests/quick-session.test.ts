@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { applyChangeSet, applyProjectCommand, type ProjectCommand } from '../src/shared/project-commands'
+import { applyChangeSet, applyProjectCommand, commandAudioPaths, type ProjectCommand } from '../src/shared/project-commands'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 import { cueSchema, projectCommandSchema } from '../src/main/schemas'
 import { newLineCue, nextLineNumber, replacesWholeText, splitParagraphs } from '../src/shared/lines'
-import { uniqueProjectName } from '../src/shared/project-summary'
+import { isInsideDir, uniqueProjectName } from '../src/shared/project-summary'
 import { takeFileKind } from '../src/shared/take-import'
 import { pickHistory } from '../src/shared/undo-route'
 import { exportName, planBatch } from '../src/shared/export-plan'
@@ -321,5 +321,63 @@ describe('quick session export', () => {
     const planned = planBatch(p)
     expect(planned.map((x) => x.name)).toEqual(['Line 1.wav'])
     expect(exportName(p, recorded, recorded.takes[0])).toBe('Line 1.wav')
+  })
+})
+
+describe('undoing Use as original', () => {
+  const undoOf = (c: Cue): ProjectCommand => ({
+    type: 'cue.restoreOriginal',
+    cueId: c.id,
+    referenceAudio: c.referenceAudio ?? null,
+    referenceDuration: c.referenceDuration ?? null,
+  })
+
+  it('restores the previous original file and length', () => {
+    const before = cue('a', {
+      referenceAudio: { fileId: 'r', relPath: '/p/r.wav', format: 'wav', sampleRate: 48000 },
+      referenceDuration: 4,
+      takes: [take('t', { duration: 1 })],
+    })
+    const p = project([structuredClone(before)])
+    const undo = undoOf(p.cues[0])
+    run(p, { type: 'cue.useTakeAsOriginal', cueId: 'a', takeId: 't' })
+    expect(p.cues[0].referenceDuration).toBe(1)
+    run(p, undo)
+    expect(p.cues[0]).toEqual(before)
+  })
+
+  it('restores the absence of an original', () => {
+    const before = cue('a', { takes: [take('t')] })
+    const p = project([structuredClone(before)])
+    const undo = undoOf(p.cues[0])
+    run(p, { type: 'cue.useTakeAsOriginal', cueId: 'a', takeId: 't' })
+    run(p, undo)
+    expect(p.cues[0]).toEqual(before)
+    expect(p.cues[0]).not.toHaveProperty('referenceAudio')
+    expect(p.cues[0]).not.toHaveProperty('referenceDuration')
+  })
+})
+
+describe('restore stays inside the open project', () => {
+  it('matches only files under the project folder', () => {
+    expect(isInsideDir('/root/A.vostudio/audio/takes/c/t.wav', '/root/A.vostudio')).toBe(true)
+    expect(isInsideDir('C:\\P\\A.vostudio\\audio\\t.wav', 'c:/p/a.vostudio/')).toBe(true)
+    expect(isInsideDir('/root/B.vostudio/audio/t.wav', '/root/A.vostudio')).toBe(false)
+    expect(isInsideDir('/root/A.vostudio2/t.wav', '/root/A.vostudio')).toBe(false)
+    expect(isInsideDir('/root/A.vostudio/../B.vostudio/t.wav', '/root/A.vostudio')).toBe(false)
+    expect(isInsideDir('/root/A.vostudio', '/root/A.vostudio')).toBe(false)
+    expect(isInsideDir('/x/t.wav', '')).toBe(false)
+  })
+
+  it('lists every audio file a restoring command would bring in', () => {
+    const restored = cue('a', {
+      takes: [take('t1'), take('t2')],
+      referenceAudio: { fileId: 'r', relPath: '/p/r.wav', format: 'wav' },
+      stems: [{ id: 's', name: 'Voice', file: { fileId: 's', relPath: '/p/s.wav', format: 'wav' }, exportMode: 'off' }],
+    })
+    expect(commandAudioPaths({ type: 'cue.restore', cue: restored, index: 0 })).toEqual(['/p/t1.wav', '/p/t2.wav', '/p/r.wav', '/p/s.wav'])
+    expect(commandAudioPaths({ type: 'cue.restoreOriginal', cueId: 'a', referenceAudio: restored.referenceAudio!, referenceDuration: 1 })).toEqual(['/p/r.wav'])
+    expect(commandAudioPaths({ type: 'cue.restoreOriginal', cueId: 'a', referenceAudio: null, referenceDuration: null })).toEqual([])
+    expect(commandAudioPaths({ type: 'cue.delete', cueId: 'a' })).toEqual([])
   })
 })
