@@ -44,3 +44,7 @@ export function importProblem(probe: AudioProbe): string | null {
   if (decodedBytes(probe) > DECODE_BUDGET_BYTES) return `File too long to edit (max ~${maxEditMinutes(probe)} min)`
   return null
 }
+
+export function maxRecordSeconds(sampleRate: number, channels = 1): number {
+  return Math.floor(DECODE_BUDGET_BYTES / bytesPerSecond({ sampleRate, channels }))
+}

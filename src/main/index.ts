@@ -19,6 +19,10 @@ import {
   stsSchema,
   templateDirSchema,
   ttsSchema,
+  recAbortSchema,
+  recBeginSchema,
+  recChunkSchema,
+  recFinishSchema,
 } from './schemas'
 import { emit } from './emit'
 import * as store from './project-store'
@@ -69,7 +73,15 @@ import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
 import { transcribeCues } from './transcribe'
-import { appendTake, importTakeFile, type TakeSession } from './take-append'
+import { appendTake, importTakeFile, takeBase, type TakeSession } from './take-append'
+import {
+  abortRecording,
+  appendRecording,
+  beginRecording,
+  closeRecordings,
+  finishRecording,
+  recoverRecordings,
+} from './recording-session'
 import { audioWithinRoots, type ChangeSet, type CommandResult } from '@shared/project-commands'
 import { setupImportedProject, setupOpenedProject } from './project-import'
 import { isInsideDir, normalizePath, PROJECT_SUFFIX, uniqueProjectName } from '@shared/project-summary'
@@ -163,13 +175,6 @@ function wavBytes(wav: unknown): Buffer {
   return bytes
 }
 
-const recordingSchema = z.object({
-  cueId: z.string().min(1),
-  durationSec: z.number().min(0).max(3600),
-  sampleRate: z.number().int().min(8000).max(384000),
-  fragment: z.boolean().optional(),
-})
-
 const durationsSchema = z
   .array(
     z.object({
@@ -240,9 +245,6 @@ const transcribeSchema = z.object({
   overwrite: z.boolean().optional(),
 })
 
-const stamp = (): string => new Date().toISOString().replace(/[:.]/g, '-')
-const takeBase = (): string => `t_${stamp()}_${randomUUID().slice(0, 8)}`
-
 let projectRepository: SerialProjectRepository | null = null
 function resetRepository(project: Project): SerialProjectRepository {
   projectRepository = new SerialProjectRepository(project, store.persistProjectSnapshot)
@@ -253,12 +255,25 @@ function resetRepository(project: Project): SerialProjectRepository {
 async function detachCurrentRepository(): Promise<void> {
   const repository = projectRepository
   await repository?.detach()
+  if (repository) await closeRecordings(repository)
   projectRepository = null
 }
 
 function abandonProject(): void {
+  if (projectRepository) void closeRecordings(projectRepository)
   projectRepository = null
   store.closeProject()
+}
+
+async function recoverOnOpen(repository: SerialProjectRepository): Promise<void> {
+  const dir = store.getProjectDir()
+  if (!dir) return
+  try {
+    const recovered = await recoverRecordings({ repository, dir })
+    if (recovered > 0) emit('recordings:recovered', recovered)
+  } catch (e) {
+    console.warn('recording recovery skipped:', e)
+  }
 }
 
 const pickedTemplates = new Set<string>()
@@ -423,6 +438,7 @@ function registerHandlers(): void {
         resetRepository,
         abandonProject,
         finishOpen: async (repository) => {
+          await recoverOnOpen(repository)
           if (repository.projectForMain().csvBinding) await autoAdopt(repository)
           await consumeSuggestionsFile(false, repository)
           void repairTakeDurations(repository).catch((e: unknown) =>
@@ -628,35 +644,26 @@ function registerHandlers(): void {
     shell.showItemInFolder(path.resolve(absPath))
   })
 
-  typedHandle('take:saveRecording', async (cueId, wav, durationSec, sampleRate, fragment) => {
-    const parsed = recordingSchema.parse({ cueId, durationSec, sampleRate, fragment })
-    const bytes = wavBytes(wav)
-
-    const session = requireSession()
-    const cue = session.repository.projectForMain().cues.find((c) => c.id === parsed.cueId)
-    if (!cue) throw new Error('Cue not found')
-
-    const fileName = `${takeBase()}_rec.wav`
-    return appendTake(session, cue.id, fileName, bytes, emitChange, (target, abs) => ({
-      take: {
-        id: randomUUID(),
-        kind: 'recording',
-        createdAt: new Date().toISOString(),
-        file: {
-          fileId: `${target.id}/${fileName}`,
-          relPath: abs,
-          format: 'wav',
-          sampleRate: parsed.sampleRate,
-          channels: 1,
-        },
-        duration: parsed.durationSec,
-        meta: target.text ? { text: target.text } : {},
-        edits: emptyEdits(),
-        ...(parsed.fragment ? { fragment: true as const } : {}),
-      },
-      select: false,
-    }))
+  typedHandle('rec:begin', (req) => {
+    const parsed = recBeginSchema.parse(req)
+    return beginRecording(requireSession(), parsed.cueId, parsed.sampleRate)
   })
+
+  typedHandle('rec:chunk', (req) => {
+    const parsed = recChunkSchema.parse(req)
+    const pcm = parsed.pcm
+    const bytes = ArrayBuffer.isView(pcm)
+      ? Buffer.from(pcm.buffer as ArrayBuffer, pcm.byteOffset, pcm.byteLength)
+      : Buffer.from(pcm)
+    return appendRecording(parsed.session, bytes)
+  })
+
+  typedHandle('rec:finish', (req) => {
+    const parsed = recFinishSchema.parse(req)
+    return finishRecording(parsed.session, parsed.fragment === true, emitChange)
+  })
+
+  typedHandle('rec:abort', (req) => abortRecording(recAbortSchema.parse(req).session))
 
   typedHandle('take:importFiles', async (cueId, paths) => {
     const parsed = takeImportSchema.parse({ cueId, paths })

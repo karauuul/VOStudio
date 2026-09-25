@@ -1967,3 +1967,14 @@ input.tl-name:focus {
   font: 500 12px var(--sans);
   cursor: pointer;
 }
+
+.rec-meter {
+  margin-right: 0;
+}
+.rec-meter.clip i {
+  background: var(--err);
+}
+.rec-clip {
+  font: 600 10px var(--mono);
+  color: var(--err);
+}

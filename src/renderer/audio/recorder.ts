@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { encodeWav, pcmDuration } from './wav'
+import type { Take as SavedTake } from '@shared/domain'
+import { maxRecordSeconds } from '@shared/take-import'
+import { pcmDuration } from './wav'
 import {
   createRingForRate,
+  ringSlice,
   ringWrite,
-  sliceTake,
   MAX_GAP_SECONDS,
   PREROLL_SECONDS,
   type Ring,
 } from './ring'
+import { openRecStream, type RecStream } from './rec-stream'
 import { CAPTURE_PROCESSOR, CAPTURE_WORKLET_SOURCE } from '../worklets/capture.worklet'
 import { applySink, clipId, deviceIdForLabel, outputDeviceId, transport } from './transport'
 
@@ -25,13 +28,13 @@ export type MicState =
   | 'error'
 
 export interface RecordedClip {
-  wav: ArrayBuffer
-  url: string
   durationSec: number
   sampleRate: number
+  finish: (fragment: boolean) => Promise<SavedTake>
 }
 
 export interface StartOptions {
+  cueId: string
   device?: string
   countIn: boolean
   autoReference: boolean
@@ -45,6 +48,8 @@ export interface RecorderApi {
   countIn: number
   elapsed: number
   level: number
+  clipped: boolean
+  limit: number
   error: string | null
   clip: RecordedClip | null
   start: (opts: StartOptions) => void
@@ -59,6 +64,8 @@ const BEEPS = 3
 const LEAD_IN = 0.12
 const DONE_TIMEOUT_MS = 500
 const LATE_MARGIN_MS = 300
+const CLIP_LEVEL = 0.99
+const LIMIT_MARGIN_SECONDS = 1
 
 let moduleUrlCache: string | null = null
 function workletModuleUrl(): string {
@@ -102,7 +109,8 @@ interface Rig {
 }
 
 interface RigHandlers {
-  onRms: (v: number) => void
+  onLevel: (rms: number, peak: number) => void
+  onCaptured: () => void
   onFlushed: (token: number, frame: number) => void
 }
 
@@ -159,12 +167,16 @@ async function buildRig(device: string | undefined, h: RigHandlers): Promise<Rig
           samples?: Float32Array
           at?: number
           rms?: number
+          peak?: number
           flushed?: boolean
           token?: number
           frame?: number
         }
-        if (m.samples) ringWrite(rig.ring, m.samples, m.at ?? rig.ring.end, maxGap)
-        if (typeof m.rms === 'number') h.onRms(m.rms)
+        if (m.samples) {
+          ringWrite(rig.ring, m.samples, m.at ?? rig.ring.end, maxGap)
+          h.onCaptured()
+        }
+        if (typeof m.rms === 'number') h.onLevel(m.rms, m.peak ?? 0)
         if (m.flushed) h.onFlushed(m.token ?? 0, m.frame ?? 0)
       }
       return rig
@@ -202,6 +214,9 @@ interface Take {
   startFrame: number
   stopFrame: number
   refPlaying: boolean
+  stream: RecStream | null
+  sent: number
+  limit: number
 }
 
 function newTake(gen: number): Take {
@@ -215,7 +230,16 @@ function newTake(gen: number): Take {
     startFrame: 0,
     stopFrame: 0,
     refPlaying: false,
+    stream: null,
+    sent: 0,
+    limit: 0,
   }
+}
+
+function pump(t: Take, r: Rig, to: number): void {
+  if (!t.stream || to <= t.sent) return
+  t.stream.push(ringSlice(r.ring, t.sent, to))
+  t.sent = to
 }
 
 function hushReference(t: Take): void {
@@ -230,6 +254,8 @@ export function useRecorder(): RecorderApi {
   const [countIn, setCountIn] = useState(0)
   const [elapsed, setElapsed] = useState(0)
   const [level, setLevel] = useState(0)
+  const [clipped, setClipped] = useState(false)
+  const [limit, setLimit] = useState(0)
   const [error, setErrorState] = useState<string | null>(null)
   const [clip, setClip] = useState<RecordedClip | null>(null)
 
@@ -250,6 +276,7 @@ export function useRecorder(): RecorderApi {
 
   const phaseRef = useRef<RecPhase>('idle')
   const levelRef = useRef(0)
+  const clippedRef = useRef(false)
   const aliveRef = useRef(true)
   const clipRef = useRef<RecordedClip | null>(null)
 
@@ -262,8 +289,6 @@ export function useRecorder(): RecorderApi {
   }, [])
 
   const discardClip = useCallback(() => {
-    const c = clipRef.current
-    if (c) URL.revokeObjectURL(c.url)
     clipRef.current = null
     if (aliveRef.current) setClip(null)
   }, [])
@@ -321,27 +346,23 @@ export function useRecorder(): RecorderApi {
         doneTimer.current = null
       }
       const rate = r.ctx.sampleRate
-      const pcm = sliceTake(
-        r.ring,
-        { start: t.startFrame, stop: t.stopFrame },
-        Math.round(PREROLL_SECONDS * rate)
-      )
+      pump(t, r, Math.min(t.stopFrame, r.ring.end))
+      const stream = t.stream
+      const frames = stream?.frames() ?? 0
       if (takeRef.current === t) takeRef.current = null
 
       teardownRig()
 
-      if (pcm.length === 0) {
+      if (!stream || frames === 0) {
+        stream?.abort()
         if (aliveRef.current) setError('Nothing was recorded — the microphone returned no samples')
         setPhase('idle')
         return
       }
-      const wav = encodeWav(pcm, rate)
-      const url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }))
       const next: RecordedClip = {
-        wav,
-        url,
-        durationSec: pcmDuration(pcm.length, rate),
+        durationSec: pcmDuration(frames, rate),
         sampleRate: rate,
+        finish: stream.finish,
       }
       clipRef.current = next
       if (aliveRef.current) {
@@ -355,6 +376,17 @@ export function useRecorder(): RecorderApi {
 
   const finalizeRef = useRef(finalize)
   finalizeRef.current = finalize
+
+  const onCaptured = useCallback(() => {
+    const t = takeRef.current
+    const r = rigRef.current
+    if (t && r && !t.awaitingFlush) pump(t, r, r.ring.end)
+  }, [])
+
+  const onLevel = useCallback((rms: number, peak: number) => {
+    levelRef.current = peak
+    if (peak >= CLIP_LEVEL && phaseRef.current === 'recording') clippedRef.current = true
+  }, [])
 
   const onFlushed = useCallback((token: number, _frame: number) => {
     const t = takeRef.current
@@ -381,12 +413,7 @@ export function useRecorder(): RecorderApi {
       rigRef.current = null
       setMic('warming')
 
-      const p = buildRig(device, {
-        onRms: (v) => {
-          levelRef.current = v
-        },
-        onFlushed,
-      }).then(
+      const p = buildRig(device, { onLevel, onCaptured, onFlushed }).then(
         (built) => {
           if (gen !== warmGen.current || !aliveRef.current) {
             disposeRig(built)
@@ -409,13 +436,14 @@ export function useRecorder(): RecorderApi {
       warmPromise.current = p
       return p
     },
-    [onFlushed, setError, setMic]
+    [onCaptured, onFlushed, onLevel, setError, setMic]
   )
 
   const cancel = useCallback(() => {
     const t = takeRef.current
     if (t) {
       t.cancelled = true
+      t.stream?.abort()
       hushReference(t)
       takeRef.current = null
     }
@@ -433,9 +461,28 @@ export function useRecorder(): RecorderApi {
     setPhase('idle')
   }, [discardClip, hushCue, setPhase, teardownRig])
 
+  const failStream = useCallback(
+    (t: Take, err: unknown) => {
+      if (takeRef.current !== t) return
+      takeRef.current = null
+      t.cancelled = true
+      hushReference(t)
+      hushCue()
+      if (doneTimer.current) {
+        clearTimeout(doneTimer.current)
+        doneTimer.current = null
+      }
+      teardownRig()
+      if (aliveRef.current) setError(`Recording stopped: ${err instanceof Error ? err.message : String(err)}`)
+      setPhase('idle')
+    },
+    [hushCue, setError, setPhase, teardownRig]
+  )
+
   const stop = useCallback(() => {
     const t = takeRef.current
     const r = rigRef.current
+    if (t?.awaitingFlush) return
     if (!t || !r || r.disposed || phaseRef.current !== 'recording') {
       cancel()
       return
@@ -446,6 +493,9 @@ export function useRecorder(): RecorderApi {
     doneTimer.current = setTimeout(() => finalizeRef.current(t, r), DONE_TIMEOUT_MS)
   }, [cancel])
 
+  const stopRef = useRef(stop)
+  stopRef.current = stop
+
   const start = useCallback(
     (opts: StartOptions) => {
       if (phaseRef.current !== 'idle' && phaseRef.current !== 'preview') return
@@ -453,6 +503,9 @@ export function useRecorder(): RecorderApi {
       setError(null)
       setElapsed(0)
       setCountIn(0)
+      clippedRef.current = false
+      setClipped(false)
+      setLimit(0)
       setPhase('arming')
 
       const t = newTake(++takeGen.current)
@@ -500,10 +553,17 @@ export function useRecorder(): RecorderApi {
           const perfNow = performance.now()
           const ctxNow = r.ctx.currentTime
           const rate = r.ctx.sampleRate
+          const arm = (): void => {
+            t.sent = t.startFrame - Math.round(PREROLL_SECONDS * rate)
+            t.limit = maxRecordSeconds(rate) - LIMIT_MARGIN_SECONDS
+            t.stream = openRecStream(opts.cueId, rate, (err) => failStream(t, err))
+            if (aliveRef.current) setLimit(t.limit)
+          }
 
           if (t.beeps === 0) {
             t.startAtMs = perfNow
             t.startFrame = Math.round(ctxNow * rate)
+            arm()
             setPhase('recording')
             return
           }
@@ -516,6 +576,7 @@ export function useRecorder(): RecorderApi {
             t.startAtMs = atMs
           }
           t.startFrame = Math.round((ctxNow + (t.startAtMs - perfNow) / 1000) * rate)
+          arm()
         } catch (err) {
           if (t.cancelled || takeRef.current !== t) return
           takeRef.current = null
@@ -529,13 +590,14 @@ export function useRecorder(): RecorderApi {
         }
       })()
     },
-    [discardClip, ensureCue, hushCue, setError, setPhase, teardownRig, warm]
+    [discardClip, ensureCue, failStream, hushCue, setError, setPhase, teardownRig, warm]
   )
 
   useEffect(() => {
     if (phase !== 'arming' && phase !== 'countin' && phase !== 'recording') return
     const id = setInterval(() => {
       setLevel(levelRef.current)
+      setClipped(clippedRef.current)
       const t = takeRef.current
       if (!t) return
       const p = phaseRef.current
@@ -548,7 +610,9 @@ export function useRecorder(): RecorderApi {
       } else {
         if (p === 'countin') setPhase('recording')
         setCountIn(0)
-        setElapsed((now - t.startAtMs) / 1000)
+        const sec = (now - t.startAtMs) / 1000
+        setElapsed(sec)
+        if (t.limit > 0 && sec >= t.limit) stopRef.current()
       }
     }, 50)
     return () => clearInterval(id)
@@ -574,7 +638,6 @@ export function useRecorder(): RecorderApi {
       const c = cueRef.current
       cueRef.current = null
       if (c) void c.ctx.close().catch(() => {})
-      if (clipRef.current) URL.revokeObjectURL(clipRef.current.url)
     }
   }, [])
 
@@ -586,6 +649,8 @@ export function useRecorder(): RecorderApi {
     countIn,
     elapsed,
     level,
+    clipped,
+    limit,
     error,
     clip,
     start,

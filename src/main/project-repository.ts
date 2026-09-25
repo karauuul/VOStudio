@@ -19,6 +19,7 @@ export class SerialProjectRepository {
 
   snapshot(): ProjectSnapshot { return { revision: this.revision, project: structuredClone(this.project) } }
   projectForMain(): Project { return this.project }
+  isLive(): boolean { return this.accepting && !this.detached }
 
   execute(command: ProjectCommand): Promise<CommandResult> {
     return this.enqueue(() => this.publish(applyProjectCommand(this.project, structuredClone(command))))

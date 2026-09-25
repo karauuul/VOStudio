@@ -1,4 +1,4 @@
-export const RING_SECONDS = 390
+export const RING_SECONDS = 10
 
 export const PREROLL_SECONDS = 0.25
 

@@ -108,6 +108,7 @@ import {
   ZONE_CURSOR,
   zoomAt,
   type TimelineView,
+  clockOf,
 } from '@shared/timeline-math'
 import { ghostPlacement, type GhostPlacement } from '@shared/generation'
 import { useCompEdit, sameComp } from '../cue/useCompEdit'
@@ -184,11 +185,6 @@ export function timecode(sec: number): string {
   const s = Number.isFinite(sec) && sec > 0 ? sec : 0
   const m = Math.floor(s / 60)
   return `${String(m).padStart(2, '0')}:${(s - m * 60).toFixed(2).padStart(5, '0')}`
-}
-
-const clockOf = (sec: number): string => {
-  const total = Math.round(Number.isFinite(sec) && sec > 0 ? sec : 0)
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
 const secs = (sec: number): string => (Number.isFinite(sec) && sec > 0 ? sec.toFixed(2) : '0.00')

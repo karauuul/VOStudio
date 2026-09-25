@@ -257,6 +257,30 @@ const voiceSettingsSchema = z.object({
   stability: finite.min(0).max(1), similarity: finite.min(0).max(1),
   style: finite.min(0).max(1), speed: finite.min(0.7).max(1.2), boost: z.boolean(),
 })
+export const REC_CHUNK_MAX_BYTES = 4 * 1024 * 1024
+
+const recSession = z.string().uuid()
+
+export const recBeginSchema = z.object({
+  cueId: z.string().min(1).max(200),
+  sampleRate: z.number().int().min(8000).max(384000),
+})
+
+export const recChunkSchema = z.object({
+  session: recSession,
+  pcm: z
+    .custom<ArrayBuffer | ArrayBufferView>((v) => v instanceof ArrayBuffer || ArrayBuffer.isView(v), {
+      message: 'Expected PCM bytes',
+    })
+    .refine((v) => v.byteLength > 0 && v.byteLength <= REC_CHUNK_MAX_BYTES && v.byteLength % 2 === 0, {
+      message: 'Invalid PCM chunk size',
+    }),
+})
+
+export const recFinishSchema = z.object({ session: recSession, fragment: z.boolean().optional() })
+
+export const recAbortSchema = z.object({ session: recSession })
+
 export const ttsSchema = z.object({
   cueId: z.string().min(1),
   text: z.string().min(1).max(5000),

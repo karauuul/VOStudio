@@ -35,6 +35,16 @@ import {
 import { replacesWholeText, splitParagraphs } from '@shared/lines'
 import { DragNumber } from '../cue/DragNumber'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
+import { clockOf } from '@shared/timeline-math'
+
+const REMAINING_SHOWN_SECONDS = 60
+
+export interface RecMeter {
+  elapsed: number
+  level: number
+  clipped: boolean
+  limit: number
+}
 
 const SOURCE_LANG = 'EN'
 const TARGET_LANG = 'UK'
@@ -63,6 +73,7 @@ export interface TextPanelProps {
   onRecord?: () => void
   recording?: boolean
   recordDisabled?: boolean
+  recMeter?: RecMeter
   originalMenu?: () => MenuEntry[]
   translationMenu?: (range: TextRange, el: HTMLTextAreaElement) => MenuEntry[]
   onCopy?: (kind: 'source' | 'translation' | 'prompt') => void
@@ -358,6 +369,7 @@ export function TextPanel({
   onRecord,
   recording,
   recordDisabled,
+  recMeter,
   originalMenu,
   translationMenu,
   mode = 'tts',
@@ -472,9 +484,24 @@ export function TextPanel({
           <div className="g w2">
             <span className="lh">
               <span className="lab">Record</span>
-              <span className="n">
-                {remaining !== undefined ? `${count(remaining)} left` : ''}
-              </span>
+              {recMeter ? (
+                <>
+                  <span className={'prog-meter rec-meter' + (recMeter.clipped ? ' clip' : '')} aria-hidden="true">
+                    <i style={{ transform: `scaleX(${Math.min(1, recMeter.level).toFixed(3)})` }} />
+                  </span>
+                  {recMeter.clipped && <span className="rec-clip">CLIP</span>}
+                  <span className="n">
+                    {clockOf(recMeter.elapsed)}
+                    {recMeter.limit > 0 && recMeter.limit - recMeter.elapsed <= REMAINING_SHOWN_SECONDS
+                      ? ` · ${clockOf(recMeter.limit - recMeter.elapsed)} left`
+                      : ''}
+                  </span>
+                </>
+              ) : (
+                <span className="n">
+                  {remaining !== undefined ? `${count(remaining)} left` : ''}
+                </span>
+              )}
             </span>
             <button
               className={'btn rec' + (recording ? ' on' : '')}

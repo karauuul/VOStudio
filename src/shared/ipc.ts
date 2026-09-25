@@ -278,13 +278,10 @@ export interface IpcApi {
 
   'shell:reveal': (absPath: string) => Promise<void>
 
-  'take:saveRecording': (
-    cueId: string,
-    wav: ArrayBuffer,
-    durationSec: number,
-    sampleRate: number,
-    fragment?: boolean
-  ) => Promise<Take>
+  'rec:begin': (req: { cueId: string; sampleRate: number }) => Promise<string>
+  'rec:chunk': (req: { session: string; pcm: ArrayBuffer }) => Promise<void>
+  'rec:finish': (req: { session: string; fragment?: boolean }) => Promise<Take>
+  'rec:abort': (req: { session: string }) => Promise<void>
 
   'take:importFiles': (cueId: string, paths: string[]) => Promise<{ takes: Take[]; failed: string[] }>
 
@@ -339,6 +336,7 @@ export interface IpcEvents {
   'takes:durations': TakeDurationUpdate[]
   'project:changed': CommandResult
   'updater:status': UpdateStatus
+  'recordings:recovered': number
 }
 
 export type EventChannel = keyof IpcEvents

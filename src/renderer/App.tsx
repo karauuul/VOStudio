@@ -334,6 +334,13 @@ export default function App() {
   const [outputApplied, setOutputApplied] = useState(true)
   useEffect(() => api.on('usage:updated', setUsage), [])
   useEffect(() => api.on('updater:status', setUpdateStatus), [])
+  useEffect(
+    () =>
+      api.on('recordings:recovered', (n) =>
+        pushStatus('ok', `Recovered ${n} recording${n === 1 ? '' : 's'}`)
+      ),
+    [pushStatus]
+  )
 
   useEffect(() => {
     void setOutputDevice(appSettings.outputDeviceLabel ?? '').then(setOutputApplied)

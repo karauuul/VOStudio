@@ -26,7 +26,10 @@ const channelMap: Record<IpcChannel, true> = {
 
   'shell:reveal': true,
 
-  'take:saveRecording': true,
+  'rec:begin': true,
+  'rec:chunk': true,
+  'rec:finish': true,
+  'rec:abort': true,
   'take:importFiles': true,
   'take:setDurations': true,
 
@@ -74,6 +77,7 @@ const eventMap: Record<EventChannel, true> = {
   'takes:durations': true,
   'project:changed': true,
   'updater:status': true,
+  'recordings:recovered': true,
 }
 
 const api = {} as Record<string, unknown>

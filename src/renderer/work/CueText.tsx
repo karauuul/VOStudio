@@ -106,6 +106,11 @@ export function CueText({
       onRecord={v2v.toggleRec}
       recording={v2v.rec.phase !== 'idle'}
       recordDisabled={v2v.converting}
+      recMeter={
+        v2v.rec.phase === 'recording'
+          ? { elapsed: v2v.rec.elapsed, level: v2v.rec.level, clipped: v2v.rec.clipped, limit: v2v.rec.limit }
+          : undefined
+      }
     />
   )
 }
