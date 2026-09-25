@@ -16,11 +16,31 @@ export function takeFileKind(path: string): TakeFileKind {
   return 'unsupported'
 }
 
-export const MAX_IMPORT_SECONDS = 3 * 60 * 60
-export const MAX_TRANSCODED_BYTES = 2 * 1024 * 1024 * 1024
+export const DECODE_BUDGET_BYTES = 300 * 1024 * 1024
 
-export function importLengthProblem(kind: TakeFileKind, duration: number | undefined): string | null {
-  if (duration !== undefined && duration > MAX_IMPORT_SECONDS) return 'Audio is longer than 3 hours'
-  if (kind === 'transcode' && duration === undefined) return 'Audio length is unknown'
+const FALLBACK_SAMPLE_RATE = 48000
+const FALLBACK_CHANNELS = 2
+const FLOAT_BYTES = 4
+
+export interface AudioProbe {
+  duration?: number
+  sampleRate?: number
+  channels?: number
+}
+
+const bytesPerSecond = (probe: AudioProbe): number =>
+  (probe.sampleRate ?? FALLBACK_SAMPLE_RATE) * (probe.channels ?? FALLBACK_CHANNELS) * FLOAT_BYTES
+
+export function decodedBytes(probe: AudioProbe): number {
+  return (probe.duration ?? 0) * bytesPerSecond(probe)
+}
+
+export function maxEditMinutes(probe: AudioProbe): number {
+  return Math.floor(DECODE_BUDGET_BYTES / bytesPerSecond(probe) / 60)
+}
+
+export function importProblem(probe: AudioProbe): string | null {
+  if (probe.duration === undefined) return 'Audio length is unknown'
+  if (decodedBytes(probe) > DECODE_BUDGET_BYTES) return `File too long to edit (max ~${maxEditMinutes(probe)} min)`
   return null
 }

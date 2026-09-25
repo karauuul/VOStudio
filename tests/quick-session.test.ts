@@ -9,7 +9,7 @@ import { pickHistory } from '../src/shared/undo-route'
 import { exportName, planBatch } from '../src/shared/export-plan'
 import { approvalState, hasValidVoicedOutput } from '../src/shared/approval'
 import { lineStepCommand, originalStateOf, outputRevisionIn, type LineEdit } from '../src/shared/line-history'
-import { importLengthProblem, MAX_IMPORT_SECONDS } from '../src/shared/take-import'
+import { DECODE_BUDGET_BYTES, decodedBytes, importProblem, maxEditMinutes } from '../src/shared/take-import'
 
 const take = (id: string, over: Partial<Take> = {}): Take => ({
   id,
@@ -125,14 +125,31 @@ describe('take file kinds', () => {
     expect(takeFileKind('/a/x.ogg')).toBe('keep')
     for (const ext of ['flac', 'm4a', 'aac', 'opus', 'webm']) expect(takeFileKind(`/a/x.${ext}`)).toBe('transcode')
     for (const ext of ['mp4', 'mov', 'mkv']) expect(takeFileKind(`/a/x.${ext}`)).toBe('video')
-    expect(MAX_IMPORT_SECONDS).toBe(3 * 60 * 60)
-    expect(importLengthProblem('transcode', 60)).toBeNull()
-    expect(importLengthProblem('keep', undefined)).toBeNull()
-    expect(importLengthProblem('transcode', undefined)).toBe('Audio length is unknown')
-    expect(importLengthProblem('keep', MAX_IMPORT_SECONDS + 1)).toBe('Audio is longer than 3 hours')
-    expect(importLengthProblem('transcode', MAX_IMPORT_SECONDS)).toBeNull()
     expect(takeFileKind('/a.wav/readme')).toBe('unsupported')
     expect(takeFileKind('/a/x.txt')).toBe('unsupported')
+  })
+})
+
+describe('decode budget for imports', () => {
+  it('estimates decoded float bytes from the probe, assuming 48 kHz stereo when unknown', () => {
+    expect(decodedBytes({ duration: 10, sampleRate: 44100, channels: 1 })).toBe(10 * 44100 * 4)
+    expect(decodedBytes({ duration: 10 })).toBe(10 * 48000 * 2 * 4)
+    expect(decodedBytes({ duration: 10, channels: 1 })).toBe(10 * 48000 * 4)
+  })
+
+  it('names the longest editable length in minutes', () => {
+    expect(DECODE_BUDGET_BYTES).toBe(300 * 1024 * 1024)
+    expect(maxEditMinutes({})).toBe(13)
+    expect(maxEditMinutes({ sampleRate: 44100, channels: 1 })).toBe(29)
+  })
+
+  it('accepts audio within the budget and refuses longer or unmeasurable audio', () => {
+    const limit = DECODE_BUDGET_BYTES / (48000 * 2 * 4)
+    expect(importProblem({ duration: limit })).toBeNull()
+    expect(importProblem({ duration: limit + 1 })).toBe('File too long to edit (max ~13 min)')
+    expect(importProblem({ duration: 1200, sampleRate: 44100, channels: 1 })).toBeNull()
+    expect(importProblem({ duration: 1800, sampleRate: 44100, channels: 1 })).toBe('File too long to edit (max ~29 min)')
+    expect(importProblem({})).toBe('Audio length is unknown')
   })
 })
 

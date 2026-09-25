@@ -4,11 +4,10 @@ import { randomUUID } from 'crypto'
 import { changeTakeOutput } from '@shared/approval'
 import { cueVoiceUnchanged, emptyEdits, type AudioRef, type Cue, type Take } from '@shared/domain'
 import type { CommandResult } from '@shared/project-commands'
-import { importLengthProblem, MAX_TRANSCODED_BYTES, takeFileKind } from '@shared/take-import'
+import { DECODE_BUDGET_BYTES, importProblem, takeFileKind } from '@shared/take-import'
 import type { SerialProjectRepository } from './project-repository'
 import { writeTakeFile, type AudioWriter } from './project-store'
-import { probeDuration } from './audio-import'
-import { runFfmpeg } from './ffmpeg'
+import { probeMedia, runFfmpeg } from './ffmpeg'
 
 export interface TakeSession {
   repository: SerialProjectRepository
@@ -49,8 +48,8 @@ export async function appendTake(
 }
 
 async function transcode(src: string, abs: string): Promise<void> {
-  await runFfmpeg(['-i', src, '-vn', '-c:a', 'pcm_s16le', '-fs', String(MAX_TRANSCODED_BYTES), abs])
-  if ((await fs.stat(abs)).size >= MAX_TRANSCODED_BYTES) throw new Error('Converted audio is too large')
+  await runFfmpeg(['-i', src, '-vn', '-c:a', 'pcm_s16le', '-fs', String(DECODE_BUDGET_BYTES), abs])
+  if ((await fs.stat(abs)).size >= DECODE_BUDGET_BYTES) throw new Error('Converted audio is too large')
 }
 
 export async function importTakeFile(
@@ -64,9 +63,10 @@ export async function importTakeFile(
   if (kind === 'video') throw new Error('Video goes to Import')
   if (kind === 'unsupported') throw new Error('Unsupported file type')
   await fs.access(src)
-  const duration = await probeDuration(src)
-  const problem = importLengthProblem(kind, duration)
+  const probe = await probeMedia(src)
+  const problem = importProblem(probe)
   if (problem) throw new Error(problem)
+  const duration = probe.duration
   const format: AudioRef['format'] = kind === 'keep' ? (path.extname(src).slice(1).toLowerCase() as AudioRef['format']) : 'wav'
   const fileName = `${baseName}.${format}`
   const write = kind === 'keep' ? (abs: string) => fs.copyFile(src, abs, constants.COPYFILE_EXCL) : (abs: string) => transcode(src, abs)

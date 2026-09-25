@@ -9,6 +9,12 @@ vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }))
 
 const { SerialProjectRepository } = await import('../src/main/project-repository')
 const { appendTake, importTakeFile } = await import('../src/main/take-append')
+const { runFfmpeg } = await import('../src/main/ffmpeg')
+
+const tone = async (file: string, frequency = 440, seconds = 0.3): Promise<Buffer> => {
+  await runFfmpeg(['-f', 'lavfi', '-i', `sine=frequency=${frequency}:duration=${seconds}`, file])
+  return fs.readFile(file)
+}
 
 function project(id: string): Project {
   return {
@@ -65,13 +71,14 @@ describe('take file import', () => {
   it('copies a wav into the line takes folder as an imported take', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-imp-'))
     const src = path.join(dir, 'voice.wav')
-    await fs.writeFile(src, Buffer.from('RIFF'))
+    const bytes = await tone(src)
     const repository = new SerialProjectRepository(project('a'), vi.fn(), 1)
     const published: CommandResult[] = []
     const take = await importTakeFile({ repository, dir }, 'c', src, 't_1_imp', (r) => published.push(r))
     expect(take).toMatchObject({ kind: 'imported', file: { format: 'wav', fileId: 'c/t_1_imp.wav' } })
     expect(take.file.relPath).toBe(path.join(dir, 'audio', 'takes', 'c', 't_1_imp.wav'))
-    expect(await fs.readFile(take.file.relPath, 'utf8')).toBe('RIFF')
+    expect(await fs.readFile(take.file.relPath)).toEqual(bytes)
+    expect(take.duration).toBeCloseTo(0.3, 1)
     expect(await exists(src)).toBe(true)
     expect(published).toHaveLength(1)
     expect(repository.snapshot().project.cues[0].takes).toEqual([take])
@@ -90,10 +97,22 @@ describe('take file import', () => {
   it('removes the copied file when the line is gone', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-imp-'))
     const src = path.join(dir, 'voice.mp3')
-    await fs.writeFile(src, Buffer.from('ID3'))
+    await tone(src)
     const repository = new SerialProjectRepository(project('a'), vi.fn(), 1)
     await expect(importTakeFile({ repository, dir }, 'missing', src, 't_1_imp', vi.fn())).rejects.toThrow('Cue not found')
     expect(await exists(path.join(dir, 'audio', 'takes', 'missing', 't_1_imp.mp3'))).toBe(false)
+  })
+})
+
+describe('decode budget', () => {
+  it('refuses audio too long to decode for editing and leaves no file behind', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-long-'))
+    const src = path.join(dir, 'long.flac')
+    await runFfmpeg(['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-t', '1800', src])
+    const repository = new SerialProjectRepository(project('a'), vi.fn(), 1)
+    await expect(importTakeFile({ repository, dir }, 'c', src, 't_1_imp', vi.fn())).rejects.toThrow('File too long to edit (max ~13 min)')
+    expect(await exists(path.join(dir, 'audio'))).toBe(false)
+    expect(repository.snapshot().revision).toBe(0)
   })
 })
 
@@ -125,8 +144,8 @@ describe('exclusive take files', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-race-'))
     const first = path.join(dir, 'first.wav')
     const second = path.join(dir, 'second.wav')
-    await fs.writeFile(first, Buffer.from('FIRST'))
-    await fs.writeFile(second, Buffer.from('SECOND'))
+    const firstBytes = await tone(first, 440)
+    const secondBytes = await tone(second, 880)
     const repository = new SerialProjectRepository(project('a'), vi.fn(), 1)
     const results = await Promise.allSettled([
       importTakeFile({ repository, dir }, 'c', first, 't_same', vi.fn()),
@@ -137,8 +156,8 @@ describe('exclusive take files', () => {
     expect(ok).toHaveLength(1)
     expect(failed).toHaveLength(1)
     const target = path.join(dir, 'audio', 'takes', 'c', 't_same.wav')
-    const winner = results[0].status === 'fulfilled' ? 'FIRST' : 'SECOND'
-    expect(await fs.readFile(target, 'utf8')).toBe(winner)
+    const winner = results[0].status === 'fulfilled' ? firstBytes : secondBytes
+    expect(await fs.readFile(target)).toEqual(winner)
     expect(repository.snapshot().project.cues[0].takes).toEqual([ok[0].value])
     expect((await fs.readdir(path.dirname(target))).filter((n) => n.startsWith('.part-'))).toEqual([])
   })
@@ -157,7 +176,7 @@ describe('exclusive take files', () => {
   it('a take whose line is gone removes only its own new file', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-own-'))
     const src = path.join(dir, 'v.wav')
-    await fs.writeFile(src, Buffer.from('NEW'))
+    await tone(src)
     const { writeTakeFile } = await import('../src/main/project-store')
     const existing = await writeTakeFile(dir, 'missing', 't_1.wav', Buffer.from('KEEP'))
     const repository = new SerialProjectRepository(project('a'), vi.fn(), 1)

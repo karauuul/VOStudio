@@ -82,6 +82,8 @@ import {
   runLineStep,
   steppedEdit,
   textFieldStep,
+  textStepCommand,
+  afterTextStep,
   type LineChange,
   type LineEdit,
   type LineHistory,
@@ -1189,22 +1191,18 @@ export default function App() {
           const current = owner ? structuredClone(owner) : undefined
           const changes = await execute(lineStepCommand(edit, dir), true)
           select = target
-          return steppedEdit(edit, dir, changes, current)
+          const next = steppedEdit(edit, dir, changes, current)
+          const textCommand = textStepCommand(next, dir)
+          if (!textCommand) return next
+          const textChanges = await execute(textCommand, true).catch((): ChangeSet => ({}))
+          return afterTextStep(next, dir, textChanges)
         })
       } catch (e) {
         pushStatus('err', String(e))
         return
       }
       if (!next) return
-      try {
-        const text = next.kind === 'cues' ? next.text : undefined
-        if (text) {
-          await execute({ type: 'cue.saveText', cueId: text.cueId, text: dir === 'undo' ? text.before : text.after }, true)
-        }
-        await selectCue(select)
-      } catch (e) {
-        pushStatus('err', String(e))
-      }
+      await selectCue(select).catch((e: unknown) => pushStatus('err', String(e)))
     },
     [flushText, lineRemovalBlock, survivorNear, projectRef, execute, selectCue, pushStatus]
   )

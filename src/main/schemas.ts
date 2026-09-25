@@ -337,7 +337,7 @@ const characterName = z.string().min(1).max(120)
 const modelId = z.string().min(1).max(120)
 
 export const projectCommandSchema = z.discriminatedUnion('type', [
-  cueId.extend({ type: z.literal('cue.saveText'), text: z.string().max(LINE_TEXT_MAX) }),
+  cueId.extend({ type: z.literal('cue.saveText'), text: z.string().max(LINE_TEXT_MAX), ifText: z.string().max(LINE_TEXT_MAX).optional() }),
   cueId.extend({ type: z.literal('cue.approve'), approved: z.boolean(), approvedAt: z.string().min(1).optional() }),
   cueId.extend({ type: z.literal('cue.setFinalTake'), takeId: z.string().min(1).max(200) }),
   cueId.extend({ type: z.literal('cue.setComp'), comp: compSchema }),

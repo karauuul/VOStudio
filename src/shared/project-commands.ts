@@ -37,7 +37,7 @@ import { newLineCue, nextLineNumber } from './lines'
 import { isInsideDir } from './project-summary'
 
 export type ProjectCommand =
-  | { type: 'cue.saveText'; cueId: string; text: string }
+  | { type: 'cue.saveText'; cueId: string; text: string; ifText?: string }
   | { type: 'cue.approve'; cueId: string; approved: boolean; approvedAt?: string }
   | { type: 'cue.setFinalTake'; cueId: string; takeId: string }
   | { type: 'cue.setComp'; cueId: string; comp: CueComp | null }
@@ -292,6 +292,7 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
   const cue = cueById(project, command.cueId)
   switch (command.type) {
     case 'cue.saveText':
+      if (command.ifText !== undefined && cue.text !== command.ifText) break
       Object.assign(cue, changeCueText(cue, command.text, project))
       if (cue.status === 'empty' && command.text.trim()) cue.status = 'translated'
       break

@@ -12,6 +12,8 @@ import {
   runLineStep,
   steppedEdit,
   textFieldStep,
+  textStepCommand,
+  afterTextStep,
   type LineHistory,
   type StepDir,
 } from '../src/shared/line-history'
@@ -36,7 +38,9 @@ function session(p: Project) {
     runLineStep(history, dir, async (entry) => {
       const owner = entry.kind === 'original' ? p.cues.find((c) => c.id === entry.cueId) : undefined
       const current = owner ? structuredClone(owner) : undefined
-      return steppedEdit(entry, dir, applyProjectCommand(p, lineStepCommand(entry, dir)), current)
+      const next = steppedEdit(entry, dir, applyProjectCommand(p, lineStepCommand(entry, dir)), current)
+      const textCommand = textStepCommand(next, dir)
+      return textCommand ? afterTextStep(next, dir, applyProjectCommand(p, textCommand)) : next
     })
   return { history, edit, step }
 }
@@ -199,5 +203,56 @@ describe('undo and redo from the text field', () => {
     const plain = { kind: 'cues' as const, undoRemoves: true, ids: ['n1'], snapshots: [], focus: 'n1', at: 1 }
     expect(textFieldStep({ undo: [plain], redo: [plain] }, 'undo', 'n1', '')).toBe(false)
     expect(textFieldStep({ undo: [plain], redo: [plain] }, 'redo', 'n1', '')).toBe(false)
+  })
+})
+
+describe('undoing a split paste never overwrites later edits', () => {
+  function pasted() {
+    const p = project([cue('a', { text: 'old' }), cue('b')])
+    const s = session(p)
+    s.edit({ type: 'cue.create', afterCueId: 'a', lines: [{ id: 'n1', text: 'Two.' }, { id: 'n2', text: 'Three.' }] })
+    s.edit({ type: 'cue.saveText', cueId: 'a', text: 'One.' })
+    recordLineEdit(s.history, { kind: 'cues', undoRemoves: true, ids: ['n1', 'n2'], snapshots: [], focus: 'a', text: { cueId: 'a', before: 'old', after: 'One.' } }, 1)
+    return { p, s }
+  }
+
+  it('restores the old text and removes the lines when the first line is untouched', async () => {
+    const { p, s } = pasted()
+    await s.step('undo')
+    expect(ids(p)).toEqual(['a', 'b'])
+    expect(p.cues[0].text).toBe('old')
+    await s.step('redo')
+    expect(ids(p)).toEqual(['a', 'n1', 'n2', 'b'])
+    expect(p.cues[0].text).toBe('One.')
+  })
+
+  it('keeps an edited first line, removes only the new lines, and redo brings back only the lines', async () => {
+    const { p, s } = pasted()
+    applyProjectCommand(p, { type: 'cue.saveText', cueId: 'a', text: 'One. And more.' })
+    await s.step('undo')
+    expect(ids(p)).toEqual(['a', 'b'])
+    expect(p.cues[0].text).toBe('One. And more.')
+    expect(s.history.redo[0]).not.toHaveProperty('text')
+    await s.step('redo')
+    expect(ids(p)).toEqual(['a', 'n1', 'n2', 'b'])
+    expect(p.cues[0].text).toBe('One. And more.')
+    await s.step('undo')
+    expect(p.cues[0].text).toBe('One. And more.')
+  })
+
+  it('redo leaves a first line alone if it changed after the undo', async () => {
+    const { p, s } = pasted()
+    await s.step('undo')
+    applyProjectCommand(p, { type: 'cue.saveText', cueId: 'a', text: 'rewritten' })
+    await s.step('redo')
+    expect(ids(p)).toEqual(['a', 'n1', 'n2', 'b'])
+    expect(p.cues[0].text).toBe('rewritten')
+  })
+
+  it('a conditional text save changes nothing when the text moved on', () => {
+    const p = project([cue('a', { text: 'now' })])
+    const before = structuredClone(p)
+    applyProjectCommand(p, { type: 'cue.saveText', cueId: 'a', text: 'x', ifText: 'then' })
+    expect(p).toEqual(before)
   })
 })

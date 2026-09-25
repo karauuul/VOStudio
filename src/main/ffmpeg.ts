@@ -37,6 +37,7 @@ export function ffmpegInfo(file: string): Promise<string> {
 const DURATION_RE = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/
 const SIZE_RE = /\b(\d{2,5})x(\d{2,5})\b/
 const CHANNELS_RE = /,\s*(mono|stereo|(\d+)\s+channels)/
+const RATE_RE = /,\s*(\d{4,6})\s+Hz/
 const VIDEO_RE = /Stream #.*Video:/
 const AUDIO_RE = /Stream #.*Audio:/
 const BRACKETS_RE = /\[[^\]]*\]/g
@@ -46,6 +47,7 @@ export interface MediaProbe {
   width?: number
   height?: number
   channels?: number
+  sampleRate?: number
   hasVideo: boolean
   hasAudio: boolean
 }
@@ -73,6 +75,8 @@ export function parseProbe(stderr: string): MediaProbe {
       if (ch && out.channels === undefined) {
         out.channels = ch[1] === 'mono' ? 1 : ch[1] === 'stereo' ? 2 : Number(ch[2])
       }
+      const rate = RATE_RE.exec(line)
+      if (rate && out.sampleRate === undefined) out.sampleRate = Number(rate[1])
     }
   }
   return out

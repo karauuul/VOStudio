@@ -440,6 +440,7 @@ describe('the ffmpeg probe', () => {
       width: 1920,
       height: 1080,
       channels: 2,
+      sampleRate: 48000,
       hasVideo: true,
       hasAudio: true,
     })

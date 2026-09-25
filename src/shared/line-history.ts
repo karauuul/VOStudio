@@ -100,3 +100,19 @@ export function textFieldStep(history: LineHistory, dir: StepDir, cueId: string,
   const paste = top?.kind === 'cues' ? top.text : undefined
   return !!paste && paste.cueId === cueId && text === (dir === 'undo' ? paste.after : paste.before)
 }
+
+export function textStepCommand(edit: LineEdit, dir: StepDir): ProjectCommand | null {
+  if (edit.kind !== 'cues' || !edit.text) return null
+  const { cueId, before, after } = edit.text
+  return dir === 'undo'
+    ? { type: 'cue.saveText', cueId, text: before, ifText: after }
+    : { type: 'cue.saveText', cueId, text: after, ifText: before }
+}
+
+export function afterTextStep(edit: LineEdit, dir: StepDir, changes: ChangeSet): LineEdit {
+  if (edit.kind !== 'cues' || !edit.text) return edit
+  const { cueId, before, after } = edit.text
+  if (changes.cues?.find((cue) => cue.id === cueId)?.text === (dir === 'undo' ? before : after)) return edit
+  const { text: _dropped, ...lines } = edit
+  return lines
+}
