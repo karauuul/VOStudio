@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { isProjectDirIn, isValidProjectName } from '@shared/project-summary'
+import { CREATE_LINES_MAX, LINE_TEXT_MAX } from '@shared/lines'
 import {
   DUCK_MAX_DB,
   DUCK_MIN_DB,
@@ -334,7 +335,7 @@ const characterName = z.string().min(1).max(120)
 const modelId = z.string().min(1).max(120)
 
 export const projectCommandSchema = z.discriminatedUnion('type', [
-  cueId.extend({ type: z.literal('cue.saveText'), text: z.string().max(5000) }),
+  cueId.extend({ type: z.literal('cue.saveText'), text: z.string().max(LINE_TEXT_MAX) }),
   cueId.extend({ type: z.literal('cue.approve'), approved: z.boolean(), approvedAt: z.string().min(1).optional() }),
   cueId.extend({ type: z.literal('cue.setFinalTake'), takeId: z.string().min(1).max(200) }),
   cueId.extend({ type: z.literal('cue.setComp'), comp: compSchema }),
@@ -360,7 +361,10 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('cue.create'),
     afterCueId: z.string().min(1).max(200).nullable(),
-    lines: z.array(z.object({ id: z.string().min(1).max(200), text: z.string().max(5000) })).min(1).max(1000),
+    lines: z
+      .array(z.object({ id: z.string().min(1).max(200), text: z.string().max(LINE_TEXT_MAX) }))
+      .min(1)
+      .max(CREATE_LINES_MAX),
   }),
   z.object({ type: z.literal('cue.delete'), cueIds: z.array(z.string().min(1).max(200)).min(1).max(100_000) }),
   z.object({

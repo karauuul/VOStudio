@@ -20,6 +20,7 @@ import {
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
 import { pickHistory, redoStale, type UndoSide } from '@shared/undo-route'
+import { planScriptPaste } from '@shared/lines'
 import type { UpdateStatus } from '@shared/updater'
 import { api, audioUrl } from './api'
 import { clipId, setOutputDevice, transport } from './audio/transport'
@@ -75,6 +76,7 @@ import {
   lineStepCommand,
   recordLineEdit,
   referenceOf,
+  removalBlock,
   removesLines,
   runLineStep,
   steppedEdit,
@@ -1097,21 +1099,30 @@ export default function App() {
     else recRef.current?.()
   }, [activeCue?.id])
 
+  const lineRemovalBlock = useCallback(
+    (ids: string[]): string | null =>
+      removalBlock(ids, {
+        busy: isCueBusyNow,
+        recordingCueId: recActiveRef.current?.() ? (activeCueIdRef.current ?? null) : null,
+      }),
+    []
+  )
+
   const deleteLine = useCallback(
     async (cueId: string): Promise<void> => {
       if (refuseWhileExporting()) return
-      if (isCueBusyNow(cueId)) {
-        pushStatus('info', 'Line is busy')
+      const block = lineRemovalBlock([cueId])
+      if (block) {
+        pushStatus('info', block)
         return
       }
-      if (activeCueIdRef.current === cueId && guardRef.current?.(() => void deleteLine(cueId))) return
       if (!(await flushText())) return
       const target = survivorNear([cueId], false)
       const changes = await execute({ type: 'cue.delete', cueIds: [cueId] })
       pushLineEdit({ kind: 'cues', undoRemoves: false, ids: [cueId], snapshots: changes.removedCues ?? [], focus: cueId })
       if (activeCueIdRef.current === cueId) await selectCue(target)
     },
-    [refuseWhileExporting, pushStatus, flushText, survivorNear, execute, pushLineEdit, selectCue]
+    [refuseWhileExporting, lineRemovalBlock, pushStatus, flushText, survivorNear, execute, pushLineEdit, selectCue]
   )
 
   const removeLine = useCallback(
@@ -1123,29 +1134,45 @@ export default function App() {
     (parts: string[]) => {
       const cue = activeCue
       if (!cue || refuseWhileExporting()) return
-      const before = cue.text
+      const plan = planScriptPaste(cue.id, parts, () => crypto.randomUUID())
+      if ('problem' in plan) {
+        pushStatus('err', plan.problem)
+        return
+      }
       const run = async (): Promise<void> => {
-        sessionText(cue.id, parts[0])
         if (!(await flushText())) return
-        const create = createLinesCommand(parts.slice(1), cue.id)
-        await execute(create)
-        pushLineEdit({
+        const before = projectRef.current?.cues.find((c) => c.id === cue.id)?.text ?? cue.text
+        await execute(plan.create)
+        const lines: LineChange = {
           kind: 'cues',
           undoRemoves: true,
-          ids: create.lines.map((line) => line.id),
+          ids: plan.create.lines.map((line) => line.id),
           snapshots: [],
           focus: cue.id,
-          text: { cueId: cue.id, before, after: parts[0] },
-        })
+        }
+        try {
+          await execute(plan.text)
+        } catch (e) {
+          pushLineEdit(lines)
+          throw e
+        }
+        pushLineEdit({ ...lines, text: { cueId: cue.id, before, after: plan.text.text } })
       }
       void run().catch((e: unknown) => pushStatus('err', String(e)))
     },
-    [activeCue, refuseWhileExporting, sessionText, flushText, execute, pushLineEdit, pushStatus]
+    [activeCue, refuseWhileExporting, flushText, projectRef, execute, pushLineEdit, pushStatus]
   )
 
   const lineStep = useCallback(
     async (dir: 'undo' | 'redo'): Promise<void> => {
       if (!(await flushText())) return
+      const stack = dir === 'undo' ? linesRef.current.undo : linesRef.current.redo
+      const top = stack[stack.length - 1]
+      const block = top && top.kind === 'cues' && removesLines(top, dir) ? lineRemovalBlock(top.ids) : null
+      if (block) {
+        pushStatus('info', block)
+        return
+      }
       let select: string | undefined
       let next: LineEdit | null
       try {
@@ -1177,7 +1204,7 @@ export default function App() {
         pushStatus('err', String(e))
       }
     },
-    [flushText, survivorNear, projectRef, execute, selectCue, pushStatus]
+    [flushText, lineRemovalBlock, survivorNear, projectRef, execute, selectCue, pushStatus]
   )
 
   const historyStep = useCallback(

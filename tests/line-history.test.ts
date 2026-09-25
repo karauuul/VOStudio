@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { applyProjectCommand, type ChangeSet, type ProjectCommand } from '../src/shared/project-commands'
 import { emptyEdits, type Cue, type Project } from '../src/shared/domain'
+import { CREATE_LINES_MAX, LINE_TEXT_MAX, planScriptPaste } from '../src/shared/lines'
+import { projectCommandSchema } from '../src/main/schemas'
 import {
   lineStepCommand,
   recordLineEdit,
   referenceOf,
+  removalBlock,
   runLineStep,
   steppedEdit,
   type LineHistory,
@@ -115,5 +118,56 @@ describe('line history', () => {
     expect(history.undo).toHaveLength(100)
     expect(history.undo[0].at).toBe(5)
     expect(history.redo).toEqual([])
+  })
+})
+
+describe('line removal guard', () => {
+  const idle = { busy: () => false, recordingCueId: null }
+
+  it('allows idle lines', () => {
+    expect(removalBlock(['a', 'b'], idle)).toBeNull()
+  })
+
+  it('refuses when any line has a pending job', () => {
+    expect(removalBlock(['a', 'b'], { ...idle, busy: (id) => id === 'b' })).toBe('Line is busy')
+  })
+
+  it('refuses when one of the lines is recording or holds an unsaved recording', () => {
+    expect(removalBlock(['a', 'b'], { ...idle, recordingCueId: 'a' })).toBe('Stop the recording first')
+    expect(removalBlock(['b'], { ...idle, recordingCueId: 'a' })).toBeNull()
+  })
+})
+
+describe('script paste validation', () => {
+  let n = 0
+  const id = (): string => `n${++n}`
+
+  it('plans line creation and the first-line text within the command limits', () => {
+    const parts = ['x'.repeat(LINE_TEXT_MAX), ...Array.from({ length: CREATE_LINES_MAX }, (_, i) => `p${i}`)]
+    const plan = planScriptPaste('a', parts, id)
+    if ('problem' in plan) throw new Error(plan.problem)
+    expect(projectCommandSchema.parse(plan.create)).toEqual(plan.create)
+    expect(projectCommandSchema.parse(plan.text)).toEqual(plan.text)
+    expect(plan.create.afterCueId).toBe('a')
+    expect(plan.create.lines.map((l) => l.text)).toEqual(parts.slice(1))
+  })
+
+  it('refuses too many paragraphs or a paragraph over the length limit', () => {
+    expect(planScriptPaste('a', Array.from({ length: CREATE_LINES_MAX + 2 }, () => 'p'), id)).toHaveProperty('problem')
+    expect(planScriptPaste('a', ['ok', 'x'.repeat(LINE_TEXT_MAX + 1)], id)).toHaveProperty('problem')
+    expect(planScriptPaste('a', ['x'.repeat(LINE_TEXT_MAX + 1), 'ok'], id)).toHaveProperty('problem')
+    expect(() => projectCommandSchema.parse({ type: 'cue.saveText', cueId: 'a', text: 'x'.repeat(LINE_TEXT_MAX + 1) })).toThrow()
+  })
+
+  it('a paste over the limit leaves the line text and the project unchanged', () => {
+    const p = project([cue('a', { text: 'keep me' }), cue('b')])
+    const before = structuredClone(p)
+    const plan = planScriptPaste('a', ['first', 'y'.repeat(LINE_TEXT_MAX + 1)], id)
+    if (!('problem' in plan)) {
+      applyProjectCommand(p, plan.create)
+      applyProjectCommand(p, plan.text)
+    }
+    expect(p).toEqual(before)
+    expect(p.cues[0].text).toBe('keep me')
   })
 })

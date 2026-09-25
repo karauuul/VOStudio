@@ -75,3 +75,14 @@ export async function runLineStep(
   ;(dir === 'undo' ? history.redo : history.undo).push(next)
   return next
 }
+
+export interface RemovalState {
+  busy: (cueId: string) => boolean
+  recordingCueId: string | null
+}
+
+export function removalBlock(ids: string[], state: RemovalState): string | null {
+  if (state.recordingCueId !== null && ids.includes(state.recordingCueId)) return 'Stop the recording first'
+  if (ids.some((id) => state.busy(id))) return 'Line is busy'
+  return null
+}

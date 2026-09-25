@@ -1,4 +1,5 @@
 import type { Cue } from './domain'
+import type { ProjectCommand } from './project-commands'
 
 const LINE_NAME = /^Line (\d+)$/
 const LINE_KEY = /^line-(\d+)$/
@@ -38,4 +39,24 @@ export function splitParagraphs(text: string): string[] {
 
 export function replacesWholeText(value: string, start: number, end: number): boolean {
   return value.trim().length === 0 || (start === 0 && end === value.length)
+}
+
+export const LINE_TEXT_MAX = 5000
+export const CREATE_LINES_MAX = 1000
+
+export type ScriptPaste =
+  | { problem: string }
+  | {
+      create: Extract<ProjectCommand, { type: 'cue.create' }>
+      text: Extract<ProjectCommand, { type: 'cue.saveText' }>
+    }
+
+export function planScriptPaste(cueId: string, parts: string[], newId: () => string): ScriptPaste {
+  if (parts.length < 2) return { problem: 'Nothing to split' }
+  if (parts.length - 1 > CREATE_LINES_MAX) return { problem: `Too many paragraphs (max ${CREATE_LINES_MAX + 1})` }
+  if (parts.some((part) => part.length > LINE_TEXT_MAX)) return { problem: `Paragraph over ${LINE_TEXT_MAX} characters` }
+  return {
+    create: { type: 'cue.create', afterCueId: cueId, lines: parts.slice(1).map((text) => ({ id: newId(), text })) },
+    text: { type: 'cue.saveText', cueId, text: parts[0] },
+  }
 }
