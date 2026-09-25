@@ -57,6 +57,7 @@ export interface RecorderApi {
   start: (opts: StartOptions) => void
   stop: () => void
   cancel: () => void
+  live: () => boolean
   discardClip: () => void
   clearError: () => void
 }
@@ -486,11 +487,17 @@ export function useRecorder(): RecorderApi {
     [hushCue, setError, setPhase, teardownRig]
   )
 
+  const live = useCallback((): boolean => {
+    if (phaseRef.current === 'recording') return true
+    const t = takeRef.current
+    return phaseRef.current === 'countin' && !!t && t.startFrame > 0 && performance.now() >= t.startAtMs
+  }, [])
+
   const stop = useCallback(() => {
     const t = takeRef.current
     const r = rigRef.current
     if (t?.awaitingFlush) return
-    if (!t || !r || r.disposed || phaseRef.current !== 'recording') {
+    if (!t || !r || r.disposed || !live()) {
       cancel()
       return
     }
@@ -498,7 +505,7 @@ export function useRecorder(): RecorderApi {
     t.awaitingFlush = true
     r.node.port.postMessage({ cmd: 'flush', token: t.gen })
     doneTimer.current = setTimeout(() => finalizeRef.current(t, r), DONE_TIMEOUT_MS)
-  }, [cancel])
+  }, [cancel, live])
 
   const stopRef = useRef(stop)
   stopRef.current = stop
@@ -607,6 +614,7 @@ export function useRecorder(): RecorderApi {
         } catch (err) {
           if (t.cancelled || takeRef.current !== t) return
           takeRef.current = null
+          t.stream?.abort()
           hushReference(t)
           hushCue()
           teardownRig()
@@ -683,6 +691,7 @@ export function useRecorder(): RecorderApi {
     start,
     stop,
     cancel,
+    live,
     discardClip,
     clearError,
   }

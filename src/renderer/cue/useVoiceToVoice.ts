@@ -238,8 +238,6 @@ export function useVoiceToVoice({
         return
       case 'arming':
       case 'countin':
-        rec.cancel()
-        return
       case 'recording':
         rec.stop()
         return
@@ -261,17 +259,13 @@ export function useVoiceToVoice({
   }, [converting, rec, playhead, preroll, cue.id, appSettings])
 
   const recStop = rec.stop
+  const recLive = rec.live
   const onEscape = useCallback((): boolean => {
     if (preRef.current) {
       cancelPre()
       return true
     }
-    if (punchRef.current !== null && (recPhase === 'arming' || recPhase === 'countin')) {
-      cancelPre()
-      recCancel()
-      return true
-    }
-    if (recPhase === 'recording') {
+    if (recLive()) {
       recStop()
       return true
     }
@@ -281,7 +275,7 @@ export function useVoiceToVoice({
       return true
     }
     return false
-  }, [recPhase, recCancel, recStop, cancelPre])
+  }, [recPhase, recCancel, recStop, recLive, cancelPre])
 
   const reconvert = useCallback(
     (take: Take) => {

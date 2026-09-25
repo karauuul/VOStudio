@@ -1216,16 +1216,23 @@ export function TimelinePanel({
       },
       playhead: () => posRef.current,
       preroll: (at, lead) =>
-        new Promise<number>((resolve) => {
+        new Promise<number>((resolve, reject) => {
           const from = Math.max(0, at - lead)
           if (!resolved || !transportId || !(at > from)) {
             resolve(performance.now())
             return
           }
-          const settle = (): void => resolve(transport.timeOf(at) ?? performance.now())
+          let started = false
+          const settle = (): void => {
+            started = true
+            resolve(transport.timeOf(at) ?? performance.now())
+          }
+          const interrupted = (): void => {
+            if (!started) reject(new Error('Punch pre-roll was interrupted'))
+          }
           void transport
             .playComp({ ...resolved, region: { in: from, out: at } }, { id: transportId, seek: from, once: true, onStart: settle })
-            .then(settle, settle)
+            .then(interrupted, interrupted)
         }),
       editSelected,
       moveSelected: (start, doCommit) => {
