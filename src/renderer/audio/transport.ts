@@ -47,6 +47,7 @@ let meter: AnalyserNode | null = null
 let meterFrame: Float32Array<ArrayBuffer> | null = null
 let monitorGain = 1
 let looping = false
+let stops = 0
 let sinkId = ''
 
 export interface SinkTarget {
@@ -552,6 +553,7 @@ export async function playComp(
   halt()
   dropComp()
   const g = ++gen
+  const stopped = stops
   const resolvedOriginals = resolved.originals ?? []
   if (resolved.clips.length === 0 && resolvedOriginals.length === 0) return
   const urls = compUrls(resolved)
@@ -574,9 +576,9 @@ export async function playComp(
     console.error(e)
     return
   }
-  if (g !== gen) return
+  if (g !== gen || stopped !== stops) return
   if (!(await pitchReady(sources))) return
-  if (g !== gen) return
+  if (g !== gen || stopped !== stops) return
 
   const clips = sources.map((s) => s.clip)
   const dur = Math.max(compDuration({ clips }), ...originals.map((o) => originalVoiceEnd(o)), 0)
@@ -667,6 +669,7 @@ export function toggle(): void {
 }
 
 export function stop(): void {
+  stops++
   const a = audible()
   teardown()
   pausedPos = 0
