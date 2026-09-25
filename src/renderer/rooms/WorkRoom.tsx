@@ -1,12 +1,14 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type ComponentProps,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react'
 import type { ProjectSource } from '@shared/domain'
+import { fitWorkPanes } from '@shared/work-layout'
 import { LinesPanel } from '../work/LinesPanel'
 import { CueText } from '../work/CueText'
 import { TextPanel, type TextPanelProps } from '../work/TextPanel'
@@ -19,7 +21,7 @@ const PANES = {
   lines: { key: 'vo.lines.w', def: 280, min: 240, max: 400 },
   props: { key: 'vo.props.w', def: 380, min: 320, max: 480 },
   lib: { key: 'vo.lib.h', def: 500, min: 160, max: 800 },
-  prog: { key: 'vo.prog.w', def: 620, min: 360, max: 900 },
+  prog: { key: 'vo.prog.w', def: 620, min: 480, max: 900 },
   upper: { key: 'vo.upper.h', def: 410, min: 240, max: 600 },
 } as const
 
@@ -29,6 +31,8 @@ type Sizes = Record<Pane, number>
 const VERTICAL: Pane[] = ['lib', 'upper']
 const INVERTED: Pane[] = ['props', 'prog']
 const KEEP = 160
+const TEXT_MIN = 320
+const SPLITTERS = 24
 
 const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
 
@@ -96,6 +100,29 @@ export function WorkRoom({
       ) as Sizes
   )
 
+  const gridRef = useRef<HTMLDivElement>(null)
+  const [available, setAvailable] = useState(Infinity)
+
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!grid) return
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width > 0) setAvailable(entry.contentRect.width - SPLITTERS)
+    })
+    observer.observe(grid)
+    return () => observer.disconnect()
+  }, [])
+
+  const fitted = {
+    ...size,
+    ...fitWorkPanes(
+      size,
+      { lines: PANES.lines.min, props: PANES.props.min, prog: PANES.prog.min },
+      available,
+      TEXT_MIN
+    ),
+  }
+
   useEffect(() => {
     try {
       for (const [pane, cfg] of Object.entries(PANES)) {
@@ -112,7 +139,7 @@ export function WorkRoom({
       const vertical = VERTICAL.includes(pane)
       const inverted = INVERTED.includes(pane)
       const p0 = vertical ? e.clientY : e.clientX
-      const v0 = size[pane]
+      const v0 = fitted[pane]
       const neighbor = inverted
         ? e.currentTarget.previousElementSibling
         : e.currentTarget.nextElementSibling
@@ -126,7 +153,7 @@ export function WorkRoom({
       document.body.classList.add('resizing')
       const move = (ev: MouseEvent): void => {
         const d = inverted ? p0 - ev.clientX : (vertical ? ev.clientY : ev.clientX) - p0
-        setSize((s) => ({ ...s, [pane]: clamp(v0 + d, cfg.min, max) }))
+        setSize({ ...(vertical ? size : fitted), [pane]: clamp(v0 + d, cfg.min, max) })
       }
       const up = (): void => {
         document.body.classList.remove('resizing')
@@ -136,7 +163,7 @@ export function WorkRoom({
       window.addEventListener('mousemove', move)
       window.addEventListener('mouseup', up)
     },
-    [size]
+    [size, fitted]
   )
 
   const cue = text.cue
@@ -145,9 +172,10 @@ export function WorkRoom({
 
   return (
     <div
+      ref={gridRef}
       className="main work-grid"
       hidden={hidden}
-      style={{ gridTemplateColumns: `${size.lines}px 8px minmax(0, 1fr) 8px ${size.props}px` }}
+      style={{ gridTemplateColumns: `${fitted.lines}px 8px minmax(0, 1fr) 8px ${fitted.props}px` }}
     >
       <section className="panel">
         <div className="phd">
@@ -164,7 +192,7 @@ export function WorkRoom({
       >
         <div
           className="work-upper"
-          style={{ gridTemplateColumns: `minmax(0, 1fr) 8px ${size.prog}px` }}
+          style={{ gridTemplateColumns: `minmax(0, 1fr) 8px ${fitted.prog}px` }}
         >
           <section className="panel text">
             <div className="phd">
