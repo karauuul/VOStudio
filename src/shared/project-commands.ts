@@ -29,6 +29,8 @@ import {
 } from './domain'
 import { referencedByOtherComp, resolveTake } from './library'
 import { sanitizeExportSettings, type ExportSettings } from './export-settings'
+import { mixesOriginal } from './export-plan'
+import { newLineCue, nextLineNumber } from './lines'
 
 export type ProjectCommand =
   | { type: 'cue.saveText'; cueId: string; text: string }
@@ -46,6 +48,10 @@ export type ProjectCommand =
   | { type: 'cue.deleteTake'; cueId: string; takeId: string; deletedAt?: string }
   | { type: 'cue.setCharacter'; cueId: string; characterId: string }
   | { type: 'cue.setExcluded'; cueId: string; excluded: boolean }
+  | { type: 'cue.create'; afterCueId: string | null; lines: { id: string; text: string }[] }
+  | { type: 'cue.delete'; cueId: string }
+  | { type: 'cue.restore'; cue: Cue; index: number }
+  | { type: 'cue.useTakeAsOriginal'; cueId: string; takeId: string }
   | { type: 'character.setVoiceSettings'; characterId: string; settings: VoiceSettings }
   | { type: 'character.create'; id: string; name: string }
   | { type: 'character.rename'; characterId: string; name: string }
@@ -66,6 +72,7 @@ export interface ChangeSet {
   exportTemplate?: string
   versions?: ProjectVersion[]
   cues?: Cue[]
+  cueIndex?: Record<string, number>
   removedCueIds?: string[]
   sources?: ProjectSource[]
   characters?: Project['characters']
@@ -117,7 +124,31 @@ function uniqueName(project: Project, name: string, exceptId?: string): string {
   return trimmed
 }
 
+function insertCues(project: Project, index: number, cues: Cue[]): ChangeSet {
+  const at = Math.max(0, Math.min(project.cues.length, Math.trunc(index)))
+  project.cues.splice(at, 0, ...cues)
+  return {
+    cues: structuredClone(cues),
+    cueIndex: Object.fromEntries(cues.map((cue, i) => [cue.id, at + i])),
+  }
+}
+
 export function applyProjectCommand(project: Project, command: ProjectCommand): ChangeSet {
+  if (command.type === 'cue.create') {
+    if (command.lines.length === 0) throw new Error('No lines to create')
+    const ids = new Set(command.lines.map((line) => line.id))
+    if (ids.size !== command.lines.length || project.cues.some((cue) => ids.has(cue.id))) {
+      throw new Error('Line id is already used')
+    }
+    const after = command.afterCueId === null ? project.cues.length - 1 : project.cues.findIndex((cue) => cue.id === command.afterCueId)
+    if (after < 0 && command.afterCueId !== null) throw new Error('Cue not found')
+    const first = nextLineNumber(project.cues)
+    return insertCues(project, after + 1, command.lines.map((line, i) => newLineCue(line.id, first + i, line.text)))
+  }
+  if (command.type === 'cue.restore') {
+    if (project.cues.some((cue) => cue.id === command.cue.id)) throw new Error('Line id is already used')
+    return insertCues(project, command.index, [structuredClone(command.cue)])
+  }
   if (command.type === 'character.setVoiceSettings') {
     const character = characterById(project, command.characterId)
     character.voiceSettings = structuredClone(command.settings)
@@ -208,6 +239,13 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
     return { export: settings ?? null }
   }
   const cue = cueById(project, command.cueId)
+  if (command.type === 'cue.delete') {
+    if (cue.takes.some((take) => referencedByOtherComp(project, cue.id, take.id))) {
+      throw new Error('This line has a source used on another line — remove it there first')
+    }
+    project.cues.splice(project.cues.indexOf(cue), 1)
+    return { removedCueIds: [cue.id] }
+  }
   switch (command.type) {
     case 'cue.saveText':
       Object.assign(cue, changeCueText(cue, command.text, project))
@@ -331,6 +369,15 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
     case 'cue.setExcluded':
       Object.assign(cue, setExcluded(cue, command.excluded, project))
       break
+    case 'cue.useTakeAsOriginal': {
+      const found = resolveTake(project, cue, command.takeId)
+      if (!found || found.take.deletedAt) throw new Error('Take not found in this cue')
+      cue.referenceAudio = structuredClone(found.take.file)
+      if (found.take.duration > 0) cue.referenceDuration = found.take.duration
+      else delete cue.referenceDuration
+      if (mixesOriginal(cue)) Object.assign(cue, invalidateVoicedOutput(cue, project))
+      break
+    }
     case 'cue.setCharacter': {
       if (command.characterId) characterById(project, command.characterId)
       if (cue.characterId === command.characterId) break
@@ -372,12 +419,12 @@ export function applyChangeSet(project: Project, changes: ChangeSet): Project {
   if (changes.cues) {
     const replacements = new Map(changes.cues.map((cue) => [cue.id, cue]))
     const known = new Set(next.cues.map((cue) => cue.id))
-    next = {
-      ...next,
-      cues: next.cues
-        .map((cue) => replacements.get(cue.id) ?? cue)
-        .concat(changes.cues.filter((cue) => !known.has(cue.id))),
-    }
+    const fresh = changes.cues.filter((cue) => !known.has(cue.id))
+    const at = changes.cueIndex ?? {}
+    const cues = next.cues.map((cue) => replacements.get(cue.id) ?? cue)
+    const placed = fresh.filter((cue) => at[cue.id] !== undefined).sort((a, b) => at[a.id] - at[b.id])
+    for (const cue of placed) cues.splice(Math.max(0, Math.min(cues.length, at[cue.id])), 0, cue)
+    next = { ...next, cues: cues.concat(fresh.filter((cue) => at[cue.id] === undefined)) }
   }
   if (changes.characters) {
     if (changes.charactersReplace) next = { ...next, characters: changes.characters }

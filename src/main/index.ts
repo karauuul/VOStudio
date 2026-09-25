@@ -35,6 +35,7 @@ import {
   type Cue,
   type ProjectVersion,
   type Stem,
+  type Take,
   type UiSessionState,
 } from '@shared/domain'
 import type { Project } from '@shared/domain'
@@ -67,10 +68,11 @@ import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
 import { transcribeCues } from './transcribe'
-import { appendTake, type TakeSession } from './take-append'
+import { appendTake, importTakeFile, type TakeSession } from './take-append'
 import type { ChangeSet, CommandResult } from '@shared/project-commands'
 import { setupImportedProject, setupOpenedProject } from './project-import'
-import { normalizePath, PROJECT_SUFFIX } from '@shared/project-summary'
+import { normalizePath, PROJECT_SUFFIX, uniqueProjectName } from '@shared/project-summary'
+import { TAKE_FILE_EXTENSIONS } from '@shared/take-import'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'vostudio', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
@@ -217,6 +219,11 @@ const tableImportSchema = z.object({
   replaceTranslations: z.boolean().optional(),
 })
 
+const takeImportSchema = z.object({
+  cueId: z.string().min(1).max(200),
+  paths: z.array(filePath).min(1).max(200),
+})
+
 const transcribeSchema = z.object({
   cueIds: z.array(z.string().min(1).max(200)).min(1).max(500),
   overwrite: z.boolean().optional(),
@@ -261,6 +268,13 @@ function serialLifecycle<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 const dirExists = (dir: string): Promise<boolean> => fs.stat(dir).then(() => true, () => false)
+
+async function projectFolderNames(): Promise<string[]> {
+  const entries = await fs.readdir(store.defaultProjectsRoot()).catch(() => [])
+  return entries
+    .filter((name) => name.toLowerCase().endsWith(PROJECT_SUFFIX))
+    .map((name) => name.slice(0, -PROJECT_SUFFIX.length))
+}
 
 function requireRepository(): SerialProjectRepository {
   if (!projectRepository) throw new Error('No project is open')
@@ -380,7 +394,7 @@ const emptyProjectBase = (name: string): Omit<Project, 'id' | 'schemaVersion' | 
   cues: [],
   sessions: [],
   pronunciationRules: '',
-  exportTemplate: '{EventName}__{WemId}.{ext}',
+  exportTemplate: '{EventName}.{ext}',
   ui: { filter: '', search: '' },
 })
 
@@ -409,9 +423,9 @@ function registerHandlers(): void {
     })
   )
 
-  typedHandle('project:create', (name: string) =>
+  typedHandle('project:create', (name?: string) =>
     serialLifecycle(async () => {
-      const projectName = projectNameSchema.parse(name)
+      const projectName = name === undefined ? uniqueProjectName(await projectFolderNames()) : projectNameSchema.parse(name)
       const dir = path.join(store.defaultProjectsRoot(), `${projectName}${PROJECT_SUFFIX}`)
       if (await dirExists(dir)) throw new Error(`Project "${projectName}" already exists`)
       await detachCurrentRepository()
@@ -466,23 +480,29 @@ function registerHandlers(): void {
   )
 
   typedHandle('import:pick', async (kind) => {
-    const parsed = z.enum(['files', 'folder', 'table']).parse(kind)
+    const parsed = z.enum(['files', 'folder', 'table', 'audio']).parse(kind)
     const options: Electron.OpenDialogOptions =
       kind === 'folder'
         ? { title: 'Import folder', properties: ['openDirectory'] }
-        : parsed === 'table'
+        : parsed === 'audio'
           ? {
-              title: 'Import text table',
-              properties: ['openFile'],
-              filters: [{ name: 'Tables', extensions: ['csv', 'tsv', 'txt'] }],
-            }
-          : {
-              title: 'Import audio files',
+              title: 'Add audio',
               properties: ['openFile', 'multiSelections'],
-              filters: [
-                { name: 'Media', extensions: ['wav', 'mp3', 'ogg', 'm4a', 'mp4', 'mov', 'mkv'] },
-              ],
+              filters: [{ name: 'Audio', extensions: TAKE_FILE_EXTENSIONS }],
             }
+          : parsed === 'table'
+            ? {
+                title: 'Import text table',
+                properties: ['openFile'],
+                filters: [{ name: 'Tables', extensions: ['csv', 'tsv', 'txt'] }],
+              }
+            : {
+                title: 'Import audio files',
+                properties: ['openFile', 'multiSelections'],
+                filters: [
+                  { name: 'Media', extensions: ['wav', 'mp3', 'ogg', 'm4a', 'mp4', 'mov', 'mkv'] },
+                ],
+              }
     const win = BrowserWindow.getFocusedWindow()
     const picked = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
     return picked.canceled ? [] : picked.filePaths
@@ -622,6 +642,22 @@ function registerHandlers(): void {
       },
       select: false,
     }))
+  })
+
+  typedHandle('take:importFiles', async (cueId, paths) => {
+    const parsed = takeImportSchema.parse({ cueId, paths })
+    const session = requireSession()
+    const takes: Take[] = []
+    const failed: string[] = []
+    const base = `t_${stamp()}`
+    for (const [i, src] of parsed.paths.entries()) {
+      try {
+        takes.push(await importTakeFile(session, parsed.cueId, src, `${base}_${i + 1}_imp`, emitChange))
+      } catch (e) {
+        failed.push(`${path.basename(src)}: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+    return { takes, failed }
   })
 
   typedHandle('take:setDurations', async (items) => {

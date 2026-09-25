@@ -27,6 +27,7 @@ const channelMap: Record<IpcChannel, true> = {
   'shell:reveal': true,
 
   'take:saveRecording': true,
+  'take:importFiles': true,
   'take:setDurations': true,
 
   'stems:isolate': true,

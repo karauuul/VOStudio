@@ -59,6 +59,8 @@ export type KeyAction =
   | 'insertSource'
   | 'replaceSource'
   | 'escape'
+  | 'newProject'
+  | 'addLine'
 
 export interface Binding {
   action: KeyAction
@@ -99,6 +101,7 @@ export const BINDINGS: Binding[] = [
     label: 'Close surface',
   },
   { action: 'settings', codes: ['Comma'], mod: true, scopes: APP, label: 'Settings' },
+  { action: 'newProject', codes: ['KeyN'], mod: true, scopes: ['home'], label: 'New project' },
   { action: 'shortcuts', codes: ['F1'], scopes: APP, label: 'Shortcuts' },
   {
     action: 'routeImport',
@@ -122,8 +125,9 @@ export const BINDINGS: Binding[] = [
   { action: 'gridToggle', codes: ['Space'], scopes: GRID, label: 'Select row' },
   { action: 'gridSelectAll', codes: ['KeyA'], mod: true, scopes: GRID, label: 'Select all results' },
   { action: 'generate', codes: ['KeyG'], mod: true, scopes: TEXT, label: 'Generate' },
-  { action: 'undo', codes: ['KeyZ'], mod: true, scopes: TIMELINE, label: 'Undo' },
-  { action: 'redo', codes: ['KeyZ'], mod: true, shift: true, scopes: TIMELINE, label: 'Redo' },
+  { action: 'undo', codes: ['KeyZ'], mod: true, scopes: WORK, label: 'Undo' },
+  { action: 'redo', codes: ['KeyZ'], mod: true, shift: true, scopes: WORK, label: 'Redo' },
+  { action: 'addLine', codes: ['Enter', 'NumpadEnter'], mod: true, scopes: ['text'], label: 'New line' },
   { action: 'next', codes: ['KeyJ', 'ArrowDown'], scopes: WORK, repeat: true, label: 'Next cue' },
   {
     action: 'prev',
@@ -307,6 +311,8 @@ export interface KeyboardHandlers {
   replaceSource: () => void
   escape: () => boolean
   stopPlayback: () => void
+  newProject: () => void
+  addLine: () => void
 }
 
 export interface KeyboardScopes {

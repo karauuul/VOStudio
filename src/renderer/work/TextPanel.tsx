@@ -32,6 +32,7 @@ import {
   type GenMode,
   type ProviderModel,
 } from '@shared/provider-models'
+import { replacesWholeText, splitParagraphs } from '@shared/lines'
 import { DragNumber } from '../cue/DragNumber'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 
@@ -49,6 +50,8 @@ export interface TextPanelProps {
   onSelection?: (range: TextRange | null) => void
   onAcceptSuggestion?: () => void
   onRejectSuggestion?: () => void
+  onPasteScript?: (parts: string[]) => void
+  onUndoKey?: () => boolean
   onCharacter?: (characterId: string) => void
   onVoiceChange?: (patch: Partial<VoiceSettings>) => void
   onGenerate?: (kind: GenTarget['kind']) => void
@@ -148,10 +151,20 @@ function Translation({
   onSelection,
   onAcceptSuggestion,
   onRejectSuggestion,
+  onPasteScript,
+  onUndoKey,
   menu,
 }: Pick<
   TextPanelProps,
-  'cue' | 'textRef' | 'target' | 'onText' | 'onSelection' | 'onAcceptSuggestion' | 'onRejectSuggestion'
+  | 'cue'
+  | 'textRef'
+  | 'target'
+  | 'onText'
+  | 'onSelection'
+  | 'onAcceptSuggestion'
+  | 'onRejectSuggestion'
+  | 'onPasteScript'
+  | 'onUndoKey'
 > & { menu?: (range: TextRange, el: HTMLTextAreaElement) => MenuEntry[] }) {
   const mirrorRef = useRef<HTMLDivElement>(null)
   const pop = useContextMenu()
@@ -185,6 +198,18 @@ function Translation({
               value={text}
               spellCheck={false}
               onChange={(e) => onText?.(e.target.value)}
+              onPaste={(e) => {
+                const el = e.currentTarget
+                const parts = splitParagraphs(e.clipboardData.getData('text/plain'))
+                if (!onPasteScript || parts.length < 2) return
+                if (!replacesWholeText(el.value, el.selectionStart, el.selectionEnd)) return
+                e.preventDefault()
+                onPasteScript(parts)
+              }}
+              onKeyDown={(e) => {
+                if (e.code !== 'KeyZ' || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return
+                if (onUndoKey?.()) e.preventDefault()
+              }}
               onScroll={(e) => {
                 const mirror = mirrorRef.current
                 if (mirror) mirror.scrollTop = e.currentTarget.scrollTop
@@ -320,6 +345,8 @@ export function TextPanel({
   onSelection,
   onAcceptSuggestion,
   onRejectSuggestion,
+  onPasteScript,
+  onUndoKey,
   onCharacter,
   onVoiceChange,
   onGenerate,
@@ -371,6 +398,8 @@ export function TextPanel({
         onSelection={onSelection}
         onAcceptSuggestion={onAcceptSuggestion}
         onRejectSuggestion={onRejectSuggestion}
+        onPasteScript={onPasteScript}
+        onUndoKey={onUndoKey}
         menu={translationMenu}
       />
 

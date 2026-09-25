@@ -450,3 +450,27 @@ describe('done and next', () => {
     expect(action({ code: 'KeyA', ctrlKey: true, shiftKey: true, scope: 'grid' })).toBeNull()
   })
 })
+
+describe('quick session keys', () => {
+  it('Ctrl+N creates a project only on Home and leaves bare N to suggestions', () => {
+    expect(action({ code: 'KeyN', ctrlKey: true, scope: 'home' })).toBe('newProject')
+    expect(action({ code: 'KeyN', metaKey: true, scope: 'home' })).toBe('newProject')
+    expect(action({ code: 'KeyN', ctrlKey: true, scope: 'workspace' })).toBeNull()
+    expect(action({ code: 'KeyN', scope: 'workspace' })).toBe('rejectSuggestion')
+    expect(keyText(of('newProject'))).toBe('Ctrl+N')
+  })
+
+  it('Ctrl+Enter adds a line from a text field without taking plain Enter', () => {
+    expect(action({ code: 'Enter', ctrlKey: true, scope: 'text' })).toBe('addLine')
+    expect(action({ code: 'NumpadEnter', ctrlKey: true, scope: 'text' })).toBe('addLine')
+    expect(action({ code: 'Enter', scope: 'text' })).toBeNull()
+    expect(action({ code: 'Enter', scope: 'workspace' })).toBe('restartActive')
+    expect(action({ code: 'Enter', ctrlKey: true, scope: 'grid' })).toBeNull()
+  })
+
+  it('undo and redo work without an active line', () => {
+    expect(action({ code: 'KeyZ', ctrlKey: true, scope: 'workspace' })).toBe('undo')
+    expect(action({ code: 'KeyZ', ctrlKey: true, shiftKey: true, scope: 'workspace' })).toBe('redo')
+    expect(action({ code: 'KeyZ', ctrlKey: true, scope: 'text' })).toBeNull()
+  })
+})

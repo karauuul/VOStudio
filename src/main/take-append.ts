@@ -1,9 +1,17 @@
 import { promises as fs } from 'fs'
+import os from 'os'
+import path from 'path'
+import { randomUUID } from 'crypto'
 import { changeTakeOutput } from '@shared/approval'
-import { cueVoiceUnchanged, type Cue, type Take } from '@shared/domain'
+import { cueVoiceUnchanged, emptyEdits, type AudioRef, type Cue, type Take } from '@shared/domain'
 import type { CommandResult } from '@shared/project-commands'
+import { takeFileKind } from '@shared/take-import'
 import type { SerialProjectRepository } from './project-repository'
 import { writeTakeFile } from './project-store'
+import { probeDuration } from './audio-import'
+import { runFfmpeg } from './ffmpeg'
+
+const MAX_IMPORT_BYTES = 200 * 1024 * 1024
 
 export interface TakeSession {
   repository: SerialProjectRepository
@@ -41,4 +49,46 @@ export async function appendTake(
   }
   if (result) publish(result)
   return added
+}
+
+async function readAudio(src: string): Promise<{ bytes: Buffer; format: AudioRef['format']; duration?: number }> {
+  const kind = takeFileKind(src)
+  if (kind === 'video') throw new Error('Video goes to Import')
+  if (kind === 'unsupported') throw new Error('Unsupported file type')
+  const { size } = await fs.stat(src)
+  if (size > MAX_IMPORT_BYTES) throw new Error('File is too large')
+  if (kind === 'keep') {
+    const format = path.extname(src).slice(1).toLowerCase() as AudioRef['format']
+    return { bytes: await fs.readFile(src), format, duration: await probeDuration(src) }
+  }
+  const tmp = path.join(os.tmpdir(), `vostudio-import-${randomUUID()}.wav`)
+  try {
+    await runFfmpeg(['-i', src, '-vn', '-c:a', 'pcm_s16le', tmp])
+    return { bytes: await fs.readFile(tmp), format: 'wav', duration: await probeDuration(tmp) }
+  } finally {
+    await fs.rm(tmp, { force: true }).catch(() => undefined)
+  }
+}
+
+export async function importTakeFile(
+  session: TakeSession,
+  cueId: string,
+  src: string,
+  baseName: string,
+  publish: (result: CommandResult) => void
+): Promise<Take> {
+  const { bytes, format, duration } = await readAudio(src)
+  const fileName = `${baseName}.${format}`
+  return appendTake(session, cueId, fileName, bytes, publish, (cue, abs) => ({
+    take: {
+      id: randomUUID(),
+      kind: 'imported',
+      createdAt: new Date().toISOString(),
+      file: { fileId: `${cue.id}/${fileName}`, relPath: abs, format },
+      duration: duration ?? 0,
+      meta: {},
+      edits: emptyEdits(),
+    },
+    select: false,
+  }))
 }

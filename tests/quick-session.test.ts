@@ -1,0 +1,325 @@
+import { describe, expect, it } from 'vitest'
+import { applyChangeSet, applyProjectCommand, type ProjectCommand } from '../src/shared/project-commands'
+import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
+import { cueSchema, projectCommandSchema } from '../src/main/schemas'
+import { newLineCue, nextLineNumber, replacesWholeText, splitParagraphs } from '../src/shared/lines'
+import { uniqueProjectName } from '../src/shared/project-summary'
+import { takeFileKind } from '../src/shared/take-import'
+import { pickHistory } from '../src/shared/undo-route'
+import { exportName, planBatch } from '../src/shared/export-plan'
+import { hasValidVoicedOutput } from '../src/shared/approval'
+
+const take = (id: string, over: Partial<Take> = {}): Take => ({
+  id,
+  kind: 'tts',
+  createdAt: 'now',
+  file: { fileId: id, relPath: `/p/${id}.wav`, format: 'wav' },
+  duration: 2,
+  meta: {},
+  edits: emptyEdits(),
+  ...over,
+})
+
+const cue = (id: string, over: Partial<Cue> = {}): Cue => ({
+  id,
+  characterId: '',
+  key: id,
+  fields: {},
+  sourceText: '',
+  text: '',
+  status: 'empty',
+  notes: '',
+  takes: [],
+  ...over,
+})
+
+function project(cues: Cue[] = [cue('a'), cue('b')]): Project {
+  return {
+    id: 'p',
+    schemaVersion: 1,
+    createdAt: 'now',
+    name: 'P',
+    media: { referenceDir: '', referencePattern: '' },
+    characters: [],
+    cues,
+    sessions: [],
+    pronunciationRules: '',
+    exportTemplate: '{EventName}.{ext}',
+    ui: { filter: '', search: '' },
+  }
+}
+
+function run(p: Project, command: ProjectCommand): Project {
+  const before = structuredClone(p)
+  const changes = applyProjectCommand(p, projectCommandSchema.parse(command) as ProjectCommand)
+  const mirrored = applyChangeSet(before, changes)
+  expect(mirrored.cues).toEqual(p.cues)
+  return p
+}
+
+const ids = (p: Project): string[] => p.cues.map((c) => c.id)
+
+describe('unique project name', () => {
+  it('starts at Untitled and counts up past taken folders, ignoring case', () => {
+    expect(uniqueProjectName([])).toBe('Untitled')
+    expect(uniqueProjectName(['Other'])).toBe('Untitled')
+    expect(uniqueProjectName(['untitled'])).toBe('Untitled 2')
+    expect(uniqueProjectName(['Untitled', 'Untitled 2', 'UNTITLED 3'])).toBe('Untitled 4')
+    expect(uniqueProjectName(['Untitled', 'Untitled 3'])).toBe('Untitled 2')
+  })
+})
+
+describe('paragraph split', () => {
+  it('splits on blank lines when the text has any, keeping single breaks inside', () => {
+    expect(splitParagraphs('One\nstill one\n\nTwo\n \n\nThree')).toEqual(['One\nstill one', 'Two', 'Three'])
+  })
+
+  it('splits on single newlines otherwise', () => {
+    expect(splitParagraphs('One\nTwo\r\nThree\n')).toEqual(['One', 'Two', 'Three'])
+  })
+
+  it('trims and drops empty paragraphs', () => {
+    expect(splitParagraphs('  One  \n\n\n\n   \n\n Two ')).toEqual(['One', 'Two'])
+    expect(splitParagraphs('Only one')).toEqual(['Only one'])
+    expect(splitParagraphs(' \n \n')).toEqual([])
+  })
+
+  it('replaces the whole text only when the field is empty or fully selected', () => {
+    expect(replacesWholeText('', 0, 0)).toBe(true)
+    expect(replacesWholeText('  ', 1, 1)).toBe(true)
+    expect(replacesWholeText('abc', 0, 3)).toBe(true)
+    expect(replacesWholeText('abc', 0, 2)).toBe(false)
+    expect(replacesWholeText('abc', 3, 3)).toBe(false)
+  })
+})
+
+describe('manual line identity', () => {
+  it('numbers after the highest manual line', () => {
+    expect(nextLineNumber([])).toBe(1)
+    expect(nextLineNumber([cue('x', { key: 'line-004', fields: { EventName: 'Line 2' } })])).toBe(5)
+    expect(nextLineNumber([cue('x', { key: 'k', fields: { EventName: 'Line 7' } }), cue('y', { key: 'VO_12' })])).toBe(8)
+  })
+
+  it('builds an empty, unassigned line', () => {
+    expect(newLineCue('id', 3)).toEqual({
+      id: 'id',
+      characterId: '',
+      key: 'line-003',
+      fields: { EventName: 'Line 3' },
+      sourceText: '',
+      text: '',
+      status: 'empty',
+      notes: '',
+      takes: [],
+    })
+    expect(newLineCue('id', 1, 'Hi').status).toBe('translated')
+  })
+})
+
+describe('take file kinds', () => {
+  it('keeps wav, mp3 and ogg, transcodes the rest of audio and refuses video', () => {
+    expect(takeFileKind('C:\\a.b\\x.WAV')).toBe('keep')
+    expect(takeFileKind('/a/x.mp3')).toBe('keep')
+    expect(takeFileKind('/a/x.ogg')).toBe('keep')
+    for (const ext of ['flac', 'm4a', 'aac', 'opus', 'webm']) expect(takeFileKind(`/a/x.${ext}`)).toBe('transcode')
+    for (const ext of ['mp4', 'mov', 'mkv']) expect(takeFileKind(`/a/x.${ext}`)).toBe('video')
+    expect(takeFileKind('/a.wav/readme')).toBe('unsupported')
+    expect(takeFileKind('/a/x.txt')).toBe('unsupported')
+  })
+})
+
+describe('cue.create', () => {
+  it('inserts a line right after the given one and mirrors the order in the renderer', () => {
+    const p = run(project(), { type: 'cue.create', afterCueId: 'a', lines: [{ id: 'n1', text: '' }] })
+    expect(ids(p)).toEqual(['a', 'n1', 'b'])
+    expect(p.cues[1]).toEqual(newLineCue('n1', 1))
+  })
+
+  it('inserts several lines in order and numbers them consecutively', () => {
+    const p = run(project(), {
+      type: 'cue.create',
+      afterCueId: 'a',
+      lines: [
+        { id: 'n1', text: 'Two' },
+        { id: 'n2', text: 'Three' },
+      ],
+    })
+    expect(ids(p)).toEqual(['a', 'n1', 'n2', 'b'])
+    expect(p.cues.slice(1, 3).map((c) => [c.key, c.fields['EventName'], c.text])).toEqual([
+      ['line-001', 'Line 1', 'Two'],
+      ['line-002', 'Line 2', 'Three'],
+    ])
+    run(p, { type: 'cue.create', afterCueId: 'b', lines: [{ id: 'n3', text: '' }] })
+    expect(p.cues[4].fields['EventName']).toBe('Line 3')
+  })
+
+  it('appends when there is no current line, including into an empty project', () => {
+    const p = run(project([]), { type: 'cue.create', afterCueId: null, lines: [{ id: 'n1', text: '' }] })
+    expect(ids(p)).toEqual(['n1'])
+    run(p, { type: 'cue.create', afterCueId: null, lines: [{ id: 'n2', text: '' }] })
+    expect(ids(p)).toEqual(['n1', 'n2'])
+  })
+
+  it('refuses used ids, an unknown anchor and an empty list', () => {
+    expect(() => applyProjectCommand(project(), { type: 'cue.create', afterCueId: null, lines: [{ id: 'a', text: '' }] })).toThrow()
+    expect(() =>
+      applyProjectCommand(project(), {
+        type: 'cue.create',
+        afterCueId: null,
+        lines: [
+          { id: 'n', text: '' },
+          { id: 'n', text: '' },
+        ],
+      })
+    ).toThrow()
+    expect(() => applyProjectCommand(project(), { type: 'cue.create', afterCueId: 'zz', lines: [{ id: 'n', text: '' }] })).toThrow('Cue not found')
+    expect(() => projectCommandSchema.parse({ type: 'cue.create', afterCueId: null, lines: [] })).toThrow()
+  })
+})
+
+describe('ordered insertion in change sets', () => {
+  it('still appends unknown cues without an index, exactly as before', () => {
+    const next = applyChangeSet(project(), { cues: [cue('z'), cue('a', { text: 'x' })] })
+    expect(ids(next)).toEqual(['a', 'b', 'z'])
+    expect(next.cues[0].text).toBe('x')
+  })
+
+  it('places indexed cues at their index in ascending order and clamps out-of-range indexes', () => {
+    const next = applyChangeSet(project(), {
+      cues: [cue('late'), cue('y'), cue('x'), cue('tail')],
+      cueIndex: { x: 0, y: 2, late: 99 },
+    })
+    expect(ids(next)).toEqual(['x', 'a', 'y', 'b', 'late', 'tail'])
+  })
+})
+
+describe('cue.delete and cue.restore', () => {
+  const full = (): Cue =>
+    cue('full', {
+      characterId: 'ch',
+      key: 'K1',
+      fields: { EventName: 'E', exportName: 'X' },
+      sourceText: 'src',
+      text: 'txt',
+      suggestedText: 'sugg',
+      status: 'approved',
+      notes: 'n',
+      referenceAudio: { fileId: 'r', relPath: '/p/r.wav', format: 'wav', sampleRate: 48000, channels: 1 },
+      referenceDuration: 1.5,
+      original: { exportMode: 'on', duckDb: -12, previewMuted: true },
+      stems: [{ id: 's', name: 'Voice', file: { fileId: 's', relPath: '/p/s.wav', format: 'wav' }, exportMode: 'off', duckDb: -6 }],
+      region: { sourceId: 'src1', in: 1, out: 2 },
+      takes: [
+        take('t1', {
+          kind: 'recording',
+          meta: { text: 'txt', voiceSettings: { stability: 0.5, similarity: 0.5, style: 0, speed: 1, boost: true }, sourceTakeId: 'x', provider: 'elevenlabs', model: 'm' },
+          edits: { ...emptyEdits(), timeStretch: 1.1, gainEnvelope: [{ t: 0, db: -3 }], effects: { reverb: { mix: 0.2, size: 0.5, decay: 1 } } },
+          words: [{ text: 'txt', start: 0, end: 1 }],
+          rating: 2,
+          fragment: true,
+          pinned: true,
+        }),
+        take('t2', { deletedAt: 'then' }),
+      ],
+      finalTakeId: 't2',
+      comp: {
+        clips: [{ id: 'c1', sourceTakeId: 't1', srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits(), crossfade: 0.1, trackId: 'tr' }],
+        region: { in: 0, out: 1 },
+        tracks: [{ id: 'tr', name: 'A', gainDb: 0, muted: false, solo: false }],
+        originalStart: 0.5,
+      },
+      output: { kind: 'comp', revision: 3 },
+      textRevision: 2,
+      approval: { textRevision: 2, outputRevision: 3, approvedAt: 'then' },
+      voiceSettingsOverride: { speed: 1.1 },
+    })
+
+  it('validates a full cue without dropping any field', () => {
+    const value = full()
+    expect(cueSchema.parse(value)).toEqual(value)
+    expect(cueSchema.parse(cue('bare'))).toEqual(cue('bare'))
+    expect(() => cueSchema.parse({ ...value, status: 'nope' })).toThrow()
+    expect(() => cueSchema.parse({ ...value, takes: [{ id: 'x' }] })).toThrow()
+  })
+
+  it('deletes a line and restores the exact cue at its old index', () => {
+    const p = project([cue('a'), full(), cue('b')])
+    const saved = structuredClone(p.cues[1])
+    const changes = applyProjectCommand(p, { type: 'cue.delete', cueId: 'full' })
+    expect(changes).toEqual({ removedCueIds: ['full'] })
+    expect(ids(p)).toEqual(['a', 'b'])
+    run(p, { type: 'cue.restore', cue: saved, index: 1 })
+    expect(p.cues).toEqual([cue('a'), saved, cue('b')])
+  })
+
+  it('mirrors a delete in the renderer', () => {
+    const p = project()
+    const changes = applyProjectCommand(p, projectCommandSchema.parse({ type: 'cue.delete', cueId: 'a' }) as ProjectCommand)
+    expect(applyChangeSet(project(), changes).cues).toEqual(p.cues)
+  })
+
+  it('refuses to delete a line whose source is used on another line, and to restore a live id', () => {
+    const owner = cue('a', { takes: [take('t', { pinned: true })] })
+    const user = cue('b', { comp: { clips: [{ id: 'c', sourceTakeId: 't', srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits() }] } })
+    const p = project([owner, user])
+    expect(() => applyProjectCommand(p, { type: 'cue.delete', cueId: 'a' })).toThrow('used on another line')
+    expect(ids(p)).toEqual(['a', 'b'])
+    expect(() => applyProjectCommand(p, { type: 'cue.restore', cue: cue('a'), index: 0 })).toThrow()
+    expect(() => applyProjectCommand(p, { type: 'cue.delete', cueId: 'zz' })).toThrow('Cue not found')
+  })
+})
+
+describe('cue.useTakeAsOriginal', () => {
+  it('points the original at the take file and length', () => {
+    const p = project([cue('a', { takes: [take('t', { kind: 'imported', duration: 3.5 })] })])
+    run(p, { type: 'cue.useTakeAsOriginal', cueId: 'a', takeId: 't' })
+    expect(p.cues[0].referenceAudio).toEqual(p.cues[0].takes[0].file)
+    expect(p.cues[0].referenceAudio).not.toBe(p.cues[0].takes[0].file)
+    expect(p.cues[0].referenceDuration).toBe(3.5)
+    expect(p.cues[0].takes).toHaveLength(1)
+  })
+
+  it('drops a stale length when the take length is unknown, and accepts a pinned source', () => {
+    const p = project([
+      cue('a', { referenceDuration: 9 }),
+      cue('b', { takes: [take('t', { pinned: true, duration: 0 })] }),
+    ])
+    run(p, { type: 'cue.useTakeAsOriginal', cueId: 'a', takeId: 't' })
+    expect(p.cues[0].referenceAudio?.relPath).toBe('/p/t.wav')
+    expect(p.cues[0]).not.toHaveProperty('referenceDuration')
+  })
+
+  it('refuses unknown or deleted takes', () => {
+    const p = project([cue('a', { takes: [take('gone', { deletedAt: 'x' })] })])
+    expect(() => applyProjectCommand(p, { type: 'cue.useTakeAsOriginal', cueId: 'a', takeId: 'zz' })).toThrow()
+    expect(() => applyProjectCommand(p, { type: 'cue.useTakeAsOriginal', cueId: 'a', takeId: 'gone' })).toThrow()
+  })
+})
+
+describe('undo routing with lines', () => {
+  it('picks the newest side on undo and the oldest on redo', () => {
+    expect(pickHistory({ comp: 1, fx: 2, line: 3 }, 'undo')).toBe('line')
+    expect(pickHistory({ comp: 5, fx: 2, line: 3 }, 'undo')).toBe('comp')
+    expect(pickHistory({ comp: null, fx: null, line: 3 }, 'undo')).toBe('line')
+    expect(pickHistory({ comp: 4, fx: 5, line: 3 }, 'redo')).toBe('line')
+    expect(pickHistory({ comp: 3, fx: null, line: 3 }, 'redo')).toBe('comp')
+    expect(pickHistory({ comp: null, fx: null, line: null }, 'undo')).toBe(null)
+  })
+})
+
+describe('quick session export', () => {
+  it('exports a line whose only audio is a recording placed on the timeline, named after the line', () => {
+    const line = newLineCue('n1', 1)
+    const recorded: Cue = {
+      ...line,
+      takes: [take('rec', { kind: 'recording', duration: 1.2 })],
+      comp: { clips: [{ id: 'c', sourceTakeId: 'rec', srcIn: 0, srcOut: 1.2, start: 0, edits: emptyEdits() }] },
+      output: { kind: 'comp', revision: 1 },
+    }
+    const p = project([recorded])
+    expect(hasValidVoicedOutput(recorded, p)).toBe(true)
+    const planned = planBatch(p)
+    expect(planned.map((x) => x.name)).toEqual(['Line 1.wav'])
+    expect(exportName(p, recorded, recorded.takes[0])).toBe('Line 1.wav')
+  })
+})

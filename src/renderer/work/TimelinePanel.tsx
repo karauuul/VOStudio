@@ -238,6 +238,7 @@ interface Props {
   compRef: MutableRefObject<CompApi | null>
   busyClipId?: string | null
   onDropSource: (takeId: string, trackId: string, at: number) => void
+  onDropFiles: (files: File[], trackId: string, at: number) => void
   onRegenerateClip: (clipId: string) => void
   onPinSource: (takeId: string, pinned: boolean) => void
   onShowInLibrary: (takeId: string) => void
@@ -263,6 +264,7 @@ export function TimelinePanel({
   compRef,
   busyClipId,
   onDropSource,
+  onDropFiles,
   onRegenerateClip,
   onPinSource,
   onShowInLibrary,
@@ -2015,19 +2017,24 @@ export function TimelinePanel({
               className="tl-body"
               data-track={track.id}
               onDragOver={(e) => {
-                if (!e.dataTransfer.types.includes(DRAG_TYPE)) return
+                const types = e.dataTransfer.types
+                if (!types.includes(DRAG_TYPE) && !types.includes('Files')) return
                 e.preventDefault()
                 e.dataTransfer.dropEffect = 'copy'
               }}
               onDrop={(e) => {
+                const at = Math.max(0, xToTime(viewRef.current, e.clientX - bodyLeft()))
+                const files = [...e.dataTransfer.files]
+                if (files.length > 0) {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onDropFiles(files, track.id, at)
+                  return
+                }
                 const takeId = e.dataTransfer.getData(DRAG_TYPE)
                 if (!takeId) return
                 e.preventDefault()
-                onDropSource(
-                  takeId,
-                  track.id,
-                  Math.max(0, xToTime(viewRef.current, e.clientX - bodyLeft()))
-                )
+                onDropSource(takeId, track.id, at)
               }}
             >
               {grid}
