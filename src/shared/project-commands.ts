@@ -32,6 +32,7 @@ import { referencedByOtherComp, resolveTake } from './library'
 import { sanitizeExportSettings, type ExportSettings } from './export-settings'
 import { mixesOriginal } from './export-plan'
 import { newLineCue, nextLineNumber } from './lines'
+import { isInsideDir } from './project-summary'
 
 export type ProjectCommand =
   | { type: 'cue.saveText'; cueId: string; text: string }
@@ -408,6 +409,10 @@ export function commandAudioPaths(command: ProjectCommand): string[] {
     ...(cue.referenceAudio ? [cue.referenceAudio.relPath] : []),
     ...(cue.stems ?? []).map((stem) => stem.file.relPath),
   ]
+}
+
+export function audioWithinRoots(command: ProjectCommand, roots: string[]): boolean {
+  return commandAudioPaths(command).every((file) => roots.some((root) => isInsideDir(file, root)))
 }
 
 export function applyChangeSet(project: Project, changes: ChangeSet): Project {

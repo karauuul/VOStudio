@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyChangeSet, applyProjectCommand, commandAudioPaths, type ProjectCommand } from '../src/shared/project-commands'
+import { applyChangeSet, applyProjectCommand, audioWithinRoots, commandAudioPaths, type ProjectCommand } from '../src/shared/project-commands'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 import { cueSchema, projectCommandSchema } from '../src/main/schemas'
 import { newLineCue, nextLineNumber, replacesWholeText, splitParagraphs } from '../src/shared/lines'
@@ -379,5 +379,30 @@ describe('restore stays inside the open project', () => {
     expect(commandAudioPaths({ type: 'cue.restoreOriginal', cueId: 'a', referenceAudio: restored.referenceAudio!, referenceDuration: 1 })).toEqual(['/p/r.wav'])
     expect(commandAudioPaths({ type: 'cue.restoreOriginal', cueId: 'a', referenceAudio: null, referenceDuration: null })).toEqual([])
     expect(commandAudioPaths({ type: 'cue.delete', cueId: 'a' })).toEqual([])
+  })
+})
+
+describe('trusted audio roots for restoring', () => {
+  const roots = ['/root/P.vostudio', '/data/reference', '/data/generated']
+  const restore = (over: Partial<Cue>): ProjectCommand => ({ type: 'cue.restore', cue: cue('a', over), index: 0 })
+
+  it('accepts a line whose original lives under the reference root and takes under project or generated roots', () => {
+    expect(
+      audioWithinRoots(
+        restore({
+          referenceAudio: { fileId: 'r', relPath: '/data/reference/vo/r.wav', format: 'wav' },
+          takes: [take('t1', { file: { fileId: 't1', relPath: '/root/P.vostudio/audio/takes/a/t1.wav', format: 'wav' } }), take('t2', { file: { fileId: 't2', relPath: '/data/generated/t2.mp3', format: 'mp3' } })],
+        }),
+        roots
+      )
+    ).toBe(true)
+    expect(audioWithinRoots({ type: 'cue.restoreOriginal', cueId: 'a', referenceAudio: { fileId: 'r', relPath: '/data/reference/r.wav', format: 'wav' }, referenceDuration: 1 }, roots)).toBe(true)
+  })
+
+  it('rejects any file outside every trusted root', () => {
+    expect(audioWithinRoots(restore({ referenceAudio: { fileId: 'r', relPath: '/elsewhere/r.wav', format: 'wav' } }), roots)).toBe(false)
+    expect(audioWithinRoots(restore({ takes: [take('t', { file: { fileId: 't', relPath: '/root/Other.vostudio/t.wav', format: 'wav' } })] }), roots)).toBe(false)
+    expect(audioWithinRoots(restore({ referenceAudio: { fileId: 'r', relPath: '/data/reference/r.wav', format: 'wav' } }), ['/root/P.vostudio'])).toBe(false)
+    expect(audioWithinRoots({ type: 'cue.delete', cueId: 'a' }, [])).toBe(true)
   })
 })

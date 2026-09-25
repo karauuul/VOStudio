@@ -69,9 +69,9 @@ import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } 
 import { SerialProjectRepository } from './project-repository'
 import { transcribeCues } from './transcribe'
 import { appendTake, importTakeFile, type TakeSession } from './take-append'
-import { commandAudioPaths, type ChangeSet, type CommandResult } from '@shared/project-commands'
+import { audioWithinRoots, type ChangeSet, type CommandResult } from '@shared/project-commands'
 import { setupImportedProject, setupOpenedProject } from './project-import'
-import { isInsideDir, normalizePath, PROJECT_SUFFIX, uniqueProjectName } from '@shared/project-summary'
+import { normalizePath, PROJECT_SUFFIX, uniqueProjectName } from '@shared/project-summary'
 import { TAKE_FILE_EXTENSIONS } from '@shared/take-import'
 
 protocol.registerSchemesAsPrivileged([
@@ -86,8 +86,12 @@ function fileStream(abs: string, start?: number, end?: number): ReadableStream<U
   return Readable.toWeb(createReadStream(abs, options)) as ReadableStream<Uint8Array>
 }
 
+function trustedAudioRoots(): string[] {
+  return [store.getProjectDir(), REFERENCE_DIR_ENV, GENERATED_DIR].filter(Boolean) as string[]
+}
+
 function isAllowedPath(abs: string): boolean {
-  const roots = [store.getProjectDir(), REFERENCE_DIR_ENV, GENERATED_DIR].filter(Boolean) as string[]
+  const roots = trustedAudioRoots()
   const norm = path.resolve(abs).toLowerCase()
   if (roots.some((r) => norm.startsWith(path.resolve(r).toLowerCase() + path.sep))) return true
   const project = store.getProject()
@@ -581,10 +585,7 @@ function registerHandlers(): void {
   typedHandle('project:command', (command) => {
     if (!projectRepository) throw new Error('No project is open')
     const parsed = projectCommandSchema.parse(command)
-    const dir = store.getProjectDir()
-    if (commandAudioPaths(parsed).some((file) => !dir || !isInsideDir(file, dir))) {
-      throw new Error('Audio is outside this project')
-    }
+    if (!audioWithinRoots(parsed, trustedAudioRoots())) throw new Error('Audio is outside this project')
     return projectRepository.execute(parsed)
   })
 
