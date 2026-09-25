@@ -74,8 +74,9 @@ import { libraryRow, lineLabel, locateText, resolveTake, type LibraryRow } from 
 import type { ChangeSet, ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
 import {
   lineStepCommand,
+  originalStateOf,
+  outputRevisionIn,
   recordLineEdit,
-  referenceOf,
   removalBlock,
   removesLines,
   runLineStep,
@@ -1184,7 +1185,7 @@ export default function App() {
                 ? survivorNear(edit.ids, edit.undoRemoves)
                 : edit.focus
           const owner = edit.kind === 'original' ? projectRef.current?.cues.find((c) => c.id === edit.cueId) : undefined
-          const current = referenceOf(owner)
+          const current = owner ? structuredClone(owner) : undefined
           const changes = await execute(lineStepCommand(edit, dir), true)
           select = target
           return steppedEdit(edit, dir, changes, current)
@@ -1328,10 +1329,10 @@ export default function App() {
     (cueId: string, takeId: string) => {
       const cue = projectRef.current?.cues.find((c) => c.id === cueId)
       if (!cue || refuseWhileExporting()) return
-      const before = referenceOf(cue)
+      const before = originalStateOf(cue)
       void execute({ type: 'cue.useTakeAsOriginal', cueId, takeId })
         .then((changes) =>
-          pushLineEdit({ kind: 'original', cueId, before, after: referenceOf(changes.cues?.find((c) => c.id === cueId)) })
+          pushLineEdit({ kind: 'original', cueId, takeId, before, whenOutputRevision: outputRevisionIn(changes, cueId) })
         )
         .catch((e: unknown) => pushStatus('err', String(e)))
     },

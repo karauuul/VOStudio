@@ -5,8 +5,9 @@ import { CREATE_LINES_MAX, LINE_TEXT_MAX, planScriptPaste } from '../src/shared/
 import { projectCommandSchema } from '../src/main/schemas'
 import {
   lineStepCommand,
+  originalStateOf,
+  outputRevisionIn,
   recordLineEdit,
-  referenceOf,
   removalBlock,
   runLineStep,
   steppedEdit,
@@ -33,7 +34,7 @@ function session(p: Project) {
   const step = (dir: StepDir) =>
     runLineStep(history, dir, async (entry) => {
       const owner = entry.kind === 'original' ? p.cues.find((c) => c.id === entry.cueId) : undefined
-      const current = referenceOf(owner)
+      const current = owner ? structuredClone(owner) : undefined
       return steppedEdit(entry, dir, applyProjectCommand(p, lineStepCommand(entry, dir)), current)
     })
   return { history, edit, step }
@@ -101,15 +102,17 @@ describe('line history', () => {
     const ref = { fileId: 'r', relPath: '/p/r.wav', format: 'wav' as const }
     const p = project([cue('a', { referenceAudio: ref, referenceDuration: 3, takes: [{ id: 't', kind: 'imported', createdAt: 'now', file: { fileId: 't', relPath: '/p/t.wav', format: 'wav' }, duration: 1, meta: {}, edits: emptyEdits() }] })])
     const s = session(p)
-    const before = referenceOf(p.cues[0])
+    const before = originalStateOf(p.cues[0])
     const changes = s.edit({ type: 'cue.useTakeAsOriginal', cueId: 'a', takeId: 't' })
-    recordLineEdit(s.history, { kind: 'original', cueId: 'a', before, after: referenceOf(changes.cues?.[0]) }, 1)
+    recordLineEdit(s.history, { kind: 'original', cueId: 'a', takeId: 't', before, whenOutputRevision: outputRevisionIn(changes, 'a') }, 1)
     await s.step('undo')
     expect(p.cues[0].referenceAudio).toEqual(ref)
     expect(p.cues[0].referenceDuration).toBe(3)
     await s.step('redo')
     expect(p.cues[0].referenceAudio?.relPath).toBe('/p/t.wav')
     expect(p.cues[0].referenceDuration).toBe(1)
+    await s.step('undo')
+    expect(p.cues[0].referenceAudio).toEqual(ref)
   })
 
   it('caps the undo stack and clears redo on every new entry', () => {

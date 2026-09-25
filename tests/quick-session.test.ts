@@ -7,7 +7,9 @@ import { isInsideDir, uniqueProjectName } from '../src/shared/project-summary'
 import { takeFileKind } from '../src/shared/take-import'
 import { pickHistory } from '../src/shared/undo-route'
 import { exportName, planBatch } from '../src/shared/export-plan'
-import { hasValidVoicedOutput } from '../src/shared/approval'
+import { approvalState, hasValidVoicedOutput } from '../src/shared/approval'
+import { lineStepCommand, originalStateOf, outputRevisionIn, type LineEdit } from '../src/shared/line-history'
+import { importLengthProblem, MAX_IMPORT_SECONDS } from '../src/shared/take-import'
 
 const take = (id: string, over: Partial<Take> = {}): Take => ({
   id,
@@ -123,6 +125,12 @@ describe('take file kinds', () => {
     expect(takeFileKind('/a/x.ogg')).toBe('keep')
     for (const ext of ['flac', 'm4a', 'aac', 'opus', 'webm']) expect(takeFileKind(`/a/x.${ext}`)).toBe('transcode')
     for (const ext of ['mp4', 'mov', 'mkv']) expect(takeFileKind(`/a/x.${ext}`)).toBe('video')
+    expect(MAX_IMPORT_SECONDS).toBe(3 * 60 * 60)
+    expect(importLengthProblem('transcode', 60)).toBeNull()
+    expect(importLengthProblem('keep', undefined)).toBeNull()
+    expect(importLengthProblem('transcode', undefined)).toBe('Audio length is unknown')
+    expect(importLengthProblem('keep', MAX_IMPORT_SECONDS + 1)).toBe('Audio is longer than 3 hours')
+    expect(importLengthProblem('transcode', MAX_IMPORT_SECONDS)).toBeNull()
     expect(takeFileKind('/a.wav/readme')).toBe('unsupported')
     expect(takeFileKind('/a/x.txt')).toBe('unsupported')
   })
@@ -333,12 +341,12 @@ describe('quick session export', () => {
 })
 
 describe('undoing Use as original', () => {
-  const undoOf = (c: Cue): ProjectCommand => ({
-    type: 'cue.restoreOriginal',
-    cueId: c.id,
-    referenceAudio: c.referenceAudio ?? null,
-    referenceDuration: c.referenceDuration ?? null,
-  })
+  function useAsOriginal(p: Project, cueId: string, takeId: string): ProjectCommand {
+    const before = originalStateOf(p.cues.find((c) => c.id === cueId)!)
+    const changes = applyProjectCommand(p, { type: 'cue.useTakeAsOriginal', cueId, takeId })
+    const edit: LineEdit = { kind: 'original', cueId, takeId, before, whenOutputRevision: outputRevisionIn(changes, cueId), at: 1 }
+    return lineStepCommand(edit, 'undo')
+  }
 
   it('restores the previous original file and length', () => {
     const before = cue('a', {
@@ -347,8 +355,7 @@ describe('undoing Use as original', () => {
       takes: [take('t', { duration: 1 })],
     })
     const p = project([structuredClone(before)])
-    const undo = undoOf(p.cues[0])
-    run(p, { type: 'cue.useTakeAsOriginal', cueId: 'a', takeId: 't' })
+    const undo = useAsOriginal(p, 'a', 't')
     expect(p.cues[0].referenceDuration).toBe(1)
     run(p, undo)
     expect(p.cues[0]).toEqual(before)
@@ -357,12 +364,47 @@ describe('undoing Use as original', () => {
   it('restores the absence of an original', () => {
     const before = cue('a', { takes: [take('t')] })
     const p = project([structuredClone(before)])
-    const undo = undoOf(p.cues[0])
-    run(p, { type: 'cue.useTakeAsOriginal', cueId: 'a', takeId: 't' })
-    run(p, undo)
+    run(p, useAsOriginal(p, 'a', 't'))
     expect(p.cues[0]).toEqual(before)
     expect(p.cues[0]).not.toHaveProperty('referenceAudio')
     expect(p.cues[0]).not.toHaveProperty('referenceDuration')
+  })
+
+  const approvedMixing = (): Cue =>
+    cue('a', {
+      text: 'T',
+      status: 'approved',
+      referenceAudio: { fileId: 'r', relPath: '/p/r.wav', format: 'wav' },
+      referenceDuration: 4,
+      original: { exportMode: 'on', duckDb: -12 },
+      takes: [take('v'), take('t', { kind: 'imported', duration: 1 })],
+      finalTakeId: 'v',
+      output: { kind: 'take', takeId: 'v', revision: 2 },
+      textRevision: 1,
+      approval: { textRevision: 1, outputRevision: 2, approvedAt: 'then' },
+    })
+
+  it('brings an approved line that mixes its original back exactly, approval included', () => {
+    const before = approvedMixing()
+    const p = project([structuredClone(before)])
+    expect(approvalState(p.cues[0], p)).toBe('approved')
+    const undo = useAsOriginal(p, 'a', 't')
+    expect(approvalState(p.cues[0], p)).toBe('stale')
+    expect(p.cues[0].status).toBe('generated')
+    run(p, undo)
+    expect(p.cues[0]).toEqual(before)
+    expect(approvalState(p.cues[0], p)).toBe('approved')
+  })
+
+  it('does not revive an approval when the output changed after the action', () => {
+    const p = project([approvedMixing()])
+    const undo = useAsOriginal(p, 'a', 't')
+    run(p, { type: 'cue.setFinalTake', cueId: 'a', takeId: 'v' })
+    run(p, { type: 'cue.setTakeEffects', cueId: 'a', takeId: 'v', effects: { reverb: { mix: 0.2, size: 0.5, decay: 1 } } })
+    run(p, undo)
+    expect(p.cues[0].referenceAudio?.relPath).toBe('/p/r.wav')
+    expect(approvalState(p.cues[0], p)).toBe('stale')
+    expect(p.cues[0].status).not.toBe('approved')
   })
 })
 

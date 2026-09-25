@@ -15,3 +15,12 @@ export function takeFileKind(path: string): TakeFileKind {
   if (VIDEO.has(ext)) return 'video'
   return 'unsupported'
 }
+
+export const MAX_IMPORT_SECONDS = 3 * 60 * 60
+export const MAX_TRANSCODED_BYTES = 2 * 1024 * 1024 * 1024
+
+export function importLengthProblem(kind: TakeFileKind, duration: number | undefined): string | null {
+  if (duration !== undefined && duration > MAX_IMPORT_SECONDS) return 'Audio is longer than 3 hours'
+  if (kind === 'transcode' && duration === undefined) return 'Audio length is unknown'
+  return null
+}

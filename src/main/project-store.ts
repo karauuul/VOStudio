@@ -281,22 +281,30 @@ export async function ensureVersion(previous: ProjectVersion[]): Promise<Project
   return saveVersion(previous)
 }
 
+export type AudioWriter = Buffer | ((abs: string) => Promise<void>)
+
 async function writeAudioFile(
   root: string | null,
   kind: 'takes' | 'stems',
   cueId: string,
   fileName: string,
-  data: Buffer
+  data: AudioWriter
 ): Promise<string> {
   if (!root) throw new Error('No project is open')
   const dir = path.join(root, 'audio', kind, cueId)
   await fs.mkdir(dir, { recursive: true })
   const abs = path.join(dir, fileName)
-  await fs.writeFile(abs, data)
+  try {
+    if (typeof data === 'function') await data(abs)
+    else await fs.writeFile(abs, data)
+  } catch (error) {
+    await fs.rm(abs, { force: true }).catch(() => undefined)
+    throw error
+  }
   return abs
 }
 
-export function writeTakeFile(root: string, cueId: string, fileName: string, data: Buffer): Promise<string> {
+export function writeTakeFile(root: string, cueId: string, fileName: string, data: AudioWriter): Promise<string> {
   return writeAudioFile(root, 'takes', cueId, fileName, data)
 }
 

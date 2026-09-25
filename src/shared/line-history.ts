@@ -1,10 +1,6 @@
-import type { AudioRef, Cue } from './domain'
-import type { ChangeSet, PlacedCue, ProjectCommand } from './project-commands'
-
-export interface Reference {
-  referenceAudio: AudioRef | null
-  referenceDuration: number | null
-}
+import { sanitizeRevision } from './approval'
+import type { Cue } from './domain'
+import type { ChangeSet, OriginalState, PlacedCue, ProjectCommand } from './project-commands'
 
 export type LineChange =
   | {
@@ -15,7 +11,7 @@ export type LineChange =
       focus: string
       text?: { cueId: string; before: string; after: string }
     }
-  | { kind: 'original'; cueId: string; before: Reference; after: Reference }
+  | { kind: 'original'; cueId: string; takeId: string; before: OriginalState; whenOutputRevision: number }
 
 export type LineEdit = LineChange & { at: number }
 
@@ -28,10 +24,16 @@ export type StepDir = 'undo' | 'redo'
 
 export const LINE_HISTORY_LIMIT = 100
 
-export const referenceOf = (cue: Cue | undefined): Reference => ({
-  referenceAudio: cue?.referenceAudio ?? null,
-  referenceDuration: cue?.referenceDuration ?? null,
+export const originalStateOf = (cue: Cue): OriginalState => ({
+  referenceAudio: cue.referenceAudio ?? null,
+  referenceDuration: cue.referenceDuration ?? null,
+  status: cue.status,
+  ...(cue.output === undefined ? {} : { output: structuredClone(cue.output) }),
+  ...(cue.approval === undefined ? {} : { approval: structuredClone(cue.approval) }),
 })
+
+export const outputRevisionIn = (changes: ChangeSet, cueId: string): number =>
+  sanitizeRevision(changes.cues?.find((cue) => cue.id === cueId)?.output?.revision)
 
 export function recordLineEdit(history: LineHistory, change: LineChange, at: number): void {
   history.undo.push({ ...change, at })
@@ -45,15 +47,20 @@ export function removesLines(edit: LineEdit, dir: StepDir): boolean {
 
 export function lineStepCommand(edit: LineEdit, dir: StepDir): ProjectCommand {
   if (edit.kind === 'original') {
-    return { type: 'cue.restoreOriginal', cueId: edit.cueId, ...(dir === 'undo' ? edit.before : edit.after) }
+    return dir === 'undo'
+      ? { type: 'cue.restoreOriginal', cueId: edit.cueId, whenOutputRevision: edit.whenOutputRevision, ...edit.before }
+      : { type: 'cue.useTakeAsOriginal', cueId: edit.cueId, takeId: edit.takeId }
   }
   return removesLines(edit, dir)
     ? { type: 'cue.delete', cueIds: edit.ids }
     : { type: 'cue.restore', cues: edit.snapshots }
 }
 
-export function steppedEdit(edit: LineEdit, dir: StepDir, changes: ChangeSet, current: Reference): LineEdit {
-  if (edit.kind === 'original') return dir === 'undo' ? { ...edit, after: current } : { ...edit, before: current }
+export function steppedEdit(edit: LineEdit, dir: StepDir, changes: ChangeSet, current: Cue | undefined): LineEdit {
+  if (edit.kind === 'original') {
+    if (dir === 'undo' || !current) return edit
+    return { ...edit, before: originalStateOf(current), whenOutputRevision: outputRevisionIn(changes, edit.cueId) }
+  }
   return removesLines(edit, dir) ? { ...edit, snapshots: changes.removedCues ?? [] } : edit
 }
 

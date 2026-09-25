@@ -96,3 +96,26 @@ describe('take file import', () => {
     expect(await exists(path.join(dir, 'audio', 'takes', 'missing', 't_1_imp.mp3'))).toBe(false)
   })
 })
+
+describe('transcoded take import', () => {
+  it('converts a flac straight into the takes folder as wav', async () => {
+    const { runFfmpeg } = await import('../src/main/ffmpeg')
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-imp-'))
+    const src = path.join(dir, 'voice.flac')
+    await runFfmpeg(['-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.5', src])
+    const repository = new SerialProjectRepository(project('a'), vi.fn(), 1)
+    const take = await importTakeFile({ repository, dir }, 'c', src, 't_1_imp', vi.fn())
+    expect(take.file).toMatchObject({ format: 'wav', relPath: path.join(dir, 'audio', 'takes', 'c', 't_1_imp.wav') })
+    expect(take.duration).toBeCloseTo(0.5, 1)
+    expect((await fs.readFile(take.file.relPath)).subarray(0, 4).toString()).toBe('RIFF')
+  })
+
+  it('refuses a transcode whose length cannot be read and leaves no file behind', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-imp-'))
+    const src = path.join(dir, 'broken.flac')
+    await fs.writeFile(src, Buffer.from('not audio'))
+    const repository = new SerialProjectRepository(project('a'), vi.fn(), 1)
+    await expect(importTakeFile({ repository, dir }, 'c', src, 't_1_imp', vi.fn())).rejects.toThrow('length is unknown')
+    expect(await exists(path.join(dir, 'audio', 'takes', 'c', 't_1_imp.wav'))).toBe(false)
+  })
+})

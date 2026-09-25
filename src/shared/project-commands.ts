@@ -1,4 +1,4 @@
-import { approveCue, changeCompOutput, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval, setExcluded } from './approval'
+import { approveCue, changeCompOutput, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval, sanitizeRevision, setExcluded } from './approval'
 import { compProblem, normalizeComp } from './comp'
 import { sanitizeEffects } from './effects'
 import {
@@ -15,6 +15,8 @@ import {
   sanitizeStems,
   type AudioRef,
   type Character,
+  type CueApproval,
+  type CueOutput,
   type ClipEffects,
   type Cue,
   type CueComp,
@@ -54,7 +56,7 @@ export type ProjectCommand =
   | { type: 'cue.delete'; cueIds: string[] }
   | { type: 'cue.restore'; cues: PlacedCue[] }
   | { type: 'cue.useTakeAsOriginal'; cueId: string; takeId: string }
-  | { type: 'cue.restoreOriginal'; cueId: string; referenceAudio: AudioRef | null; referenceDuration: number | null }
+  | ({ type: 'cue.restoreOriginal'; cueId: string; whenOutputRevision: number } & OriginalState)
   | { type: 'character.setVoiceSettings'; characterId: string; settings: VoiceSettings }
   | { type: 'character.create'; id: string; name: string }
   | { type: 'character.rename'; characterId: string; name: string }
@@ -66,6 +68,14 @@ export type ProjectCommand =
   | { type: 'project.setExport'; settings: ExportSettings | null }
   | { type: 'project.setProvider'; provider: ProviderSettings | null }
   | { type: 'project.setExportTemplate'; template: string }
+
+export interface OriginalState {
+  referenceAudio: AudioRef | null
+  referenceDuration: number | null
+  status: Cue['status']
+  output?: CueOutput | null
+  approval?: CueApproval | null
+}
 
 export interface PlacedCue {
   cue: Cue
@@ -417,7 +427,15 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
       else delete cue.referenceAudio
       if (command.referenceDuration !== null) cue.referenceDuration = command.referenceDuration
       else delete cue.referenceDuration
-      if (mixesOriginal(cue)) Object.assign(cue, invalidateVoicedOutput(cue, project))
+      if (sanitizeRevision(cue.output?.revision) !== command.whenOutputRevision) {
+        if (mixesOriginal(cue)) Object.assign(cue, invalidateVoicedOutput(cue, project))
+        break
+      }
+      cue.status = command.status
+      if (command.output === undefined) delete cue.output
+      else cue.output = structuredClone(command.output)
+      if (command.approval === undefined) delete cue.approval
+      else cue.approval = structuredClone(command.approval)
       break
     }
     case 'cue.setCharacter': {
