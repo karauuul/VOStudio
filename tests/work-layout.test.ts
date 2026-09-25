@@ -20,6 +20,12 @@ describe('fitWorkPanes', () => {
     expect(1440 - 16 - 24 - fitted.lines - fitted.props - fitted.prog).toBeGreaterThanOrEqual(320)
   })
 
+  it('a fitted layout with a narrower pane stays as is, so the freed width goes to text', () => {
+    const fitted = fitWorkPanes(stored, mins, 1440 - 16 - 24, 320)
+    const dragged = { ...fitted, lines: fitted.lines - 40 }
+    expect(fitWorkPanes(dragged, mins, 1440 - 16 - 24, 320)).toEqual(dragged)
+  })
+
   it('never goes below the minimums', () => {
     expect(fitWorkPanes(stored, mins, 800, 320)).toEqual(mins)
   })

@@ -153,7 +153,7 @@ export function WorkRoom({
       document.body.classList.add('resizing')
       const move = (ev: MouseEvent): void => {
         const d = inverted ? p0 - ev.clientX : (vertical ? ev.clientY : ev.clientX) - p0
-        setSize((s) => ({ ...s, [pane]: clamp(v0 + d, cfg.min, max) }))
+        setSize({ ...fitted, [pane]: clamp(v0 + d, cfg.min, max) })
       }
       const up = (): void => {
         document.body.classList.remove('resizing')
