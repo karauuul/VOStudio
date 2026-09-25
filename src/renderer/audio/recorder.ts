@@ -30,6 +30,7 @@ export type MicState =
 export interface RecordedClip {
   durationSec: number
   sampleRate: number
+  hidden: number
   finish: (fragment: boolean) => Promise<SavedTake>
 }
 
@@ -40,6 +41,7 @@ export interface StartOptions {
   autoReference: boolean
   referenceUrl?: string
   referenceClipId?: string
+  preroll?: () => Promise<number>
 }
 
 export interface RecorderApi {
@@ -55,6 +57,7 @@ export interface RecorderApi {
   start: (opts: StartOptions) => void
   stop: () => void
   cancel: () => void
+  live: () => boolean
   discardClip: () => void
   clearError: () => void
 }
@@ -216,6 +219,7 @@ interface Take {
   refPlaying: boolean
   stream: RecStream | null
   sent: number
+  first: number
   limit: number
 }
 
@@ -232,13 +236,16 @@ function newTake(gen: number): Take {
     refPlaying: false,
     stream: null,
     sent: 0,
+    first: -1,
     limit: 0,
   }
 }
 
 function pump(t: Take, r: Rig, to: number): void {
   if (!t.stream || to <= t.sent) return
-  t.stream.push(ringSlice(r.ring, t.sent, to))
+  const samples = ringSlice(r.ring, t.sent, to)
+  if (t.first < 0 && samples.length > 0) t.first = to - samples.length
+  t.stream.push(samples)
   t.sent = to
 }
 
@@ -362,6 +369,7 @@ export function useRecorder(): RecorderApi {
       const next: RecordedClip = {
         durationSec: pcmDuration(frames, rate),
         sampleRate: rate,
+        hidden: Math.max(0, (t.startFrame - t.first) / rate),
         finish: stream.finish,
       }
       clipRef.current = next
@@ -479,11 +487,17 @@ export function useRecorder(): RecorderApi {
     [hushCue, setError, setPhase, teardownRig]
   )
 
+  const live = useCallback((): boolean => {
+    if (phaseRef.current === 'recording') return true
+    const t = takeRef.current
+    return phaseRef.current === 'countin' && !!t && t.startFrame > 0 && performance.now() >= t.startAtMs
+  }, [])
+
   const stop = useCallback(() => {
     const t = takeRef.current
     const r = rigRef.current
     if (t?.awaitingFlush) return
-    if (!t || !r || r.disposed || phaseRef.current !== 'recording') {
+    if (!t || !r || r.disposed || !live()) {
       cancel()
       return
     }
@@ -491,7 +505,7 @@ export function useRecorder(): RecorderApi {
     t.awaitingFlush = true
     r.node.port.postMessage({ cmd: 'flush', token: t.gen })
     doneTimer.current = setTimeout(() => finalizeRef.current(t, r), DONE_TIMEOUT_MS)
-  }, [cancel])
+  }, [cancel, live])
 
   const stopRef = useRef(stop)
   stopRef.current = stop
@@ -517,6 +531,26 @@ export function useRecorder(): RecorderApi {
 
       void (async (): Promise<void> => {
         try {
+          if (opts.preroll) {
+            const r = await rigPromise
+            if (t.cancelled || takeRef.current !== t || r.disposed) return
+            const rate = r.ctx.sampleRate
+            const from = Math.round(r.ctx.currentTime * rate)
+            t.sent = from
+            t.stream = openRecStream(opts.cueId, rate, (err) => failStream(t, err))
+            t.refPlaying = true
+            setPhase('countin')
+            const punchMs = await opts.preroll()
+            if (t.cancelled || takeRef.current !== t || r.disposed) return
+            const perfNow = performance.now()
+            const ctxNow = r.ctx.currentTime
+            t.startAtMs = punchMs
+            t.startFrame = Math.round((ctxNow + (punchMs - perfNow) / 1000) * rate)
+            t.limit = maxRecordSeconds(rate) - LIMIT_MARGIN_SECONDS - Math.max(0, t.startFrame - from) / rate
+            if (aliveRef.current) setLimit(t.limit)
+            return
+          }
+
           if (opts.autoReference && opts.referenceUrl) {
             t.refPlaying = true
             await transport.playClip({
@@ -580,6 +614,7 @@ export function useRecorder(): RecorderApi {
         } catch (err) {
           if (t.cancelled || takeRef.current !== t) return
           takeRef.current = null
+          t.stream?.abort()
           hushReference(t)
           hushCue()
           teardownRig()
@@ -656,6 +691,7 @@ export function useRecorder(): RecorderApi {
     start,
     stop,
     cancel,
+    live,
     discardClip,
     clearError,
   }

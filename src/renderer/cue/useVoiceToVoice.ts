@@ -19,13 +19,31 @@ interface Options {
   isActiveCue: (cueId: string) => boolean
   noVoiceReason: string
   selection: () => ClipSelection | null
-  onPlace: (cueId: string, take: Take, replaceClipId?: string) => Promise<void>
+  playhead: () => number
+  targetTrack: () => string | undefined
+  preroll: (at: number, lead: number, onInterrupt: () => void) => Promise<number>
+  onPlace: (
+    cueId: string,
+    take: Take,
+    replaceClipId?: string,
+    drop?: undefined,
+    punch?: PunchPlacement
+  ) => Promise<void>
 }
+
+export interface PunchPlacement {
+  at: number
+  hidden: number
+  trackId?: string
+}
+
+export const PUNCH_PREROLL_SECONDS = 5
 
 export interface VoiceToVoice {
   rec: RecorderApi
   converting: boolean
   toggleRec: () => void
+  punch: () => void
   guard: (proceed: () => void) => boolean
   reconvert: (take: Take) => void
   onEscape: () => boolean
@@ -41,6 +59,9 @@ export function useVoiceToVoice({
   isActiveCue,
   noVoiceReason,
   selection,
+  playhead,
+  targetTrack,
+  preroll,
   onPlace,
 }: Options): VoiceToVoice {
   const rec = useRecorder()
@@ -52,12 +73,15 @@ export function useVoiceToVoice({
   const preRef = useRef(false)
   const preGen = useRef(0)
   const targetRef = useRef<string | null>(null)
+  const punchRef = useRef<number | null>(null)
+  const punchTrackRef = useRef<string | undefined>(undefined)
   const savingRef = useRef(false)
   const savedClipRef = useRef<RecordedClip | null>(null)
 
   const cancelPre = useCallback((): void => {
     preGen.current++
     targetRef.current = null
+    punchRef.current = null
     if (!preRef.current) return
     preRef.current = false
     transport.stop()
@@ -78,6 +102,7 @@ export function useVoiceToVoice({
   }, [recError, clearRecError, onStatus])
 
   const startRec = useCallback(() => {
+    punchRef.current = null
     const sel = selection()
     if (!sel) {
       targetRef.current = null
@@ -125,7 +150,7 @@ export function useVoiceToVoice({
       setSaving(true)
       useJobsStore.getState().beginSave()
       try {
-        const take = await clip.finish(!!target)
+        const take = await clip.finish(!!target || punchRef.current !== null)
         targetRef.current = null
         rec.cancel()
         onTakeAdded(cueId, take, true)
@@ -149,14 +174,18 @@ export function useVoiceToVoice({
     if (recPhase !== 'preview' || !hasClip || savingRef.current) return
     const cueId = cue.id
     const target = targetRef.current
+    const at = punchRef.current
+    const trackId = punchTrackRef.current
+    const punch = at === null ? undefined : { at, hidden: rec.clip?.hidden ?? 0, ...(trackId ? { trackId } : {}) }
     void saveClip(target).then((take) => {
+      punchRef.current = null
       if (!take) return
-      onPlace(cueId, take, target ?? undefined).then(
+      onPlace(cueId, take, target ?? undefined, undefined, punch).then(
         () => onStatus('ok', 'Recording placed'),
         (e: unknown) => onStatus('err', String(e))
       )
     })
-  }, [recPhase, hasClip, cue.id, saveClip, onPlace, onStatus])
+  }, [recPhase, hasClip, cue.id, saveClip, onPlace, onStatus, rec.clip])
 
   const submitSts = useCallback(
     (cueId: string, sourceTakeId: string, voiceSettings: VoiceSettings, fragment: boolean) => {
@@ -214,21 +243,38 @@ export function useVoiceToVoice({
         return
       case 'arming':
       case 'countin':
-        rec.cancel()
-        return
       case 'recording':
         rec.stop()
         return
     }
   }, [converting, rec, startRec, cancelPre])
 
+  const punch = useCallback(() => {
+    if (converting || preRef.current || rec.phase !== 'idle') return
+    const at = Math.max(0, playhead())
+    targetRef.current = null
+    punchRef.current = at
+    punchTrackRef.current = targetTrack()
+    rec.start({
+      cueId: cue.id,
+      device: appSettings.micDeviceLabel ?? appSettings.micDeviceId,
+      countIn: false,
+      autoReference: false,
+      preroll: () =>
+        preroll(at, Math.min(PUNCH_PREROLL_SECONDS, at), () => {
+          if (punchRef.current === at) rec.cancel()
+        }),
+    })
+  }, [converting, rec, playhead, targetTrack, preroll, cue.id, appSettings])
+
   const recStop = rec.stop
+  const recLive = rec.live
   const onEscape = useCallback((): boolean => {
     if (preRef.current) {
       cancelPre()
       return true
     }
-    if (recPhase === 'recording') {
+    if (recLive()) {
       recStop()
       return true
     }
@@ -238,7 +284,7 @@ export function useVoiceToVoice({
       return true
     }
     return false
-  }, [recPhase, recCancel, recStop, cancelPre])
+  }, [recPhase, recCancel, recStop, recLive, cancelPre])
 
   const reconvert = useCallback(
     (take: Take) => {
@@ -258,6 +304,7 @@ export function useVoiceToVoice({
     rec,
     converting,
     toggleRec,
+    punch,
     guard,
     reconvert,
     onEscape,

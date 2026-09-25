@@ -47,6 +47,7 @@ let meter: AnalyserNode | null = null
 let meterFrame: Float32Array<ArrayBuffer> | null = null
 let monitorGain = 1
 let looping = false
+let stops = 0
 let sinkId = ''
 
 export interface SinkTarget {
@@ -208,6 +209,7 @@ interface CompState {
   at: number
   startPos: number
   bus: Bus | null
+  once?: boolean
 }
 
 type Mode = 'idle' | 'clip' | 'comp'
@@ -546,11 +548,12 @@ function compUrls(resolved: ResolvedComp): string[] {
 
 export async function playComp(
   resolved: ResolvedComp,
-  opts: { id?: string; seek?: number } = {}
+  opts: { id?: string; seek?: number; once?: boolean; onStart?: () => void } = {}
 ): Promise<void> {
   halt()
   dropComp()
   const g = ++gen
+  const stopped = stops
   const resolvedOriginals = resolved.originals ?? []
   if (resolved.clips.length === 0 && resolvedOriginals.length === 0) return
   const urls = compUrls(resolved)
@@ -573,9 +576,9 @@ export async function playComp(
     console.error(e)
     return
   }
-  if (g !== gen) return
+  if (g !== gen || stopped !== stops) return
   if (!(await pitchReady(sources))) return
-  if (g !== gen) return
+  if (g !== gen || stopped !== stops) return
 
   const clips = sources.map((s) => s.clip)
   const dur = Math.max(compDuration({ clips }), ...originals.map((o) => originalVoiceEnd(o)), 0)
@@ -596,10 +599,18 @@ export async function playComp(
     at: 0,
     startPos: 0,
     bus: null,
+    ...(opts.once ? { once: true } : {}),
   }
   const p = new Promise<void>((res) => waiters.push(res))
   startComp(opts.seek ?? from, true)
+  opts.onStart?.()
   return p
+}
+
+export function timeOf(pos: number): number | null {
+  const s = comp
+  if (!s?.bus || !ctx) return null
+  return performance.now() + (s.at + (pos - s.startPos) - ctx.currentTime) * 1000
 }
 
 export function playRange(clip: Clip, from: number, to: number): Promise<void> {
@@ -614,7 +625,7 @@ export function playRange(clip: Clip, from: number, to: number): Promise<void> {
         },
       ],
     },
-    { id: clip.id, seek: a }
+    { id: clip.id, seek: a, once: true }
   )
 }
 
@@ -658,6 +669,7 @@ export function toggle(): void {
 }
 
 export function stop(): void {
+  stops++
   const a = audible()
   teardown()
   pausedPos = 0
@@ -732,7 +744,7 @@ function tick(): void {
     if (now >= s.at + (stopAt - s.startPos)) {
       teardown()
       pausedPos = stopAt >= s.dur ? s.from : stopAt
-      if (looping) {
+      if (looping && !s.once) {
         startComp(s.from, false)
         return
       }
@@ -757,6 +769,7 @@ export const transport = {
   scrubTo,
   playComp,
   playRange,
+  timeOf,
   subscribe,
   getState,
   currentClipId,
