@@ -182,19 +182,23 @@ export function WorkRoom({
   return (
     <div
       ref={gridRef}
-      className="main work-grid"
+      className={'main work-grid' + (over ? ' drop-over' : '')}
       hidden={hidden}
       style={{ gridTemplateColumns: `${fitted.lines}px 8px minmax(0, 1fr) 8px ${fitted.props}px` }}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes('Files')) return
         e.preventDefault()
         e.dataTransfer.dropEffect = 'copy'
+        setOver(true)
       }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false)
+      }}
+      onDropCapture={() => setOver(false)}
       onDrop={(e) => {
         const files = [...e.dataTransfer.files]
         if (files.length === 0) return
         e.preventDefault()
-        setOver(false)
         onDropFiles(files)
       }}
     >
@@ -266,8 +270,6 @@ export function WorkRoom({
                 <button
                   className={'drop' + (over ? ' over' : '')}
                   onClick={onPickAudio}
-                  onDragEnter={() => setOver(true)}
-                  onDragLeave={() => setOver(false)}
                 >
                   Drop audio
                 </button>
