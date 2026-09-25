@@ -83,3 +83,7 @@ export function isInsideDir(file: string, dir: string): boolean {
   const root = normalizePath(dir)
   return root.length > 0 && target.startsWith(root + '/') && !target.split('/').includes('..')
 }
+
+export function isSafeId(id: unknown): id is string {
+  return typeof id === 'string' && isSafeFileName(id) && !id.includes('..')
+}

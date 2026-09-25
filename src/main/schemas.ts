@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { isProjectDirIn, isValidProjectName } from '@shared/project-summary'
+import { isProjectDirIn, isSafeId, isValidProjectName } from '@shared/project-summary'
 import { CREATE_LINES_MAX, LINE_TEXT_MAX } from '@shared/lines'
 import {
   DUCK_MAX_DB,
@@ -26,6 +26,8 @@ import {
 } from '@shared/effects'
 
 export const finite = z.number().finite()
+
+const safeId = z.string().min(1).max(200).refine(isSafeId, { message: 'Invalid id' })
 
 export const projectDirSchema = (root: string) =>
   z
@@ -282,7 +284,7 @@ export function autoSelectsOutput(
 
 const takeSchema = z
   .object({
-    id: z.string().min(1).max(200),
+    id: safeId,
     kind: z.enum(['tts', 'sts', 'recording', 'imported', 'composite']),
     createdAt: z.string(),
     file: audioRefSchema,
@@ -307,7 +309,7 @@ const takeSchema = z
 
 export const cueSchema = z
   .object({
-    id: z.string().min(1).max(200),
+    id: safeId,
     characterId: z.string().max(200),
     key: z.string().max(4096),
     fields: z.record(z.string()),
@@ -362,7 +364,7 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('cue.create'),
     afterCueId: z.string().min(1).max(200).nullable(),
     lines: z
-      .array(z.object({ id: z.string().min(1).max(200), text: z.string().max(LINE_TEXT_MAX) }))
+      .array(z.object({ id: safeId, text: z.string().max(LINE_TEXT_MAX) }))
       .min(1)
       .max(CREATE_LINES_MAX),
   }),

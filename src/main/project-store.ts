@@ -17,7 +17,7 @@ import {
   type UiSessionState,
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
-import { PROJECT_SUFFIX, summarizeProject, type ProjectStats, type ProjectSummary } from '@shared/project-summary'
+import { isInsideDir, PROJECT_SUFFIX, summarizeProject, type ProjectStats, type ProjectSummary } from '@shared/project-summary'
 import { projectFileSchema } from './schemas'
 
 let current: Project | null = null
@@ -281,6 +281,16 @@ export async function ensureVersion(previous: ProjectVersion[]): Promise<Project
   return saveVersion(previous)
 }
 
+export function audioFilePath(root: string, kind: 'takes' | 'stems', cueId: string, fileName: string): string {
+  const base = path.resolve(root, 'audio', kind)
+  const dir = path.resolve(base, cueId)
+  const abs = path.resolve(dir, fileName)
+  if (path.dirname(dir) !== base || path.dirname(abs) !== dir || !isInsideDir(abs, base)) {
+    throw new Error('Audio path is outside the project')
+  }
+  return abs
+}
+
 export type AudioWriter = Buffer | ((abs: string) => Promise<void>)
 
 async function writeAudioFile(
@@ -291,9 +301,8 @@ async function writeAudioFile(
   data: AudioWriter
 ): Promise<string> {
   if (!root) throw new Error('No project is open')
-  const dir = path.join(root, 'audio', kind, cueId)
-  await fs.mkdir(dir, { recursive: true })
-  const abs = path.join(dir, fileName)
+  const abs = audioFilePath(root, kind, cueId, fileName)
+  await fs.mkdir(path.dirname(abs), { recursive: true })
   try {
     if (typeof data === 'function') await data(abs)
     else await fs.writeFile(abs, data)
