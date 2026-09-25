@@ -444,6 +444,13 @@
   color: var(--tx3);
   pointer-events: none;
 }
+.gen .ai-tog {
+  justify-self: start;
+  gap: 6px;
+}
+.gen .ai-tog.on .caret {
+  transform: rotate(180deg);
+}
 .gen .split {
   display: flex;
   width: 100%;
@@ -1196,6 +1203,9 @@ input.tl-name:focus {
   min-height: 0;
   display: grid;
   grid-template-rows: 1fr 1fr auto;
+}
+.ed-script:not(:has(> .blk.o)) {
+  grid-template-rows: 1fr auto;
 }
 
 .tl-grid {
@@ -1977,4 +1987,7 @@ input.tl-name:focus {
 .rec-clip {
   font: 600 10px var(--mono);
   color: var(--err);
+}
+.work-grid.drop-over {
+  box-shadow: inset 0 0 0 2px var(--ac);
 }
