@@ -362,8 +362,11 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
     afterCueId: z.string().min(1).max(200).nullable(),
     lines: z.array(z.object({ id: z.string().min(1).max(200), text: z.string().max(5000) })).min(1).max(1000),
   }),
-  cueId.extend({ type: z.literal('cue.delete') }),
-  z.object({ type: z.literal('cue.restore'), cue: cueSchema, index: z.number().int().min(0).max(10_000_000) }),
+  z.object({ type: z.literal('cue.delete'), cueIds: z.array(z.string().min(1).max(200)).min(1).max(100_000) }),
+  z.object({
+    type: z.literal('cue.restore'),
+    cues: z.array(z.object({ cue: cueSchema, index: z.number().int().min(0).max(10_000_000) })).min(1).max(100_000),
+  }),
   cueId.extend({ type: z.literal('cue.useTakeAsOriginal'), takeId: z.string().min(1).max(200) }),
   cueId.extend({
     type: z.literal('cue.restoreOriginal'),

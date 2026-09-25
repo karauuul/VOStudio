@@ -245,27 +245,35 @@ describe('cue.delete and cue.restore', () => {
   it('deletes a line and restores the exact cue at its old index', () => {
     const p = project([cue('a'), full(), cue('b')])
     const saved = structuredClone(p.cues[1])
-    const changes = applyProjectCommand(p, { type: 'cue.delete', cueId: 'full' })
-    expect(changes).toEqual({ removedCueIds: ['full'] })
+    const changes = applyProjectCommand(p, { type: 'cue.delete', cueIds: ['full'] })
+    expect(changes).toEqual({ removedCueIds: ['full'], removedCues: [{ cue: saved, index: 1 }] })
     expect(ids(p)).toEqual(['a', 'b'])
-    run(p, { type: 'cue.restore', cue: saved, index: 1 })
+    run(p, { type: 'cue.restore', cues: changes.removedCues! })
     expect(p.cues).toEqual([cue('a'), saved, cue('b')])
   })
 
-  it('mirrors a delete in the renderer', () => {
-    const p = project()
-    const changes = applyProjectCommand(p, projectCommandSchema.parse({ type: 'cue.delete', cueId: 'a' }) as ProjectCommand)
-    expect(applyChangeSet(project(), changes).cues).toEqual(p.cues)
+  it('deletes and restores several lines in one step, in their old places', () => {
+    const p = project([cue('a'), cue('b'), cue('c'), cue('d'), cue('e')])
+    const before = structuredClone(p.cues)
+    const changes = applyProjectCommand(p, projectCommandSchema.parse({ type: 'cue.delete', cueIds: ['d', 'b'] }) as ProjectCommand)
+    expect(applyChangeSet(project(structuredClone(before)), changes).cues).toEqual(p.cues)
+    expect(ids(p)).toEqual(['a', 'c', 'e'])
+    run(p, { type: 'cue.restore', cues: changes.removedCues! })
+    expect(p.cues).toEqual(before)
   })
 
-  it('refuses to delete a line whose source is used on another line, and to restore a live id', () => {
+  it('changes nothing when any line of a batch cannot be deleted or restored', () => {
     const owner = cue('a', { takes: [take('t', { pinned: true })] })
     const user = cue('b', { comp: { clips: [{ id: 'c', sourceTakeId: 't', srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits() }] } })
-    const p = project([owner, user])
-    expect(() => applyProjectCommand(p, { type: 'cue.delete', cueId: 'a' })).toThrow('used on another line')
-    expect(ids(p)).toEqual(['a', 'b'])
-    expect(() => applyProjectCommand(p, { type: 'cue.restore', cue: cue('a'), index: 0 })).toThrow()
-    expect(() => applyProjectCommand(p, { type: 'cue.delete', cueId: 'zz' })).toThrow('Cue not found')
+    const p = project([owner, user, cue('c')])
+    const before = structuredClone(p)
+    expect(() => applyProjectCommand(p, { type: 'cue.delete', cueIds: ['c', 'a'] })).toThrow('used on another line')
+    expect(() => applyProjectCommand(p, { type: 'cue.delete', cueIds: ['c', 'zz'] })).toThrow('Cue not found')
+    expect(() => applyProjectCommand(p, { type: 'cue.delete', cueIds: ['c', 'c'] })).toThrow()
+    expect(() => applyProjectCommand(p, { type: 'cue.restore', cues: [{ cue: cue('n'), index: 0 }, { cue: cue('a'), index: 1 }] })).toThrow()
+    expect(p).toEqual(before)
+    applyProjectCommand(p, { type: 'cue.delete', cueIds: ['a', 'b'] })
+    expect(ids(p)).toEqual(['c'])
   })
 })
 
@@ -375,16 +383,16 @@ describe('restore stays inside the open project', () => {
       referenceAudio: { fileId: 'r', relPath: '/p/r.wav', format: 'wav' },
       stems: [{ id: 's', name: 'Voice', file: { fileId: 's', relPath: '/p/s.wav', format: 'wav' }, exportMode: 'off' }],
     })
-    expect(commandAudioPaths({ type: 'cue.restore', cue: restored, index: 0 })).toEqual(['/p/t1.wav', '/p/t2.wav', '/p/r.wav', '/p/s.wav'])
+    expect(commandAudioPaths({ type: 'cue.restore', cues: [{ cue: restored, index: 0 }] })).toEqual(['/p/t1.wav', '/p/t2.wav', '/p/r.wav', '/p/s.wav'])
     expect(commandAudioPaths({ type: 'cue.restoreOriginal', cueId: 'a', referenceAudio: restored.referenceAudio!, referenceDuration: 1 })).toEqual(['/p/r.wav'])
     expect(commandAudioPaths({ type: 'cue.restoreOriginal', cueId: 'a', referenceAudio: null, referenceDuration: null })).toEqual([])
-    expect(commandAudioPaths({ type: 'cue.delete', cueId: 'a' })).toEqual([])
+    expect(commandAudioPaths({ type: 'cue.delete', cueIds: ['a'] })).toEqual([])
   })
 })
 
 describe('trusted audio roots for restoring', () => {
   const roots = ['/root/P.vostudio', '/data/reference', '/data/generated']
-  const restore = (over: Partial<Cue>): ProjectCommand => ({ type: 'cue.restore', cue: cue('a', over), index: 0 })
+  const restore = (over: Partial<Cue>): ProjectCommand => ({ type: 'cue.restore', cues: [{ cue: cue('a', over), index: 0 }] })
 
   it('accepts a line whose original lives under the reference root and takes under project or generated roots', () => {
     expect(
@@ -403,6 +411,6 @@ describe('trusted audio roots for restoring', () => {
     expect(audioWithinRoots(restore({ referenceAudio: { fileId: 'r', relPath: '/elsewhere/r.wav', format: 'wav' } }), roots)).toBe(false)
     expect(audioWithinRoots(restore({ takes: [take('t', { file: { fileId: 't', relPath: '/root/Other.vostudio/t.wav', format: 'wav' } })] }), roots)).toBe(false)
     expect(audioWithinRoots(restore({ referenceAudio: { fileId: 'r', relPath: '/data/reference/r.wav', format: 'wav' } }), ['/root/P.vostudio'])).toBe(false)
-    expect(audioWithinRoots({ type: 'cue.delete', cueId: 'a' }, [])).toBe(true)
+    expect(audioWithinRoots({ type: 'cue.delete', cueIds: ['a'] }, [])).toBe(true)
   })
 })

@@ -9,7 +9,7 @@ import {
 } from 'react'
 import type { Cue, Project, UiSessionState } from '@shared/domain'
 import type { TakeDurationUpdate } from '@shared/ipc'
-import { applyChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
+import { applyChangeSet, type ChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
 import { api } from './api'
 import { durationQueue } from './audio/duration-backfill'
 import { playback } from './playback'
@@ -46,7 +46,7 @@ export interface ProjectSession {
   projectRef: MutableRefObject<Project | null>
   setProject: Dispatch<SetStateAction<Project | null>>
   mutateCue: (cueId: string, fn: (c: Cue) => Cue) => void
-  dispatch: (command: ProjectCommand) => Promise<void>
+  dispatch: (command: ProjectCommand, replay?: boolean) => Promise<ChangeSet>
   enter: (snapshot: ProjectSnapshot) => void
   close: () => Promise<boolean>
   onText: (cueId: string, text: string) => void
@@ -60,6 +60,7 @@ export interface ProjectSession {
 export function useProjectSession(o: {
   onStatus: (kind: StatusKind, text: string) => void
   onBootstrap: (project: Project) => void
+  onEdit: () => void
 }): ProjectSession {
   const [project, setProject] = useState<Project | null>(null)
   const projectRef = useRef<Project | null>(null)
@@ -76,12 +77,16 @@ export function useProjectSession(o: {
   statusRef.current = o.onStatus
   const bootstrapRef = useRef(o.onBootstrap)
   bootstrapRef.current = o.onBootstrap
+  const editRef = useRef(o.onEdit)
+  editRef.current = o.onEdit
 
-  const dispatch = useCallback(async (command: ProjectCommand) => {
+  const dispatch = useCallback(async (command: ProjectCommand, replay = false): Promise<ChangeSet> => {
     const result = await api['project:command'](command)
-    if (result.revision <= revisionRef.current) return
+    if (!replay) editRef.current()
+    if (result.revision <= revisionRef.current) return result.changes
     revisionRef.current = result.revision
     setProject((current) => (current ? applyChangeSet(current, result.changes) : current))
+    return result.changes
   }, [])
 
   const enter = useCallback((snapshot: ProjectSnapshot) => {
@@ -94,6 +99,7 @@ export function useProjectSession(o: {
   useEffect(
     () =>
       api.on('project:changed', (result) => {
+        editRef.current()
         if (result.revision <= revisionRef.current) return
         revisionRef.current = result.revision
         setProject((current) => (current ? applyChangeSet(current, result.changes) : current))
