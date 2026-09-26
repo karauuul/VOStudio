@@ -1,3 +1,4 @@
+import { sanitizeRevision } from './approval'
 import type { Character, Cue } from './domain'
 import { outputStateKey, type ChangeSet, type FieldStep, type OriginalState, type OutputState, type PlacedCue, type ProjectCommand } from './project-commands'
 
@@ -19,7 +20,7 @@ export type LineChange =
       focus: string
     }
   | { kind: 'original'; cueId: string; takeId: string; before: OriginalState; after: OutputState }
-  | { kind: 'done'; cueId: string; before: OutputState; after: OutputState }
+  | { kind: 'done'; cueId: string; textRevision: number; before: OutputState; after: OutputState }
 
 export type LineEdit = LineChange & { at: number }
 
@@ -53,7 +54,8 @@ export function outputStateIn(changes: ChangeSet, cueId: string): OutputState {
 export function doneChange(before: Cue, changes: ChangeSet): LineChange | null {
   const from = outputStateOf(before)
   const to = outputStateIn(changes, before.id)
-  return outputStateKey(from) === outputStateKey(to) ? null : { kind: 'done', cueId: before.id, before: from, after: to }
+  if (outputStateKey(from) === outputStateKey(to)) return null
+  return { kind: 'done', cueId: before.id, textRevision: sanitizeRevision(before.textRevision), before: from, after: to }
 }
 
 export function recordLineEdit(history: LineHistory, change: LineChange, at: number): void {
@@ -70,7 +72,7 @@ export function removesLines(edit: LineEdit, dir: StepDir): boolean {
 export function lineStepCommand(edit: LineEdit, dir: StepDir): ProjectCommand {
   if (edit.kind === 'done') {
     const [from, to] = dir === 'undo' ? [edit.after, edit.before] : [edit.before, edit.after]
-    return { type: 'cue.restoreOutput', cueId: edit.cueId, whenState: from, ...to }
+    return { type: 'cue.restoreOutput', cueId: edit.cueId, whenState: from, whenTextRevision: edit.textRevision, ...to }
   }
   if (edit.kind === 'original') {
     return dir === 'undo'

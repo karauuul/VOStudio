@@ -1468,12 +1468,14 @@ export default function App() {
     [visible, activeIndex, selectCue]
   )
 
+  const doneInFlight = useRef(new Set<string>())
   const setDone = useCallback(
     async (cueId: string, done: boolean): Promise<boolean> => {
       const p = projectRef.current ?? undefined
       const cue = p?.cues.find((c) => c.id === cueId)
-      if (!cue) return false
+      if (!cue || doneInFlight.current.has(cueId)) return false
       if (isDone(cue, p) === done) return true
+      doneInFlight.current.add(cueId)
       try {
         const change = doneChange(cue, await execute({ type: 'cue.approve', cueId, approved: done }))
         if (change) pushLineEdit(change)
@@ -1481,6 +1483,8 @@ export default function App() {
       } catch (e) {
         pushStatus('err', String(e))
         return false
+      } finally {
+        doneInFlight.current.delete(cueId)
       }
     },
     [projectRef, execute, pushLineEdit, pushStatus]

@@ -1,4 +1,4 @@
-import { approveCue, changeCompOutput, changeCueSourceText, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval, sanitizeApproval, sanitizeCueOutput, setExcluded } from './approval'
+import { approveCue, sanitizeRevision, changeCompOutput, changeCueSourceText, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval, sanitizeApproval, sanitizeCueOutput, setExcluded } from './approval'
 import { compProblem, normalizeComp } from './comp'
 import { sanitizeEffects } from './effects'
 import {
@@ -65,7 +65,7 @@ export type ProjectCommand =
     }
   | { type: 'cue.useTakeAsOriginal'; cueId: string; takeId: string }
   | ({ type: 'cue.restoreOriginal'; cueId: string; whenState: OutputState } & OriginalState)
-  | ({ type: 'cue.restoreOutput'; cueId: string; whenState: OutputState } & OutputState)
+  | ({ type: 'cue.restoreOutput'; cueId: string; whenState: OutputState; whenTextRevision: number } & OutputState)
   | { type: 'character.setVoiceSettings'; characterId: string; settings: VoiceSettings }
   | { type: 'character.create'; id: string; name: string }
   | { type: 'character.rename'; characterId: string; name: string }
@@ -541,6 +541,7 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
       break
     }
     case 'cue.restoreOutput':
+      if (sanitizeRevision(cue.textRevision) !== command.whenTextRevision) break
       if (outputStateKey(cue) === outputStateKey(command.whenState)) restoreOutputState(cue, command)
       break
     case 'cue.setCharacter': {

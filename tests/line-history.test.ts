@@ -214,6 +214,18 @@ describe('undoing Done', () => {
     expect(approvalState(p.cues[0], p)).toBe('stale')
   })
 
+  it('refuses to bring back an approval for text edited after the step', async () => {
+    const p = project([voiced()])
+    applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'earlier' })
+    const s = session(p)
+    toggled(p, s, false)
+    applyProjectCommand(p, { type: 'cue.saveText', cueId: 'a', text: 'edited' })
+    const current = structuredClone(p.cues[0])
+    await s.step('undo')
+    expect(p.cues[0]).toEqual(current)
+    expect(isDone(p.cues[0], p)).toBe(false)
+  })
+
   it('records nothing when the toggle changed nothing', () => {
     const p = project([voiced()])
     const before = structuredClone(p.cues[0])
