@@ -122,7 +122,7 @@ export function OutputPanel({ project, outDir, last, onSettings, onTemplate, onP
         </select>
       </div>
 
-      {project.sources?.some((s) => s.kind === 'video') && (
+      {(project.sources ?? []).length > 0 && (
         <>
           <div className="exp-sec">Video</div>
 
