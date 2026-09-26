@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, type MutableRefObject } from 'react'
 import { resolveVoiceSettings, type Character, type Cue, type Take } from '@shared/domain'
 import type { GenTarget } from '@shared/generation'
 import type { AppSettings } from '@shared/ipc'
-import { useVoiceToVoice, type PunchPlacement } from '../cue/useVoiceToVoice'
+import { useVoiceToVoice, type RecordPlacement } from '../cue/useVoiceToVoice'
 import { useWire } from '../cue/useWire'
 import { TextPanel, type TextPanelProps } from './TextPanel'
 import type { ClipSelection, CompApi } from './TimelinePanel'
@@ -20,7 +20,7 @@ export interface CueTextProps {
     take: Take,
     replaceClipId?: string,
     drop?: undefined,
-    punch?: PunchPlacement
+    placement?: RecordPlacement
   ) => Promise<void>
   recRef: MutableRefObject<(() => void) | null>
   punchRef: MutableRefObject<(() => void) | null>
@@ -33,6 +33,7 @@ export interface CueTextProps {
   onStatus: (kind: 'ok' | 'err' | 'info', text: string) => void
   isActiveCue: (cueId: string) => boolean
   hasKey: boolean
+  keepMicWarm: boolean
   text: TextPanelProps
 }
 
@@ -55,6 +56,7 @@ export function CueText({
   onStatus,
   isActiveCue,
   hasKey,
+  keepMicWarm,
   text,
 }: CueTextProps) {
   const textRef = useRef<HTMLTextAreaElement>(null)
@@ -81,6 +83,7 @@ export function CueText({
       compRef.current?.preroll(at, lead, onInterrupt) ?? Promise.resolve({ at: performance.now(), played: false }),
     [compRef]
   )
+  const punchMark = useCallback((at: number | null) => compRef.current?.punchMark(at), [compRef])
 
   const v2v = useVoiceToVoice({
     cue,
@@ -95,6 +98,8 @@ export function CueText({
     playhead,
     targetTrack,
     preroll,
+    punchMark,
+    keepMicWarm,
     onPlace,
   })
 
@@ -125,6 +130,7 @@ export function CueText({
       onHoverGenerate={(on) => compRef.current?.ghost(on ? { generate: true } : null)}
       onRecord={v2v.toggleRec}
       recording={v2v.rec.phase !== 'idle'}
+      arming={v2v.rec.phase === 'arming'}
       recordDisabled={v2v.converting}
       recMeter={
         v2v.rec.phase === 'recording'

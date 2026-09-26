@@ -12,10 +12,44 @@ import {
   TRACK_GAIN_MIN_DB,
 } from '@shared/domain'
 import {
+  COMPRESSOR_ATTACK_MAX,
+  COMPRESSOR_ATTACK_MIN,
+  COMPRESSOR_KNEE_MAX,
+  COMPRESSOR_KNEE_MIN,
+  COMPRESSOR_MAKEUP_MAX,
+  COMPRESSOR_MAKEUP_MIN,
+  COMPRESSOR_RATIO_MAX,
+  COMPRESSOR_RATIO_MIN,
+  COMPRESSOR_RELEASE_MAX,
+  COMPRESSOR_RELEASE_MIN,
+  COMPRESSOR_THRESHOLD_MAX,
+  COMPRESSOR_THRESHOLD_MIN,
   DELAY_FEEDBACK_MAX,
   DELAY_FEEDBACK_MIN,
   DELAY_TIME_MAX,
   DELAY_TIME_MIN,
+  EQ_GAIN_MAX,
+  EQ_GAIN_MIN,
+  EQ_HIGH_FREQ_MAX,
+  EQ_HIGH_FREQ_MIN,
+  EQ_LOW_FREQ_MAX,
+  EQ_LOW_FREQ_MIN,
+  EQ_MID_FREQ_MAX,
+  EQ_MID_FREQ_MIN,
+  EQ_Q_MAX,
+  EQ_Q_MIN,
+  GATE_ATTACK_MAX,
+  GATE_ATTACK_MIN,
+  GATE_HOLD_MAX,
+  GATE_HOLD_MIN,
+  GATE_RANGE_MAX,
+  GATE_RANGE_MIN,
+  GATE_RELEASE_MAX,
+  GATE_RELEASE_MIN,
+  GATE_THRESHOLD_MAX,
+  GATE_THRESHOLD_MIN,
+  HIGHPASS_FREQ_MAX,
+  HIGHPASS_FREQ_MIN,
   MIX_MAX,
   MIX_MIN,
   PITCH_SEMITONES_MAX,
@@ -157,10 +191,49 @@ const pitchSchema = z.object({
   enabled: bypass,
 })
 
+const gateSchema = z.object({
+  threshold: finite.min(GATE_THRESHOLD_MIN).max(GATE_THRESHOLD_MAX),
+  attack: finite.min(GATE_ATTACK_MIN).max(GATE_ATTACK_MAX),
+  hold: finite.min(GATE_HOLD_MIN).max(GATE_HOLD_MAX),
+  release: finite.min(GATE_RELEASE_MIN).max(GATE_RELEASE_MAX),
+  range: finite.min(GATE_RANGE_MIN).max(GATE_RANGE_MAX),
+  enabled: bypass,
+})
+
+const highpassSchema = z.object({
+  frequency: finite.min(HIGHPASS_FREQ_MIN).max(HIGHPASS_FREQ_MAX),
+  enabled: bypass,
+})
+
+const eqSchema = z.object({
+  lowFreq: finite.min(EQ_LOW_FREQ_MIN).max(EQ_LOW_FREQ_MAX),
+  lowGain: finite.min(EQ_GAIN_MIN).max(EQ_GAIN_MAX),
+  midFreq: finite.min(EQ_MID_FREQ_MIN).max(EQ_MID_FREQ_MAX),
+  midGain: finite.min(EQ_GAIN_MIN).max(EQ_GAIN_MAX),
+  midQ: finite.min(EQ_Q_MIN).max(EQ_Q_MAX),
+  highFreq: finite.min(EQ_HIGH_FREQ_MIN).max(EQ_HIGH_FREQ_MAX),
+  highGain: finite.min(EQ_GAIN_MIN).max(EQ_GAIN_MAX),
+  enabled: bypass,
+})
+
+const compressorSchema = z.object({
+  threshold: finite.min(COMPRESSOR_THRESHOLD_MIN).max(COMPRESSOR_THRESHOLD_MAX),
+  ratio: finite.min(COMPRESSOR_RATIO_MIN).max(COMPRESSOR_RATIO_MAX),
+  attack: finite.min(COMPRESSOR_ATTACK_MIN).max(COMPRESSOR_ATTACK_MAX),
+  release: finite.min(COMPRESSOR_RELEASE_MIN).max(COMPRESSOR_RELEASE_MAX),
+  knee: finite.min(COMPRESSOR_KNEE_MIN).max(COMPRESSOR_KNEE_MAX),
+  makeup: finite.min(COMPRESSOR_MAKEUP_MIN).max(COMPRESSOR_MAKEUP_MAX),
+  enabled: bypass,
+})
+
 export const clipEffectsSchema = z.object({
   reverb: reverbSchema.optional(),
   delay: delaySchema.optional(),
   pitch: pitchSchema.optional(),
+  gate: gateSchema.optional(),
+  highpass: highpassSchema.optional(),
+  eq: eqSchema.optional(),
+  compressor: compressorSchema.optional(),
 })
 
 export const clipEditsSchema = z.object({

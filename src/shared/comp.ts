@@ -11,7 +11,7 @@ import {
   type CueComp,
   type Take,
 } from './domain'
-import { effectOn, effectsTail, pitchActive, sanitizeEffects } from './effects'
+import { effectOn, effectsTail, sanitizeEffects, usesWorklets } from './effects'
 
 export const COMP_EPS = 1e-6
 
@@ -104,8 +104,14 @@ export function compHasReverb(clips: readonly CompClip[], tracks?: readonly Comp
   )
 }
 
-export function compHasPitch(clips: readonly CompClip[]): boolean {
-  return clips.some((c) => pitchActive(c.edits.effects?.pitch))
+export function compUsesWorklets(
+  clips: readonly CompClip[],
+  tracks?: readonly CompTrack[]
+): boolean {
+  return (
+    clips.some((c) => usesWorklets(c.edits.effects)) ||
+    (tracks ?? []).some((t) => usesWorklets(t.effects))
+  )
 }
 
 export function withSourceEffects(clip: CompClip, take: Pick<Take, 'edits'>): CompClip {
@@ -397,6 +403,34 @@ function indexOf(comp: CueComp, clipId: string): number {
 export function removeClip(comp: CueComp, clipId: string): CueComp {
   const clips = comp.clips.filter((c) => c.id !== clipId)
   return clips.length === comp.clips.length ? comp : withClips(comp, clips)
+}
+
+export function rippleDelete(comp: CueComp, clipIds: readonly string[]): CueComp {
+  const ids = new Set(clipIds)
+  const gone = comp.clips.filter((c) => ids.has(c.id))
+  if (gone.length === 0) return comp
+  const closed = new Set(
+    gone.flatMap((g) => {
+      const prev = siblings(comp, g.id)?.prev
+      return prev && !ids.has(prev.id) ? [prev.id] : []
+    })
+  )
+  const shift = (c: CompClip): number =>
+    gone.reduce(
+      (sum, g) =>
+        clipTrackId(g) === clipTrackId(c) && clipEnd(g) <= c.start + COMP_EPS
+          ? sum + clipTimelineDuration(g)
+          : sum,
+      0
+    )
+  const clips = comp.clips
+    .filter((c) => !ids.has(c.id))
+    .map((c) => {
+      const d = shift(c)
+      const kept = closed.has(c.id) ? stripCrossfade(c) : c
+      return d > 0 ? { ...kept, start: c.start - d } : kept
+    })
+  return withClips(comp, clips)
 }
 
 export function findInsertSlot(

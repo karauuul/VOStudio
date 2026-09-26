@@ -51,7 +51,7 @@ import type { CompApi, TimelineSelection } from './work/TimelinePanel'
 import type { LibraryPanel } from './work/LibraryPanel'
 import { ProgramPanel, type ProgramApi } from './work/ProgramPanel'
 import { CueText } from './work/CueText'
-import type { PunchPlacement } from './cue/useVoiceToVoice'
+import type { RecordPlacement } from './cue/useVoiceToVoice'
 import { TimelinePanel } from './work/TimelinePanel'
 import { RulesDialog } from './RulesPanel'
 import { ProjectHome } from './ProjectHome'
@@ -74,7 +74,7 @@ import {
 } from '@shared/workspace-source'
 import { hasValidVoicedOutput, isDone } from '@shared/approval'
 import { compDuration, isEmptyComp } from '@shared/comp'
-import { libraryRow, lineLabel, locateText, punchClip, resolveTake, type LibraryRow } from '@shared/library'
+import { libraryRow, lineLabel, locateText, punchClip, recordClip, resolveTake, type LibraryRow } from '@shared/library'
 import type { ChangeSet, ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
 import {
   lineStepCommand,
@@ -730,7 +730,7 @@ export default function App() {
       take: Take | Take[],
       replaceClipId?: string,
       drop?: { trackId: string; at: number },
-      punch?: PunchPlacement
+      placement?: RecordPlacement
     ): Promise<void> => placeQueue(cueId, async () => {
       const takes = Array.isArray(take) ? take : [take]
       const durations: number[] = []
@@ -759,17 +759,20 @@ export default function App() {
           : state.clipId === clipId.comp(cueId)
             ? state.pos
             : 0)
-      if (punch) {
-        const punched = punchClip(comp, {
+      if (placement) {
+        const request = {
           takeId: takes[0].id,
           duration: durations[0],
-          hidden: punch.hidden,
-          at: punch.at,
-          targetTrackId: punch.trackId ?? trackId,
-        })
-        if (!punched) throw new Error('nothing was recorded after the punch point')
-        comp = punched.comp
-        trackId = punched.trackId
+          at: placement.at,
+          targetTrackId: placement.trackId ?? trackId,
+        }
+        const placed =
+          placement.kind === 'punch'
+            ? punchClip(comp, { ...request, hidden: placement.hidden })
+            : recordClip(comp, request)
+        if (!placed) throw new Error('nothing was recorded after the punch point')
+        comp = placed.comp
+        trackId = placed.trackId
       } else {
         takes.forEach((item, i) => {
           const placed = placeTake({
@@ -1528,6 +1531,11 @@ export default function App() {
         }
         compRef.current?.deleteSelected()
       },
+      rippleDelete: () => {
+        const el = document.activeElement
+        if (el instanceof HTMLElement && el.closest('.lines, .panel.lib')) return
+        compRef.current?.deleteSelected(true)
+      },
       nudgeClips: (steps) => compRef.current?.nudge(steps),
       splitClip: () => compRef.current?.split(),
       splitAtPlayhead: () => compRef.current?.splitAtPlayhead(),
@@ -1612,7 +1620,11 @@ export default function App() {
     />
   )
 
-  const shortcutsUi = showShortcuts && <ShortcutsDialog onClose={() => setShowShortcuts(false)} />
+  const lineAi = !project || !activeCue || showsAi(activeCue, project)
+
+  const shortcutsUi = showShortcuts && (
+    <ShortcutsDialog ai={lineAi} onClose={() => setShowShortcuts(false)} />
+  )
 
   const toastUi = status && <StatusToast status={status} onClose={closeStatus} />
 
@@ -1903,7 +1915,7 @@ export default function App() {
       ? { cost: estimateChars(activeCue.text, genTarget, project.pronunciationRules, genModel) }
       : {}),
     ...(usage ? { remaining: usage.remaining } : {}),
-    ai: !activeCue || showsAi(activeCue, project),
+    ai: lineAi,
   }
 
   const cueText: ComponentProps<typeof CueText> | null = activeCue
@@ -1926,6 +1938,7 @@ export default function App() {
         onStatus: pushStatus,
         isActiveCue,
         hasKey,
+        keepMicWarm: route === 'work',
         text,
       }
     : null
@@ -2050,6 +2063,7 @@ export default function App() {
     onShowInLibrary: setSourceTakeId,
     onTakeEffects,
     onMonitor: (tab) => programRef.current?.showTab(tab),
+    ai: lineAi,
   }
 
   const library: ComponentProps<typeof LibraryPanel> = {

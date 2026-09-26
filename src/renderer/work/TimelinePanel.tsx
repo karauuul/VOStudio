@@ -31,6 +31,7 @@ import {
   moveClipTo,
   originalRefRange,
   removeClip,
+  rippleDelete,
   trackIsFree,
   setClipEdits,
   setCrossfade,
@@ -84,7 +85,7 @@ import {
 import { audioUrl } from '../api'
 import { tryResolveComp, type ResolvedOriginal } from '../audio/comp-source'
 import { playBounds } from '@shared/resume'
-import { hasReference } from '@shared/lines'
+import { hasReference, isGeneratedTake } from '@shared/lines'
 import { reportTakeDuration } from '../audio/duration-backfill'
 import { clipId, transport, type TransportState } from '../audio/transport'
 import type { PrerollStart } from '../audio/recorder'
@@ -138,7 +139,7 @@ export interface TimelineSelection {
 }
 
 export interface CompApi {
-  deleteSelected: () => boolean
+  deleteSelected: (ripple?: boolean) => boolean
   selectClip: (clipId: string) => void
   splitAt: (clipId: string, at: number) => void
   muteHovered: () => boolean
@@ -169,6 +170,7 @@ export interface CompApi {
   current: () => CueComp
   splitAtPlayhead: () => void
   ghost: (request: GhostRequest | null) => void
+  punchMark: (at: number | null) => void
 }
 
 export type GhostRequest = { takeId: string; replaceClipId?: string } | { generate: true }
@@ -249,6 +251,7 @@ interface Props {
   onShowInLibrary: (takeId: string) => void
   onTakeEffects: (takeId: string, effects: ClipEffects | undefined) => void
   onMonitor: (tab: 'program' | 'source') => void
+  ai: boolean
 }
 
 export function TimelinePanel({
@@ -275,6 +278,7 @@ export function TimelinePanel({
   onShowInLibrary,
   onTakeEffects,
   onMonitor,
+  ai,
 }: Props) {
   const lanesRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -304,6 +308,7 @@ export function TimelinePanel({
   const [playingId, setPlayingId] = useState<string | null>(null)
   const [cutAt, setCutAt] = useState<number | null>(null)
   const [ghost, setGhost] = useState<GhostRequest | null>(null)
+  const [punchAt, setPunchAt] = useState<number | null>(null)
 
   const cueId = cue?.id ?? ''
   const [shownCue, setShownCue] = useState(cueId)
@@ -319,6 +324,7 @@ export function TimelinePanel({
     setArmSplit(false)
     setCutAt(null)
     setGhost(null)
+    setPunchAt(null)
     setUnits(cue?.region ? 'timecode' : 'seconds')
   }
 
@@ -1173,11 +1179,11 @@ export function TimelinePanel({
         editTrack(t.id, { solo: !t.solo })
         return true
       },
-      deleteSelected: () => {
+      deleteSelected: (ripple = false) => {
         const base = compRefLive.current
         const ids = selRef.current.filter((id) => base.clips.some((c) => c.id === id))
         if (!editable || ids.length === 0) return false
-        commit(ids.reduce(removeClip, base))
+        commit(ripple ? rippleDelete(base, ids) : ids.reduce(removeClip, base))
         setSelected([])
         return true
       },
@@ -1313,6 +1319,7 @@ export function TimelinePanel({
         if (c) splitClip(c.id, at)
       },
       ghost: setGhost,
+      punchMark: setPunchAt,
     }),
     [
       editable,
@@ -1385,6 +1392,7 @@ export function TimelinePanel({
     (c: CompClip): MenuEntry[] => {
       const take = takeOf(c)
       const versions = cue && take ? clipVersions(cue, project, take.id) : []
+      const regenerable = ai && !!take && isGeneratedTake(take)
       const at = posRef.current
       const words = cue ? clipBoundaries(comp, cue, project, c.id) : []
       const free = (t: CompTrack): boolean =>
@@ -1392,11 +1400,15 @@ export function TimelinePanel({
         trackIsFree(comp, t.id, c.start, clipEnd(c), c.id)
       return [
         { label: 'Play clip', hotkey: hotkeyText('playClip'), onClick: () => ops.playClip() },
-        {
-          label: 'Regenerate',
-          hotkey: hotkeyText('generate'),
-          onClick: () => onRegenerateClip(c.id),
-        },
+        ...(regenerable
+          ? [
+              {
+                label: 'Regenerate',
+                hotkey: hotkeyText('generate'),
+                onClick: () => onRegenerateClip(c.id),
+              },
+            ]
+          : []),
         {
           label: 'Version',
           disabled: versions.length === 0,
@@ -1408,14 +1420,18 @@ export function TimelinePanel({
               disabled: v.duration <= 0,
               onClick: () => switchVersion(c, v.takeId, v.duration),
             })),
-            { sep: true } as MenuEntry,
-            { label: 'New from text…', checked: false, onClick: () => onRegenerateClip(c.id) },
+            ...(regenerable
+              ? [
+                  { sep: true } as MenuEntry,
+                  { label: 'New from text…', checked: false, onClick: () => onRegenerateClip(c.id) },
+                ]
+              : []),
           ],
         },
         { sep: true },
         {
           label: 'Split at playhead',
-          hotkey: hotkeyText('splitClip'),
+          hotkey: hotkeyText('splitAtPlayhead'),
           disabled: !(at > c.start + COMP_EPS && at < clipEnd(c) - COMP_EPS),
           onClick: () => splitClip(c.id, at),
         },
@@ -1492,9 +1508,16 @@ export function TimelinePanel({
           danger: true,
           onClick: () => commit(removeClip(comp, c.id)),
         },
+        {
+          label: 'Ripple delete',
+          hotkey: hotkeyText('rippleDelete'),
+          danger: true,
+          onClick: () => commit(rippleDelete(comp, [c.id])),
+        },
       ]
     },
     [
+      ai,
       cue,
       project,
       comp,
@@ -1573,6 +1596,7 @@ export function TimelinePanel({
   const step = tickStep(pxPerSec)
   const rulerTicks = width > 0 ? ticks(view, width) : []
   const xOf = (t: number): number => timeToX(view, t)
+  const punchX = punchAt === null ? null : playheadX(view, punchAt, STRIP, width)
 
   const grid = (
     <div
@@ -1785,6 +1809,7 @@ export function TimelinePanel({
               />
             </>
           )}
+          {punchAt !== null && <b className="tl-mk in punch" style={{ left: xOf(punchAt) }} />}
         </div>
       </div>
 
@@ -2167,6 +2192,9 @@ export function TimelinePanel({
             className="tl-marq"
             style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
           />
+        )}
+        {punchX !== null && (
+          <span className="tl-ph punch" style={{ transform: `translateX(${punchX.toFixed(2)}px)` }} />
         )}
         <span className="tl-ph" ref={headRef} />
       </div>
