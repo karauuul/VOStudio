@@ -241,6 +241,21 @@ describe('undoing Done', () => {
     }
   })
 
+  it('records no step when a legacy line switched from its composition to the same take meanwhile', () => {
+    const p = project([{ ...voiced(), comp: { clips: [{ id: 'k', sourceTakeId: 'u', srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits() }] } }])
+    expect(p.cues[0].output).toBeUndefined()
+    const stale = structuredClone(p.cues[0])
+    applyProjectCommand(p, { type: 'cue.setFinalTake', cueId: 'a', takeId: 't' })
+    expect(p.cues[0].output).toMatchObject({ kind: 'take', takeId: 't' })
+    expect(doneChange(stale, applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'then' }), p)).toBeNull()
+  })
+
+  it('still records the first Done of a legacy line whose output approval materializes', () => {
+    const p = project([{ ...voiced(), comp: { clips: [{ id: 'k', sourceTakeId: 'u', srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits() }] } }])
+    const before = structuredClone(p.cues[0])
+    expect(doneChange(before, applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'then' }), p)).not.toBeNull()
+  })
+
   it('records nothing when the toggle changed nothing', () => {
     const p = project([voiced()])
     const before = structuredClone(p.cues[0])

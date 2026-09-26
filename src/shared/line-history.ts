@@ -1,5 +1,6 @@
-import { sanitizeRevision } from './approval'
+import { materializeOutput, sanitizeRevision } from './approval'
 import type { Character, Cue } from './domain'
+import type { TakeLookup } from './library'
 import { outputStateKey, type ChangeSet, type FieldStep, type OriginalState, type OutputState, type PlacedCue, type ProjectCommand } from './project-commands'
 import { hasComposition } from './sources'
 
@@ -52,7 +53,7 @@ export function outputStateIn(changes: ChangeSet, cueId: string): OutputState {
   return outputStateOf(cue)
 }
 
-export function doneChange(before: Cue, changes: ChangeSet): LineChange | null {
+export function doneChange(before: Cue, changes: ChangeSet, project?: TakeLookup): LineChange | null {
   const now = changes.cues?.find((cue) => cue.id === before.id)
   if (!now) throw new Error('Cue not found')
   const from = outputStateOf(before)
@@ -61,7 +62,8 @@ export function doneChange(before: Cue, changes: ChangeSet): LineChange | null {
     sanitizeRevision(now.textRevision) !== sanitizeRevision(before.textRevision) ||
     now.finalTakeId !== before.finalTakeId ||
     JSON.stringify(now.comp ?? null) !== JSON.stringify(before.comp ?? null) ||
-    (from.output !== undefined && JSON.stringify(from.output) !== JSON.stringify(to.output ?? null))
+    JSON.stringify(from.output ?? (to.output && materializeOutput(before, project).output) ?? null) !==
+      JSON.stringify(to.output ?? null)
   if (concurrent || outputStateKey(from) === outputStateKey(to)) return null
   return { kind: 'done', cueId: before.id, textRevision: sanitizeRevision(before.textRevision), before: from, after: to }
 }
