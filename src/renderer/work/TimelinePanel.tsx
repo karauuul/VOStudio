@@ -74,6 +74,7 @@ import {
   type ClipEdits,
   type ClipEffects,
   type CompClip,
+  type CompRegion,
   type CompTrack,
   type Cue,
   type CueComp,
@@ -155,6 +156,13 @@ export interface CompApi {
   playhead: () => number
   targetTrack: () => string
   preroll: (at: number, lead: number, onInterrupt: () => void) => Promise<PrerollStart>
+  region: () => CompRegion | null
+  loop: (
+    range: CompRegion,
+    lead: number,
+    onPass: (at: number) => void,
+    onInterrupt: (early: boolean) => void
+  ) => Promise<PrerollStart>
   editSelected: (patch: Partial<ClipEdits>, commit: boolean) => void
   moveSelected: (start: number, commit: boolean) => void
   nudge: (steps: number) => void
@@ -309,6 +317,7 @@ export function TimelinePanel({
   const [cutAt, setCutAt] = useState<number | null>(null)
   const [ghost, setGhost] = useState<GhostRequest | null>(null)
   const [punchAt, setPunchAt] = useState<number | null>(null)
+  const [loopAt, setLoopAt] = useState<CompRegion | null>(null)
 
   const cueId = cue?.id ?? ''
   const [shownCue, setShownCue] = useState(cueId)
@@ -325,6 +334,7 @@ export function TimelinePanel({
     setCutAt(null)
     setGhost(null)
     setPunchAt(null)
+    setLoopAt(null)
     setUnits(cue?.region ? 'timecode' : 'seconds')
   }
 
@@ -1259,6 +1269,49 @@ export function TimelinePanel({
             .playComp({ ...resolved, region: { in: from, out: at } }, { id: transportId, seek: from, once: true, onStart: settle })
             .then(interrupted, interrupted)
         }),
+      region: () => compRefLive.current.region ?? null,
+      loop: (range, lead, onPass, onInterrupt) =>
+        new Promise<PrerollStart>((resolve, reject) => {
+          if (!resolved || !transportId) {
+            reject(new Error('Nothing to play'))
+            return
+          }
+          let first: number | null = null
+          let ended = false
+          const passAt = (): number => transport.timeOf(range.in) ?? performance.now()
+          const end = (): void => {
+            ended = true
+            setLoopAt(null)
+          }
+          const halt = (): void => {
+            if (ended) return
+            end()
+            transport.pause()
+          }
+          const settle = (): void => {
+            first = passAt()
+            onPass(first)
+            resolve({ at: first, played: true, halt })
+          }
+          const interrupted = (): void => {
+            if (ended) return
+            end()
+            if (first === null) reject(new Error('Loop playback was interrupted'))
+            else onInterrupt(performance.now() < first)
+          }
+          setLoopAt(range)
+          void transport
+            .playComp(
+              { ...resolved, region: range },
+              {
+                id: transportId,
+                seek: Math.max(0, range.in - lead),
+                onStart: settle,
+                onLoop: () => onPass(passAt()),
+              }
+            )
+            .then(interrupted, interrupted)
+        }),
       editSelected,
       moveSelected: (start, doCommit) => {
         const base = compRefLive.current
@@ -1597,6 +1650,10 @@ export function TimelinePanel({
   const rulerTicks = width > 0 ? ticks(view, width) : []
   const xOf = (t: number): number => timeToX(view, t)
   const punchX = punchAt === null ? null : playheadX(view, punchAt, STRIP, width)
+  const loopBand = loopAt && {
+    from: clamp(xOf(loopAt.in), 0, width),
+    to: clamp(xOf(loopAt.out), 0, width),
+  }
 
   const grid = (
     <div
@@ -1794,7 +1851,7 @@ export function TimelinePanel({
           {compDur > 0 && (
             <>
               <span
-                className="tl-io"
+                className={'tl-io' + (loopAt ? ' loop' : '')}
                 style={{ left: xOf(regionIn), width: Math.max(0, xOf(regionOut) - xOf(regionIn)) }}
               />
               <b
@@ -2195,6 +2252,9 @@ export function TimelinePanel({
         )}
         {punchX !== null && (
           <span className="tl-ph punch" style={{ transform: `translateX(${punchX.toFixed(2)}px)` }} />
+        )}
+        {loopBand && loopBand.to > loopBand.from && (
+          <span className="tl-loop" style={{ left: STRIP + loopBand.from, width: loopBand.to - loopBand.from }} />
         )}
         <span className="tl-ph" ref={headRef} />
       </div>

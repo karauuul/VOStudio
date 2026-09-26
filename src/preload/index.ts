@@ -29,6 +29,7 @@ const channelMap: Record<IpcChannel, true> = {
   'rec:begin': true,
   'rec:chunk': true,
   'rec:finish': true,
+  'rec:finishPasses': true,
   'rec:abort': true,
   'take:importFiles': true,
   'take:setDurations': true,

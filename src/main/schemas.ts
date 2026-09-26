@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { isProjectDirIn, isSafeId, isValidProjectName } from '@shared/project-summary'
 import { CREATE_LINES_MAX, LINE_TEXT_MAX } from '@shared/lines'
 import { PUNCH_PREROLL_MAX, PUNCH_PREROLL_STEP, RECORD_LATENCY_MAX_MS } from '@shared/punch'
+import { LOOP_PASS_MAX } from '@shared/loop-record'
 import {
   DUCK_MAX_DB,
   DUCK_MIN_DB,
@@ -361,6 +362,21 @@ export const recChunkSchema = z.object({
 })
 
 export const recFinishSchema = z.object({ session: recSession, fragment: z.boolean().optional() })
+
+export const recFinishPassesSchema = z.object({
+  session: recSession,
+  passes: z
+    .array(
+      z
+        .object({ from: z.number().int().min(0), to: z.number().int().min(1) })
+        .refine((p) => p.to > p.from, { message: 'Pass ends before it starts' })
+    )
+    .min(1)
+    .max(LOOP_PASS_MAX)
+    .refine((passes) => passes.every((p, i) => i === 0 || p.from >= passes[i - 1].to), {
+      message: 'Passes must be sorted and must not overlap',
+    }),
+})
 
 export const recAbortSchema = z.object({ session: recSession })
 

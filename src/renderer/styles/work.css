@@ -743,6 +743,20 @@
   pointer-events: none;
 }
 
+.tl-io.loop {
+  border-color: var(--err);
+  background: rgba(229, 101, 95, 0.16);
+}
+
+.tl-loop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(229, 101, 95, 0.08);
+  pointer-events: none;
+  z-index: 4;
+}
+
 .tl-mk.punch::before {
   background: var(--err);
 }
@@ -2001,7 +2015,8 @@ input.tl-name:focus {
 .rec-meter.clip i {
   background: var(--err);
 }
-.rec-clip {
+.rec-clip,
+.rec-pass {
   font: 600 10px var(--mono);
   color: var(--err);
 }

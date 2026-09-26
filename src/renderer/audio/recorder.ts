@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Take as SavedTake } from '@shared/domain'
+import type { PassRange } from '@shared/loop-record'
 import { latencyEstimate } from '@shared/punch'
 import { micHoldMs } from '@shared/recording-guard'
 import { maxRecordSeconds } from '@shared/take-import'
@@ -33,14 +34,18 @@ export type MicState =
 export interface RecordedClip {
   durationSec: number
   sampleRate: number
+  frames: number
   hidden: number
+  marks: number[]
   latency: number | null
   finish: (fragment: boolean) => Promise<SavedTake>
+  finishPasses: (passes: readonly PassRange[]) => Promise<SavedTake[]>
 }
 
 export interface PrerollStart {
   at: number
   played: boolean
+  halt?: () => void
 }
 
 export interface StartOptions {
@@ -68,6 +73,7 @@ export interface RecorderApi {
   stop: () => void
   cancel: () => void
   live: () => boolean
+  mark: (at: number) => void
   discardClip: () => void
   clearError: () => void
 }
@@ -264,6 +270,8 @@ interface Take {
   first: number
   limit: number
   latency: number | null
+  marks: number[]
+  halt: (() => void) | null
 }
 
 function newTake(gen: number): Take {
@@ -282,6 +290,8 @@ function newTake(gen: number): Take {
     first: -1,
     limit: 0,
     latency: null,
+    marks: [],
+    halt: null,
   }
 }
 
@@ -430,9 +440,12 @@ export function useRecorder(keepWarm: boolean): RecorderApi {
       const next: RecordedClip = {
         durationSec: pcmDuration(frames, rate),
         sampleRate: rate,
+        frames,
         hidden: Math.max(0, (t.startFrame - t.first) / rate),
+        marks: t.marks.map((f) => f - t.first),
         latency: t.latency,
         finish: stream.finish,
+        finishPasses: stream.finishPasses,
       }
       clipRef.current = next
       if (aliveRef.current) {
@@ -568,12 +581,20 @@ export function useRecorder(keepWarm: boolean): RecorderApi {
     }
     t.stopFrame = Math.round(r.ctx.currentTime * r.ctx.sampleRate)
     t.awaitingFlush = true
+    t.halt?.()
     r.node.port.postMessage({ cmd: 'flush', token: t.gen })
     doneTimer.current = setTimeout(() => finalizeRef.current(t, r), DONE_TIMEOUT_MS)
   }, [cancel, live])
 
   const stopRef = useRef(stop)
   stopRef.current = stop
+
+  const mark = useCallback((at: number) => {
+    const t = takeRef.current
+    const r = rigRef.current
+    if (!t || !r || r.disposed || t.awaitingFlush) return
+    t.marks.push(Math.round((r.ctx.currentTime + (at - performance.now()) / 1000) * r.ctx.sampleRate))
+  }, [])
 
   const start = useCallback(
     (opts: StartOptions) => {
@@ -605,8 +626,9 @@ export function useRecorder(keepWarm: boolean): RecorderApi {
             t.stream = openRecStream(opts.cueId, rate, opts.bitDepth, (err) => failStream(t, err))
             t.refPlaying = true
             setPhase('countin')
-            const { at: punchMs, played } = await opts.preroll()
+            const { at: punchMs, played, halt } = await opts.preroll()
             if (t.cancelled || takeRef.current !== t || r.disposed) return
+            t.halt = halt ?? null
             const perfNow = performance.now()
             const ctxNow = r.ctx.currentTime
             t.startAtMs = punchMs
@@ -763,6 +785,7 @@ export function useRecorder(keepWarm: boolean): RecorderApi {
     stop,
     cancel,
     live,
+    mark,
     discardClip,
     clearError,
   }

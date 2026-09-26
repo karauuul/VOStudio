@@ -45,6 +45,7 @@ export interface RecMeter {
   level: number
   clipped: boolean
   limit: number
+  pass?: number
 }
 
 const SOURCE_LANG = 'EN'
@@ -420,6 +421,7 @@ export function TextPanel({
         <i style={{ transform: `scaleX(${meterFill(recMeter.level).toFixed(3)})` }} />
       </span>
       {recMeter.clipped && <span className="rec-clip">CLIP</span>}
+      {recMeter.pass !== undefined && <span className="rec-pass">Take {recMeter.pass}</span>}
       <span className="n">
         {clockOf(recMeter.elapsed)}
         {recMeter.limit > 0 && recMeter.limit - recMeter.elapsed <= REMAINING_SHOWN_SECONDS

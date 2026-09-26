@@ -7,7 +7,15 @@ import type { Project } from '../src/shared/domain'
 import { DECODE_BUDGET_BYTES, maxRecordSeconds } from '../src/shared/take-import'
 import { WAV_HEADER_BYTES, wavDataBytes, wavHeader } from '../src/shared/wav-header'
 import { encodeWav } from '../src/renderer/audio/wav'
-import { recAbortSchema, recBeginSchema, recChunkSchema, recFinishSchema, REC_CHUNK_MAX_BYTES } from '../src/main/schemas'
+import {
+  recAbortSchema,
+  recBeginSchema,
+  recChunkSchema,
+  recFinishPassesSchema,
+  recFinishSchema,
+  REC_CHUNK_MAX_BYTES,
+} from '../src/main/schemas'
+import { LOOP_PASS_MAX } from '../src/shared/loop-record'
 
 vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }))
 
@@ -17,6 +25,7 @@ const {
   appendRecording,
   beginRecording,
   closeRecordings,
+  finishPasses,
   finishRecording,
   recordingLimitBytes,
   recordingsDir,
@@ -95,6 +104,23 @@ describe('recording IPC schemas', () => {
     expect(recChunkSchema.safeParse({ session: SESSION, pcm: 'bytes' }).success).toBe(false)
     expect(recFinishSchema.safeParse({ session: SESSION, fragment: 'yes' }).success).toBe(false)
     expect(recAbortSchema.safeParse({}).success).toBe(false)
+  })
+
+  it('bounds loop passes to whole, ordered, limited frame ranges', () => {
+    const ok = { session: SESSION, passes: [{ from: 0, to: 10 }, { from: 12, to: 22 }] }
+    expect(recFinishPassesSchema.parse(ok)).toEqual(ok)
+    const bad = (passes: unknown): boolean => recFinishPassesSchema.safeParse({ session: SESSION, passes }).success
+    expect(bad([])).toBe(false)
+    expect(bad([{ from: -1, to: 10 }])).toBe(false)
+    expect(bad([{ from: 10, to: 10 }])).toBe(false)
+    expect(bad([{ from: 0.5, to: 10 }])).toBe(false)
+    expect(bad([{ from: 0, to: '10' }])).toBe(false)
+    expect(bad(Array.from({ length: LOOP_PASS_MAX + 1 }, () => ({ from: 0, to: 1 })))).toBe(false)
+    expect(bad(Array.from({ length: LOOP_PASS_MAX }, (_, i) => ({ from: i, to: i + 1 })))).toBe(true)
+    expect(bad([{ from: 0, to: 10 }, { from: 0, to: 10 }])).toBe(false)
+    expect(bad([{ from: 0, to: 10 }, { from: 9, to: 20 }])).toBe(false)
+    expect(bad([{ from: 12, to: 22 }, { from: 0, to: 10 }])).toBe(false)
+    expect(recFinishPassesSchema.safeParse({ session: 'nope', passes: [{ from: 0, to: 1 }] }).success).toBe(false)
   })
 })
 
@@ -298,6 +324,75 @@ describe('recording session', () => {
     const bytes = await fs.readFile(path.join(recordingsDir(dir), partial))
     expect(bytes.subarray(0, WAV_HEADER_BYTES)).toEqual(Buffer.from(wavHeader(960, RATE)))
     expect(await fs.readdir(path.join(dir, 'audio', 'takes', 'c'))).toEqual([])
+  })
+})
+
+describe('loop passes', () => {
+  const ramp = (frames: number): Buffer => {
+    const out = Buffer.alloc(frames * 2)
+    for (let i = 0; i < frames; i++) out.writeInt16LE(i % 30000, i * 2)
+    return out
+  }
+
+  it('copies each pass into its own fragment take and drops the partial', async () => {
+    const { dir, repository } = setup()
+    const published: CommandResult[] = []
+    const id = await beginRecording({ repository, dir }, 'c', RATE)
+    const [partialName] = await listRecordings(dir)
+    await appendRecording(id, ramp(20000))
+    const takes = await finishPasses(id, [{ from: 1000, to: 4000 }, { from: 5000, to: 8000 }, { from: 9000, to: 10500 }], (r) => published.push(r))
+    expect(takes.map((t) => t.duration)).toEqual([3000 / RATE, 3000 / RATE, 1500 / RATE])
+    for (const take of takes) {
+      expect(take).toMatchObject({ kind: 'recording', fragment: true, meta: { text: 'line' }, file: { format: 'wav', sampleRate: RATE, channels: 1 } })
+      expect(take.file.fileId).toMatch(/^c\/t_.*_\d_loop\.wav$/)
+      expect(take.file.fileId).not.toBe(`c/${partialName}`)
+    }
+    const first = await fs.readFile(takes[0].file.relPath)
+    expect(first.subarray(0, WAV_HEADER_BYTES)).toEqual(Buffer.from(wavHeader(6000, RATE)))
+    expect(first.length).toBe(WAV_HEADER_BYTES + 6000)
+    expect(first.readInt16LE(WAV_HEADER_BYTES)).toBe(1000)
+    expect(first.readInt16LE(WAV_HEADER_BYTES + 5998)).toBe(3999)
+    const last = await fs.readFile(takes[2].file.relPath)
+    expect(last.readInt16LE(WAV_HEADER_BYTES)).toBe(9000)
+    expect(last.readInt16LE(last.length - 2)).toBe(10499)
+    expect(new Set(takes.map((t) => t.file.relPath)).size).toBe(3)
+    expect(repository.snapshot().project.cues[0].takes).toEqual(takes)
+    expect(published).toHaveLength(3)
+    expect(await listRecordings(dir)).toEqual([])
+  })
+
+  it('24-bit passes keep whole samples and pad odd data', async () => {
+    const { dir, repository } = setup()
+    const id = await beginRecording({ repository, dir }, 'c', RATE, 24)
+    const samples = Buffer.alloc(100 * 3)
+    for (let i = 0; i < 100; i++) samples.writeIntLE(i * 1000, i * 3, 3)
+    await appendRecording(id, samples)
+    const [take] = await finishPasses(id, [{ from: 10, to: 13 }], () => undefined)
+    const bytes = await fs.readFile(take.file.relPath)
+    expect(bytes.length).toBe(WAV_HEADER_BYTES + 10)
+    expect(bytes.subarray(0, WAV_HEADER_BYTES)).toEqual(Buffer.from(wavHeader(9, RATE, 1, 24)))
+    expect([0, 1, 2].map((k) => bytes.readIntLE(WAV_HEADER_BYTES + k * 3, 3))).toEqual([10000, 11000, 12000])
+    expect(bytes[WAV_HEADER_BYTES + 9]).toBe(0)
+    expect(take.duration).toBe(3 / RATE)
+  })
+
+  it('a pass past the end appends nothing and keeps the partial for recovery', async () => {
+    const { dir, repository } = setup()
+    const id = await beginRecording({ repository, dir }, 'c', RATE)
+    await appendRecording(id, ramp(1000))
+    await expect(finishPasses(id, [{ from: 0, to: 500 }, { from: 600, to: 1001 }], vi.fn())).rejects.toThrow('outside')
+    expect(repository.snapshot().revision).toBe(0)
+    expect(await listRecordings(dir)).toHaveLength(2)
+    expect(await recoverRecordings({ repository, dir })).toBe(1)
+    expect(repository.snapshot().project.cues[0].takes[0].duration).toBe(1000 / RATE)
+  })
+
+  it('an empty loop recording leaves no file and no take', async () => {
+    const { dir, repository } = setup()
+    const id = await beginRecording({ repository, dir }, 'c', RATE)
+    await expect(finishPasses(id, [{ from: 0, to: 1 }], vi.fn())).rejects.toThrow('Nothing was recorded')
+    expect(await listRecordings(dir)).toEqual([])
+    expect(repository.snapshot().revision).toBe(0)
   })
 })
 
