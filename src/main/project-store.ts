@@ -331,7 +331,7 @@ export async function relocateMovedFiles(project: Project, dir: string): Promise
     [...new Set(projectPaths(project))].map(async (stored) => {
       if (projectRootOf(stored) !== root) return
       const next = relocatedPath(dir, stored)
-      if (next && (await exists(next))) moved.set(stored, next)
+      if (next && ((await exists(next)) || !(await exists(stored)))) moved.set(stored, next)
     })
   )
   return rebasePaths(project, moved)

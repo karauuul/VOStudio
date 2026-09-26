@@ -300,11 +300,25 @@ describe('relocateMovedFiles', () => {
     expect(await store.relocateMovedFiles(opened, newDir)).toBe(true)
 
     const expected = projectAt(newDir, external)
-    expected.cues[0].takes[1].file.relPath = path.join(oldDir, 'audio', 'takes', 'c1', 't2.wav')
     const { ui: _a, ...got } = opened
     const { ui: _b, ...want } = expected
     expect(got).toEqual(want)
     await expect(fs.stat(opened.cues[0].takes[0].file.relPath)).resolves.toBeTruthy()
+    store.closeProject()
+  })
+
+  it('rebases project paths whose files are missing after a move, like the export folder', async () => {
+    const oldDir = path.join(ROOT, 'Gone.vostudio')
+    const newDir = path.join(ROOT, 'Here2.vostudio')
+    const project = projectAt(oldDir, path.join(H.root, 'external'))
+    await touch(project.cues[0].takes[0].file.relPath)
+    await writeProject(oldDir, project)
+    await fs.rename(oldDir, newDir)
+
+    const opened = await store.openProjectDir(newDir)
+    expect(await store.relocateMovedFiles(opened, newDir)).toBe(true)
+    expect(opened.export?.outDir).toBe(path.join(newDir, 'export', 'final'))
+    expect(opened.cues[0].stems?.[0].file.relPath).toBe(path.join(newDir, 'audio', 'stems', 'c1', 'v.wav'))
     store.closeProject()
   })
 
