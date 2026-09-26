@@ -69,7 +69,7 @@ export function CueText({
   const noVoiceReason = !hasKey
     ? 'API key missing — open Settings'
     : !character
-      ? 'Cue has no character assigned'
+      ? 'Line has no character'
       : noVoice
         ? `No voice configured for character "${character.name}"`
         : ''

@@ -404,21 +404,19 @@ export function TimelinePanel({
       const found = cue ? resolveTake(project, cue, c.sourceTakeId) : undefined
       if (found) paths.add(found.take.file.relPath)
     }
-    let alive = true
+    const ctl = new AbortController()
     for (const path of paths) {
       if (peaks[path]) continue
-      void getPeaks(path)
+      void getPeaks(path, { signal: ctl.signal })
         .then((p) => {
-          if (!alive) return
+          if (ctl.signal.aborted) return
           setPeaks((m) => (m[path] ? m : { ...m, [path]: p }))
           const found = cue?.takes.find((t) => t.file.relPath === path)
           if (found && cue) reportTakeDuration(cue.id, found, p.duration)
         })
         .catch(() => {})
     }
-    return () => {
-      alive = false
-    }
+    return () => ctl.abort()
   }, [refPath, comp, peaks, cue, project])
 
   const fittedRef = useRef('')

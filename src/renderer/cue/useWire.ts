@@ -1,7 +1,7 @@
-import { useEffect, type MutableRefObject } from 'react'
+import { useLayoutEffect, type MutableRefObject } from 'react'
 
 export function useWire<T>(ref: MutableRefObject<T | null>, value: T): void {
-  useEffect(() => {
+  useLayoutEffect(() => {
     ref.current = value
     return () => {
       ref.current = null
