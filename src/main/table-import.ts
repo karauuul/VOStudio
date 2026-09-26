@@ -32,15 +32,15 @@ export async function readTable(file: string): Promise<ReadTable> {
   }
 }
 
-const optionsFor = (project: Project, table: TableFile, req: TableRequest): TableOptions => ({
-  mapping: tableMapping(table, project.cues, req.mapping),
+const optionsFor = (table: TableFile, req: TableRequest): TableOptions => ({
+  mapping: tableMapping(table, req.mapping),
   rule: req.rule,
   replaceTranslations: req.replaceTranslations === true,
   keepOriginal: req.keepOriginal === true,
 })
 
 export function previewTableFile(project: Project, table: ReadTable, req: TableRequest): TablePreview {
-  const options = optionsFor(project, table, req)
+  const options = optionsFor(table, req)
   return {
     path: table.path,
     name: path.basename(table.path),
@@ -58,7 +58,7 @@ export function importTableFile(
   table: ReadTable,
   req: TableRequest
 ): { result: TableImportResult; changes: ChangeSet | null } {
-  const options = optionsFor(project, table, req)
+  const options = optionsFor(table, req)
   const committed = commitTable(project, table.rows, options)
   return {
     result: {

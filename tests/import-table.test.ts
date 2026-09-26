@@ -8,6 +8,7 @@ import {
   matchAudioFiles,
   matchesImportTab,
   matchKey,
+  tableColumnLabels,
   tableDelimiter,
 } from '../src/shared/import-table'
 import {
@@ -68,6 +69,35 @@ describe('detectMapping', () => {
 
   it('leaves columns unmapped when nothing matches', () => {
     expect(detectMapping(['alpha', 'beta'])).toEqual({})
+  })
+
+  it('maps a bare Text header to the line text unless the table has a translation column', () => {
+    expect(detectMapping(['Text'])).toEqual({ translation: 0 })
+    expect(detectMapping(['EventName', 'Text', 'Character'])).toEqual({ id: 0, translation: 1, character: 2 })
+    expect(detectMapping(['Text', 'Translation'])).toEqual({ text: 0, translation: 1 })
+    expect(detectMapping(['Source', 'Text'])).toEqual({ text: 0, translation: 1 })
+    expect(detectMapping(['Key', 'Text', 'Original'])).toEqual({ id: 0, translation: 1, text: 2 })
+    expect(detectMapping(['Key', 'Line text'])).toEqual({ id: 0, translation: 1 })
+    expect(detectMapping(['Text', 'Original', 'Translation'])).toEqual({ text: 1, translation: 2 })
+  })
+
+  it('maps explicit original and translation headers by name', () => {
+    for (const original of ['Source', 'Original', 'EN', 'sourceText']) {
+      for (const translation of ['Translation', 'UK', 'Localized', 'Target']) {
+        expect(detectMapping(['Key', original, translation])).toEqual({ id: 0, text: 1, translation: 2 })
+      }
+    }
+    expect(detectMapping(['Original'])).toEqual({ text: 0 })
+    expect(detectMapping(['EN'])).toEqual({ text: 0 })
+  })
+
+  it('leaves Cyrillic headers unmapped', () => {
+    expect(detectMapping(['Ключ', 'Текст', 'Персонаж'])).toEqual({})
+  })
+
+  it('labels the line text Text in manual projects and Translation in translation projects', () => {
+    expect(tableColumnLabels(false)).toEqual({ id: 'Key', text: 'Original', translation: 'Text', character: 'Character' })
+    expect(tableColumnLabels(true)).toEqual({ id: 'Key', text: 'Original', translation: 'Translation', character: 'Character' })
   })
 })
 
@@ -139,6 +169,7 @@ describe('applyTable', () => {
     const p = project([cue({ key: 'A', text: 'stary' })])
     applyTable(p, rows('A,,new,'), mapping, 'id', false)
     expect(p.cues[0].text).toBe('stary')
+    expect(p.cues[0].suggestedText).toBe('new')
     applyTable(p, rows('A,,new,'), mapping, 'id', true)
     expect(p.cues[0].text).toBe('new')
   })

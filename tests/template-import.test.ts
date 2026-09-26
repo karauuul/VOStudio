@@ -434,11 +434,20 @@ describe('createProjectFromTemplate', () => {
     }
   })
 
-  it('reports an existing project folder as fatal at validation', async () => {
+  it('imports again under the next free name and leaves the existing project untouched', async () => {
+    const first = path.join(H.root, 'VOStudio', 'Sample Template.vostudio', 'project.json')
+    const before = await fs.readFile(first, 'utf-8')
     const v = await validateTemplate(FIXTURE)
-    expect(v.fatalErrors.map((e) => e.reason)).toContain('Project "Sample Template" already exists')
-    expect(toPreview(v).fatalErrors.length).toBeGreaterThan(0)
-    await expect(createProjectFromTemplate(v)).rejects.toThrow('import blocked')
+    expect(toPreview(v).fatalErrors).toEqual([])
+
+    const project = await createProjectFromTemplate(v)
+    const dir = path.join(H.root, 'VOStudio', 'Sample Template 2.vostudio')
+    const saved = JSON.parse(await fs.readFile(path.join(dir, 'project.json'), 'utf-8')) as Project
+    expect(project.name).toBe('Sample Template 2')
+    expect(saved.name).toBe('Sample Template 2')
+    expect(saved.media.referenceDir).toBe(path.join(dir, 'audio', 'reference'))
+    expect(await fs.readFile(first, 'utf-8')).toBe(before)
+    expect((await createProjectFromTemplate(await validateTemplate(FIXTURE))).name).toBe('Sample Template 3')
   })
 
   it('sanitizes terms on open and leaves a project without them byte-identical', async () => {
@@ -468,7 +477,7 @@ describe('createProjectFromTemplate', () => {
     project.characters = [{ ...project.characters[0], id: 'ada', name: 'ADA' }]
     project.cues = [{ ...project.cues[0], characterId: 'ada' }]
 
-    const { result, changes } = await reimportTemplate(await validateTemplate(dir, true), project, dir)
+    const { result, changes } = await reimportTemplate(await validateTemplate(dir), project, dir)
     expect(result).toMatchObject({ added: 2, updated: 0, untouched: 1, orphaned: 0 })
     expect(project.characters.map((c) => c.id)).toEqual(['ada', 'Alien'])
     expect(project.cues.map((c) => c.characterId)).toEqual(['ada', 'ada', 'Alien'])
@@ -485,7 +494,7 @@ describe('createProjectFromTemplate', () => {
     const project = { ...base, id: 'p', schemaVersion: 1, createdAt: '', name: 'Tmp Template' } as Project
     project.cues = [project.cues[0]]
 
-    const { result } = await reimportTemplate(await validateTemplate(dir, true), project, dir)
+    const { result } = await reimportTemplate(await validateTemplate(dir), project, dir)
     expect(result).toMatchObject({ added: 1 })
     expect(result.warnings.map((w) => w.reason)).toContain(
       'Reference audio "shared.wav" already exists with different content; the project file was kept'
@@ -497,7 +506,7 @@ describe('createProjectFromTemplate', () => {
     const dir = await makeTemplate({ index: rows('1,ADA,S,,,X1,,,') })
     const base = buildProjectBase(await validateTemplate(dir), '/refs')
     const project = { ...base, id: 'p', schemaVersion: 1, createdAt: '', name: 'Other' } as Project
-    await expect(reimportTemplate(await validateTemplate(dir, true), project, dir)).rejects.toThrow(
+    await expect(reimportTemplate(await validateTemplate(dir), project, dir)).rejects.toThrow(
       'the open project is "Other"'
     )
   })

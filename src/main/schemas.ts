@@ -485,7 +485,12 @@ export const cueSchema = z
 const cueId = z.object({ cueId: z.string().min(1).max(200) })
 const placedCues = z.array(z.object({ cue: cueSchema, index: z.number().int().min(0).max(10_000_000) }))
 const lineFieldsSchema = z
-  .object({ sourceText: z.string().optional(), text: z.string().optional(), characterId: z.string().max(4096).optional() })
+  .object({
+    sourceText: z.string().optional(),
+    text: z.string().optional(),
+    characterId: z.string().max(4096).optional(),
+    suggestedText: z.string().nullable().optional(),
+  })
   .strict()
 const characterSchema = z.object({
   id: z.string().min(1).max(4096),

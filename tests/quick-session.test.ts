@@ -65,6 +65,9 @@ describe('unique project name', () => {
   it('starts at Untitled and counts up past taken folders, ignoring case', () => {
     expect(uniqueProjectName([])).toBe('Untitled')
     expect(uniqueProjectName(['Other'])).toBe('Untitled')
+    const long = 'x'.repeat(80)
+    expect(uniqueProjectName([long], long)).toBe(`${'x'.repeat(78)} 2`)
+    expect(uniqueProjectName([long, `${'x'.repeat(78)} 2`], long)).toHaveLength(80)
     expect(uniqueProjectName(['untitled'])).toBe('Untitled 2')
     expect(uniqueProjectName(['Untitled', 'Untitled 2', 'UNTITLED 3'])).toBe('Untitled 4')
     expect(uniqueProjectName(['Untitled', 'Untitled 3'])).toBe('Untitled 2')
@@ -589,15 +592,38 @@ describe('AI sections visibility', () => {
     expect(showsAi(cue('a', { referenceAudio: ref }), p)).toBe(true)
     expect(showsAi(cue('d', { referenceDuration: 2 }), p)).toBe(true)
     expect(showsAi(cue('g', { region: { sourceId: 'src', in: 0, out: 1 } }), p)).toBe(true)
-    expect(showsAi(cue('c', { characterId: 'ada' }), p)).toBe(true)
   })
 
   it('shows once AI was used on the line or configured in the project', () => {
     const p = project([])
     expect(showsAi(cue('g', { takes: [take('t')] }), p)).toBe(true)
     expect(showsAi(cue('v', { takes: [take('s', { kind: 'sts' })] }), p)).toBe(true)
-    expect(showsAi(cue('m'), { ...p, characters: [ada] })).toBe(true)
     expect(showsAi(cue('m'), { ...p, provider: { tts: { model: 'eleven_v3' } } })).toBe(true)
+  })
+
+  it('treats characters as speakers, not as translation', () => {
+    const p = { ...project([]), characters: [ada] }
+    expect(showsAi(cue('c', { characterId: 'ada' }), p)).toBe(false)
+    expect(showsAi(newLineCue('n', 1, 'my text'), p)).toBe(false)
+    expect(showsAi({ ...newLineCue('n', 1, 'my text'), characterId: 'ada' }, p)).toBe(false)
+  })
+
+  it('keeps every line of a template project on the AI panel', () => {
+    const template = {
+      ...project([
+        cue('t', { sourceText: 'Hi', referenceAudio: ref, referenceDuration: 1, characterId: 'ada' }),
+        cue('u', { sourceText: 'Bye', characterId: 'ada' }),
+      ]),
+      characters: [ada],
+      languages: { source: 'en', target: 'uk' },
+    }
+    for (const line of [...template.cues, newLineCue('n', 1), cue('c', { characterId: 'ada' })]) {
+      expect(showsAi(line, template)).toBe(true)
+    }
+    expect(isManualProject(template)).toBe(false)
+    const { languages: _dropped, ...withoutLanguages } = template
+    expect(withoutLanguages.cues.every((line) => showsAi(line, withoutLanguages))).toBe(true)
+    expect(isManualProject(withoutLanguages)).toBe(false)
   })
 
   it('only generated takes can be regenerated', () => {
@@ -614,8 +640,10 @@ describe('AI sections visibility', () => {
     expect(isManualProject(project([newLineCue('n', 1, 'my text'), own]))).toBe(true)
     expect(isManualProject(project([newLineCue('n', 1), cue('s', { sourceText: 'Hi' })]))).toBe(false)
     expect(isManualProject(project([cue('g', { region: { sourceId: 'src', in: 0, out: 1 } })]))).toBe(false)
-    expect(isManualProject({ ...project([newLineCue('n', 1)]), characters: [ada] })).toBe(false)
+    expect(isManualProject({ ...project([newLineCue('n', 1)]), characters: [ada] })).toBe(true)
+    expect(isManualProject({ ...project([{ ...newLineCue('n', 1, 'said'), characterId: 'ada' }]), characters: [ada] })).toBe(true)
     expect(isManualProject({ ...project([newLineCue('n', 1)]), provider: { tts: { model: 'eleven_v3' } } })).toBe(false)
+    expect(isManualProject({ ...project([newLineCue('n', 1)]), languages: { source: 'en', target: 'uk' } })).toBe(false)
   })
 
   it('has reference audio only with an original, a source region or stems', () => {

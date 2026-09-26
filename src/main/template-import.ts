@@ -18,7 +18,7 @@ import {
 import type { ReimportResult, TemplateIssue, TemplateMeta, TemplatePreview } from '@shared/ipc'
 import type { ChangeSet } from '@shared/project-commands'
 import { applyTemplateDiff, diffTemplate } from '@shared/template-reimport'
-import { isSafeFileName, PROJECT_SUFFIX } from '@shared/project-summary'
+import { isSafeFileName, PROJECT_SUFFIX, uniqueProjectName } from '@shared/project-summary'
 import { projectNameSchema, templateMetaSchema } from './schemas'
 import * as store from './project-store'
 
@@ -67,8 +67,6 @@ const readText = async (file: string): Promise<string | null> => {
   }
 }
 
-const exists = (file: string): Promise<boolean> => fs.stat(file).then(() => true, () => false)
-
 const realpath = (file: string): Promise<string | null> => fs.realpath(file).then((p) => p, () => null)
 
 function isUnder(root: string, candidate: string): boolean {
@@ -87,11 +85,7 @@ export function relUnderAudio(audioDir: string, refAudio: string): string | null
   return rel === '' ? null : rel
 }
 
-async function readMeta(
-  dir: string,
-  fatal: TemplateIssue[],
-  skipExistingCheck: boolean
-): Promise<TemplateMeta | null> {
+async function readMeta(dir: string, fatal: TemplateIssue[]): Promise<TemplateMeta | null> {
   const raw = await readText(path.join(dir, 'project-meta.json'))
   if (raw === null) {
     fatal.push({ row: null, reason: 'project-meta.json is missing' })
@@ -115,9 +109,6 @@ async function readMeta(
   if (!name.success) {
     fatal.push({ row: null, reason: `project-meta.json: name "${result.data.name}" is not a valid folder name` })
     return null
-  }
-  if (!skipExistingCheck && (await exists(projectDirFor(name.data)))) {
-    fatal.push({ row: null, reason: `Project "${name.data}" already exists` })
   }
   return { ...result.data, name: name.data }
 }
@@ -151,10 +142,10 @@ async function readTerms(dir: string, warnings: TemplateIssue[]): Promise<Term[]
   )
 }
 
-export async function validateTemplate(dir: string, skipExistingCheck = false): Promise<TemplateValidation> {
+export async function validateTemplate(dir: string): Promise<TemplateValidation> {
   const warnings: TemplateIssue[] = []
   const fatalErrors: TemplateIssue[] = []
-  const meta = await readMeta(dir, fatalErrors, skipExistingCheck)
+  const meta = await readMeta(dir, fatalErrors)
   const terms = await readTerms(dir, warnings)
   const audioDir = path.join(dir, 'audio')
   const audioRoot = await realpath(audioDir)
@@ -410,7 +401,7 @@ async function copyReferenceAudio(
   const conflicts: string[] = []
   for (const rel of candidates) {
     const target = path.join(referenceRoot, rel)
-    if (overwrite || !(await exists(target))) {
+    if (overwrite || !(await store.exists(target))) {
       wanted.push(rel)
       continue
     }
@@ -438,13 +429,13 @@ export async function createProjectFromTemplate(validation: TemplateValidation):
   if (validation.fatalErrors.length > 0 || !validation.meta) {
     throw new Error(`Template has ${validation.fatalErrors.length} fatal error(s) — import blocked`)
   }
-  const name = projectNameSchema.parse(validation.meta.name)
+  const name = uniqueProjectName(await store.projectFolderNames(), projectNameSchema.parse(validation.meta.name))
   const projectDir = projectDirFor(name)
-  if (await exists(projectDir)) throw new Error(`Project "${name}" already exists`)
+  if (await store.exists(projectDir)) throw new Error(`Project "${name}" already exists`)
   const previousProject = store.getProject()
   const previousDir = store.getProjectDir()
   const referenceRoot = path.join(projectDir, 'audio', 'reference')
-  const project = await store.createProject(name, buildProjectBase(validation, referenceRoot))
+  const project = await store.createProject(name, { ...buildProjectBase(validation, referenceRoot), name })
   try {
     await copyReferenceAudio(validation, referenceRoot)
   } catch (error) {

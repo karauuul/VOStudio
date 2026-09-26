@@ -32,13 +32,14 @@ export type TableMapping = Partial<Record<TableColumn, number>>
 
 const HINTS: Record<TableColumn, string[]> = {
   id: ['cueid', 'id', 'eventname', 'key', 'wemid', 'exportname', 'name', 'file', 'filename'],
-  text: ['sourcetext', 'source', 'original', 'text', 'en'],
+  text: ['sourcetext', 'source', 'original', 'en'],
   translation: ['translation', 'translated', 'target', 'localized', 'uk'],
   character: ['character', 'speaker', 'voice', 'actor'],
 }
 
 const EXACT_ORDER: TableColumn[] = ['id', 'text', 'translation', 'character']
 const LOOSE_ORDER: TableColumn[] = ['id', 'translation', 'text', 'character']
+const LINE_TEXT = 'text'
 
 const normalize = (header: string): string => header.toLowerCase().replace(/[^a-z0-9]/g, '')
 
@@ -60,8 +61,19 @@ export function detectMapping(headers: string[]): TableMapping {
     const index = normalized.findIndex((h, i) => !used.has(i) && hints.some((hint) => h.includes(hint)))
     if (index >= 0) claim(column, index)
   }
+  const exact = normalized.findIndex((h, i) => !used.has(i) && h === LINE_TEXT)
+  const lineText = exact >= 0 ? exact : normalized.findIndex((h, i) => !used.has(i) && h.includes(LINE_TEXT))
+  const free = mapping.translation === undefined ? 'translation' : mapping.text === undefined ? 'text' : null
+  if (lineText >= 0 && free) claim(free, lineText)
   return mapping
 }
+
+export const tableColumnLabels = (ai: boolean): Record<TableColumn, string> => ({
+  id: 'Key',
+  text: 'Original',
+  translation: ai ? 'Translation' : 'Text',
+  character: 'Character',
+})
 
 export const TABLE_FILE = /\.(csv|tsv|txt|xlsx)$/i
 
@@ -113,19 +125,11 @@ export function parseTableFile(fileName: string, raw: string): TableFile {
   return headedTable(csv.headers, csv.rows)
 }
 
-export function tableMapping(
-  file: TableFile,
-  cues: Pick<Cue, 'sourceText'>[],
-  requested?: TableMapping
-): TableMapping {
+export function tableMapping(file: TableFile, requested?: TableMapping): TableMapping {
   if (file.script) return { translation: 0 }
   if (requested) return requested
   const mapping = detectMapping(file.headers)
-  if (file.headers.length === 1 && Object.keys(mapping).length === 0) mapping.text = 0
-  if (mapping.text !== undefined && mapping.translation === undefined && cues.every((cue) => !cue.sourceText.trim())) {
-    mapping.translation = mapping.text
-    delete mapping.text
-  }
+  if (file.headers.length === 1 && Object.keys(mapping).length === 0) mapping.translation = 0
   return mapping
 }
 
@@ -141,6 +145,7 @@ export function assignColumn(mapping: TableMapping, column: number, field: Table
 export interface TableSummary {
   added: number
   updated: number
+  suggested: number
   unchanged: number
   skipped: number
 }
@@ -221,7 +226,7 @@ export function applyTable(
   const before = project.characters.length
   const changed = new Map<string, Cue>()
   const unmatched: Cue[] = []
-  const summary: TableSummary = { added: 0, updated: 0, unchanged: 0, skipped: 0 }
+  const summary: TableSummary = { added: 0, updated: 0, suggested: 0, unchanged: 0, skipped: 0 }
   let matched = 0
   let line = nextLineNumber(project.cues)
 
@@ -249,13 +254,23 @@ export function applyTable(
       unmatched.push(cue)
     } else matched++
     let touched = created
+    let suggested = false
     if (source && source !== cue.sourceText && !(keepOriginal && cue.sourceText.trim())) {
       Object.assign(cue, changeCueSourceText(cue, source))
       touched = true
     }
-    if (translation && translation !== cue.text && (replaceTranslations || !cue.text.trim())) {
-      Object.assign(cue, changeCueText(cue, translation))
-      if (cue.status === 'empty') cue.status = 'translated'
+    if (translation && translation !== cue.text) {
+      if (replaceTranslations || !cue.text.trim()) {
+        Object.assign(cue, changeCueText(cue, translation))
+        if (cue.status === 'empty') cue.status = 'translated'
+        delete cue.suggestedText
+        touched = true
+      } else if (translation !== cue.suggestedText) {
+        cue.suggestedText = translation
+        suggested = true
+      }
+    } else if (translation && cue.suggestedText !== undefined) {
+      delete cue.suggestedText
       touched = true
     }
     if (character) {
@@ -266,8 +281,8 @@ export function applyTable(
         touched = true
       }
     }
-    if (touched) changed.set(cue.id, cue)
-    summary[created ? 'added' : touched ? 'updated' : 'unchanged']++
+    if (touched || suggested) changed.set(cue.id, cue)
+    summary[created ? 'added' : suggested ? 'suggested' : touched ? 'updated' : 'unchanged']++
   }
 
   return {
@@ -302,9 +317,10 @@ const lineFields = (cue: Cue): Required<LineFields> => ({
   sourceText: cue.sourceText,
   text: cue.text,
   characterId: cue.characterId,
+  suggestedText: cue.suggestedText ?? null,
 })
 
-const LINE_FIELD_KEYS = ['sourceText', 'text', 'characterId'] as const
+const LINE_FIELD_KEYS = ['sourceText', 'text', 'characterId', 'suggestedText'] as const
 
 export function previewTable(project: Pick<Project, 'cues' | 'characters'>, rows: string[][], options: TableOptions): TableSummary {
   const copy = { cues: project.cues.map((cue) => ({ ...cue })), characters: [...project.characters] }

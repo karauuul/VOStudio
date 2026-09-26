@@ -282,15 +282,6 @@ function serialLifecycle<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 
-const dirExists = (dir: string): Promise<boolean> => fs.stat(dir).then(() => true, () => false)
-
-async function projectFolderNames(): Promise<string[]> {
-  const entries = await fs.readdir(store.defaultProjectsRoot()).catch(() => [])
-  return entries
-    .filter((name) => name.toLowerCase().endsWith(PROJECT_SUFFIX))
-    .map((name) => name.slice(0, -PROJECT_SUFFIX.length))
-}
-
 function requireRepository(): SerialProjectRepository {
   if (!projectRepository) throw new Error('No project is open')
   return projectRepository
@@ -349,8 +340,10 @@ async function repairTakeDurations(repository: SerialProjectRepository): Promise
   if (applied.length > 0) emit('takes:durations', applied)
 }
 
-async function migrateCharacters(project: Project): Promise<void> {
-  if (applyAlienMigration(project)) await store.saveProject(project)
+async function prepareOpened(project: Project, dir: string): Promise<void> {
+  const migrated = applyAlienMigration(project)
+  const relocated = await store.relocateMovedFiles(project, dir)
+  if (migrated || relocated) await store.saveProject(project)
 }
 
 async function consumeSuggestionsFile(
@@ -419,9 +412,10 @@ function registerHandlers(): void {
   typedHandle('project:open', (dir: string) =>
     serialLifecycle(async () => {
       const target = projectDirSchema(store.defaultProjectsRoot()).parse(dir)
+      if (!(await store.exists(target))) return null
       const snapshot = await setupOpenedProject({
         detachCurrent: detachCurrentRepository,
-        prepareProject: migrateCharacters,
+        prepareProject: (project) => prepareOpened(project, target),
         openProject: () => store.openProjectDir(target),
         resetRepository,
         abandonProject,
@@ -441,9 +435,9 @@ function registerHandlers(): void {
 
   typedHandle('project:create', (name?: string) =>
     serialLifecycle(async () => {
-      const projectName = name === undefined ? uniqueProjectName(await projectFolderNames()) : projectNameSchema.parse(name)
+      const projectName = name === undefined ? uniqueProjectName(await store.projectFolderNames()) : projectNameSchema.parse(name)
       const dir = path.join(store.defaultProjectsRoot(), `${projectName}${PROJECT_SUFFIX}`)
-      if (await dirExists(dir)) throw new Error(`Project "${projectName}" already exists`)
+      if (await store.exists(dir)) throw new Error(`Project "${projectName}" already exists`)
       await detachCurrentRepository()
       return resetRepository(await store.createProject(projectName, emptyProjectBase(projectName))).snapshot()
     })
@@ -587,7 +581,7 @@ function registerHandlers(): void {
       const repository = projectRepository
       const projectDir = store.getProjectDir()
       if (!repository || !projectDir) throw new Error('No project is open')
-      const validation = await validateTemplate(target, true)
+      const validation = await validateTemplate(target)
       const { result, changes } = await reimportTemplate(validation, repository.projectForMain(), projectDir)
       emit('project:changed', await repository.commit(changes))
       return result
