@@ -27,6 +27,7 @@ import {
   healCut,
   canHeal,
   maxCrossfade,
+  moveClips,
   moveClipTo,
   originalRefRange,
   removeClip,
@@ -58,6 +59,7 @@ import {
   splitClipIntoWords,
   updateTrack,
   versionLabel,
+  stationarySnapPoints,
   wordSnapPoints,
 } from '@shared/library'
 import {
@@ -85,6 +87,7 @@ import { playBounds } from '@shared/resume'
 import { hasReference } from '@shared/lines'
 import { reportTakeDuration } from '../audio/duration-backfill'
 import { clipId, transport, type TransportState } from '../audio/transport'
+import type { PrerollStart } from '../audio/recorder'
 import { playback, type PlaybackOps } from '../playback'
 import { getPeaks, Wave, type Peaks } from '../Waveform'
 import { DragNumber } from '../cue/DragNumber'
@@ -150,9 +153,10 @@ export interface CompApi {
   selection: () => ClipSelection | null
   playhead: () => number
   targetTrack: () => string
-  preroll: (at: number, lead: number, onInterrupt: () => void) => Promise<number>
+  preroll: (at: number, lead: number, onInterrupt: () => void) => Promise<PrerollStart>
   editSelected: (patch: Partial<ClipEdits>, commit: boolean) => void
   moveSelected: (start: number, commit: boolean) => void
+  nudge: (steps: number) => void
   trimSelected: (edge: 'start' | 'end', at: number, commit: boolean) => void
   editTrack: (trackId: string, patch: Partial<Omit<CompTrack, 'id'>>, commit: boolean) => void
   fit: (scope: 'clip' | 'track') => void
@@ -743,15 +747,9 @@ export function TimelinePanel({
   )
 
   const snapPoints = useCallback(
-    (excludeId: string | null): number[] => {
+    (excludeIds: readonly string[]): number[] => {
       if (snapUnit === 'off' || !cue) return []
-      const base = wordSnapPoints(comp, cue, project)
-      if (!excludeId) return base
-      const c = comp.clips.find((x) => x.id === excludeId)
-      if (!c) return base
-      const lo = c.start
-      const hi = clipEnd(c)
-      return base.filter((t) => t <= lo || t >= hi)
+      return stationarySnapPoints(comp, excludeIds, cue, project)
     },
     [snapUnit, cue, comp, project]
   )
@@ -805,19 +803,26 @@ export function TimelinePanel({
       if (e.button !== 0 || !editable) return
       e.preventDefault()
       e.stopPropagation()
-      const picked = e.shiftKey
-        ? selRef.current.includes(c.id)
-          ? selRef.current.filter((id) => id !== c.id)
-          : [...selRef.current, c.id]
-        : [c.id]
-      setSelected(picked)
-      setPickedTrack(null)
-      selRef.current = picked
       const box = e.currentTarget.getBoundingClientRect()
       const lx = e.clientX - box.left
       const ly = e.clientY - box.top
       const at = xToTime(viewRef.current, e.clientX - bodyLeft())
       const gesture = gestureFor(c, box.width, box.height, lx, ly)
+      const group =
+        !e.shiftKey &&
+        gesture === 'move' &&
+        selRef.current.length > 1 &&
+        selRef.current.includes(c.id)
+      const picked = e.shiftKey
+        ? selRef.current.includes(c.id)
+          ? selRef.current.filter((id) => id !== c.id)
+          : [...selRef.current, c.id]
+        : group
+          ? selRef.current
+          : [c.id]
+      setSelected(picked)
+      setPickedTrack(null)
+      selRef.current = picked
       if (gesture === 'split') {
         splitClip(c.id, at)
         return
@@ -826,13 +831,17 @@ export function TimelinePanel({
       const base = comp
       const x0 = e.clientX
       const y0 = e.clientY
-      const targets = snapPoints(c.id)
+      const moving = gesture === 'move' && picked.includes(c.id) ? picked : [c.id]
+      const targets = snapPoints(moving)
+      const order = compTracks(base).map((t) => t.id)
       const take = takeOf(c)
       const srcDur = (take && peaks[take.file.relPath]?.duration) || take?.duration || Infinity
       const tl = clipTimelineDuration(c)
       let next = base
+      let dragged = false
 
       const onMove = (ev: MouseEvent): void => {
+        if (ev.clientX !== x0 || ev.clientY !== y0) dragged = true
         const pps = viewRef.current.pxPerSec
         const raw = (ev.clientX - x0) / pps
         const tol = ev.altKey || snapUnit === 'off' ? 0 : SNAP_PX / pps
@@ -841,7 +850,8 @@ export function TimelinePanel({
           const over = document
             .elementFromPoint(ev.clientX, ev.clientY)
             ?.closest('[data-track]') as HTMLElement | null
-          next = moveClipTo(base, c.id, c.start + d, over?.dataset['track'] ?? clipTrackId(c))
+          const to = order.indexOf(over?.dataset['track'] ?? '')
+          next = moveClips(base, moving, d, to < 0 ? 0 : to - order.indexOf(clipTrackId(c)))
         } else if (gesture === 'trimStart' || gesture === 'trimEnd') {
           const edge = gesture === 'trimStart' ? 'start' : 'end'
           const anchor = edge === 'start' ? c.start : clipEnd(c)
@@ -871,6 +881,10 @@ export function TimelinePanel({
       startDrag(onMove, () => {
         setGainDrag(null)
         commit(next)
+        if (group && !dragged) {
+          selRef.current = [c.id]
+          setSelected([c.id])
+        }
       })
     },
     [
@@ -1001,7 +1015,7 @@ export function TimelinePanel({
       e.preventDefault()
       e.stopPropagation()
       const base = compRefLive.current
-      const targets = snapPoints(null)
+      const targets = snapPoints([])
       let next = base
       startDrag(
         (ev) => {
@@ -1025,7 +1039,7 @@ export function TimelinePanel({
       const base = compRefLive.current
       if (base.clips.length === 0) return
       const from = compOriginalStart(base)
-      const targets = snapPoints(null)
+      const targets = snapPoints([])
       const x0 = e.clientX
       let next = base
       startDrag(
@@ -1219,17 +1233,17 @@ export function TimelinePanel({
       playhead: () => posRef.current,
       targetTrack: () => resolveTargetTrack(compRefLive.current, targetTrackId),
       preroll: (at, lead, onInterrupt) =>
-        new Promise<number>((resolve, reject) => {
+        new Promise<PrerollStart>((resolve, reject) => {
           const from = Math.max(0, at - lead)
           if (!resolved || !transportId || !(at > from)) {
             transport.stop()
-            resolve(performance.now())
+            resolve({ at: performance.now(), played: false })
             return
           }
           let punchMs: number | null = null
           const settle = (): void => {
             punchMs = transport.timeOf(at) ?? performance.now()
-            resolve(punchMs)
+            resolve({ at: punchMs, played: true })
           }
           const interrupted = (): void => {
             if (punchMs === null) reject(new Error('Punch pre-roll was interrupted'))
@@ -1247,6 +1261,9 @@ export function TimelinePanel({
         const next = moveClipTo(base, id, start)
         if (doCommit) commit(next)
         else setPending(next)
+      },
+      nudge: (steps) => {
+        if (editable) commit(moveClips(compRefLive.current, selRef.current, steps * STEP_SECONDS))
       },
       trimSelected: (edge, at, doCommit) => {
         const base = compRefLive.current

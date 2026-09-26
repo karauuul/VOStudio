@@ -39,6 +39,7 @@ export type KeyAction =
   | 'makeFinal'
   | 'doneNext'
   | 'deleteClip'
+  | 'nudgeClips'
   | 'splitClip'
   | 'splitAtPlayhead'
   | 'healClip'
@@ -69,8 +70,10 @@ export interface Binding {
   scopes: Scope[]
   mod?: true
   shift?: true
+  alt?: true
   repeat?: true
   index?: number
+  steps?: number
   label?: string
   keys?: string
 }
@@ -190,6 +193,18 @@ export const BINDINGS: Binding[] = [
   { action: 'healClip', codes: ['KeyH'], scopes: TIMELINE, label: 'Heal' },
   { action: 'crossfadeClip', codes: ['KeyX'], scopes: TIMELINE, label: 'Crossfade' },
   { action: 'deleteClip', codes: ['Delete'], scopes: TIMELINE, label: 'Delete clip' },
+  {
+    action: 'nudgeClips',
+    codes: ['ArrowLeft'],
+    alt: true,
+    scopes: TIMELINE,
+    steps: -1,
+    label: 'Nudge clips',
+    keys: 'Alt+←/→',
+  },
+  { action: 'nudgeClips', codes: ['ArrowRight'], alt: true, scopes: TIMELINE, steps: 1 },
+  { action: 'nudgeClips', codes: ['ArrowLeft'], alt: true, shift: true, scopes: TIMELINE, steps: -5 },
+  { action: 'nudgeClips', codes: ['ArrowRight'], alt: true, shift: true, scopes: TIMELINE, steps: 5 },
   ...Array.from({ length: 9 }, (_, i) => ({
     action: 'selectTake' as const,
     codes: [`Digit${i + 1}`, `Numpad${i + 1}`],
@@ -225,7 +240,9 @@ function codeName(code: string): string {
 export function keyText(b: Binding): string {
   if (b.keys) return b.keys
   const code = b.codes.find((c) => !c.startsWith('Numpad')) ?? b.codes[0]
-  return [b.mod ? MOD_LABEL : '', b.shift ? 'Shift' : '', codeName(code)].filter(Boolean).join('+')
+  return [b.mod ? MOD_LABEL : '', b.alt ? 'Alt' : '', b.shift ? 'Shift' : '', codeName(code)]
+    .filter(Boolean)
+    .join('+')
 }
 
 export function bindingOf(action: KeyAction): Binding | null {
@@ -250,12 +267,13 @@ export function groupOf(b: Binding): string {
 }
 
 export function resolveKey(e: KeyInput): Binding | null {
-  if (e.isComposing || e.altKey || e.scope === 'popover') return null
+  if (e.isComposing || e.scope === 'popover') return null
   const mod = e.ctrlKey || e.metaKey
   for (const b of BINDINGS) {
     if (!b.codes.includes(e.code)) continue
     if (mod !== !!b.mod) continue
     if (e.shiftKey !== !!b.shift) continue
+    if (e.altKey !== !!b.alt) continue
     if (!b.scopes.includes(e.scope)) continue
     if (e.repeat && !b.repeat) continue
     return b
@@ -292,6 +310,7 @@ export interface KeyboardHandlers {
   makeFinal: () => void
   doneNext: () => void
   deleteClip: () => void
+  nudgeClips: (steps: number) => void
   splitClip: () => void
   splitAtPlayhead: () => void
   healClip: () => void
@@ -417,6 +436,10 @@ export function useKeyboard(
       e.preventDefault()
       if (b.action === 'selectTake') {
         handlers.selectTake(b.index ?? 0)
+        return
+      }
+      if (b.action === 'nudgeClips') {
+        handlers.nudgeClips(b.steps ?? 0)
         return
       }
       handlers[b.action]()

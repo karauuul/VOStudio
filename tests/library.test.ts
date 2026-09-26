@@ -18,6 +18,7 @@ import {
   splitClipByWord,
   updateTrack,
   versionLabel,
+  stationarySnapPoints,
   wordSnapPoints,
   wordsFromAlignment,
 } from '../src/shared/library'
@@ -398,6 +399,18 @@ describe('timeline words', () => {
     expect(points).toContain(5)
     expect(points.some((p) => Math.abs(p - 3.5) < 1e-6)).toBe(true)
     expect(points.some((p) => Math.abs(p - 3.9) < 1e-6)).toBe(true)
+  })
+
+  it('snap targets come only from clips that are not moving', () => {
+    const c = cue('q', { takes: [t] })
+    const moving = clip({ id: 'moving', start: 3 })
+    const still = clip({ id: 'still', start: 3.2, trackId: 'track-2' })
+    const points = stationarySnapPoints({ clips: [moving, still] }, ['moving'], c, project([c]))
+    expect(points).toContain(3.2)
+    expect(points.some((p) => Math.abs(p - 3.7) < 1e-6)).toBe(true)
+    expect(points).not.toContain(3)
+    expect(points).not.toContain(5)
+    expect(points).toContain(0)
   })
 
   it('speed scales the boundaries with the clip', () => {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Take as SavedTake } from '@shared/domain'
+import { latencyEstimate } from '@shared/punch'
 import { maxRecordSeconds } from '@shared/take-import'
 import type { PcmBitDepth } from '@shared/wav-header'
 import { pcmDuration } from './wav'
@@ -32,7 +33,13 @@ export interface RecordedClip {
   durationSec: number
   sampleRate: number
   hidden: number
+  latency: number | null
   finish: (fragment: boolean) => Promise<SavedTake>
+}
+
+export interface PrerollStart {
+  at: number
+  played: boolean
 }
 
 export interface StartOptions {
@@ -43,7 +50,7 @@ export interface StartOptions {
   autoReference: boolean
   referenceUrl?: string
   referenceClipId?: string
-  preroll?: () => Promise<number>
+  preroll?: () => Promise<PrerollStart>
 }
 
 export interface RecorderApi {
@@ -195,6 +202,10 @@ async function buildRig(device: string | undefined, h: RigHandlers): Promise<Rig
   }
 }
 
+function inputLatency(stream: MediaStream): unknown {
+  return (stream.getAudioTracks()[0]?.getSettings() as { latency?: unknown } | undefined)?.latency
+}
+
 function disposeRig(r: Rig | null): void {
   if (!r || r.disposed) return
   r.disposed = true
@@ -223,6 +234,7 @@ interface Take {
   sent: number
   first: number
   limit: number
+  latency: number | null
 }
 
 function newTake(gen: number): Take {
@@ -240,6 +252,7 @@ function newTake(gen: number): Take {
     sent: 0,
     first: -1,
     limit: 0,
+    latency: null,
   }
 }
 
@@ -372,6 +385,7 @@ export function useRecorder(): RecorderApi {
         durationSec: pcmDuration(frames, rate),
         sampleRate: rate,
         hidden: Math.max(0, (t.startFrame - t.first) / rate),
+        latency: t.latency,
         finish: stream.finish,
       }
       clipRef.current = next
@@ -542,13 +556,14 @@ export function useRecorder(): RecorderApi {
             t.stream = openRecStream(opts.cueId, rate, opts.bitDepth, (err) => failStream(t, err))
             t.refPlaying = true
             setPhase('countin')
-            const punchMs = await opts.preroll()
+            const { at: punchMs, played } = await opts.preroll()
             if (t.cancelled || takeRef.current !== t || r.disposed) return
             const perfNow = performance.now()
             const ctxNow = r.ctx.currentTime
             t.startAtMs = punchMs
             t.startFrame = Math.round((ctxNow + (punchMs - perfNow) / 1000) * rate)
             t.limit = maxRecordSeconds(rate) - LIMIT_MARGIN_SECONDS - Math.max(0, t.startFrame - from) / rate
+            t.latency = played ? latencyEstimate([...transport.outputLatency(), inputLatency(r.stream)]) : null
             if (aliveRef.current) setLimit(t.limit)
             return
           }
