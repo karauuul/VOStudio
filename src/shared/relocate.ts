@@ -6,9 +6,16 @@ const isProjectFolder = (part: string): boolean =>
 
 const unifySeparators = (p: string): string => p.replace(/[\\/]+/g, '/')
 
+const PROJECT_DIRS = new Set(['audio', 'export', 'versions', 'autosave'])
+
 function projectFolderAt(parts: string[]): number {
-  for (let i = parts.length - 2; i >= 0; i--) if (isProjectFolder(parts[i])) return i
-  return -1
+  let innermost = -1
+  for (let i = parts.length - 2; i >= 0; i--) {
+    if (!isProjectFolder(parts[i])) continue
+    if (PROJECT_DIRS.has(parts[i + 1].toLowerCase())) return i
+    if (innermost < 0) innermost = i
+  }
+  return innermost
 }
 
 const splitPath = (stored: string): string[] => stored.replace(/[\\/]+$/, '').split(/[\\/]+/)

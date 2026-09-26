@@ -214,6 +214,12 @@ describe('previous project root', () => {
     expect(previousProjectRoot(project)).toBe(projectRootOf('E:\\Old\\Foo.vostudio\\audio\\x.wav'))
   })
 
+  it('takes the project folder that holds audio/, not a nested folder that only ends like one', () => {
+    const stored = '/old/Foo.vostudio/audio/takes/line.vostudio/t1.wav'
+    expect(projectRootOf(stored)).toBe('/old/Foo.vostudio')
+    expect(relocatedPath('/new/Bar.vostudio', stored)).toBe('/new/Bar.vostudio/audio/takes/line.vostudio/t1.wav')
+  })
+
   it('keeps case for POSIX roots and folds it for Windows roots', () => {
     expect(projectRootOf('/data/Foo.vostudio/audio/x.wav')).not.toBe(projectRootOf('/data/foo.vostudio/audio/x.wav'))
     expect(projectRootOf('E:\\data\\Foo.vostudio\\audio\\x.wav')).toBe(projectRootOf('e:\\DATA\\foo.VOSTUDIO\\audio\\y.wav'))
