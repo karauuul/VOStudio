@@ -59,6 +59,7 @@ import {
   splitClipIntoWords,
   updateTrack,
   versionLabel,
+  stationarySnapPoints,
   wordSnapPoints,
 } from '@shared/library'
 import {
@@ -747,10 +748,7 @@ export function TimelinePanel({
   const snapPoints = useCallback(
     (excludeIds: readonly string[]): number[] => {
       if (snapUnit === 'off' || !cue) return []
-      const excluded = comp.clips.filter((x) => excludeIds.includes(x.id))
-      return wordSnapPoints(comp, cue, project).filter((t) =>
-        excluded.every((c) => t <= c.start || t >= clipEnd(c))
-      )
+      return stationarySnapPoints(comp, excludeIds, cue, project)
     },
     [snapUnit, cue, comp, project]
   )
