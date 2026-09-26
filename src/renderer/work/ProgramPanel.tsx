@@ -8,6 +8,7 @@ import {
 } from 'react'
 import type { WordTiming } from '@shared/domain'
 import { mapToOriginal, subtitleAt } from '@shared/subtitles'
+import { meterFill } from '@shared/meter'
 import { audioUrl } from '../api'
 import { clipId, transport, type TransportState } from '../audio/transport'
 import { useWire } from '../cue/useWire'
@@ -230,7 +231,7 @@ export function ProgramPanel({
   useEffect(() => {
     const level = (v: number): void => {
       const el = meterRef.current
-      if (el) el.style.transform = `scaleX(${v.toFixed(3)})`
+      if (el) el.style.transform = `scaleX(${meterFill(v).toFixed(3)})`
     }
     if (!state.playing) {
       level(0)

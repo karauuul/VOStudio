@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { recordingGuard, type RecordingPhase } from '../src/shared/recording-guard'
+import {
+  MIC_HIDDEN_MS,
+  MIC_IDLE_MS,
+  micHoldMs,
+  recordingGuard,
+  type RecordingPhase,
+} from '../src/shared/recording-guard'
 
 describe('recordingGuard', () => {
   it('idle never blocks', () => {
@@ -28,5 +34,21 @@ describe('recordingGuard', () => {
   it('every phase is covered', () => {
     const phases: RecordingPhase[] = ['idle', 'arming', 'countin', 'recording', 'preview']
     for (const p of phases) expect(recordingGuard(p, true)).toBeTruthy()
+  })
+})
+
+describe('micHoldMs', () => {
+  it('closes the microphone at once outside the Work room', () => {
+    expect(micHoldMs(false, false)).toBe(0)
+    expect(micHoldMs(false, true)).toBe(0)
+  })
+
+  it('keeps it open for the idle window while Work is shown', () => {
+    expect(micHoldMs(true, false)).toBe(MIC_IDLE_MS)
+  })
+
+  it('keeps it open only briefly while the window is hidden', () => {
+    expect(micHoldMs(true, true)).toBe(MIC_HIDDEN_MS)
+    expect(MIC_HIDDEN_MS).toBeLessThan(MIC_IDLE_MS)
   })
 })

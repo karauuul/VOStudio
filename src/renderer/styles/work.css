@@ -739,6 +739,14 @@
   clip-path: polygon(100% 0, 0 0, 100% 100%);
 }
 
+.tl-mk.punch {
+  pointer-events: none;
+}
+
+.tl-mk.punch::before {
+  background: var(--err);
+}
+
 .tl-lanes {
   position: relative;
   min-height: 0;
@@ -1172,6 +1180,14 @@ input.tl-name:focus {
   left: -5px;
   border: 5px solid transparent;
   border-top: 8px solid #fff;
+}
+
+.tl-ph.punch {
+  background: var(--err);
+}
+
+.tl-ph.punch::before {
+  border-top-color: var(--err);
 }
 
 .tl-tools {

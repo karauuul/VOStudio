@@ -49,7 +49,7 @@ import type { CompApi, TimelineSelection } from './work/TimelinePanel'
 import type { LibraryPanel } from './work/LibraryPanel'
 import { ProgramPanel, type ProgramApi } from './work/ProgramPanel'
 import { CueText } from './work/CueText'
-import type { PunchPlacement } from './cue/useVoiceToVoice'
+import type { RecordPlacement } from './cue/useVoiceToVoice'
 import { TimelinePanel } from './work/TimelinePanel'
 import { RulesDialog } from './RulesPanel'
 import { ProjectHome } from './ProjectHome'
@@ -72,7 +72,7 @@ import {
 } from '@shared/workspace-source'
 import { hasValidVoicedOutput } from '@shared/approval'
 import { compDuration, isEmptyComp } from '@shared/comp'
-import { libraryRow, lineLabel, locateText, punchClip, resolveTake, type LibraryRow } from '@shared/library'
+import { libraryRow, lineLabel, locateText, punchClip, recordClip, resolveTake, type LibraryRow } from '@shared/library'
 import type { ChangeSet, ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
 import {
   lineStepCommand,
@@ -719,7 +719,7 @@ export default function App() {
       take: Take | Take[],
       replaceClipId?: string,
       drop?: { trackId: string; at: number },
-      punch?: PunchPlacement
+      placement?: RecordPlacement
     ): Promise<void> => placeQueue(cueId, async () => {
       const takes = Array.isArray(take) ? take : [take]
       const durations: number[] = []
@@ -748,17 +748,20 @@ export default function App() {
           : state.clipId === clipId.comp(cueId)
             ? state.pos
             : 0)
-      if (punch) {
-        const punched = punchClip(comp, {
+      if (placement) {
+        const request = {
           takeId: takes[0].id,
           duration: durations[0],
-          hidden: punch.hidden,
-          at: punch.at,
-          targetTrackId: punch.trackId ?? trackId,
-        })
-        if (!punched) throw new Error('nothing was recorded after the punch point')
-        comp = punched.comp
-        trackId = punched.trackId
+          at: placement.at,
+          targetTrackId: placement.trackId ?? trackId,
+        }
+        const placed =
+          placement.kind === 'punch'
+            ? punchClip(comp, { ...request, hidden: placement.hidden })
+            : recordClip(comp, request)
+        if (!placed) throw new Error('nothing was recorded after the punch point')
+        comp = placed.comp
+        trackId = placed.trackId
       } else {
         takes.forEach((item, i) => {
           const placed = placeTake({
@@ -1868,6 +1871,7 @@ export default function App() {
         onStatus: pushStatus,
         isActiveCue,
         hasKey,
+        keepMicWarm: route === 'work',
         text,
       }
     : null

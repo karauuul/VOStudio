@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { clipEnd, compProblem, compRenderPlan } from '../src/shared/comp'
 import { emptyEdits, type CompClip, type CompTrack, type CueComp } from '../src/shared/domain'
-import { PUNCH_CROSSFADE, punchClip } from '../src/shared/library'
+import { PUNCH_CROSSFADE, punchClip, recordClip } from '../src/shared/library'
 import {
   latencyEstimate,
   latencySeconds,
@@ -122,6 +122,110 @@ describe('punchClip', () => {
     const comp: CueComp = { clips: [clip(), clip({ id: 'b', start: 4 })] }
     const before = structuredClone(comp)
     punchClip(comp, punch)
+    expect(comp).toEqual(before)
+  })
+})
+
+describe('recordClip', () => {
+  const take = { takeId: 'new', duration: 2, at: 0 }
+
+  it('replaces the clip under the playhead as a new version of the same clip', () => {
+    const comp: CueComp = { clips: [clip({ edits: { ...emptyEdits(), gainDb: -3 } })] }
+    for (const at of [0, 1.2]) {
+      const r = recordClip(comp, { ...take, at })
+      expect(r.clipId).toBe('a')
+      expect(r.trackId).toBe('track-1')
+      expect(r.comp).toEqual({
+        clips: [{ id: 'a', sourceTakeId: 'new', srcIn: 0, srcOut: 2, start: 0, edits: emptyEdits() }],
+      })
+    }
+  })
+
+  it('overwrites whatever a longer retake runs into on the same track', () => {
+    const comp: CueComp = { clips: [clip(), clip({ id: 'b', start: 3, srcOut: 2 }), clip({ id: 'c', start: 5 })] }
+    const r = recordClip(comp, { ...take, duration: 5.5 })
+    expect(compProblem(r.comp)).toBeNull()
+    expect(r.comp.clips.map((c) => c.id)).toEqual(['a', 'c'])
+    expect(added(r.comp, 'a')).toMatchObject({ sourceTakeId: 'new', start: 0, srcOut: 5.5 })
+    expect(added(r.comp, 'c')).toMatchObject({ start: 5.5, srcIn: 0.5, srcOut: 3 })
+  })
+
+  it('places at the playhead in a gap and trims only the target track', () => {
+    const comp: CueComp = {
+      clips: [
+        clip({ id: 'a', srcOut: 1, trackId: 'track-1' }),
+        clip({ id: 'b', start: 2, srcOut: 0.5, trackId: 'track-1' }),
+        clip({ id: 'c', start: 3, srcOut: 4, trackId: 'track-1' }),
+        clip({ id: 'o', start: 1, srcOut: 4, trackId: 'track-2' }),
+      ],
+      tracks: [track('track-1'), track('track-2')],
+    }
+    const r = recordClip(comp, { ...take, at: 1.5, targetTrackId: 'track-1' })
+    expect(compProblem(r.comp)).toBeNull()
+    expect(r.comp.tracks).toEqual(comp.tracks)
+    expect(r.trackId).toBe('track-1')
+    expect(added(r.comp, r.clipId)).toMatchObject({ start: 1.5, srcIn: 0, srcOut: 2, trackId: 'track-1' })
+    expect(added(r.comp, 'a')).toEqual(comp.clips[0])
+    expect(r.comp.clips.some((c) => c.id === 'b')).toBe(false)
+    expect(added(r.comp, 'c')).toMatchObject({ start: 3.5, srcIn: 0.5, srcOut: 4 })
+    expect(added(r.comp, 'o')).toEqual(comp.clips[3])
+  })
+
+  it('treats a clip that ends at the playhead as a neighbour, not a hit', () => {
+    const r = recordClip({ clips: [clip()] }, { ...take, at: 3 })
+    expect(r.comp.clips.map((c) => c.id)).toEqual(['a', r.clipId])
+    expect(added(r.comp, 'a')).toEqual(clip())
+    expect(added(r.comp, r.clipId).start).toBe(3)
+  })
+
+  it('never creates a track, even when only another track is free', () => {
+    const comp: CueComp = {
+      clips: [clip({ id: 'a', trackId: 'track-1' })],
+      tracks: [track('track-1'), track('track-2')],
+    }
+    const r = recordClip(comp, { ...take, at: 1, targetTrackId: 'track-1' })
+    expect(r.comp.tracks).toEqual(comp.tracks)
+    expect(r.comp.clips).toHaveLength(1)
+    expect(added(r.comp, 'a')).toMatchObject({ sourceTakeId: 'new', trackId: 'track-1' })
+    const single = recordClip({ clips: [clip()] }, { ...take, at: 4 })
+    expect(single.comp.tracks).toBeUndefined()
+    expect(single.comp.clips.every((c) => c.trackId === undefined)).toBe(true)
+  })
+
+  it('replaces on the target track only', () => {
+    const comp: CueComp = {
+      clips: [clip({ id: 'a', trackId: 'track-1' }), clip({ id: 'b', trackId: 'track-2' })],
+      tracks: [track('track-1'), track('track-2')],
+    }
+    const r = recordClip(comp, { ...take, at: 1, targetTrackId: 'track-2' })
+    expect(r.clipId).toBe('b')
+    expect(added(r.comp, 'a')).toEqual(comp.clips[0])
+    expect(added(r.comp, 'b')).toMatchObject({ sourceTakeId: 'new', srcOut: 2, trackId: 'track-2' })
+  })
+
+  it('places onto an empty or missing composition', () => {
+    for (const comp of [undefined, { clips: [] }]) {
+      const r = recordClip(comp, { ...take, at: 1 })
+      expect(r.trackId).toBe('track-1')
+      expect(r.comp).toEqual({
+        clips: [{ id: r.clipId, sourceTakeId: 'new', srcIn: 0, srcOut: 2, start: 1, edits: emptyEdits() }],
+      })
+    }
+  })
+
+  it('keeps a time-stretched neighbour in sync when trimming its head', () => {
+    const c = clip({ id: 'b', start: 1, srcOut: 4, edits: { ...emptyEdits(), timeStretch: 2 } })
+    const r = recordClip({ clips: [c] }, take)
+    expect(added(r.comp, 'b').start).toBeCloseTo(2)
+    expect(added(r.comp, 'b').srcIn).toBeCloseTo(2)
+    expect(clipEnd(added(r.comp, 'b'))).toBeCloseTo(3)
+  })
+
+  it('does not mutate the input composition', () => {
+    const comp: CueComp = { clips: [clip(), clip({ id: 'b', start: 3 })] }
+    const before = structuredClone(comp)
+    recordClip(comp, { ...take, duration: 4 })
+    recordClip(comp, { ...take, at: 6 })
     expect(comp).toEqual(before)
   })
 })
