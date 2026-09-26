@@ -227,18 +227,18 @@ describe('undoing Done', () => {
     expect(isDone(p.cues[0], p)).toBe(false)
   })
 
-  it('keeps an output edit that landed between the snapshot and the toggle', async () => {
-    const p = project([voiced()])
-    applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'earlier' })
-    const stale = structuredClone(p.cues[0])
-    applyProjectCommand(p, { type: 'cue.setFinalTake', cueId: 'a', takeId: 'u' })
-    const edited = structuredClone(p.cues[0].output)
-    const s = session(p)
-    const change = doneChange(stale, s.edit({ type: 'cue.approve', cueId: 'a', approved: false }))
-    if (change) recordLineEdit(s.history, change, 1)
-    expect(change && change.kind === 'done' && change.before.output).toEqual(edited)
-    await s.step('undo')
-    expect(p.cues[0].output).toEqual(edited)
+  it('records no step when another edit landed between the snapshot and the toggle', () => {
+    const concurrent: ProjectCommand[] = [
+      { type: 'cue.setFinalTake', cueId: 'a', takeId: 'u' },
+      { type: 'cue.saveText', cueId: 'a', text: 'edited' },
+    ]
+    for (const [approved, command] of [true, false].flatMap((a) => concurrent.map((c) => [a, c] as const))) {
+      const p = project([voiced()])
+      if (!approved) applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'earlier' })
+      const stale = structuredClone(p.cues[0])
+      applyProjectCommand(p, command)
+      expect(doneChange(stale, applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved, approvedAt: 'then' }))).toBeNull()
+    }
   })
 
   it('records nothing when the toggle changed nothing', () => {

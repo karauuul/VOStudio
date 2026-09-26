@@ -55,12 +55,15 @@ export function outputStateIn(changes: ChangeSet, cueId: string): OutputState {
 export function doneChange(before: Cue, changes: ChangeSet): LineChange | null {
   const now = changes.cues?.find((cue) => cue.id === before.id)
   if (!now) throw new Error('Cue not found')
+  const from = outputStateOf(before)
   const to = outputStateOf(now)
-  const prior = outputStateOf(before)
-  const { output: _stale, ...rest } = prior
-  const from: OutputState = prior.output === undefined || to.output === undefined ? prior : { ...rest, output: to.output }
-  if (outputStateKey(from) === outputStateKey(to)) return null
-  return { kind: 'done', cueId: before.id, textRevision: sanitizeRevision(now.textRevision), before: from, after: to }
+  const concurrent =
+    sanitizeRevision(now.textRevision) !== sanitizeRevision(before.textRevision) ||
+    now.finalTakeId !== before.finalTakeId ||
+    JSON.stringify(now.comp ?? null) !== JSON.stringify(before.comp ?? null) ||
+    (from.output !== undefined && JSON.stringify(from.output) !== JSON.stringify(to.output ?? null))
+  if (concurrent || outputStateKey(from) === outputStateKey(to)) return null
+  return { kind: 'done', cueId: before.id, textRevision: sanitizeRevision(before.textRevision), before: from, after: to }
 }
 
 export function recordLineEdit(history: LineHistory, change: LineChange, at: number): void {
