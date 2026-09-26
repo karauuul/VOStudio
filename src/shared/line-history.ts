@@ -59,6 +59,7 @@ export function doneChange(before: Cue, changes: ChangeSet, project?: TakeLookup
   const from = outputStateOf(before)
   const to = outputStateOf(now)
   const concurrent =
+    (before.status === 'excluded') !== (now.status === 'excluded') ||
     sanitizeRevision(now.textRevision) !== sanitizeRevision(before.textRevision) ||
     now.finalTakeId !== before.finalTakeId ||
     JSON.stringify(now.comp ?? null) !== JSON.stringify(before.comp ?? null) ||

@@ -232,6 +232,10 @@ describe('undoing Done', () => {
       { type: 'cue.setFinalTake', cueId: 'a', takeId: 'u' },
       { type: 'cue.saveText', cueId: 'a', text: 'edited' },
     ]
+    const p0 = project([voiced()])
+    const stale0 = structuredClone(p0.cues[0])
+    p0.cues[0].status = 'excluded'
+    expect(doneChange(stale0, { cues: [structuredClone(p0.cues[0])] })).toBeNull()
     for (const [approved, command] of [true, false].flatMap((a) => concurrent.map((c) => [a, c] as const))) {
       const p = project([voiced()])
       if (!approved) applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'earlier' })
