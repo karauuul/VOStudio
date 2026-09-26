@@ -1528,7 +1528,7 @@ export default function App() {
       if (isDone(cue, p) === done) return true
       doneInFlight.current.add(cueId)
       try {
-        const change = doneChange(cue, await execute({ type: 'cue.approve', cueId, approved: done }))
+        const change = doneChange(cue, await execute({ type: 'cue.approve', cueId, approved: done }), p)
         if (change) pushLineEdit(change)
         return true
       } catch (e) {
