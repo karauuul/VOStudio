@@ -1,18 +1,18 @@
 import { useCallback, useRef, useState, type MutableRefObject, type RefObject } from 'react'
 import type { Cue, MatchRule, Project, VoiceSettings } from '@shared/domain'
 import { reviewGeneration } from '@shared/cue-filter'
-import type { TableMapping } from '@shared/import-table'
+import { TABLE_FILE } from '@shared/import-table'
+import type { TableImportResult } from '@shared/ipc'
 import type { ProjectCommand } from '@shared/project-commands'
 import { api } from '../api'
 import { isCueBusyNow, useJobsStore } from '../jobs/store'
-import { LinesTable, type GridApi, type TableSource } from '../import/LinesTable'
+import { LinesTable, type GridApi } from '../import/LinesTable'
 import { ProjectPanel } from '../import/ProjectPanel'
 import { SourcesPanel } from '../import/SourcesPanel'
 import type { MenuEntry } from '../shell/ContextMenu'
 
 type Status = (kind: 'ok' | 'err' | 'info', text: string) => void
 
-const TABLE_RE = /\.(csv|tsv|txt)$/i
 const TEMPLATE_RE = /\.vostudio-src$/i
 
 interface Props {
@@ -30,6 +30,9 @@ interface Props {
   onReviewSelection: (cueIds: string[]) => void
   onGenerate: (cues: Cue[]) => void
   onAssignCharacter: (cueIds: string[], characterId: string) => void
+  tables: TableImportResult[]
+  onTable: (path: string) => void
+  onPickTable: () => void
   dispatch: (command: ProjectCommand) => Promise<void>
   onVoiceSettings: (characterId: string, settings: VoiceSettings) => void
   onProvider: (characterId: string, patch: { voiceId?: string }) => void
@@ -52,13 +55,15 @@ export function ImportRoom({
   onReviewSelection,
   onGenerate,
   onAssignCharacter,
+  tables,
+  onTable,
+  onPickTable,
   dispatch,
   onVoiceSettings,
   onProvider,
   onFlushVoice,
   onCancelVoice,
 }: Props) {
-  const [tables, setTables] = useState<TableSource[]>([])
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
   const submitJob = useJobsStore((s) => s.submit)
@@ -78,29 +83,11 @@ export function ImportRoom({
     [onStatus]
   )
 
-  const importTable = useCallback(
-    (path: string, mapping?: TableMapping, replaceTranslations?: boolean) =>
-      run(async () => {
-        const result = await api['import:table']({
-          path,
-          rule: matchBy,
-          ...(mapping ? { mapping } : {}),
-          ...(replaceTranslations ? { replaceTranslations } : {}),
-        })
-        setTables((prev) => [...prev.filter((t) => t.path !== result.path), result])
-        onStatus(
-          result.unmatched > 0 ? 'info' : 'ok',
-          `${result.name}: ${result.matched} matched, ${result.unmatched} unmatched`
-        )
-      }),
-    [run, matchBy, onStatus]
-  )
-
   const importPaths = useCallback(
     (paths: string[]) => {
       const templates = paths.filter((p) => TEMPLATE_RE.test(p))
-      const tablePaths = paths.filter((p) => TABLE_RE.test(p))
-      const audio = paths.filter((p) => !TEMPLATE_RE.test(p) && !TABLE_RE.test(p))
+      const tablePaths = paths.filter((p) => TABLE_FILE.test(p))
+      const audio = paths.filter((p) => !TEMPLATE_RE.test(p) && !TABLE_FILE.test(p))
       if (templates.length > 0) {
         run(async () => {
           const r = await api['import:template'](templates[0])
@@ -112,7 +99,7 @@ export function ImportRoom({
         return
       }
       if (tablePaths.length > 0) {
-        importTable(tablePaths[0])
+        onTable(tablePaths[0])
         return
       }
       if (audio.length === 0) return
@@ -121,7 +108,7 @@ export function ImportRoom({
         onStatus('ok', `${r.files} files · ${r.added} lines added, ${r.updated} updated`)
       })
     },
-    [run, importTable, matchBy, onStatus]
+    [run, onTable, matchBy, onStatus]
   )
 
   const pick = useCallback(
@@ -131,15 +118,6 @@ export function ImportRoom({
         if (paths.length > 0) importPaths(paths)
       }),
     [run, importPaths]
-  )
-
-  const pickTable = useCallback(
-    (replaceTranslations: boolean) =>
-      run(async () => {
-        const paths = await api['import:pick']('table')
-        if (paths.length > 0) importTable(paths[0], undefined, replaceTranslations)
-      }),
-    [run, importTable]
   )
 
   const transcribe = useCallback(
@@ -217,8 +195,6 @@ export function ImportRoom({
     [project.characters, onOpenCue, onAssignCharacter, onGenerate, onReviewSelection, transcribe]
   )
 
-  const table = tables[tables.length - 1] ?? null
-
   return (
     <div className="main import-grid" hidden={hidden}>
       <SourcesPanel project={project} tables={tables} onPick={pick} onDrop={importPaths} busy={busy} />
@@ -231,9 +207,7 @@ export function ImportRoom({
         onSearch={onSearch}
         searchRef={searchRef}
         gridRef={gridRef}
-        table={table}
-        onMapping={(mapping) => table && importTable(table.path, mapping)}
-        onImportText={pickTable}
+        onImportText={onPickTable}
         onTranscribe={transcribe}
         onDetect={detect}
         onOpenCue={onOpenCue}

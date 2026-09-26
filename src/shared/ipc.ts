@@ -10,7 +10,7 @@ import type {
   UiSessionState,
 } from './domain'
 import type { ProviderModel } from './provider-models'
-import type { TableMapping } from './import-table'
+import type { TableMapping, TableSummary, TableUndo } from './import-table'
 import type { CompClipPlan, CompPlan, ExportFormat } from './export-plan'
 import type { ExportedLines } from './readiness'
 import type { UpdateStatus } from './updater'
@@ -205,14 +205,33 @@ export interface AudioImportResult {
   files: number
 }
 
+export interface TableRequest {
+  path: string
+  rule: MatchRule
+  mapping?: TableMapping
+  replaceTranslations?: boolean
+  keepOriginal?: boolean
+}
+
+export interface TablePreview {
+  path: string
+  name: string
+  script: boolean
+  headers: string[]
+  rows: string[][]
+  total: number
+  mapping: TableMapping
+  summary: TableSummary
+}
+
 export interface TableImportResult {
   path: string
   name: string
   headers: string[]
   mapping: TableMapping
   rows: number
-  matched: number
-  unmatched: number
+  summary: TableSummary
+  undo: TableUndo
 }
 
 export interface DetectResult {
@@ -258,12 +277,8 @@ export interface IpcApi {
   'project:importTemplate': (dir: string) => Promise<TemplateImportResult>
   'import:pick': (kind: 'files' | 'folder' | 'table' | 'audio') => Promise<string[]>
   'import:audio': (req: { paths: string[]; rule: MatchRule }) => Promise<AudioImportResult>
-  'import:table': (req: {
-    path: string
-    rule: MatchRule
-    mapping?: TableMapping
-    replaceTranslations?: boolean
-  }) => Promise<TableImportResult>
+  'import:tablePreview': (req: TableRequest) => Promise<TablePreview>
+  'import:table': (req: TableRequest) => Promise<TableImportResult>
   'import:template': (dir: string) => Promise<ReimportResult>
   'source:detect': (req: { sourceId: string; mode: 'silence' | 'transcribe' }) => Promise<DetectResult>
   'project:command': (command: ProjectCommand) => Promise<CommandResult>

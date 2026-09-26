@@ -18,9 +18,10 @@ import {
   type UsageInfo,
   type VoiceSettings,
 } from '@shared/domain'
-import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
+import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '@shared/ipc'
 import { pickHistory, redoStale, type UndoSide } from '@shared/undo-route'
 import { planScriptPaste, showsAi } from '@shared/lines'
+import { TABLE_FILE } from '@shared/import-table'
 import { keyedQueue } from '@shared/keyed-queue'
 import type { UpdateStatus } from '@shared/updater'
 import { api, audioUrl } from './api'
@@ -41,6 +42,7 @@ import { LinesPanel } from './work/LinesPanel'
 import type { TextPanelProps } from './work/TextPanel'
 import { ImportRoom } from './rooms/ImportRoom'
 import type { GridApi } from './import/LinesTable'
+import { TableImportDialog, type TableChoice } from './import/TableImportDialog'
 import { WorkRoom } from './rooms/WorkRoom'
 import { ExportRoom } from './rooms/ExportRoom'
 import { useProjectSession, type StatusKind } from './useProjectSession'
@@ -147,6 +149,8 @@ export default function App() {
   const mode: GenMode = genMode ?? 'tts'
   const [providerModels, setProviderModels] = useState<ProviderModel[]>([])
   const [showRules, setShowRules] = useState(false)
+  const [tableFile, setTableFile] = useState<string | null>(null)
+  const [tables, setTables] = useState<TableImportResult[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
@@ -311,6 +315,8 @@ export default function App() {
   const enterProject = useCallback(
     (snapshot: ProjectSnapshot) => {
       resetHistory()
+      setTableFile(null)
+      setTables([])
       setCharacterFilter(ALL_CHARACTERS)
       setRoute('work')
       setReviewIds(null)
@@ -1220,7 +1226,7 @@ export default function App() {
     async (dir: 'undo' | 'redo'): Promise<void> => {
       const stack = dir === 'undo' ? linesRef.current.undo : linesRef.current.redo
       const top = stack[stack.length - 1]
-      const removal = top?.kind === 'cues' && removesLines(top, dir) ? top.ids : null
+      const removal = top && top.kind !== 'original' && removesLines(top, dir) ? top.ids : null
       if (!(await (removal ? prepareLineRemoval(removal) : flushPending()))) return
       let select: string | undefined
       let next: LineEdit | null
@@ -1230,7 +1236,7 @@ export default function App() {
             edit.kind === 'original'
               ? edit.cueId
               : removesLines(edit, dir)
-                ? survivorNear(edit.ids, edit.undoRemoves)
+                ? survivorNear(edit.ids, edit.kind === 'table' || edit.undoRemoves)
                 : edit.focus
           const owner = edit.kind === 'original' ? projectRef.current?.cues.find((c) => c.id === edit.cueId) : undefined
           const current = owner ? structuredClone(owner) : undefined
@@ -1331,10 +1337,55 @@ export default function App() {
     [refuseWhileExporting, activeLineId, projectRef, pushStatus, openNewLine, placeOnComp]
   )
 
+  const openTable = useCallback(
+    (path: string) => {
+      if (!refuseWhileExporting()) setTableFile(path)
+    },
+    [refuseWhileExporting]
+  )
+
+  const pickTable = useCallback(() => {
+    void api['import:pick']('table')
+      .then((paths) => {
+        if (paths.length > 0) openTable(paths[0])
+      })
+      .catch((e: unknown) => pushStatus('err', String(e)))
+  }, [openTable, pushStatus])
+
+  const importTable = useCallback(
+    async (choice: TableChoice): Promise<void> => {
+      const path = tableFile
+      if (!path || refuseWhileExporting()) return
+      try {
+        if (!(await flushText())) return
+        const result = await api['import:table']({ path, rule: matchBy, ...choice })
+        setTableFile(null)
+        setTables((prev) => [...prev.filter((t) => t.path !== result.path), result])
+        const { ids, fields, characters } = result.undo
+        const focus = ids[0] ?? fields[0]?.cueId
+        if (focus) {
+          pushLineEdit({ kind: 'table', ids, snapshots: [], fields, characters, focus })
+          if (!activeLineId()) await selectCue(focus)
+        }
+        pushStatus('ok', `${result.name}: ${result.summary.added} new, ${result.summary.updated} updated`)
+      } catch (e) {
+        pushStatus('err', String(e))
+      }
+    },
+    [tableFile, refuseWhileExporting, flushText, matchBy, pushLineEdit, activeLineId, selectCue, pushStatus]
+  )
+
   const dropFiles = useCallback(
-    (files: File[], drop?: { trackId: string; at: number }) =>
-      void importFiles(api.pathsFor(files), drop).catch((e: unknown) => pushStatus('err', String(e))),
-    [importFiles, pushStatus]
+    (files: File[], drop?: { trackId: string; at: number }) => {
+      const paths = api.pathsFor(files)
+      const table = paths.find((path) => TABLE_FILE.test(path))
+      if (table) {
+        openTable(table)
+        return
+      }
+      void importFiles(paths, drop).catch((e: unknown) => pushStatus('err', String(e)))
+    },
+    [openTable, importFiles, pushStatus]
   )
 
   const pickAudio = useCallback(() => {
@@ -2069,6 +2120,9 @@ export default function App() {
         onReviewSelection={startReviewSelection}
         onGenerate={generateSelected}
         onAssignCharacter={(ids, characterId) => void assignCharacter(ids, characterId)}
+        tables={tables}
+        onTable={openTable}
+        onPickTable={pickTable}
         dispatch={dispatch}
         onVoiceSettings={onCharacterVoice}
         onProvider={onCharacterProvider}
@@ -2090,6 +2144,7 @@ export default function App() {
         onAddLine={addLine}
         onRecord={recordLine}
         onPickAudio={pickAudio}
+        onPickTable={pickTable}
         onDropFiles={dropFiles}
       />
 
@@ -2119,6 +2174,16 @@ export default function App() {
           }}
           onStatus={pushStatus}
           onClose={() => setShowJobs(false)}
+        />
+      )}
+
+      {tableFile && (
+        <TableImportDialog
+          path={tableFile}
+          rule={matchBy}
+          ai={project.cues.some((cue) => showsAi(cue, project))}
+          onImport={importTable}
+          onClose={() => setTableFile(null)}
         />
       )}
 

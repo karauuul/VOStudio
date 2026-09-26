@@ -16,8 +16,6 @@ import {
   lineDot,
   matchesImportTab,
   type ImportTab,
-  type TableColumn,
-  type TableMapping,
 } from '@shared/import-table'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 import { useWire } from '../cue/useWire'
@@ -29,19 +27,8 @@ export interface GridApi {
   selectAll: () => void
 }
 
-export interface TableSource {
-  path: string
-  name: string
-  headers: string[]
-  mapping: TableMapping
-  rows: number
-  matched: number
-  unmatched: number
-}
-
 const COLUMNS = '56px 250px 64px minmax(160px, 1fr) minmax(160px, 1fr) 110px'
 const ROW_H = 34
-const MAP_COLUMNS: TableColumn[] = ['id', 'text', 'translation', 'character']
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
 
@@ -64,9 +51,7 @@ interface Props {
   onSearch: (s: string) => void
   searchRef: RefObject<HTMLInputElement>
   gridRef: MutableRefObject<GridApi | null>
-  table: TableSource | null
-  onMapping: (mapping: TableMapping) => void
-  onImportText: (replaceTranslations: boolean) => void
+  onImportText: () => void
   onTranscribe: (cueIds: string[], overwrite: boolean) => void
   onDetect: (sourceId: string, mode: 'silence' | 'transcribe') => void
   onOpenCue: (cueId: string) => void
@@ -79,8 +64,6 @@ export function LinesTable({
   onSearch,
   searchRef,
   gridRef,
-  table,
-  onMapping,
   onImportText,
   onTranscribe,
   onDetect,
@@ -228,8 +211,10 @@ export function LinesTable({
       onTranscribe(ids, overwrite)
       return
     }
-    arm(selected.length > 0 ? targets(selected, false) : missing(), false)
+    arm(transcribable, false)
   }
+
+  const transcribable = selected.length > 0 ? targets(selected, false) : missing()
 
   const transcribeMenu: MenuEntry[] = [
     {
@@ -237,7 +222,7 @@ export function LinesTable({
       disabled: targets(selected, false).length === 0,
       onClick: () => arm(targets(selected, false), false),
     },
-    { label: 'All without transcript', onClick: () => arm(missing(), false) },
+    { label: 'All without transcript', disabled: missing().length === 0, onClick: () => arm(missing(), false) },
     {
       label: 'Overwrite selected',
       disabled: targets(selected, true).length === 0,
@@ -299,7 +284,7 @@ export function LinesTable({
           </button>
         </span>
         <span className="split">
-          <button className="btn ghost" onClick={transcribeClick}>
+          <button className="btn ghost" disabled={!pending && transcribable.length === 0} onClick={transcribeClick}>
             {pending ? `Transcribe ${pending.ids.length}` : 'Transcribe'}
           </button>
           <button
@@ -311,52 +296,10 @@ export function LinesTable({
           </button>
         </span>
         <span className="tbar-sep" />
-        <span className="split">
-          <button className="btn ghost" onClick={() => onImportText(false)}>
-            Import text
-          </button>
-          <button
-            className="btn ghost caret-btn"
-            aria-label="Import text options"
-            onClick={(e) =>
-              pop.open(e, [
-                { label: 'Import text', onClick: () => onImportText(false) },
-                { label: 'Replace translations', onClick: () => onImportText(true) },
-              ])
-            }
-          >
-            <Caret />
-          </button>
-        </span>
+        <button className="btn ghost" onClick={onImportText}>
+          Import text
+        </button>
       </div>
-
-      {table && (
-        <div className="tbar map">
-          <span className="lab">{table.name}</span>
-          {MAP_COLUMNS.map((column) => (
-            <label key={column} className="imp-map">
-              <span>{column}</span>
-              <select
-                value={table.mapping[column] ?? -1}
-                onChange={(e) => {
-                  const index = Number(e.target.value)
-                  const next = { ...table.mapping }
-                  if (index < 0) delete next[column]
-                  else next[column] = index
-                  onMapping(next)
-                }}
-              >
-                <option value={-1}>—</option>
-                {table.headers.map((h, i) => (
-                  <option key={`${h}-${i}`} value={i}>
-                    {h}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
-        </div>
-      )}
 
       <div className="imp-head" style={{ gridTemplateColumns: COLUMNS }}>
         <span>#</span>
@@ -407,7 +350,7 @@ export function LinesTable({
 
       <div className="foot">
         <b>{nnn(total.lines)}</b> lines · <b>{nnn(total.transcribed)}</b> transcribed ·{' '}
-        <b>{nnn(total.translated)}</b> translated · <b>{nnn(total.unmatched)}</b> unmatched
+        <b>{nnn(total.translated)}</b> translated · <b>{nnn(total.unmatched)}</b> no audio
         <span className="sp" />
         <button
           className="btn primary"

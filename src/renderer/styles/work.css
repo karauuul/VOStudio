@@ -1950,6 +1950,10 @@ input.tl-name:focus {
   padding: 0 8px;
 }
 
+.phd .add-line + .add-line {
+  margin-left: -4px;
+}
+
 .work-empty {
   flex: 1 1 auto;
   min-height: 0;

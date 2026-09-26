@@ -73,11 +73,16 @@
   text-overflow: ellipsis;
 }
 
+.imp-src > div {
+  min-width: 0;
+}
+
 .imp-src .m {
   font: 11px var(--mono);
   color: var(--tx3);
   text-align: right;
   line-height: 1.5;
+  white-space: nowrap;
 }
 
 .foot {
@@ -107,12 +112,6 @@
   border-bottom: 1px solid var(--line);
 }
 
-.tbar.map {
-  gap: 12px;
-  flex-wrap: wrap;
-  padding: 6px 16px;
-}
-
 .tbar-sep {
   width: 1px;
   height: 20px;
@@ -124,19 +123,6 @@
   margin: 0;
   width: 260px;
   flex: none;
-}
-
-.imp-map {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--tx3);
-}
-
-.imp-map select {
-  height: 24px;
-  max-width: 130px;
 }
 
 .tbar .btn {

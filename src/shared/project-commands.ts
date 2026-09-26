@@ -1,4 +1,4 @@
-import { approveCue, changeCompOutput, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval, sanitizeRevision, setExcluded } from './approval'
+import { approveCue, changeCompOutput, changeCueSourceText, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval, sanitizeRevision, setExcluded } from './approval'
 import { compProblem, normalizeComp } from './comp'
 import { sanitizeEffects } from './effects'
 import {
@@ -55,6 +55,14 @@ export type ProjectCommand =
   | { type: 'cue.create'; afterCueId: string | null; lines: { id: string; text: string }[] }
   | { type: 'cue.delete'; cueIds: string[] }
   | { type: 'cue.restore'; cues: PlacedCue[] }
+  | {
+      type: 'table.step'
+      remove: string[]
+      restore: PlacedCue[]
+      fields: FieldStep[]
+      addCharacters: Character[]
+      dropCharacters: Character[]
+    }
   | { type: 'cue.useTakeAsOriginal'; cueId: string; takeId: string }
   | ({ type: 'cue.restoreOriginal'; cueId: string; whenOutputRevision: number } & OriginalState)
   | { type: 'character.setVoiceSettings'; characterId: string; settings: VoiceSettings }
@@ -80,6 +88,14 @@ export interface OriginalState {
 export interface PlacedCue {
   cue: Cue
   index: number
+}
+
+export type LineFields = Partial<Pick<Cue, 'sourceText' | 'text' | 'characterId'>>
+
+export interface FieldStep {
+  cueId: string
+  from: LineFields
+  to: LineFields
 }
 
 export interface ChangeSet {
@@ -171,6 +187,83 @@ function deleteCues(project: Project, cueIds: string[]): ChangeSet {
   return { removedCueIds: [...ids], removedCues: snapshot }
 }
 
+function checkRestore(project: Project, placed: PlacedCue[]): void {
+  const ids = new Set(placed.map((item) => item.cue.id))
+  if (ids.size === 0 || ids.size !== placed.length || project.cues.some((cue) => ids.has(cue.id))) {
+    throw new Error('Line id is already used')
+  }
+  const lookup = { cues: [...project.cues, ...placed.map((item) => item.cue)] }
+  for (const { cue } of placed) {
+    for (const clip of cue.comp?.clips ?? []) {
+      if (!resolveTake(lookup, cue, clip.sourceTakeId)) throw new Error('A source this line uses is no longer available')
+    }
+  }
+}
+
+const VOICE_KEYS = Object.keys(DEFAULT_VOICE_SETTINGS) as (keyof VoiceSettings)[]
+const PROVIDER_KEYS = ['providerId', 'voiceId', 'ttsModel', 'stsModel'] as const
+
+const sameCharacter = (a: Character, b: Character): boolean =>
+  a.name === b.name &&
+  a.color === b.color &&
+  PROVIDER_KEYS.every((key) => a.provider[key] === b.provider[key]) &&
+  VOICE_KEYS.every((key) => a.voiceSettings[key] === b.voiceSettings[key])
+
+function stepFields(project: Project, cue: Cue, from: LineFields, to: LineFields): Cue {
+  let next = cue
+  if (to.sourceText !== undefined && next.sourceText === from.sourceText) {
+    next = changeCueSourceText(next, to.sourceText, project)
+  }
+  if (to.text !== undefined && next.text === from.text) next = changeCueText(next, to.text, project)
+  const characterId = to.characterId
+  if (
+    characterId !== undefined &&
+    next.characterId === from.characterId &&
+    next.characterId !== characterId &&
+    (characterId === '' || project.characters.some((item) => item.id === characterId))
+  ) {
+    next = { ...next, characterId }
+  }
+  return next
+}
+
+function tableStep(project: Project, command: Extract<ProjectCommand, { type: 'table.step' }>): ChangeSet {
+  const present = new Set(project.cues.map((cue) => cue.id))
+  const remove = command.remove.filter((id) => present.has(id))
+  if (command.restore.length > 0) checkRestore(project, command.restore)
+  const removed = remove.length > 0 ? deleteCues(project, remove) : {}
+  const cueIndex = command.restore.length > 0 ? insertCues(project, structuredClone(command.restore)).cueIndex : undefined
+  let charactersChanged = false
+  for (const character of command.addCharacters) {
+    if (project.characters.some((item) => item.id === character.id)) continue
+    project.characters.push(structuredClone(character))
+    charactersChanged = true
+  }
+  const byId = new Map(project.cues.map((cue) => [cue.id, cue]))
+  const touched = new Set(Object.keys(cueIndex ?? {}))
+  for (const { cueId, from, to } of command.fields) {
+    const cue = byId.get(cueId)
+    if (!cue) continue
+    const next = stepFields(project, cue, from, to)
+    if (next === cue) continue
+    Object.assign(cue, next)
+    touched.add(cueId)
+  }
+  for (const character of command.dropCharacters) {
+    const at = project.characters.findIndex((item) => item.id === character.id)
+    if (at < 0 || !sameCharacter(project.characters[at], character)) continue
+    if (project.cues.some((cue) => cue.characterId === character.id)) continue
+    project.characters.splice(at, 1)
+    charactersChanged = true
+  }
+  return {
+    ...removed,
+    ...(touched.size > 0 ? { cues: [...touched].map((id) => structuredClone(byId.get(id) as Cue)) } : {}),
+    ...(cueIndex ? { cueIndex } : {}),
+    ...(charactersChanged ? characterList(project) : {}),
+  }
+}
+
 export function applyProjectCommand(project: Project, command: ProjectCommand): ChangeSet {
   if (command.type === 'cue.create') {
     if (command.lines.length === 0) throw new Error('No lines to create')
@@ -187,19 +280,11 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
     )
   }
   if (command.type === 'cue.restore') {
-    const ids = new Set(command.cues.map((placed) => placed.cue.id))
-    if (ids.size === 0 || ids.size !== command.cues.length || project.cues.some((cue) => ids.has(cue.id))) {
-      throw new Error('Line id is already used')
-    }
-    const lookup = { cues: [...project.cues, ...command.cues.map((placed) => placed.cue)] }
-    for (const { cue } of command.cues) {
-      for (const clip of cue.comp?.clips ?? []) {
-        if (!resolveTake(lookup, cue, clip.sourceTakeId)) throw new Error('A source this line uses is no longer available')
-      }
-    }
+    checkRestore(project, command.cues)
     return insertCues(project, structuredClone(command.cues))
   }
   if (command.type === 'cue.delete') return deleteCues(project, command.cueIds)
+  if (command.type === 'table.step') return tableStep(project, command)
   if (command.type === 'character.setVoiceSettings') {
     const character = characterById(project, command.characterId)
     character.voiceSettings = structuredClone(command.settings)
@@ -452,8 +537,8 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
 
 export function commandAudioPaths(command: ProjectCommand): string[] {
   if (command.type === 'cue.restoreOriginal') return command.referenceAudio ? [command.referenceAudio.relPath] : []
-  if (command.type !== 'cue.restore') return []
-  return command.cues.flatMap(({ cue }) => [
+  const restored = command.type === 'cue.restore' ? command.cues : command.type === 'table.step' ? command.restore : []
+  return restored.flatMap(({ cue }) => [
     ...cue.takes.map((take) => take.file.relPath),
     ...(cue.referenceAudio ? [cue.referenceAudio.relPath] : []),
     ...(cue.stems ?? []).map((stem) => stem.file.relPath),

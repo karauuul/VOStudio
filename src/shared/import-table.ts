@@ -1,4 +1,7 @@
 import { changeCueSourceText, changeCueText } from './approval'
+import { parseCsv } from './csv'
+import { newLineCue, nextLineNumber, splitParagraphs } from './lines'
+import type { ChangeSet, FieldStep, LineFields } from './project-commands'
 import {
   characterColor,
   DEFAULT_VOICE_SETTINGS,
@@ -60,10 +63,60 @@ export function detectMapping(headers: string[]): TableMapping {
   return mapping
 }
 
+export const TABLE_FILE = /\.(csv|tsv|txt)$/i
+
 export function tableDelimiter(fileName: string, firstLine: string): ',' | '\t' {
   if (/\.tsv$/i.test(fileName)) return '\t'
   if (/\.csv$/i.test(fileName)) return ','
   return firstLine.includes('\t') ? '\t' : ','
+}
+
+export interface TableFile {
+  script: boolean
+  headers: string[]
+  rows: string[][]
+}
+
+export function parseTableFile(fileName: string, raw: string): TableFile {
+  const firstLine = raw.slice(0, raw.search(/\r?\n/) + 1 || undefined)
+  if (/\.txt$/i.test(fileName) && !firstLine.includes('\t')) {
+    return { script: true, headers: [], rows: splitParagraphs(raw.replace(/^\uFEFF/, '')).map((part) => [part]) }
+  }
+  const csv = parseCsv(raw, tableDelimiter(fileName, firstLine))
+  if (csv.headers.length === 0) throw new Error('Table has no header row')
+  return { script: false, headers: csv.headers, rows: csv.rows }
+}
+
+export function tableMapping(
+  file: TableFile,
+  cues: Pick<Cue, 'sourceText'>[],
+  requested?: TableMapping
+): TableMapping {
+  if (file.script) return { translation: 0 }
+  if (requested) return requested
+  const mapping = detectMapping(file.headers)
+  if (file.headers.length === 1 && Object.keys(mapping).length === 0) mapping.text = 0
+  if (mapping.text !== undefined && mapping.translation === undefined && cues.every((cue) => !cue.sourceText.trim())) {
+    mapping.translation = mapping.text
+    delete mapping.text
+  }
+  return mapping
+}
+
+export function assignColumn(mapping: TableMapping, column: number, field: TableColumn | null): TableMapping {
+  const next: TableMapping = {}
+  for (const key of Object.keys(mapping) as TableColumn[]) {
+    if (mapping[key] !== column && key !== field) next[key] = mapping[key]
+  }
+  if (field) next[field] = column
+  return next
+}
+
+export interface TableSummary {
+  added: number
+  updated: number
+  unchanged: number
+  skipped: number
 }
 
 export interface TableApplyResult {
@@ -71,6 +124,7 @@ export interface TableApplyResult {
   matched: number
   unmatched: Cue[]
   createdCharacters: Character[]
+  summary: TableSummary
 }
 
 function ensureCharacter(project: Pick<Project, 'characters'>, name: string): string {
@@ -94,58 +148,65 @@ function ensureCharacter(project: Pick<Project, 'characters'>, name: string): st
   return name
 }
 
+const cellAt = (cells: string[], column: number | undefined): string =>
+  column === undefined ? '' : (cells[column] ?? '').trim()
+
+const keyedCue = (key: string): Cue => ({
+  id: crypto.randomUUID(),
+  characterId: '',
+  key,
+  fields: { EventName: key },
+  sourceText: '',
+  text: '',
+  status: 'empty',
+  notes: '',
+  takes: [],
+})
+
 export function applyTable(
   project: Pick<Project, 'cues' | 'characters'>,
   rows: string[][],
   mapping: TableMapping,
   rule: MatchRule,
-  replaceTranslations: boolean
+  replaceTranslations: boolean,
+  keepOriginal = false
 ): TableApplyResult {
   const idColumn = mapping.id
-  if (idColumn === undefined) {
-    return { changed: [], matched: 0, unmatched: [], createdCharacters: [] }
-  }
   const byKey = new Map(project.cues.map((cue) => [matchKey(cue, rule), cue]))
   const before = project.characters.length
   const changed = new Map<string, Cue>()
   const unmatched: Cue[] = []
+  const summary: TableSummary = { added: 0, updated: 0, unchanged: 0, skipped: 0 }
   let matched = 0
+  let line = nextLineNumber(project.cues)
 
   for (const cells of rows) {
-    const id = (cells[idColumn] ?? '').trim()
-    if (!id) continue
-    let cue = byKey.get(id)
-    let touched = false
+    const id = cellAt(cells, idColumn)
+    const source = cellAt(cells, mapping.text)
+    const translation = cellAt(cells, mapping.translation)
+    if (idColumn === undefined ? !source && !translation : !id) {
+      summary.skipped++
+      continue
+    }
+    let cue = idColumn === undefined ? undefined : byKey.get(id)
+    const created = !cue
     if (!cue) {
-      cue = {
-        id: crypto.randomUUID(),
-        characterId: '',
-        key: id,
-        fields: { EventName: id },
-        sourceText: '',
-        text: '',
-        status: 'empty',
-        notes: '',
-        takes: [],
-      }
+      cue = idColumn === undefined ? newLineCue(crypto.randomUUID(), line++) : keyedCue(id)
       project.cues.push(cue)
-      byKey.set(id, cue)
+      if (idColumn !== undefined) byKey.set(id, cue)
       unmatched.push(cue)
-      touched = true
     } else matched++
-    const source = mapping.text === undefined ? '' : (cells[mapping.text] ?? '').trim()
-    if (source && source !== cue.sourceText) {
+    let touched = created
+    if (source && source !== cue.sourceText && !(keepOriginal && cue.sourceText.trim())) {
       Object.assign(cue, changeCueSourceText(cue, source))
       touched = true
     }
-    const translation =
-      mapping.translation === undefined ? '' : (cells[mapping.translation] ?? '').trim()
     if (translation && translation !== cue.text && (replaceTranslations || !cue.text.trim())) {
       Object.assign(cue, changeCueText(cue, translation))
       if (cue.status === 'empty') cue.status = 'translated'
       touched = true
     }
-    const character = mapping.character === undefined ? '' : (cells[mapping.character] ?? '').trim()
+    const character = cellAt(cells, mapping.character)
     if (character) {
       const characterId = ensureCharacter(project, character)
       if (cue.characterId !== characterId) {
@@ -154,6 +215,7 @@ export function applyTable(
       }
     }
     if (touched) changed.set(cue.id, cue)
+    summary[created ? 'added' : touched ? 'updated' : 'unchanged']++
   }
 
   return {
@@ -161,6 +223,73 @@ export function applyTable(
     matched,
     unmatched,
     createdCharacters: project.characters.slice(before),
+    summary,
+  }
+}
+
+export interface TableOptions {
+  mapping: TableMapping
+  rule: MatchRule
+  replaceTranslations: boolean
+  keepOriginal: boolean
+}
+
+export interface TableUndo {
+  ids: string[]
+  fields: FieldStep[]
+  characters: Character[]
+}
+
+export interface TableCommit {
+  summary: TableSummary
+  undo: TableUndo
+  changes: ChangeSet | null
+}
+
+const lineFields = (cue: Cue): Required<LineFields> => ({
+  sourceText: cue.sourceText,
+  text: cue.text,
+  characterId: cue.characterId,
+})
+
+const LINE_FIELD_KEYS = ['sourceText', 'text', 'characterId'] as const
+
+export function previewTable(project: Pick<Project, 'cues' | 'characters'>, rows: string[][], options: TableOptions): TableSummary {
+  const copy = { cues: project.cues.map((cue) => ({ ...cue })), characters: [...project.characters] }
+  return applyTable(copy, rows, options.mapping, options.rule, options.replaceTranslations, options.keepOriginal).summary
+}
+
+export function commitTable(project: Pick<Project, 'cues' | 'characters'>, rows: string[][], options: TableOptions): TableCommit {
+  const before = new Map(project.cues.map((cue) => [cue.id, lineFields(cue)]))
+  const applied = applyTable(project, rows, options.mapping, options.rule, options.replaceTranslations, options.keepOriginal)
+  const fields: FieldStep[] = []
+  for (const cue of applied.changed) {
+    const from = before.get(cue.id)
+    if (!from) continue
+    const to = lineFields(cue)
+    const keys = LINE_FIELD_KEYS.filter((key) => from[key] !== to[key])
+    if (keys.length === 0) continue
+    fields.push({
+      cueId: cue.id,
+      from: Object.fromEntries(keys.map((key) => [key, from[key]])),
+      to: Object.fromEntries(keys.map((key) => [key, to[key]])),
+    })
+  }
+  const createdCharacters = applied.createdCharacters.length > 0
+  return {
+    summary: applied.summary,
+    undo: {
+      ids: applied.unmatched.map((cue) => cue.id),
+      fields,
+      characters: structuredClone(applied.createdCharacters),
+    },
+    changes:
+      applied.changed.length === 0 && !createdCharacters
+        ? null
+        : {
+            cues: structuredClone(applied.changed),
+            ...(createdCharacters ? { characters: structuredClone(project.characters), charactersReplace: true } : {}),
+          },
   }
 }
 
@@ -194,7 +323,7 @@ export const IMPORT_TABS: { id: ImportTab; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'notranscript', label: 'No transcript' },
   { id: 'notranslation', label: 'No translation' },
-  { id: 'unmatched', label: 'Unmatched' },
+  { id: 'unmatched', label: 'No audio' },
 ]
 
 export const hasAudio = (cue: Cue): boolean => !!cue.referenceAudio || !!cue.region
