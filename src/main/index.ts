@@ -411,6 +411,8 @@ const emptyProjectBase = (name: string): Omit<Project, 'id' | 'schemaVersion' | 
   ui: { filter: '', search: '' },
 })
 
+let restoringVersion = false
+
 function registerHandlers(): void {
   typedHandle('project:list', () => store.listProjects())
 
@@ -611,19 +613,24 @@ function registerHandlers(): void {
     serialLifecycle(async () => {
       const { n } = restoreVersionSchema.parse(req)
       const { repository, dir } = requireSession()
-      const version = await store.readVersion(n)
-      await upgradeLoaded(version, dir)
-      await detachCurrentRepository()
-      const current = repository.projectForMain()
-      const revision = repository.currentRevision()
-      let restored: Project
+      restoringVersion = true
       try {
-        restored = await store.restoreVersion(current, version, n)
-      } catch (error) {
-        resetRepository(current, revision)
-        throw error
+        const version = await store.readVersion(n)
+        await upgradeLoaded(version, dir)
+        await detachCurrentRepository()
+        const current = repository.projectForMain()
+        const revision = repository.currentRevision()
+        let restored: Project
+        try {
+          restored = await store.restoreVersion(current, version, n)
+        } catch (error) {
+          resetRepository(current, revision)
+          throw error
+        }
+        return resetRepository(restored, revision).snapshot()
+      } finally {
+        restoringVersion = false
       }
-      return resetRepository(restored, revision).snapshot()
     })
   )
 
@@ -652,6 +659,7 @@ function registerHandlers(): void {
   })
 
   typedHandle('rec:begin', (req) => {
+    if (restoringVersion) throw new Error('Restoring version')
     const parsed = recBeginSchema.parse(req)
     return beginRecording(requireSession(), parsed.cueId, parsed.sampleRate, parsed.bitDepth)
   })
