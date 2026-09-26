@@ -15,12 +15,12 @@ import {
   compRenderPlan,
   duckEnvelope,
 } from '@shared/comp'
+import { dbToGain } from '@shared/effects'
 import { connectEffects } from './effects-graph'
-import { connectPitch } from './pitch-node'
 
 export const FADE_CURVE_POINTS = 64
 
-export { envelopeDbAt }
+export { dbToGain, envelopeDbAt }
 export const stretchRate = clipSpeed
 
 export function trimmedDuration(bufferDuration: number, edits: ClipEdits): number {
@@ -31,10 +31,6 @@ export function trimmedDuration(bufferDuration: number, edits: ClipEdits): numbe
 
 export function renderDuration(bufferDuration: number, edits: ClipEdits): number {
   return trimmedDuration(bufferDuration, edits) / stretchRate(edits)
-}
-
-export function dbToGain(db: number): number {
-  return Math.pow(10, db / 20)
 }
 
 export function fadeValue(shape: FadeShape, x: number): number {
@@ -177,9 +173,7 @@ export function buildClipGraph(
   gain.gain.value = dbToGain(edits.gainDb)
   node.connect(gain)
 
-  const pitched = connectPitch(ctx, gain, edits.effects?.pitch, buffer.numberOfChannels)
-
-  const output = connectEffects(ctx, pitched, edits.effects)
+  const output = connectEffects(ctx, gain, edits.effects, buffer.numberOfChannels)
 
   return {
     source,
@@ -246,7 +240,7 @@ function trackBuses(
     const gain = ctx.createGain()
     const audible = !track || (!track.muted && (!soloed || track.solo))
     gain.gain.value = audible ? dbToGain(track?.gainDb ?? 0) : 0
-    connectEffects(ctx, gain, track?.effects).connect(destination)
+    connectEffects(ctx, gain, track?.effects, destination.channelCount).connect(destination)
     buses.set(trackId, gain)
     return gain
   }

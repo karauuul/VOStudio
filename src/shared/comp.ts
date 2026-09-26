@@ -11,7 +11,7 @@ import {
   type CueComp,
   type Take,
 } from './domain'
-import { effectOn, effectsTail, pitchActive, sanitizeEffects } from './effects'
+import { effectOn, effectsTail, sanitizeEffects, usesWorklets } from './effects'
 
 export const COMP_EPS = 1e-6
 
@@ -104,8 +104,14 @@ export function compHasReverb(clips: readonly CompClip[], tracks?: readonly Comp
   )
 }
 
-export function compHasPitch(clips: readonly CompClip[]): boolean {
-  return clips.some((c) => pitchActive(c.edits.effects?.pitch))
+export function compUsesWorklets(
+  clips: readonly CompClip[],
+  tracks?: readonly CompTrack[]
+): boolean {
+  return (
+    clips.some((c) => usesWorklets(c.edits.effects)) ||
+    (tracks ?? []).some((t) => usesWorklets(t.effects))
+  )
 }
 
 export function withSourceEffects(clip: CompClip, take: Pick<Take, 'edits'>): CompClip {

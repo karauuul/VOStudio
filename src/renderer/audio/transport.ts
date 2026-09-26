@@ -1,4 +1,4 @@
-import { compDuration, compEffectsTail, compHasPitch } from '@shared/comp'
+import { compDuration, compEffectsTail, compUsesWorklets } from '@shared/comp'
 import { emptyEdits, type CompTrack } from '@shared/domain'
 import {
   buildClipGraph,
@@ -11,7 +11,7 @@ import type { ResolvedComp } from './comp-source'
 import { playBounds, resumeAt } from '@shared/resume'
 import { Lru } from './lru'
 import { DECODE_BUDGET_BYTES } from '@shared/take-import'
-import { ensurePitchModule } from './pitch-node'
+import { ensureEffectWorklets } from './effect-worklets'
 
 export interface TransportState {
   clipId: string | null
@@ -132,7 +132,7 @@ function ac(): AudioContext {
   meter = a
   meterFrame = new Float32Array(a.fftSize)
   void applySink(c, sinkId)
-  void ensurePitchModule(c).catch(() => {})
+  void ensureEffectWorklets(c).catch(() => {})
   const wake = (): void => {
     void c.resume().catch(() => {})
   }
@@ -532,10 +532,10 @@ export async function loadCompSources(resolved: ResolvedComp): Promise<CompSourc
   return out
 }
 
-async function pitchReady(sources: CompSource[]): Promise<boolean> {
-  if (!compHasPitch(sources.map((s) => s.clip))) return true
+async function workletsReady(sources: CompSource[], tracks?: CompTrack[]): Promise<boolean> {
+  if (!compUsesWorklets(sources.map((s) => s.clip), tracks)) return true
   try {
-    await ensurePitchModule(ac())
+    await ensureEffectWorklets(ac())
   } catch (e) {
     console.error(e)
   }
@@ -577,7 +577,7 @@ export async function playComp(
     return
   }
   if (g !== gen || stopped !== stops) return
-  if (!(await pitchReady(sources))) return
+  if (!(await workletsReady(sources, resolved.tracks))) return
   if (g !== gen || stopped !== stops) return
 
   const clips = sources.map((s) => s.clip)

@@ -1723,7 +1723,7 @@ input.tl-name:focus {
 
 .fxp .p {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) 72px;
+  grid-template-columns: 60px minmax(0, 1fr) 80px;
   align-items: center;
   gap: 12px;
   height: 28px;

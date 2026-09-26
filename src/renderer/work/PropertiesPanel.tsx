@@ -22,12 +22,46 @@ import {
   type TakeKind,
 } from '@shared/domain'
 import {
+  COMPRESSOR_ATTACK_MAX,
+  COMPRESSOR_ATTACK_MIN,
+  COMPRESSOR_KNEE_MAX,
+  COMPRESSOR_KNEE_MIN,
+  COMPRESSOR_MAKEUP_MAX,
+  COMPRESSOR_MAKEUP_MIN,
+  COMPRESSOR_RATIO_MAX,
+  COMPRESSOR_RATIO_MIN,
+  COMPRESSOR_RELEASE_MAX,
+  COMPRESSOR_RELEASE_MIN,
+  COMPRESSOR_THRESHOLD_MAX,
+  COMPRESSOR_THRESHOLD_MIN,
   DELAY_FEEDBACK_MAX,
   DELAY_FEEDBACK_MIN,
   DELAY_TIME_MAX,
   DELAY_TIME_MIN,
   EFFECT_KINDS,
   effectOn,
+  EQ_GAIN_MAX,
+  EQ_GAIN_MIN,
+  EQ_HIGH_FREQ_MAX,
+  EQ_HIGH_FREQ_MIN,
+  EQ_LOW_FREQ_MAX,
+  EQ_LOW_FREQ_MIN,
+  EQ_MID_FREQ_MAX,
+  EQ_MID_FREQ_MIN,
+  EQ_Q_MAX,
+  EQ_Q_MIN,
+  GATE_ATTACK_MAX,
+  GATE_ATTACK_MIN,
+  GATE_HOLD_MAX,
+  GATE_HOLD_MIN,
+  GATE_RANGE_MAX,
+  GATE_RANGE_MIN,
+  GATE_RELEASE_MAX,
+  GATE_RELEASE_MIN,
+  GATE_THRESHOLD_MAX,
+  GATE_THRESHOLD_MIN,
+  HIGHPASS_FREQ_MAX,
+  HIGHPASS_FREQ_MIN,
   MIX_MAX,
   MIX_MIN,
   pickEffects,
@@ -90,7 +124,15 @@ const TAB_LABEL: Record<PropertiesTab, string> = {
   source: 'Source',
 }
 
-const FX_LABEL: Record<EffectKind, string> = { reverb: 'Reverb', delay: 'Delay', pitch: 'Pitch' }
+const FX_LABEL: Record<EffectKind, string> = {
+  gate: 'Gate',
+  highpass: 'High-pass',
+  eq: 'EQ',
+  compressor: 'Compressor',
+  reverb: 'Reverb',
+  delay: 'Delay',
+  pitch: 'Pitch',
+}
 
 const KIND_LABEL: Record<TakeKind, string> = {
   tts: 'generated',
@@ -340,90 +382,82 @@ interface Param {
   set: (v: number) => ClipEffects
 }
 
+interface Knob {
+  key: string
+  label: string
+  unit: string
+  min: number
+  max: number
+  decimals: number
+  scale: number
+  snap: number
+}
+
+const knob = (
+  key: string,
+  label: string,
+  unit: string,
+  min: number,
+  max: number,
+  decimals: number,
+  scale = 1,
+  snap = 0
+): Knob => ({ key, label, unit, min, max, decimals, scale, snap })
+
+const KNOBS: Record<EffectKind, Knob[]> = {
+  gate: [
+    knob('threshold', 'Threshold', 'dB', GATE_THRESHOLD_MIN, GATE_THRESHOLD_MAX, 0),
+    knob('attack', 'Attack', 'ms', GATE_ATTACK_MIN, GATE_ATTACK_MAX, 1, 1000),
+    knob('hold', 'Hold', 'ms', GATE_HOLD_MIN, GATE_HOLD_MAX, 0, 1000),
+    knob('release', 'Release', 'ms', GATE_RELEASE_MIN, GATE_RELEASE_MAX, 0, 1000),
+    knob('range', 'Range', 'dB', GATE_RANGE_MIN, GATE_RANGE_MAX, 0),
+  ],
+  highpass: [knob('frequency', 'Freq', 'Hz', HIGHPASS_FREQ_MIN, HIGHPASS_FREQ_MAX, 0)],
+  eq: [
+    knob('lowFreq', 'Low', 'Hz', EQ_LOW_FREQ_MIN, EQ_LOW_FREQ_MAX, 0),
+    knob('lowGain', 'Low gain', 'dB', EQ_GAIN_MIN, EQ_GAIN_MAX, 1),
+    knob('midFreq', 'Mid', 'Hz', EQ_MID_FREQ_MIN, EQ_MID_FREQ_MAX, 0),
+    knob('midGain', 'Mid gain', 'dB', EQ_GAIN_MIN, EQ_GAIN_MAX, 1),
+    knob('midQ', 'Mid Q', '', EQ_Q_MIN, EQ_Q_MAX, 2),
+    knob('highFreq', 'High', 'Hz', EQ_HIGH_FREQ_MIN, EQ_HIGH_FREQ_MAX, 0),
+    knob('highGain', 'High gain', 'dB', EQ_GAIN_MIN, EQ_GAIN_MAX, 1),
+  ],
+  compressor: [
+    knob('threshold', 'Threshold', 'dB', COMPRESSOR_THRESHOLD_MIN, COMPRESSOR_THRESHOLD_MAX, 1),
+    knob('ratio', 'Ratio', ':1', COMPRESSOR_RATIO_MIN, COMPRESSOR_RATIO_MAX, 1),
+    knob('attack', 'Attack', 'ms', COMPRESSOR_ATTACK_MIN, COMPRESSOR_ATTACK_MAX, 1, 1000),
+    knob('release', 'Release', 'ms', COMPRESSOR_RELEASE_MIN, COMPRESSOR_RELEASE_MAX, 0, 1000),
+    knob('knee', 'Knee', 'dB', COMPRESSOR_KNEE_MIN, COMPRESSOR_KNEE_MAX, 0),
+    knob('makeup', 'Makeup', 'dB', COMPRESSOR_MAKEUP_MIN, COMPRESSOR_MAKEUP_MAX, 1),
+  ],
+  reverb: [
+    knob('size', 'Size', '%', REVERB_SIZE_MIN, REVERB_SIZE_MAX, 0, 100),
+    knob('decay', 'Decay', 's', REVERB_DECAY_MIN, REVERB_DECAY_MAX, 2),
+    knob('mix', 'Mix', '%', MIX_MIN, MIX_MAX, 0, 100),
+  ],
+  delay: [
+    knob('time', 'Time', 'ms', DELAY_TIME_MIN, DELAY_TIME_MAX, 0, 1000),
+    knob('feedback', 'Feedback', '%', DELAY_FEEDBACK_MIN, DELAY_FEEDBACK_MAX, 0, 100),
+    knob('mix', 'Mix', '%', MIX_MIN, MIX_MAX, 0, 100),
+  ],
+  pitch: [knob('semitones', 'Shift', 'st', PITCH_SEMITONES_MIN, PITCH_SEMITONES_MAX, 1, 1, PITCH_STEP)],
+}
+
 function effectParams(fx: ClipEffects, which: EffectKind): Param[] {
-  if (which === 'reverb') {
-    const r = fx.reverb!
-    return [
-      {
-        key: 'size',
-        label: 'Size',
-        value: Math.round(r.size * 100),
-        min: REVERB_SIZE_MIN * 100,
-        max: REVERB_SIZE_MAX * 100,
-        decimals: 0,
-        unit: '%',
-        set: (v) => ({ ...fx, reverb: { ...r, size: v / 100 } }),
-      },
-      {
-        key: 'decay',
-        label: 'Decay',
-        value: r.decay,
-        min: REVERB_DECAY_MIN,
-        max: REVERB_DECAY_MAX,
-        decimals: 2,
-        unit: 's',
-        set: (v) => ({ ...fx, reverb: { ...r, decay: v } }),
-      },
-      {
-        key: 'mix',
-        label: 'Mix',
-        value: Math.round(r.mix * 100),
-        min: MIX_MIN * 100,
-        max: MIX_MAX * 100,
-        decimals: 0,
-        unit: '%',
-        set: (v) => ({ ...fx, reverb: { ...r, mix: v / 100 } }),
-      },
-    ]
-  }
-  if (which === 'delay') {
-    const d = fx.delay!
-    return [
-      {
-        key: 'time',
-        label: 'Time',
-        value: Math.round(d.time * 1000),
-        min: DELAY_TIME_MIN * 1000,
-        max: DELAY_TIME_MAX * 1000,
-        decimals: 0,
-        unit: 'ms',
-        set: (v) => ({ ...fx, delay: { ...d, time: v / 1000 } }),
-      },
-      {
-        key: 'feedback',
-        label: 'Feedback',
-        value: Math.round(d.feedback * 100),
-        min: DELAY_FEEDBACK_MIN * 100,
-        max: DELAY_FEEDBACK_MAX * 100,
-        decimals: 0,
-        unit: '%',
-        set: (v) => ({ ...fx, delay: { ...d, feedback: v / 100 } }),
-      },
-      {
-        key: 'mix',
-        label: 'Mix',
-        value: Math.round(d.mix * 100),
-        min: MIX_MIN * 100,
-        max: MIX_MAX * 100,
-        decimals: 0,
-        unit: '%',
-        set: (v) => ({ ...fx, delay: { ...d, mix: v / 100 } }),
-      },
-    ]
-  }
-  const p = fx.pitch!
-  return [
-    {
-      key: 'semitones',
-      label: 'Shift',
-      value: p.semitones,
-      min: PITCH_SEMITONES_MIN,
-      max: PITCH_SEMITONES_MAX,
-      decimals: 1,
-      unit: 'st',
-      set: (v) => ({ ...fx, pitch: { ...p, semitones: Math.round(v / PITCH_STEP) * PITCH_STEP } }),
-    },
-  ]
+  const current = fx[which] as unknown as Record<string, number>
+  return KNOBS[which].map((k) => {
+    const snap = (v: number): number => (k.snap > 0 ? Math.round(v / k.snap) * k.snap : v)
+    return {
+      key: k.key,
+      label: k.label,
+      unit: k.unit,
+      decimals: k.decimals,
+      value: Number((current[k.key] * k.scale).toFixed(k.decimals)),
+      min: k.min * k.scale,
+      max: k.max * k.scale,
+      set: (v) => ({ ...fx, [which]: { ...current, [k.key]: snap(v / k.scale) } }),
+    }
+  })
 }
 
 function EffectStack({

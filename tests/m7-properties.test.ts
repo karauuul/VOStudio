@@ -146,7 +146,7 @@ describe('connectEffects honours the bypass', () => {
   it('a bypassed reverb builds no convolver', () => {
     const { ctx, made } = fakeContext()
     const fx = setEffectEnabled({ reverb: DEFAULT_REVERB }, 'reverb', false)
-    const out = connectEffects(ctx, input(), fx)
+    const out = connectEffects(ctx, input(), fx, 1)
     expect(made).toEqual([])
     expect((out as unknown as FakeNode).kind).toBe('input')
   })
@@ -154,7 +154,7 @@ describe('connectEffects honours the bypass', () => {
   it('a bypassed delay beside a live reverb leaves only the reverb', () => {
     const { ctx, made } = fakeContext()
     const fx = setEffectEnabled({ reverb: DEFAULT_REVERB, delay: DEFAULT_DELAY }, 'delay', false)
-    connectEffects(ctx, input(), fx)
+    connectEffects(ctx, input(), fx, 1)
     expect(made.filter((k) => k === 'convolver')).toHaveLength(1)
     expect(made.filter((k) => k === 'delay')).toHaveLength(0)
   })
