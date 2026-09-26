@@ -11,6 +11,7 @@ import {
   tableMapping,
   type TableOptions,
   TABLE_ROWS_MAX,
+  TABLE_COLUMNS_MAX,
   CUE_KEY_MAX,
   CHARACTER_ID_MAX,
 } from '../src/shared/import-table'
@@ -434,6 +435,10 @@ describe('table size bound', () => {
     const rows = Array.from({ length: TABLE_ROWS_MAX + 1 }, (_, i) => `line ${i}`).join('\n')
     expect(() => parseTableFile('big.csv', `Text\n${rows}\n`)).toThrow(/more than/)
     expect(parseTableFile('ok.csv', 'Text\nOne\n').rows).toHaveLength(1)
+    const wide = Array.from({ length: TABLE_COLUMNS_MAX + 1 }, (_, i) => `c${i}`).join(',')
+    expect(() => parseTableFile('wide.csv', `${wide}\n`)).toThrow(/columns/)
+    expect(tableImportSchema.safeParse({ path: '/t.csv', rule: 'id', mapping: { id: TABLE_COLUMNS_MAX - 1 } }).success).toBe(true)
+    expect(tableImportSchema.safeParse({ path: '/t.csv', rule: 'id', mapping: { id: TABLE_COLUMNS_MAX } }).success).toBe(false)
   })
 })
 

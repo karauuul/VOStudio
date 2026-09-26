@@ -77,7 +77,10 @@ export function TableImportDialog({ path, rule, ai, onImport, onClose }: Props) 
   }
 
   const stats: { key: keyof TableSummary; label: string; tone: string }[] = preview?.script
-    ? [{ key: 'added', label: 'new', tone: 'ok' }]
+    ? [
+        { key: 'added', label: 'new', tone: 'ok' },
+        { key: 'skipped', label: 'skipped', tone: summary?.skipped ? 'warn' : '' },
+      ]
     : [
         { key: 'added', label: 'new', tone: 'ok' },
         { key: 'updated', label: 'updated', tone: 'ac' },

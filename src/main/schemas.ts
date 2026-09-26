@@ -2,7 +2,7 @@ import path from 'path'
 import { z } from 'zod'
 import { isProjectDirIn, isSafeId, isValidProjectName } from '@shared/project-summary'
 import { CREATE_LINES_MAX, LINE_TEXT_MAX } from '@shared/lines'
-import { CHARACTER_ID_MAX, CUE_KEY_MAX, TABLE_ROWS_MAX } from '@shared/import-table'
+import { CHARACTER_ID_MAX, CUE_KEY_MAX, TABLE_COLUMNS_MAX, TABLE_ROWS_MAX } from '@shared/import-table'
 import { PUNCH_PREROLL_MAX, PUNCH_PREROLL_STEP, RECORD_LATENCY_MAX_MS } from '@shared/punch'
 import {
   DUCK_MAX_DB,
@@ -72,7 +72,7 @@ export const filePath = z.string().min(1).max(4096).refine((p) => path.isAbsolut
 
 export const matchRuleSchema = z.enum(['id', 'exportName', 'tableId'])
 
-const columnIndex = z.number().int().min(0).max(4096)
+const columnIndex = z.number().int().min(0).max(TABLE_COLUMNS_MAX - 1)
 
 export const tableImportSchema = z.object({
   path: filePath,

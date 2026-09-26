@@ -78,11 +78,13 @@ export interface TableFile {
 }
 
 export const TABLE_ROWS_MAX = 100_000
+export const TABLE_COLUMNS_MAX = 4096
 export const CUE_KEY_MAX = 4096
 export const CHARACTER_ID_MAX = 200
 
 function bounded(file: TableFile): TableFile {
   if (file.rows.length > TABLE_ROWS_MAX) throw new Error(`Table has more than ${TABLE_ROWS_MAX} rows`)
+  if (file.headers.length > TABLE_COLUMNS_MAX) throw new Error(`Table has more than ${TABLE_COLUMNS_MAX} columns`)
   return file
 }
 
