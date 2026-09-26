@@ -20,7 +20,7 @@ import {
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '@shared/ipc'
 import { pickHistory, redoStale, type UndoSide } from '@shared/undo-route'
-import { planScriptPaste, showsAi } from '@shared/lines'
+import { PARAGRAPH_TOO_LONG, planScriptPaste, showsAi } from '@shared/lines'
 import { TABLE_FILE } from '@shared/import-table'
 import { keyedQueue } from '@shared/keyed-queue'
 import type { UpdateStatus } from '@shared/updater'
@@ -1508,11 +1508,15 @@ export default function App() {
 
   const doneNext = useCallback(() => {
     const cue = activeCue
-    if (!cue || !hasValidVoicedOutput(cue, projectRef.current ?? undefined)) return
+    if (!cue) return
+    if (!hasValidVoicedOutput(cue, projectRef.current ?? undefined)) {
+      pushStatus('info', 'No audio')
+      return
+    }
     void setDone(cue.id, true).then((ok) => {
       if (ok) move(1)
     })
-  }, [activeCue, projectRef, setDone, move])
+  }, [activeCue, projectRef, setDone, move, pushStatus])
 
   const handlers: KeyboardHandlers = useMemo(
     () => ({
@@ -1929,6 +1933,7 @@ export default function App() {
     onAcceptSuggestion,
     onRejectSuggestion,
     onPasteScript: pasteScript,
+    onPasteOverflow: () => pushStatus('err', PARAGRAPH_TOO_LONG),
     onHistoryKey: textHistoryKey,
     onCharacter: onCueCharacter,
     onVoiceChange,
