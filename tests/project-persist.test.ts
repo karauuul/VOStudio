@@ -43,6 +43,7 @@ const autosaves = async (dir: string): Promise<string[]> => (await fs.readdir(pa
 const readBackup = (dir: string, name: string): Promise<string> => fs.readFile(path.join(dir, 'autosave', name), 'utf-8')
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   store.closeProject()
 })
@@ -100,6 +101,37 @@ describe('autosave backups', () => {
     const names = await autosaves(dir)
     expect(names).toHaveLength(2)
     expect(await readBackup(dir, names[0])).toBe(previous)
+    expect(JSON.parse(await readBackup(dir, names[1])).cues[1].text).toBe('one')
+  })
+
+  it('keep every replaced state when saves share a timestamp', async () => {
+    await store.createProject('sametime', base('Same time'))
+    const dir = path.join(ROOT, 'sametime.vostudio')
+    const first = await fs.readFile(projectJson(dir), 'utf-8')
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.UTC(2026, 0, 1) })
+
+    await save('one')
+    await save('two')
+    await save('three')
+
+    const names = await autosaves(dir)
+    expect(names).toHaveLength(3)
+    expect(await readBackup(dir, names[0])).toBe(first)
+    expect(JSON.parse(await readBackup(dir, names[1])).cues[1].text).toBe('one')
+    expect(JSON.parse(await readBackup(dir, names[2])).cues[1].text).toBe('two')
+  })
+
+  it('keep the replaced state on a copy fallback when the name is taken', async () => {
+    await store.createProject('sametimecopy', base('Same time copy'))
+    const dir = path.join(ROOT, 'sametimecopy.vostudio')
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.UTC(2026, 0, 1) })
+    vi.spyOn(fs, 'link').mockRejectedValue(Object.assign(new Error('not supported'), { code: 'EPERM' }))
+
+    await save('one')
+    await save('two')
+
+    const names = await autosaves(dir)
+    expect(names).toHaveLength(2)
     expect(JSON.parse(await readBackup(dir, names[1])).cues[1].text).toBe('one')
   })
 

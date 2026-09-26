@@ -187,12 +187,30 @@ export async function persistProjectFile(file: ProjectFile): Promise<void> {
   await writeSummary(dir, file)
 }
 
+const AUTOSAVE_NAME_ATTEMPTS = 1000
+
+const isTaken = (err: unknown): boolean => (err as NodeJS.ErrnoException | null)?.code === 'EEXIST'
+
+async function linkBackup(file: string, backup: string): Promise<void> {
+  await fs.link(file, backup).catch((err: unknown) => {
+    if (isTaken(err)) throw err
+    return fs.copyFile(file, backup, fs.constants.COPYFILE_EXCL)
+  })
+}
+
 async function keepAutosave(dir: string): Promise<void> {
   const file = projectJsonPath(dir)
   const autosave = path.join(dir, 'autosave')
-  const backup = path.join(autosave, autosaveName(new Date()))
+  const now = Date.now()
   try {
-    await fs.link(file, backup).catch(() => fs.copyFile(file, backup, fs.constants.COPYFILE_EXCL))
+    for (let offset = 0; ; offset++) {
+      try {
+        await linkBackup(file, path.join(autosave, autosaveName(new Date(now + offset))))
+        break
+      } catch (err) {
+        if (!isTaken(err) || offset + 1 >= AUTOSAVE_NAME_ATTEMPTS) throw err
+      }
+    }
     for (const old of expiredAutosaves(await fs.readdir(autosave))) {
       await fs.unlink(path.join(autosave, old))
     }
