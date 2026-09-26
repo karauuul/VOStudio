@@ -348,7 +348,7 @@ export function LinesTable({
               {ai && <i className={'dot ' + lineDot(cue)} />}
               {index + 1}
             </span>
-            <span className="imp-id">{cue.fields['EventName'] || cue.key}</span>
+            <span className="imp-id">{ai ? cue.fields['EventName'] || cue.key : cue.key}</span>
             {ai && (
               <>
                 <span className="imp-len">
