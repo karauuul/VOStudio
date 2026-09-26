@@ -387,12 +387,18 @@ export function matchAudioFiles<T extends { name: string }>(
 
 export type ImportTab = 'all' | 'notranscript' | 'notranslation' | 'unmatched'
 
-export const IMPORT_TABS: { id: ImportTab; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'notranscript', label: 'No transcript' },
-  { id: 'notranslation', label: 'No translation' },
-  { id: 'unmatched', label: 'No audio' },
-]
+export const importTabs = (ai: boolean): { id: ImportTab; label: string }[] =>
+  ai
+    ? [
+        { id: 'all', label: 'All' },
+        { id: 'notranscript', label: 'No transcript' },
+        { id: 'notranslation', label: 'No translation' },
+        { id: 'unmatched', label: 'No audio' },
+      ]
+    : [
+        { id: 'all', label: 'All' },
+        { id: 'notranslation', label: 'No text' },
+      ]
 
 export const hasAudio = (cue: Cue): boolean => !!cue.referenceAudio || !!cue.region
 

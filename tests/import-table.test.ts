@@ -4,6 +4,7 @@ import {
   applyTable,
   detectMapping,
   importCounts,
+  importTabs,
   lineDot,
   matchAudioFiles,
   matchesImportTab,
@@ -19,6 +20,7 @@ import {
   type Project,
 } from '../src/shared/domain'
 import { applyChangeSet, applyProjectCommand } from '../src/shared/project-commands'
+import { isManualProject } from '../src/shared/lines'
 
 const cue = (over: Partial<Cue> & { key: string }): Cue => ({
   id: `id-${over.key}`,
@@ -249,6 +251,29 @@ describe('import tabs and counts', () => {
 
   it('picks the row dot', () => {
     expect(cues.map(lineDot)).toEqual(['ready', 'transcript', 'none'])
+  })
+
+  it('keeps the translation tabs', () => {
+    expect(importTabs(true)).toEqual([
+      { id: 'all', label: 'All' },
+      { id: 'notranscript', label: 'No transcript' },
+      { id: 'notranslation', label: 'No translation' },
+      { id: 'unmatched', label: 'No audio' },
+    ])
+  })
+
+  it('offers only text tabs in a manual project built from a table', () => {
+    const p = project([])
+    const headers = ['EventName', 'Text', 'Character']
+    const mapping = detectMapping(headers)
+    applyTable(p, [['a', 'One', 'ADA'], ['b', 'Two', 'ADA'], ['c', '', 'BOB']], mapping, 'id', false)
+    expect(isManualProject(p)).toBe(true)
+    expect(importTabs(false)).toEqual([
+      { id: 'all', label: 'All' },
+      { id: 'notranslation', label: 'No text' },
+    ])
+    expect(importCounts(p.cues)).toMatchObject({ lines: 3, notranslation: 1 })
+    expect(p.cues.filter((c) => matchesImportTab(c, 'notranslation')).map((c) => c.key)).toEqual(['c'])
   })
 })
 

@@ -11,12 +11,13 @@ import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import type { Cue, Project } from '@shared/domain'
 import { matchesSearch } from '@shared/cue-filter'
 import {
-  IMPORT_TABS,
   importCounts,
+  importTabs,
   lineDot,
   matchesImportTab,
   type ImportTab,
 } from '@shared/import-table'
+import { isManualProject } from '@shared/lines'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 import { useWire } from '../cue/useWire'
 
@@ -28,6 +29,7 @@ export interface GridApi {
 }
 
 const COLUMNS = '52px minmax(96px, 0.8fr) 64px minmax(120px, 1fr) minmax(120px, 1fr) minmax(72px, 110px)'
+const MANUAL_COLUMNS = '52px minmax(96px, 0.8fr) minmax(120px, 2fr) minmax(72px, 110px)'
 const ROW_H = 34
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
@@ -70,7 +72,7 @@ export function LinesTable({
   onOpenCue,
   menu,
 }: Props) {
-  const [tab, setTab] = useState<ImportTab>('all')
+  const [picked, setPicked] = useState<ImportTab>('all')
   const [sel, setSel] = useState<ReadonlySet<string>>(() => new Set())
   const [focus, setFocus] = useState(0)
   const [pending, setPending] = useState<{ ids: string[]; overwrite: boolean } | null>(null)
@@ -78,6 +80,10 @@ export function LinesTable({
   const vRef = useRef<VirtuosoHandle>(null)
   const anchorRef = useRef(0)
   const pop = useContextMenu()
+  const ai = useMemo(() => !isManualProject(project), [project])
+  const tabs = importTabs(ai)
+  const tab = tabs.some((t) => t.id === picked) ? picked : 'all'
+  const columns = ai ? COLUMNS : MANUAL_COLUMNS
 
   const scoped = useMemo(
     () => project.cues.filter((c) => matchesSearch(c, search)),
@@ -238,11 +244,11 @@ export function LinesTable({
       <div className="phd">
         Lines <span className="n">{nnn(total.lines)}</span>
         <span className="tabs">
-          {IMPORT_TABS.map((t) => (
+          {tabs.map((t) => (
             <button
               key={t.id}
               className={t.id === tab ? 'on' : ''}
-              onClick={() => setTab(t.id)}
+              onClick={() => setPicked(t.id)}
             >
               {t.label}
               {t.id === 'all' ? '' : ` ${counts[t.id]}`}
@@ -301,12 +307,21 @@ export function LinesTable({
         </button>
       </div>
 
-      <div className="imp-head" style={{ gridTemplateColumns: COLUMNS }}>
+      <div className="imp-head" style={{ gridTemplateColumns: columns }}>
         <span>#</span>
-        <span>Source</span>
-        <span>Length</span>
-        <span>{source ? `Original · ${source}` : 'Original'}</span>
-        <span>{target ? `Translation · ${target}` : 'Translation'}</span>
+        {ai ? (
+          <>
+            <span>Source</span>
+            <span>Length</span>
+            <span>{source ? `Original · ${source}` : 'Original'}</span>
+            <span>{target ? `Translation · ${target}` : 'Translation'}</span>
+          </>
+        ) : (
+          <>
+            <span>Key</span>
+            <span>Text</span>
+          </>
+        )}
         <span>Character</span>
       </div>
 
@@ -319,7 +334,7 @@ export function LinesTable({
         itemContent={(index, cue) => (
           <div
             className={'imp-row' + (sel.has(cue.id) ? ' on' : '') + (index === focus ? ' focus' : '')}
-            style={{ gridTemplateColumns: COLUMNS }}
+            style={{ gridTemplateColumns: columns }}
             role="row"
             tabIndex={-1}
             onClick={(e) => click(index, e)}
@@ -330,17 +345,21 @@ export function LinesTable({
             }}
           >
             <span className="imp-n">
-              <i className={'dot ' + lineDot(cue)} />
+              {ai && <i className={'dot ' + lineDot(cue)} />}
               {index + 1}
             </span>
             <span className="imp-id">{cue.fields['EventName'] || cue.key}</span>
-            <span className="imp-len">
-              {cue.referenceDuration === undefined ? '' : `${cue.referenceDuration.toFixed(2)}s`}
-            </span>
-            <span className={'imp-tx' + (cue.sourceText.trim() ? '' : ' none')}>
-              {cue.sourceText.trim() || 'no transcript'}
-            </span>
-            <span className={'imp-tx dim' + (cue.text.trim() ? '' : ' none')}>
+            {ai && (
+              <>
+                <span className="imp-len">
+                  {cue.referenceDuration === undefined ? '' : `${cue.referenceDuration.toFixed(2)}s`}
+                </span>
+                <span className={'imp-tx' + (cue.sourceText.trim() ? '' : ' none')}>
+                  {cue.sourceText.trim() || 'no transcript'}
+                </span>
+              </>
+            )}
+            <span className={'imp-tx' + (ai ? ' dim' : '') + (cue.text.trim() ? '' : ' none')}>
               {cue.text.trim() || '—'}
             </span>
             <span className="imp-char">{characterById.get(cue.characterId)?.name ?? ''}</span>
@@ -349,8 +368,17 @@ export function LinesTable({
       />
 
       <div className="foot">
-        <b>{nnn(total.lines)}</b> {total.lines === 1 ? 'line' : 'lines'} · <b>{nnn(total.transcribed)}</b> transcribed ·{' '}
-        <b>{nnn(total.translated)}</b> translated · <b>{nnn(total.unmatched)}</b> no audio
+        <b>{nnn(total.lines)}</b> {total.lines === 1 ? 'line' : 'lines'} ·{' '}
+        {ai ? (
+          <>
+            <b>{nnn(total.transcribed)}</b> transcribed · <b>{nnn(total.translated)}</b> translated ·{' '}
+            <b>{nnn(total.unmatched)}</b> no audio
+          </>
+        ) : (
+          <>
+            <b>{nnn(total.notranslation)}</b> no text
+          </>
+        )}
         <span className="sp" />
         <button
           className="btn primary"

@@ -557,6 +557,19 @@ export function sanitizeLanguages(value: unknown): ProjectLanguages | undefined 
   return source && target ? { source, target } : undefined
 }
 
+export interface ProjectTemplate {
+  name: string
+}
+
+export const TEMPLATE_NAME_MAX = 200
+
+export function sanitizeProjectTemplate(value: unknown): ProjectTemplate | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = (value as Partial<ProjectTemplate>).name
+  const name = typeof raw === 'string' ? raw.trim() : ''
+  return name && name.length <= TEMPLATE_NAME_MAX ? { name } : undefined
+}
+
 export interface ProviderModeSettings {
   model?: string
   language?: string
@@ -605,6 +618,7 @@ export interface Project {
   export?: ExportSettings
   terms?: Term[]
   languages?: ProjectLanguages
+  template?: ProjectTemplate
   provider?: ProviderSettings
   alienMigrated?: true
   ui: UiSessionState
