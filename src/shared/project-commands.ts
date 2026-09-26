@@ -104,6 +104,10 @@ export interface ChangeSet {
 
 export interface CommandResult { revision: number; changes: ChangeSet }
 export interface ProjectSnapshot { revision: number; project: Project }
+export interface SerializedSnapshot { revision: number; json: string }
+
+export const serializeSnapshot = (revision: number, project: Project): SerializedSnapshot => ({ revision, json: JSON.stringify(project) })
+export const parseSnapshot = ({ revision, json }: SerializedSnapshot): ProjectSnapshot => ({ revision, project: JSON.parse(json) as Project })
 
 const cueById = (project: Project, id: string): Cue => {
   const cue = project.cues.find((item) => item.id === id)

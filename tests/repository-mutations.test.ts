@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { SerialProjectRepository } from '../src/main/project-repository'
 import { transcribeCues } from '../src/main/transcribe'
 import { type Cue, type Project } from '../src/shared/domain'
-import { applyChangeSet, type CommandResult } from '../src/shared/project-commands'
+import { applyChangeSet, parseSnapshot, type CommandResult } from '../src/shared/project-commands'
 
 function cue(id: string, sourceText = ''): Cue {
   return {
@@ -41,13 +41,13 @@ describe('transcription against the serial repository', () => {
     await repo.commit({ cues: [live] })
     pending.resolve('heard')
     await run
-    expect(repo.snapshot().project.cues[0].sourceText).toBe('imported')
+    expect(repo.projectForMain().cues[0].sourceText).toBe('imported')
   })
 
   it('applies texts collected before a failed request and rethrows the original error', async () => {
     const initial = project()
     initial.cues.push(cue('c'))
-    const repo = new SerialProjectRepository(initial, vi.fn(), 1)
+    const repo = new SerialProjectRepository(structuredClone(initial), vi.fn(), 1)
     const quota = new Error('quota exceeded')
     const stt = vi.fn(async (ref: { fileId: string }) => {
       if (ref.fileId === 'b') throw quota
@@ -59,7 +59,7 @@ describe('transcription against the serial repository', () => {
     expect(published).toHaveLength(1)
     expect(published[0].revision).toBe(1)
     expect(published[0].changes.cues?.map((c) => [c.id, c.sourceText])).toEqual([['a', 'text a']])
-    const { revision, project: current } = repo.snapshot()
+    const { revision, project: current } = parseSnapshot(repo.snapshot())
     expect(revision).toBe(1)
     expect(current.cues.map((c) => c.sourceText)).toEqual(['text a', '', ''])
     expect(applyChangeSet(initial, published[0].changes)).toEqual(current)
@@ -67,7 +67,7 @@ describe('transcription against the serial repository', () => {
 
   it('publishes one change set whose replay matches the repository', async () => {
     const initial = project()
-    const repo = new SerialProjectRepository(initial, vi.fn(), 1)
+    const repo = new SerialProjectRepository(structuredClone(initial), vi.fn(), 1)
     const results: CommandResult[] = []
     const run = transcribeCues(repo, ['a', 'b'], false, async (ref) => `text ${ref.fileId}`, (r) => results.push(r))
     results.push(await repo.execute({ type: 'cue.saveText', cueId: 'b', text: 'typed' }))
@@ -75,8 +75,8 @@ describe('transcription against the serial repository', () => {
     const replay = results
       .sort((x, y) => x.revision - y.revision)
       .reduce((p, r) => applyChangeSet(p, r.changes), initial)
-    expect(replay).toEqual(repo.snapshot().project)
-    expect(repo.snapshot().project.cues.map((c) => [c.sourceText, c.text])).toEqual([['text a', ''], ['text b', 'typed']])
+    expect(replay).toEqual(parseSnapshot(repo.snapshot()).project)
+    expect(repo.projectForMain().cues.map((c) => [c.sourceText, c.text])).toEqual([['text a', ''], ['text b', 'typed']])
   })
 })
 
@@ -92,7 +92,7 @@ describe('repository mutations', () => {
     const result = await second
     expect(result).toMatchObject({ revision: 2, changes: { cues: [{ id: 'a', notes: 'one' }] } })
     result!.changes.cues![0].notes = 'renderer'
-    expect(repo.snapshot().project.cues[0].notes).toBe('one')
+    expect(repo.projectForMain().cues[0].notes).toBe('one')
   })
 
   it('does not advance the revision for a rejected or empty mutation', async () => {

@@ -73,7 +73,7 @@ import {
 import { hasValidVoicedOutput, isDone } from '@shared/approval'
 import { compDuration, isEmptyComp } from '@shared/comp'
 import { libraryRow, lineLabel, locateText, punchClip, recordClip, resolveTake, type LibraryRow } from '@shared/library'
-import type { ChangeSet, ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
+import { parseSnapshot, type ChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
 import {
   lineStepCommand,
   originalStateOf,
@@ -1396,7 +1396,7 @@ export default function App() {
     if (creatingRef.current) return
     creatingRef.current = true
     try {
-      enterProject(await api['project:create']())
+      enterProject(parseSnapshot(await api['project:create']()))
     } finally {
       creatingRef.current = false
     }

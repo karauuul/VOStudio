@@ -19,6 +19,16 @@ import {
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
 import { isInsideDir, PROJECT_SUFFIX, summarizeProject, type ProjectStats, type ProjectSummary } from '@shared/project-summary'
+import {
+  autosaveName,
+  expiredAutosaves,
+  freshSummary,
+  projectFile,
+  summaryRecord,
+  type FileStamp,
+  type ProjectFile,
+  type ProjectListing,
+} from '@shared/project-file'
 import { appSettingsSchema, projectFileSchema } from './schemas'
 
 let current: Project | null = null
@@ -87,6 +97,7 @@ export function getProjectDir(): string | null {
 }
 
 const uiPath = (dir: string): string => path.join(dir, 'ui.json')
+const projectJsonPath = (dir: string): string => path.join(dir, 'project.json')
 
 export async function saveUi(raw: UiSessionState): Promise<void> {
   const targetTrack = sanitizeTargetTrack(raw.targetTrack)
@@ -142,8 +153,9 @@ export async function createProject(name: string, base: Omit<Project, 'id' | 'sc
   }
   const nextUi = { ...DEFAULT_UI, ...project.ui }
   project.ui = nextUi
-  const { ui: _ui, ...persistedProject } = project
-  await atomicWrite(path.join(dir, 'project.json'), JSON.stringify(persistedProject, null, 2))
+  const file = projectFile(project)
+  await atomicWrite(projectJsonPath(dir), file.json)
+  await writeSummary(dir, file)
   await atomicWrite(uiPath(dir), JSON.stringify(nextUi, null, 2))
   current = project
   projectDir = dir
@@ -160,21 +172,51 @@ export async function saveProject(p: Project): Promise<{ rev: number }> {
   return { rev }
 }
 
-export async function persistProjectSnapshot(project: Project): Promise<void> {
-  if (!projectDir) return
-  const file = path.join(projectDir, 'project.json')
+export function persistProjectSnapshot(project: Project): Promise<void> {
+  return persistProjectFile(projectFile(project))
+}
+
+export async function persistProjectFile(file: ProjectFile): Promise<void> {
+  const dir = projectDir
+  if (!dir) return
+  const target = projectJsonPath(dir)
+  const tmp = target + '.tmp'
+  await fs.writeFile(tmp, file.json)
+  await keepAutosave(dir)
+  await fs.rename(tmp, target)
+  await writeSummary(dir, file)
+}
+
+async function keepAutosave(dir: string): Promise<void> {
+  const file = projectJsonPath(dir)
+  const autosave = path.join(dir, 'autosave')
+  const backup = path.join(autosave, autosaveName(new Date()))
   try {
-    const prev = await fs.readFile(file)
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    await fs.writeFile(path.join(projectDir, 'autosave', `project-${stamp}.json`), prev)
-    const saves = (await fs.readdir(path.join(projectDir, 'autosave'))).sort()
-    for (const old of saves.slice(0, Math.max(0, saves.length - 10))) {
-      await fs.unlink(path.join(projectDir, 'autosave', old))
+    await fs.link(file, backup).catch(() => fs.copyFile(file, backup, fs.constants.COPYFILE_EXCL))
+    for (const old of expiredAutosaves(await fs.readdir(autosave))) {
+      await fs.unlink(path.join(autosave, old))
     }
   } catch {
   }
-  const { ui: _ui, ...rest } = project
-  await atomicWrite(file, JSON.stringify(rest, null, 2))
+}
+
+const summaryPath = (dir: string): string => path.join(dir, 'summary.json')
+
+async function writeSummary(dir: string, file: ProjectFile): Promise<void> {
+  try {
+    await atomicWrite(summaryPath(dir), summaryRecord(file, await fs.stat(projectJsonPath(dir))))
+  } catch {
+  }
+}
+
+async function readListing(dir: string, stamp: FileStamp): Promise<ProjectListing> {
+  const cached = await fs
+    .readFile(summaryPath(dir), 'utf-8')
+    .then((raw) => freshSummary(JSON.parse(raw), stamp))
+    .catch(() => null)
+  if (cached) return cached
+  const parsed = JSON.parse(await fs.readFile(projectJsonPath(dir), 'utf-8')) as { name?: unknown }
+  return { name: typeof parsed.name === 'string' ? parsed.name : '', stats: summarizeProject(parsed) }
 }
 
 export async function listProjects(): Promise<ProjectSummary[]> {
@@ -201,10 +243,11 @@ export async function listProjects(): Promise<ProjectSummary[]> {
         let modifiedAt = 0
         let stats: ProjectStats | null = null
         try {
-          modifiedAt = (await fs.stat(file)).mtimeMs
-          const parsed = JSON.parse(await fs.readFile(file, 'utf-8')) as { name?: unknown }
-          stats = summarizeProject(parsed)
-          if (typeof parsed.name === 'string' && parsed.name.trim()) name = parsed.name
+          const stamp = await fs.stat(file)
+          modifiedAt = stamp.mtimeMs
+          const listing = await readListing(dir, stamp)
+          stats = listing.stats
+          if (listing.name.trim()) name = listing.name
         } catch {
         }
         return { dir, name, modifiedAt, stats }
