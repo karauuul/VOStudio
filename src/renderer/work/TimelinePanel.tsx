@@ -118,6 +118,7 @@ import {
 } from '@shared/timeline-math'
 import { ghostPlacement, type GhostPlacement } from '@shared/generation'
 import { useCompEdit, sameComp } from '../cue/useCompEdit'
+import type { CompHistory } from '@shared/comp-history'
 import { useWire } from '../cue/useWire'
 import { EFFECT_KINDS, pickEffects, TRACK_EFFECT_KINDS } from '@shared/effects'
 import { copiedEffects, copyEffects, hasCopiedEffects } from '../effects-clipboard'
@@ -150,8 +151,6 @@ export interface CompApi {
   crossfade: () => void
   undo: () => void
   redo: () => void
-  lastEditAt: (dir: 'undo' | 'redo') => number | null
-  dropRedo: () => void
   selection: () => ClipSelection | null
   playhead: () => number
   targetTrack: () => string
@@ -245,6 +244,7 @@ interface Props {
   view?: TimelineViewState
   onView: (view: TimelineViewState) => void
   onComp: (cueId: string, comp: CueComp | null) => Promise<boolean>
+  compHistory: CompHistory
   onOriginal: (original: OriginalLane) => void
   onStems: (stems: Stem[] | null) => void
   onSplitStems: () => Promise<void>
@@ -272,6 +272,7 @@ export function TimelinePanel({
   view: savedView,
   onView,
   onComp,
+  compHistory,
   onOriginal,
   onStems,
   onSplitStems,
@@ -345,7 +346,7 @@ export function TimelinePanel({
     (p: string) => onStatus('err', `Composition rejected: ${p}`),
     [onStatus]
   )
-  const edit = useCompEdit(cueId, cue?.comp, onComp, onProblem)
+  const edit = useCompEdit(cueId, cue?.comp, compHistory, onComp, onProblem)
 
   const stored = useMemo<CueComp>(() => cue?.comp ?? { clips: [] }, [cue?.comp])
   const storedRef = useRef(stored)
@@ -1226,8 +1227,6 @@ export function TimelinePanel({
       redo: () => {
         if (editable) edit.redo()
       },
-      lastEditAt: (dir) => (editable ? edit.lastAt(dir) : null),
-      dropRedo: () => edit.dropRedo(),
       selection: () => {
         const base = compRefLive.current
         const id = selId()
