@@ -7,6 +7,7 @@ import {
   sanitizeLanguages,
   sanitizeMatchRule,
   sanitizeProjectSources,
+  sanitizeProjectTemplate,
   sanitizeProviderSettings,
   sanitizeTargetTrack,
   sanitizeTimelineViews,
@@ -314,6 +315,11 @@ export async function openProjectDir(dir: string): Promise<Project> {
     const languages = sanitizeLanguages(p.languages)
     if (languages) p.languages = languages
     else delete p.languages
+  }
+  if (p.template !== undefined) {
+    const template = sanitizeProjectTemplate(p.template)
+    if (template) p.template = template
+    else delete p.template
   }
   ui = await loadUi(dir, p.ui)
   p.ui = ui

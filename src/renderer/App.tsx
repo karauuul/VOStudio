@@ -21,8 +21,8 @@ import {
 import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '@shared/ipc'
 import { pickHistory, redoStale, type UndoSide } from '@shared/undo-route'
 import { dropCompRedo, nextCompEdit, pruneCompHistory, recordCompEdit, type CompHistory } from '@shared/comp-history'
-import { isManualProject, PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
-import { TABLE_FILE } from '@shared/import-table'
+import { PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
+import { hasSourceMaterial, TABLE_FILE } from '@shared/import-table'
 import { keyedQueue } from '@shared/keyed-queue'
 import type { UpdateStatus } from '@shared/updater'
 import { api, audioUrl } from './api'
@@ -2285,7 +2285,7 @@ export default function App() {
         <TableImportDialog
           path={tableFile}
           rule={matchBy}
-          ai={!isManualProject(project)}
+          ai={hasSourceMaterial(project)}
           onImport={importTable}
           onClose={() => setTableFile(null)}
         />

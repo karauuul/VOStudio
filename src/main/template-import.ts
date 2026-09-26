@@ -435,7 +435,11 @@ export async function createProjectFromTemplate(validation: TemplateValidation):
   const previousProject = store.getProject()
   const previousDir = store.getProjectDir()
   const referenceRoot = path.join(projectDir, 'audio', 'reference')
-  const project = await store.createProject(name, { ...buildProjectBase(validation, referenceRoot), name })
+  const project = await store.createProject(name, {
+    ...buildProjectBase(validation, referenceRoot),
+    name,
+    template: { name: validation.meta.name.trim() },
+  })
   try {
     await copyReferenceAudio(validation, referenceRoot)
   } catch (error) {
@@ -455,13 +459,16 @@ export async function createProjectFromTemplate(validation: TemplateValidation):
 
 export function reimportBlockers(
   validation: TemplateValidation,
-  project: Pick<Project, 'name'>
+  project: Pick<Project, 'name' | 'template'>
 ): TemplateIssue[] {
   const issues = [...validation.fatalErrors]
-  if (validation.meta && validation.meta.name !== project.name) {
+  const meta = validation.meta
+  if (meta && meta.name.trim() !== (project.template?.name ?? project.name).trim()) {
     issues.push({
       row: null,
-      reason: `project-meta.json names "${validation.meta.name}"; the open project is "${project.name}"`,
+      reason: project.template
+        ? `project-meta.json names "${meta.name}"; the open project comes from template "${project.template.name}"`
+        : `project-meta.json names "${meta.name}"; the open project is "${project.name}"`,
     })
   }
   return issues

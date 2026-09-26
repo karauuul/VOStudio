@@ -1,7 +1,6 @@
 import { useMemo, useState, type DragEvent } from 'react'
 import { sourceLabel, type Project } from '@shared/domain'
-import { audioSources, tableColumnLabels, type TableColumn } from '@shared/import-table'
-import { isManualProject } from '@shared/lines'
+import { audioSources, hasSourceMaterial, tableColumnLabels, type TableColumn } from '@shared/import-table'
 import type { TableImportResult } from '@shared/ipc'
 import { api } from '../api'
 
@@ -55,7 +54,7 @@ interface Props {
 export function SourcesPanel({ project, tables, onPick, onDrop, busy }: Props) {
   const [over, setOver] = useState(false)
   const audio = useMemo(() => audioSources(project.cues), [project.cues])
-  const labels = useMemo(() => tableColumnLabels(!isManualProject(project)), [project])
+  const labels = useMemo(() => tableColumnLabels(hasSourceMaterial(project)), [project])
   const videos = project.sources ?? []
   const regions = useMemo(() => {
     const map = new Map<string, number>()
