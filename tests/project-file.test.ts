@@ -66,10 +66,17 @@ describe('autosave rotation', () => {
     expect(expiredAutosaves(names.slice(0, AUTOSAVE_KEEP))).toEqual([])
     expect(expiredAutosaves([])).toEqual([])
   })
+
+  it('never expires the backup the current save just created', () => {
+    const newer = Array.from({ length: AUTOSAVE_KEEP }, (_, i) => autosaveName(new Date(Date.UTC(2027, 0, 1, 0, 0, i))))
+    const rolledBack = autosaveName(new Date(Date.UTC(2026, 0, 1)))
+    expect(expiredAutosaves([...newer, rolledBack])).toEqual([rolledBack])
+    expect(expiredAutosaves([...newer, rolledBack], rolledBack)).toEqual([])
+  })
 })
 
 describe('summary sidecar', () => {
-  const stamp = { size: 1234, mtimeMs: 1727349034123.4567 }
+  const stamp = { size: 1234, mtimeMs: 1727349034123.4567, ino: 987654 }
 
   it('round-trips while project.json is the file it was written for', () => {
     const file = projectFile(project())
@@ -80,6 +87,11 @@ describe('summary sidecar', () => {
     const raw = JSON.parse(summaryRecord(projectFile(project()), stamp))
     expect(freshSummary(raw, { ...stamp, size: 1235 })).toBeNull()
     expect(freshSummary(raw, { ...stamp, mtimeMs: stamp.mtimeMs + 1 })).toBeNull()
+  })
+
+  it('is stale for a replaced project.json with the same size and mtime', () => {
+    const raw = JSON.parse(summaryRecord(projectFile(project()), stamp))
+    expect(freshSummary(raw, { ...stamp, ino: stamp.ino + 1 })).toBeNull()
   })
 
   it('keeps a project without countable cues as null stats', () => {
@@ -99,7 +111,8 @@ describe('summary sidecar', () => {
       { name: 'x', stats: { ...stats, voiced: -1 }, ...stamp },
       { name: 'x', stats: { ...stats, cues: 1.5 }, ...stamp },
       { name: 'x', stats: { ...stats, approved: '0' }, ...stamp },
-      { name: 'x', stats, size: '1234', mtimeMs: stamp.mtimeMs },
+      { name: 'x', stats, size: '1234', mtimeMs: stamp.mtimeMs, ino: stamp.ino },
+      { name: 'x', stats, size: stamp.size, mtimeMs: stamp.mtimeMs },
       { name: 'x', stats, size: stamp.size },
     ]) {
       expect(freshSummary(raw, stamp)).toBeNull()

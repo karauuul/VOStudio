@@ -203,15 +203,17 @@ async function keepAutosave(dir: string): Promise<void> {
   const autosave = path.join(dir, 'autosave')
   const now = Date.now()
   try {
-    for (let offset = 0; ; offset++) {
+    let created = ''
+    for (let offset = 0; !created; offset++) {
+      const name = autosaveName(new Date(now + offset))
       try {
-        await linkBackup(file, path.join(autosave, autosaveName(new Date(now + offset))))
-        break
+        await linkBackup(file, path.join(autosave, name))
+        created = name
       } catch (err) {
         if (!isTaken(err) || offset + 1 >= AUTOSAVE_NAME_ATTEMPTS) throw err
       }
     }
-    for (const old of expiredAutosaves(await fs.readdir(autosave))) {
+    for (const old of expiredAutosaves(await fs.readdir(autosave), created)) {
       await fs.unlink(path.join(autosave, old))
     }
   } catch {

@@ -15,6 +15,7 @@ export interface ProjectListing {
 export interface FileStamp {
   size: number
   mtimeMs: number
+  ino: number
 }
 
 export const AUTOSAVE_KEEP = 10
@@ -28,13 +29,13 @@ export function autosaveName(at: Date): string {
   return `project-${at.toISOString().replace(/[:.]/g, '-')}.json`
 }
 
-export function expiredAutosaves(names: string[]): string[] {
+export function expiredAutosaves(names: string[], created?: string): string[] {
   const sorted = [...names].sort()
-  return sorted.slice(0, Math.max(0, sorted.length - AUTOSAVE_KEEP))
+  return sorted.slice(0, Math.max(0, sorted.length - AUTOSAVE_KEEP)).filter((name) => name !== created)
 }
 
 export function summaryRecord({ name, stats }: ProjectFile, stamp: FileStamp): string {
-  return JSON.stringify({ name, stats, size: stamp.size, mtimeMs: stamp.mtimeMs })
+  return JSON.stringify({ name, stats, size: stamp.size, mtimeMs: stamp.mtimeMs, ino: stamp.ino })
 }
 
 const isCount = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 0
@@ -50,7 +51,7 @@ function asStats(value: unknown): ProjectStats | null | undefined {
 export function freshSummary(raw: unknown, stamp: FileStamp): ProjectListing | null {
   if (!raw || typeof raw !== 'object') return null
   const record = raw as Record<string, unknown>
-  if (record['size'] !== stamp.size || record['mtimeMs'] !== stamp.mtimeMs) return null
+  if (record['size'] !== stamp.size || record['mtimeMs'] !== stamp.mtimeMs || record['ino'] !== stamp.ino) return null
   const stats = asStats(record['stats'])
   if (typeof record['name'] !== 'string' || stats === undefined) return null
   return { name: record['name'], stats }

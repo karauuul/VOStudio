@@ -88,6 +88,20 @@ describe('autosave backups', () => {
     expect(await readBackup(dir, names[9])).toBe(previous)
   })
 
+  it('keep the replaced state when the clock is behind the newest backups', async () => {
+    await store.createProject('rollback', base('Rollback'))
+    const dir = path.join(ROOT, 'rollback.vostudio')
+    const future = Array.from({ length: 10 }, (_, i) => autosaveName(new Date(Date.UTC(2099, 0, 1, 0, 0, i))))
+    for (const name of future) await fs.writeFile(path.join(dir, 'autosave', name), 'future')
+    const previous = await fs.readFile(projectJson(dir), 'utf-8')
+
+    await save('one')
+
+    const names = await autosaves(dir)
+    expect(names.slice(1)).toEqual(future)
+    expect(await readBackup(dir, names[0])).toBe(previous)
+  })
+
   it('fall back to a copy where the file system refuses a hard link', async () => {
     await store.createProject('nolink', base('No link'))
     const dir = path.join(ROOT, 'nolink.vostudio')
@@ -195,7 +209,7 @@ describe('summary sidecar', () => {
     const dir = path.join(ROOT, 'sidecar.vostudio')
     const stamp = await fs.stat(projectJson(dir))
     const cached = { name: 'Cached', stats: { cues: 9, translated: 9, voiced: 9, approved: 9 } }
-    await fs.writeFile(path.join(dir, 'summary.json'), JSON.stringify({ ...cached, size: stamp.size, mtimeMs: stamp.mtimeMs }))
+    await fs.writeFile(path.join(dir, 'summary.json'), JSON.stringify({ ...cached, size: stamp.size, mtimeMs: stamp.mtimeMs, ino: stamp.ino }))
     expect(await rowOf(dir)).toMatchObject(cached)
 
     await fs.utimes(projectJson(dir), stamp.atime, new Date(stamp.mtimeMs + 5000))
