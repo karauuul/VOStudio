@@ -12,6 +12,7 @@ import type {
 import type { ProviderModel } from './provider-models'
 import type { TableMapping } from './import-table'
 import type { CompClipPlan, CompPlan, ExportFormat } from './export-plan'
+import type { LoudnessTarget } from './export-settings'
 import type { ExportedLines } from './readiness'
 import type { UpdateStatus } from './updater'
 import type { CommandResult, ProjectCommand, ProjectSnapshot } from './project-commands'
@@ -143,6 +144,7 @@ export interface ExportJob {
   hasEdits: boolean
   edits: ClipEdits
   matchLoudnessRef?: string
+  loudnessTarget?: LoudnessTarget
   compPlan?: CompPlan
 }
 

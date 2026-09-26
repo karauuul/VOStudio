@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { isProjectDirIn, isSafeId, isValidProjectName } from '@shared/project-summary'
 import { CREATE_LINES_MAX, LINE_TEXT_MAX } from '@shared/lines'
 import { PUNCH_PREROLL_MAX, PUNCH_PREROLL_STEP, RECORD_LATENCY_MAX_MS } from '@shared/punch'
+import { LUFS_TARGET_MAX, LUFS_TARGET_MIN, PEAK_TARGET_MAX, PEAK_TARGET_MIN } from '@shared/export-settings'
 import {
   DUCK_MAX_DB,
   DUCK_MIN_DB,
@@ -110,7 +111,9 @@ export const exportSettingsSchema = z
   .object({
     outDir: z.string().min(1).max(4096).optional(),
     format: z.enum(['source', 'wav-48-24', 'wav-44-16', 'mp3-192', 'ogg']).optional(),
-    loudness: z.enum(['match', 'off']).optional(),
+    loudness: z.enum(['match', 'lufs', 'peak', 'off']).optional(),
+    lufsTarget: z.number().min(LUFS_TARGET_MIN).max(LUFS_TARGET_MAX).optional(),
+    peakTarget: z.number().min(PEAK_TARGET_MIN).max(PEAK_TARGET_MAX).optional(),
     length: z.enum(['trim', 'pad', 'asis']).optional(),
     video: z.enum(['copy', 'audio']).optional(),
     videoName: z.string().min(1).max(400).optional(),

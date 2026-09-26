@@ -5,13 +5,20 @@ import {
   EXPORT_FORMATS,
   LENGTH_MODES,
   LOUDNESS_MODES,
+  LUFS_TARGET_MAX,
+  LUFS_TARGET_MIN,
+  PEAK_TARGET_MAX,
+  PEAK_TARGET_MIN,
   DEFAULT_VIDEO_NAME,
   VIDEO_MODES,
   lengthMode,
   loudnessMode,
+  lufsTarget,
+  peakTarget,
   videoMode,
   type ExportSettings,
 } from '@shared/export-settings'
+import { DragNumber } from '../cue/DragNumber'
 
 interface Props {
   project: Project
@@ -22,6 +29,8 @@ interface Props {
   onPickDir: () => void
   onReveal: () => void
 }
+
+const idle = (): void => {}
 
 function stamp(iso: string): string {
   if (!iso) return '—'
@@ -34,6 +43,7 @@ function stamp(iso: string): string {
 export function OutputPanel({ project, outDir, last, onSettings, onTemplate, onPickDir, onReveal }: Props) {
   const [template, setTemplate] = useState(project.exportTemplate)
   const [video, setVideo] = useState(project.export?.videoName ?? DEFAULT_VIDEO_NAME)
+  const loudness = loudnessMode(project.export)
 
   useEffect(() => setTemplate(project.exportTemplate), [project.exportTemplate])
   useEffect(
@@ -97,7 +107,7 @@ export function OutputPanel({ project, outDir, last, onSettings, onTemplate, onP
       <div className="exp-kvp">
         Loudness
         <select
-          value={loudnessMode(project.export)}
+          value={loudness}
           onChange={(e) => onSettings({ loudness: e.target.value as ExportSettings['loudness'] })}
         >
           {LOUDNESS_MODES.map((m) => (
@@ -107,6 +117,40 @@ export function OutputPanel({ project, outDir, last, onSettings, onTemplate, onP
           ))}
         </select>
       </div>
+
+      {loudness === 'lufs' && (
+        <div className="exp-kvp">
+          Target
+          <DragNumber
+            label=""
+            unit="LUFS"
+            value={lufsTarget(project.export)}
+            min={LUFS_TARGET_MIN}
+            max={LUFS_TARGET_MAX}
+            perPx={0.1}
+            decimals={0}
+            onInput={idle}
+            onCommit={(v) => onSettings({ lufsTarget: v })}
+          />
+        </div>
+      )}
+
+      {loudness === 'peak' && (
+        <div className="exp-kvp">
+          Target
+          <DragNumber
+            label=""
+            unit="dBFS"
+            value={peakTarget(project.export)}
+            min={PEAK_TARGET_MIN}
+            max={PEAK_TARGET_MAX}
+            perPx={0.05}
+            decimals={1}
+            onInput={idle}
+            onCommit={(v) => onSettings({ peakTarget: v })}
+          />
+        </div>
+      )}
 
       <div className="exp-kvp">
         Length
