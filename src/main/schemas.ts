@@ -247,6 +247,12 @@ export const cueApprovalSchema = z.object({
   approvedAt: z.string().min(1),
 }).nullable()
 
+const outputStateSchema = z.object({
+  status: z.enum(['empty', 'translated', 'generated', 'approved', 'excluded']),
+  output: cueOutputSchema.optional(),
+  approval: cueApprovalSchema.optional(),
+})
+
 export const cueRevisionFieldsSchema = z.object({
   textRevision: revisionSchema.optional(),
   output: cueOutputSchema.optional(),
@@ -402,10 +408,8 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('cue.restoreOriginal'),
     referenceAudio: audioRefSchema.nullable(),
     referenceDuration: finite.min(0).nullable(),
-    status: z.enum(['empty', 'translated', 'generated', 'approved', 'excluded']),
-    output: cueOutputSchema.optional(),
-    approval: cueApprovalSchema.optional(),
-    whenOutputRevision: revisionSchema,
+    ...outputStateSchema.shape,
+    whenState: outputStateSchema,
   }),
   characterId.extend({ type: z.literal('character.setVoiceSettings'), settings: voiceSettingsSchema }),
   z.object({ type: z.literal('character.create'), id: z.string().min(1).max(200), name: characterName }),
