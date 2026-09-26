@@ -31,6 +31,7 @@ import {
   healableAt,
   healCut,
   removeClip,
+  rippleDelete,
   replaceClipSource,
   setClipEdits,
   SPEED_MAX,
@@ -608,6 +609,129 @@ describe('removeClip', () => {
 
   it('the last clip can be removed — the comp becomes empty', () => {
     expect(isEmptyComp(removeClip(removeClip(two, 'a'), 'b'))).toBe(true)
+  })
+})
+
+describe('rippleDelete — the gap closes behind the removed clips', () => {
+  const lane = (id: string) => ({ id, name: id, gainDb: 0, muted: false, solo: false })
+  const on = (trackId: string, over: Partial<CompClip>): CompClip => ({ ...clip(over), trackId })
+  const at = (c: CueComp, id: string): CompClip => c.clips.find((x) => x.id === id)!
+  const row = comp(
+    clip({ id: 'a', srcOut: 1, start: 0 }),
+    clip({ id: 'b', srcOut: 2, start: 1 }),
+    clip({ id: 'c', srcOut: 1, start: 4 }),
+    clip({ id: 'd', srcOut: 1, start: 6 })
+  )
+  const layered = normalizeComp({
+    clips: [
+      on('track-1', { id: 'a', srcOut: 1, start: 0 }),
+      on('track-1', { id: 'b', srcOut: 2, start: 1 }),
+      on('track-1', { id: 'c', srcOut: 1, start: 4 }),
+      on('track-2', { id: 'x', srcOut: 1, start: 0.5 }),
+      on('track-2', { id: 'y', srcOut: 2, start: 2 }),
+      on('track-2', { id: 'z', srcOut: 1, start: 5 }),
+    ],
+    tracks: [lane('track-1'), lane('track-2')],
+  })
+
+  it('removes one clip and pulls later clips on its track left by its length', () => {
+    const out = rippleDelete(row, ['b'])
+    expect(out.clips.map((x) => [x.id, x.start])).toEqual([
+      ['a', 0],
+      ['c', 2],
+      ['d', 4],
+    ])
+    expect(compDuration(out)).toBe(5)
+    expectValid(out)
+  })
+
+  it('several clips on one track close every removed span, gaps between survivors stay', () => {
+    const out = rippleDelete(row, ['b', 'd'])
+    expect(out.clips.map((x) => [x.id, x.start])).toEqual([
+      ['a', 0],
+      ['c', 2],
+    ])
+    expect(at(out, 'c').start - clipEnd(at(out, 'a'))).toBe(1)
+    const first = rippleDelete(row, ['a', 'c'])
+    expect(first.clips.map((x) => [x.id, x.start])).toEqual([
+      ['b', 0],
+      ['d', 4],
+    ])
+    expectValid(first)
+  })
+
+  it('clips on several tracks: each track closes only its own gaps', () => {
+    const out = rippleDelete(layered, ['b', 'x'])
+    expect(at(out, 'a').start).toBe(0)
+    expect(at(out, 'c').start).toBe(2)
+    expect(at(out, 'y').start).toBe(1)
+    expect(at(out, 'z').start).toBe(4)
+    expect(out.clips.map((x) => x.trackId)).toEqual(['track-1', 'track-2', 'track-1', 'track-2'])
+    expectValid(out)
+  })
+
+  it('other tracks are untouched', () => {
+    const out = rippleDelete(layered, ['b'])
+    for (const id of ['x', 'y', 'z']) expect(at(out, id)).toEqual(at(layered, id))
+    expect(out.tracks).toEqual(layered.tracks)
+  })
+
+  it('clips before the removed one keep their place', () => {
+    const out = rippleDelete(row, ['c'])
+    expect(at(out, 'a')).toEqual(at(row, 'a'))
+    expect(at(out, 'b')).toEqual(at(row, 'b'))
+    expect(at(out, 'd').start).toBe(5)
+  })
+
+  it('a legacy comp without tracks stays byte-identical where untouched', () => {
+    const legacy: CueComp = {
+      clips: [clip({ id: 'a', srcOut: 1, start: 0 }), clip({ id: 'b', srcOut: 1, start: 2 })],
+      region: { in: 0, out: 3 },
+    }
+    const out = rippleDelete(legacy, ['b'])
+    expect(JSON.stringify(out)).toBe(
+      JSON.stringify({ clips: [legacy.clips[0]], region: { in: 0, out: 3 } })
+    )
+    const shifted = rippleDelete(legacy, ['a'])
+    expect(JSON.stringify(shifted)).toBe(
+      JSON.stringify({ clips: [{ ...legacy.clips[1], start: 1 }], region: { in: 0, out: 3 } })
+    )
+    expect(shifted).not.toHaveProperty('tracks')
+    expect(shifted.clips.every((x) => !('trackId' in x))).toBe(true)
+  })
+
+  it('drops the crossfade that led into a removed clip, keeps the others', () => {
+    const seams = comp(
+      clip({ id: 'a', srcIn: 0, srcOut: 1, start: 0, crossfade: 0.1 }),
+      clip({ id: 'b', srcIn: 1, srcOut: 2, start: 1, crossfade: 0.1 }),
+      clip({ id: 'c', srcIn: 2, srcOut: 3, start: 2, crossfade: 0.1 }),
+      clip({ id: 'd', srcIn: 3, srcOut: 4, start: 3 })
+    )
+    const out = rippleDelete(seams, ['b'])
+    expect('crossfade' in at(out, 'a')).toBe(false)
+    expect(at(out, 'c')).toEqual({ ...at(seams, 'c'), start: 1 })
+    expect(at(out, 'd').start).toBe(2)
+    expectValid(out)
+  })
+
+  it('leaves region and original start where the user put them', () => {
+    const base = { ...row, region: { in: 0.5, out: 6.5 }, originalStart: 1 }
+    const out = rippleDelete(base, ['b'])
+    expect(out.region).toEqual({ in: 0.5, out: 6.5 })
+    expect(out.originalStart).toBe(1)
+  })
+
+  it('does not mutate its input and ignores unknown ids', () => {
+    const snapshot = JSON.stringify(layered)
+    rippleDelete(layered, ['a', 'y'])
+    expect(JSON.stringify(layered)).toBe(snapshot)
+    expect(rippleDelete(row, ['nope'])).toBe(row)
+    expect(rippleDelete(row, [])).toBe(row)
+    expect(rippleDelete(row, ['b', 'nope'])).toEqual(rippleDelete(row, ['b']))
+  })
+
+  it('removing every clip empties the comp', () => {
+    expect(isEmptyComp(rippleDelete(row, ['a', 'b', 'c', 'd']))).toBe(true)
   })
 })
 
