@@ -1477,6 +1477,11 @@ export default function App() {
         }
         compRef.current?.deleteSelected()
       },
+      rippleDelete: () => {
+        const el = document.activeElement
+        if (el instanceof HTMLElement && el.closest('.lines, .panel.lib')) return
+        compRef.current?.deleteSelected(true)
+      },
       nudgeClips: (steps) => compRef.current?.nudge(steps),
       splitClip: () => compRef.current?.split(),
       splitAtPlayhead: () => compRef.current?.splitAtPlayhead(),
@@ -1561,7 +1566,11 @@ export default function App() {
     />
   )
 
-  const shortcutsUi = showShortcuts && <ShortcutsDialog onClose={() => setShowShortcuts(false)} />
+  const lineAi = !project || !activeCue || showsAi(activeCue, project)
+
+  const shortcutsUi = showShortcuts && (
+    <ShortcutsDialog ai={lineAi} onClose={() => setShowShortcuts(false)} />
+  )
 
   const toastUi = status && <StatusToast status={status} onClose={closeStatus} />
 
@@ -1852,7 +1861,7 @@ export default function App() {
       ? { cost: estimateChars(activeCue.text, genTarget, project.pronunciationRules, genModel) }
       : {}),
     ...(usage ? { remaining: usage.remaining } : {}),
-    ai: !activeCue || showsAi(activeCue, project),
+    ai: lineAi,
   }
 
   const cueText: ComponentProps<typeof CueText> | null = activeCue
@@ -1999,6 +2008,7 @@ export default function App() {
     onShowInLibrary: setSourceTakeId,
     onTakeEffects,
     onMonitor: (tab) => programRef.current?.showTab(tab),
+    ai: lineAi,
   }
 
   const library: ComponentProps<typeof LibraryPanel> = {
