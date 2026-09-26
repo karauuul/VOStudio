@@ -274,16 +274,20 @@ export default function App() {
     replace: replaceProject,
   } = session
 
+  const restoringRef = useRef(false)
+  const lockReason = (): string | null =>
+    exportingRef.current ? 'Export in progress' : restoringRef.current ? 'Restoring version' : null
   const refuseWhileExporting = useCallback((): boolean => {
-    if (!exportingRef.current) return false
-    pushStatus('info', 'Export in progress')
+    const reason = lockReason()
+    if (!reason) return false
+    pushStatus('info', reason)
     return true
   }, [pushStatus])
 
   const execute = useCallback(
     (command: ProjectCommand, replay = false): Promise<ChangeSet> =>
-      exportingRef.current
-        ? Promise.reject(new Error('Export in progress'))
+      lockReason() !== null
+        ? Promise.reject(new Error(lockReason() ?? ''))
         : sessionDispatch(command, replay || replayRef.current > 0),
     [sessionDispatch]
   )
@@ -1163,6 +1167,10 @@ export default function App() {
   }, [openNewLine, pushStatus])
 
   const recordLine = useCallback(() => {
+    if (restoringRef.current) {
+      pushStatus('info', 'Restoring version')
+      return
+    }
     if (recRef.current) {
       recRef.current()
       return
@@ -1229,7 +1237,14 @@ export default function App() {
       }
       const run = async (): Promise<void> => {
         if (!(await flushPending())) return
-        const snapshot = parseSnapshot(await api['project:restoreVersion']({ n }))
+        restoringRef.current = true
+        let snapshot: ReturnType<typeof parseSnapshot>
+        try {
+          if (!(await flushText())) return
+          snapshot = parseSnapshot(await api['project:restoreVersion']({ n }))
+        } finally {
+          restoringRef.current = false
+        }
         playback.stop()
         resetHistory()
         replaceProject(snapshot)
@@ -1241,7 +1256,7 @@ export default function App() {
       }
       void run().catch((e: unknown) => pushStatus('err', String(e)))
     },
-    [flushPending, resetHistory, replaceProject, pushStatus]
+    [flushPending, flushText, resetHistory, replaceProject, pushStatus]
   )
 
   const prepareLineRemoval = useCallback(
@@ -1648,8 +1663,14 @@ export default function App() {
       acceptSuggestion: onAcceptSuggestion,
       rejectSuggestion: onRejectSuggestion,
       toggleRecord: recordLine,
-      punchRecord: () => punchRef.current?.(),
-      loopRecord: () => loopRef.current?.(),
+      punchRecord: () => {
+        if (restoringRef.current) pushStatus('info', 'Restoring version')
+        else punchRef.current?.()
+      },
+      loopRecord: () => {
+        if (restoringRef.current) pushStatus('info', 'Restoring version')
+        else loopRef.current?.()
+      },
       escape: () => {
         if (escRef.current?.()) return true
         if (sourceTakeId === null) return false
