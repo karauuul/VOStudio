@@ -1539,7 +1539,7 @@ input.tl-name:focus {
 .props .row2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0 16px;
+  gap: 0 12px;
   padding: 6px 16px;
 }
 
@@ -1547,7 +1547,7 @@ input.tl-name:focus {
   display: grid;
   grid-template-columns: 60px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   height: 34px;
 }
 
@@ -1563,7 +1563,7 @@ input.tl-name:focus {
 
 .props .row2 .cp-in {
   height: var(--ctl);
-  padding: 0 8px;
+  padding: 0 6px;
   border: 1px solid var(--line2);
   border-radius: var(--r);
   background: var(--bg);
@@ -1578,6 +1578,7 @@ input.tl-name:focus {
 }
 
 .props .cp-u {
+  min-width: 0;
   font: 11px var(--mono);
   color: var(--tx3);
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   containerOf,
   exportName,
+  exportNamePreview,
   extOf,
   findCollisions,
   hasEdits,
@@ -104,6 +105,29 @@ describe('exportName', () => {
   it('without EventName falls back to key', () => {
     const c = cue('77', { fields: {} })
     expect(exportName(project([c]), c, c.takes[0])).toBe('77.mp3')
+  })
+})
+
+describe('exportNamePreview', () => {
+  it('is the exported file name when the line has output audio', () => {
+    const c = cue('5')
+    const p = project([c], '{EventName}.{ext}')
+    expect(exportNamePreview(p, c)).toBe(exportName(p, c, c.takes[0]))
+    expect(exportNamePreview(p, c)).toBe('Event_5.mp3')
+  })
+
+  it('drops the unknown extension when the line has no audio yet', () => {
+    const c = cue('6', { takes: [], finalTakeId: undefined, output: null, fields: { exportName: 'VO_ADA_006' } })
+    expect(exportNamePreview(project([c], '{exportName}.{ext}'), c)).toBe('VO_ADA_006')
+    expect(exportNamePreview(project([c], '{Key}_{ext}_x'), c)).toBe('6__x')
+    expect(exportNamePreview(project([c], '{Key}'), c)).toBe('6')
+  })
+
+  it('keeps dots inside names and applies a fixed output format', () => {
+    const c = cue('7', { takes: [], finalTakeId: undefined, output: null, fields: { EventName: 'Mr. Smith' } })
+    expect(exportNamePreview(project([c]), c)).toBe('Mr. Smith')
+    const p = { ...project([c]), export: { format: 'wav-48-24' as const } }
+    expect(exportNamePreview(p, c)).toBe('Mr. Smith.wav')
   })
 })
 

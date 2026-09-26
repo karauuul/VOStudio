@@ -121,6 +121,7 @@ interface Props {
   route: Route
   onRoute: (next: Route) => void
   items: MenuItem[]
+  home: MenuItem
   jobsPending: number
   jobsFailed: number
   onJobs: () => void
@@ -135,6 +136,7 @@ export function TopBar({
   route,
   onRoute,
   items,
+  home,
   jobsPending,
   jobsFailed,
   onJobs,
@@ -170,10 +172,10 @@ export function TopBar({
 
   return (
     <header className="top">
-      <span className="brand">
+      <button className="brand" disabled={home.disabled} onClick={home.onClick}>
         <Logo />
         VO Studio
-      </span>
+      </button>
 
       <input
         className="pname"

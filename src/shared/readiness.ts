@@ -9,6 +9,7 @@ import {
   renderLength,
 } from './export-plan'
 import { estimateBytes, lengthMode } from './export-settings'
+import { lineLabel } from './library'
 
 export const LONGER_TOLERANCE = 0.1
 
@@ -17,6 +18,7 @@ export type LineStatus = 'ready' | 'longer' | 'no-audio' | 'collision' | 'exclud
 export interface LineRow {
   cueId: string
   cueKey: string
+  label: string
   name: string
   originalLength?: number
   outputLength?: number
@@ -54,6 +56,7 @@ export function readinessRows(project: Project, exported: ExportedLines = {}): L
     const base = {
       cueId: cue.id,
       cueKey: cue.key,
+      label: lineLabel(cue),
       changed: false,
       done: isDone(cue, project),
       ...(originalLength(cue) === undefined ? {} : { originalLength: originalLength(cue) }),

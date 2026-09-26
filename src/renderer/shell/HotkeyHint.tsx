@@ -23,7 +23,7 @@ export function HotkeyHint() {
     }
     const onOver = (e: MouseEvent): void => {
       window.clearTimeout(timer)
-      const target = e.target instanceof HTMLElement ? e.target : null
+      const target = e.target instanceof Element ? e.target : null
       const el = target?.closest<HTMLElement>('[data-hk],[data-hint]')
       const action = el?.dataset['hk']
       const b = action ? bindingOf(action as KeyAction) : null
