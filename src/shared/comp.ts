@@ -626,6 +626,37 @@ export function moveClipTo(
   return withClips(norm, clips)
 }
 
+export function moveClips(
+  comp: CueComp,
+  clipIds: readonly string[],
+  delta: number,
+  trackOffset = 0
+): CueComp {
+  const norm = normalizeComp(comp)
+  const ids = new Set(clipIds)
+  const moving = norm.clips.filter((c) => ids.has(c.id))
+  if (moving.length === 0 || !Number.isFinite(delta)) return comp
+  const order = norm.tracks?.map((t) => t.id) ?? [DEFAULT_TRACK_ID]
+  const shifted = (c: CompClip): string | undefined => {
+    const at = order.indexOf(clipTrackId(c))
+    return at < 0 ? undefined : order[at + trackOffset]
+  }
+  const offset = moving.every((c) => shifted(c) !== undefined) ? trackOffset : 0
+  const d = Math.max(delta, -Math.min(...moving.map((c) => c.start)))
+  if (d === 0 && offset === 0) return norm
+  const moved = new Map(
+    moving.map((c) => {
+      const trackId = offset === 0 ? clipTrackId(c) : shifted(c)!
+      return [c.id, { ...c, start: c.start + d, ...(norm.tracks ? { trackId } : {}) }]
+    })
+  )
+  const still: CueComp = { clips: norm.clips.filter((c) => !ids.has(c.id)) }
+  for (const c of moved.values()) {
+    if (!trackIsFree(still, clipTrackId(c), c.start, clipEnd(c))) return norm
+  }
+  return withClips(norm, norm.clips.map((c) => moved.get(c.id) ?? c))
+}
+
 export function slipClip(
   comp: CueComp,
   clipId: string,

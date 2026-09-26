@@ -21,6 +21,7 @@ import {
   GAIN_MIN_DB,
   isEmptyComp,
   moveClipTo,
+  moveClips,
   slipClip,
   switchClipVersion,
   compDelta,
@@ -343,6 +344,124 @@ describe('moveClipTo — one track has no overlaps', () => {
   it('unknown clip and NaN — no-op', () => {
     expect(moveClipTo(three, 'nope', 1)).toBe(three)
     expect(moveClipTo(three, 'b', NaN)).toBe(three)
+  })
+})
+
+describe('moveClips — the selection moves as one unit', () => {
+  const lane = (id: string) => ({ id, name: id, gainDb: 0, muted: false, solo: false })
+  const tracks = [lane('track-1'), lane('track-2'), lane('track-3')]
+  const on = (trackId: string, over: Partial<CompClip>): CompClip => ({ ...clip(over), trackId })
+  const three = comp(
+    clip({ id: 'a', srcOut: 2, start: 0 }),
+    clip({ id: 'b', srcOut: 2, start: 3 }),
+    clip({ id: 'c', srcOut: 2, start: 8 })
+  )
+  const layered = normalizeComp({
+    clips: [
+      on('track-1', { id: 'a', srcOut: 1, start: 1 }),
+      on('track-2', { id: 'b', srcOut: 1, start: 2 }),
+      on('track-2', { id: 'x', srcOut: 1, start: 6 }),
+      on('track-3', { id: 'y', srcOut: 1, start: 0 }),
+    ],
+    tracks,
+  })
+  const at = (c: CueComp, id: string): CompClip => c.clips.find((x) => x.id === id)!
+
+  it('keeps relative offsets and leaves unselected clips alone', () => {
+    const out = moveClips(three, ['b', 'c'], 1)
+    expect(at(out, 'b').start).toBe(4)
+    expect(at(out, 'c').start).toBe(9)
+    expect(at(out, 'a')).toEqual(at(three, 'a'))
+    expectValid(out)
+  })
+
+  it('stops the whole group at zero, offsets intact', () => {
+    const out = moveClips(removeClip(three, 'a'), ['b', 'c'], -10)
+    expect(at(out, 'b').start).toBe(0)
+    expect(at(out, 'c').start).toBe(5)
+    const alone = moveClips(three, ['a', 'c'], -3)
+    expect(at(alone, 'a').start).toBe(0)
+    expect(at(alone, 'c').start).toBe(8)
+  })
+
+  it('refuses the whole move when any clip would land on an unselected clip', () => {
+    const out = moveClips(three, ['a', 'c'], 2)
+    expect(out.clips.map((x) => x.start)).toEqual([0, 3, 8])
+    expectValid(out)
+  })
+
+  it('selected clips never block each other', () => {
+    const packed = comp(clip({ id: 'a', srcOut: 1, start: 0 }), clip({ id: 'b', srcOut: 1, start: 1 }))
+    const out = moveClips(packed, ['a', 'b'], 0.5)
+    expect(out.clips.map((x) => x.start)).toEqual([0.5, 1.5])
+    expectValid(out)
+  })
+
+  it('shifts every clip by the same track offset', () => {
+    const out = moveClips(layered, ['a', 'b'], 0, 1)
+    expect(at(out, 'a').trackId).toBe('track-2')
+    expect(at(out, 'b').trackId).toBe('track-3')
+    expect(at(out, 'a').start).toBe(1)
+    expect(at(out, 'b').start).toBe(2)
+    expectValid(out)
+  })
+
+  it('moves in time only when a clip would leave the track list', () => {
+    const out = moveClips(layered, ['a', 'b'], 0.5, 2)
+    expect(at(out, 'a').trackId).toBe('track-1')
+    expect(at(out, 'b').trackId).toBe('track-2')
+    expect(at(out, 'a').start).toBe(1.5)
+    expect(at(out, 'b').start).toBe(2.5)
+    const up = moveClips(layered, ['a', 'b'], 0, -1)
+    expect(at(up, 'a').trackId).toBe('track-1')
+    expect(at(up, 'b').trackId).toBe('track-2')
+  })
+
+  it('a track offset onto an occupied spot is refused like a single move', () => {
+    const out = moveClips(layered, ['b', 'y'], 5.5, -1)
+    expect(out).toEqual(layered)
+  })
+
+  it('does not mutate its input', () => {
+    const snapshot = JSON.stringify(layered)
+    moveClips(layered, ['a', 'b'], 1, 1)
+    moveClips(layered, ['a', 'x'], -5)
+    expect(JSON.stringify(layered)).toBe(snapshot)
+  })
+
+  it('keeps region, tracks and original start', () => {
+    const base = { ...layered, region: { in: 0.5, out: 3 }, originalStart: 1 }
+    const out = moveClips(base, ['a', 'b'], 1, 1)
+    expect(out.region).toEqual({ in: 0.5, out: 3 })
+    expect(out.tracks).toEqual(tracks)
+    expect(out.originalStart).toBe(1)
+  })
+
+  it('a one-clip selection equals the single move', () => {
+    for (const d of [1, -1, -10, 4, 5, 100, 0, 0.25]) {
+      expect(moveClips(three, ['b'], d)).toEqual(moveClipTo(three, 'b', 3 + d))
+    }
+    const across = moveClips(layered, ['a'], 0, 2)
+    expect(at(across, 'a').trackId).toBe('track-3')
+    expect(across).toEqual(moveClipTo(layered, 'a', 1, 'track-3'))
+    const along = moveClips(layered, ['b'], 1)
+    expect(at(along, 'b').start).toBe(3)
+    expect(along).toEqual(moveClipTo(layered, 'b', 3))
+    expect(moveClips(layered, ['a'], 1, 1)).toEqual(moveClipTo(layered, 'a', 2, 'track-2'))
+    expect(moveClips(layered, ['b'], 4)).toEqual(moveClipTo(layered, 'b', 6))
+  })
+
+  it('an old single-track comp stays free of track ids', () => {
+    const out = moveClips(three, ['a', 'b'], 0.5)
+    expect(out.clips.every((x) => !('trackId' in x))).toBe(true)
+    expect(out).not.toHaveProperty('tracks')
+  })
+
+  it('unknown ids, an empty selection and NaN are no-ops', () => {
+    expect(moveClips(three, ['nope'], 1)).toBe(three)
+    expect(moveClips(three, [], 1)).toBe(three)
+    expect(moveClips(three, ['b'], NaN)).toBe(three)
+    expect(moveClips(three, ['b', 'nope'], 1).clips.map((x) => x.start)).toEqual([0, 4, 8])
   })
 })
 
