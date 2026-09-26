@@ -77,6 +77,7 @@ import { compDuration, isEmptyComp } from '@shared/comp'
 import { libraryRow, lineLabel, locateText, punchClip, recordClip, resolveTake, type LibraryRow } from '@shared/library'
 import { parseSnapshot, type ChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
 import {
+  doneChange,
   lineStepCommand,
   originalStateOf,
   outputStateIn,
@@ -1255,14 +1256,14 @@ export default function App() {
     async (dir: 'undo' | 'redo'): Promise<void> => {
       const stack = dir === 'undo' ? linesRef.current.undo : linesRef.current.redo
       const top = stack[stack.length - 1]
-      const removal = top && top.kind !== 'original' && removesLines(top, dir) ? top.ids : null
+      const removal = top && 'ids' in top && removesLines(top, dir) ? top.ids : null
       if (!(await (removal ? prepareLineRemoval(removal) : flushPending()))) return
       let select: string | undefined
       let next: LineEdit | null
       try {
         next = await runLineStep(linesRef.current, dir, async (edit) => {
           const target =
-            edit.kind === 'original'
+            'cueId' in edit
               ? edit.cueId
               : removesLines(edit, dir)
                 ? survivorNear(edit.ids, edit.kind === 'table' || edit.undoRemoves)
@@ -1483,16 +1484,26 @@ export default function App() {
     [visible, activeIndex, selectCue]
   )
 
+  const doneInFlight = useRef(new Set<string>())
   const setDone = useCallback(
-    (cueId: string, done: boolean): Promise<boolean> =>
-      dispatch({ type: 'cue.approve', cueId, approved: done }).then(
-        () => true,
-        (e: unknown) => {
-          pushStatus('err', String(e))
-          return false
-        }
-      ),
-    [dispatch, pushStatus]
+    async (cueId: string, done: boolean): Promise<boolean> => {
+      const p = projectRef.current ?? undefined
+      const cue = p?.cues.find((c) => c.id === cueId)
+      if (!cue || doneInFlight.current.has(cueId)) return false
+      if (isDone(cue, p) === done) return true
+      doneInFlight.current.add(cueId)
+      try {
+        const change = doneChange(cue, await execute({ type: 'cue.approve', cueId, approved: done }))
+        if (change) pushLineEdit(change)
+        return true
+      } catch (e) {
+        pushStatus('err', String(e))
+        return false
+      } finally {
+        doneInFlight.current.delete(cueId)
+      }
+    },
+    [projectRef, execute, pushLineEdit, pushStatus]
   )
 
   const doneNext = useCallback(() => {
