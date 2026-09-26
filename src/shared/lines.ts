@@ -32,20 +32,19 @@ export function isGeneratedTake(take: Pick<Take, 'kind'>): boolean {
   return take.kind === 'tts' || take.kind === 'sts'
 }
 
-export function showsAi(cue: Cue, project: Pick<Project, 'characters' | 'provider'>): boolean {
+export function showsAi(cue: Cue, project: Pick<Project, 'languages' | 'provider'>): boolean {
   return (
     cue.sourceText.trim() !== '' ||
     cue.referenceAudio !== undefined ||
     cue.referenceDuration !== undefined ||
     cue.region !== undefined ||
-    cue.characterId !== '' ||
     cue.takes.some(isGeneratedTake) ||
-    project.characters.length > 0 ||
+    project.languages !== undefined ||
     project.provider !== undefined
   )
 }
 
-export function isManualProject(project: Pick<Project, 'cues' | 'characters' | 'provider'>): boolean {
+export function isManualProject(project: Pick<Project, 'cues' | 'languages' | 'provider'>): boolean {
   return !project.cues.some((cue) => showsAi(cue, project))
 }
 

@@ -20,7 +20,7 @@ import {
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '@shared/ipc'
 import { pickHistory, redoStale, type UndoSide } from '@shared/undo-route'
-import { planScriptPaste, showsAi } from '@shared/lines'
+import { isManualProject, planScriptPaste, showsAi } from '@shared/lines'
 import { TABLE_FILE } from '@shared/import-table'
 import { keyedQueue } from '@shared/keyed-queue'
 import type { UpdateStatus } from '@shared/updater'
@@ -1397,7 +1397,8 @@ export default function App() {
           pushLineEdit({ kind: 'table', ids, snapshots: [], fields, characters, focus })
           if (!activeLineId()) await selectCue(focus)
         }
-        pushStatus('ok', `${result.name}: ${result.summary.added} new, ${result.summary.updated} updated`)
+        const { added, updated, suggested } = result.summary
+        pushStatus('ok', `${result.name}: ${added} new, ${updated} updated${suggested ? `, ${suggested} suggested` : ''}`)
       } catch (e) {
         pushStatus('err', String(e))
       }
@@ -2240,7 +2241,7 @@ export default function App() {
         <TableImportDialog
           path={tableFile}
           rule={matchBy}
-          ai={project.cues.some((cue) => showsAi(cue, project))}
+          ai={!isManualProject(project)}
           onImport={importTable}
           onClose={() => setTableFile(null)}
         />

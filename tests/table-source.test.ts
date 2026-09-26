@@ -136,34 +136,30 @@ describe('parseTableFile', () => {
 })
 
 describe('tableMapping', () => {
-  const quick = [newLineCue('a', 1, 'typed')]
-  const template = [cue('a', { sourceText: 'Hello' })]
-
-  it('maps a single text column to the line text when no line has original text', () => {
-    expect(tableMapping(csv('Text', 'x'), quick)).toEqual({ translation: 0 })
-    expect(tableMapping(csv('Text', 'x'), [])).toEqual({ translation: 0 })
-    expect(tableMapping(csv('EventName,Text,Character', 'A,x,Bo'), [])).toEqual({ id: 0, translation: 1, character: 2 })
+  it('maps a single text column to the line text', () => {
+    expect(tableMapping(csv('Text', 'x'))).toEqual({ translation: 0 })
+    expect(tableMapping(csv('EventName,Text,Character', 'A,x,Bo'))).toEqual({ id: 0, translation: 1, character: 2 })
   })
 
-  it('keeps the old guess once any line has original text', () => {
-    for (const headers of [['Text'], ['EventName', 'Original', 'Speaker'], ['cueId', 'character', 'sourceText', 'translation']]) {
-      expect(tableMapping(csv(headers.join(','), ''), template)).toEqual(detectMapping(headers))
-    }
+  it('maps explicit original headers to the original', () => {
+    expect(tableMapping(csv('EventName,Original,Speaker', 'A,x,Bo'))).toEqual({ id: 0, text: 1, character: 2 })
+    expect(tableMapping(csv('cueId,character,sourceText,translation', 'A,Bo,x,y'))).toEqual({ id: 0, character: 1, text: 2, translation: 3 })
   })
 
   it('keeps two text columns as original and text', () => {
-    expect(tableMapping(csv('Original,Translation', 'a,b'), [])).toEqual({ text: 0, translation: 1 })
+    expect(tableMapping(csv('Original,Translation', 'a,b'))).toEqual({ text: 0, translation: 1 })
   })
 
-  it('falls back to position only for a single unknown column', () => {
-    expect(tableMapping(csv('Κείμενο', 'x'), [])).toEqual({ translation: 0 })
-    expect(tableMapping(csv('Κείμενο', 'x'), template)).toEqual({ text: 0 })
-    expect(tableMapping(csv('Κλειδί,Κείμενο,Ρόλος', 'a,b,c'), [])).toEqual({})
+  it('falls back to the line text only for a single unknown column', () => {
+    expect(tableMapping(csv('Κείμενο', 'x'))).toEqual({ translation: 0 })
+    expect(tableMapping(csv('Текст', 'x'))).toEqual({ translation: 0 })
+    expect(tableMapping(csv('Κλειδί,Κείμενο,Ρόλος', 'a,b,c'))).toEqual({})
+    expect(tableMapping(csv('Ключ,Текст,Персонаж', 'a,b,c'))).toEqual({})
   })
 
   it('uses the requested mapping and forces the line text for scripts', () => {
-    expect(tableMapping(csv('Text', 'x'), [], { text: 0 })).toEqual({ text: 0 })
-    expect(tableMapping(parseTableFile('s.txt', 'a\n\nb'), template, { id: 0 })).toEqual({ translation: 0 })
+    expect(tableMapping(csv('Text', 'x'), { text: 0 })).toEqual({ text: 0 })
+    expect(tableMapping(parseTableFile('s.txt', 'a\n\nb'), { id: 0 })).toEqual({ translation: 0 })
   })
 })
 
@@ -179,7 +175,7 @@ describe('keyless import', () => {
   it('continues the Line N numbering after existing lines', () => {
     const p = project([newLineCue('a', 1, 'one'), newLineCue('b', 4, 'four')])
     const r = applyTable(p, csv('Text', 'five', '', 'six').rows, { translation: 0 }, 'id', false)
-    expect(r.summary).toEqual({ added: 2, updated: 0, unchanged: 0, skipped: 1 })
+    expect(r.summary).toEqual({ added: 2, updated: 0, suggested: 0, unchanged: 0, skipped: 1 })
     expect(p.cues.slice(2).map((c) => [c.key, c.fields['EventName'], c.text, c.status])).toEqual([
       ['line-005', 'Line 5', 'five', 'translated'],
       ['line-006', 'Line 6', 'six', 'translated'],
@@ -190,7 +186,7 @@ describe('keyless import', () => {
   it('turns a script into lines with the text as line text', () => {
     const p = project([])
     const file = parseTableFile('s.txt', 'Hello there.\n\nGeneral Kenobi.')
-    commitTable(p, file.rows, options(tableMapping(file, p.cues)))
+    commitTable(p, file.rows, options(tableMapping(file)))
     expect(p.cues.map((c) => [c.key, c.text])).toEqual([
       ['line-001', 'Hello there.'],
       ['line-002', 'General Kenobi.'],
@@ -217,11 +213,11 @@ describe('keyed import options', () => {
     expect(p.cues[1].sourceText).toBe('Filled')
   })
 
-  it('replaces existing text only when asked', () => {
+  it('replaces existing text only when asked and suggests it otherwise', () => {
     const p = project([cue('a', { key: 'A', text: 'Old text' })])
-    expect(previewTable(p, table.rows, options(mapping)).updated).toBe(1)
-    expect(previewTable(p, table.rows, options({ id: 0, translation: 2 })).unchanged).toBe(1)
-    expect(previewTable(p, table.rows, options({ id: 0, translation: 2 }, { replaceTranslations: true })).updated).toBe(1)
+    expect(previewTable(p, table.rows, options(mapping))).toMatchObject({ updated: 0, suggested: 1, unchanged: 0 })
+    expect(previewTable(p, table.rows, options({ id: 0, translation: 2 }))).toMatchObject({ suggested: 1, unchanged: 0 })
+    expect(previewTable(p, table.rows, options({ id: 0, translation: 2 }, { replaceTranslations: true }))).toMatchObject({ updated: 1, suggested: 0 })
   })
 })
 
@@ -234,23 +230,114 @@ describe('dry run', () => {
     const before = structuredClone(p)
     const summary = previewTable(p, table.rows, o)
     expect(p).toEqual(before)
-    expect(summary).toEqual({ added: 1, updated: 2, unchanged: 0, skipped: 1 })
+    expect(summary).toEqual({ added: 1, updated: 2, suggested: 0, unchanged: 0, skipped: 1 })
     expect(commitTable(p, table.rows, o).summary).toEqual(summary)
   })
 
   it('reports nothing to commit when the table matches the project', () => {
     const p = project([cue('a', { key: 'A', text: 'Alpha' })])
     const result = commitTable(p, csv('EventName,Text', 'A,Alpha').rows, options({ id: 0, translation: 1 }))
-    expect(result.summary).toEqual({ added: 0, updated: 0, unchanged: 1, skipped: 0 })
+    expect(result.summary).toEqual({ added: 0, updated: 0, suggested: 0, unchanged: 1, skipped: 0 })
     expect(result.changes).toBeNull()
     expect(result.undo).toEqual({ ids: [], fields: [], characters: [] })
   })
 
   it('a second import of the same keyed table changes nothing', () => {
     const p = project([])
-    const o = options(tableMapping(table, p.cues))
+    const o = options(tableMapping(table))
     commitTable(p, table.rows, o)
-    expect(previewTable(p, table.rows, o)).toEqual({ added: 0, updated: 0, unchanged: 3, skipped: 1 })
+    expect(previewTable(p, table.rows, o)).toEqual({ added: 0, updated: 0, suggested: 0, unchanged: 3, skipped: 1 })
+  })
+})
+
+describe('re-import without Replace', () => {
+  const first = csv('EventName,Text,Character', 'A,Alpha,Bo', 'B,Beta,Bo', 'C,Гамма,Cy', 'D,Delta,', 'E,Epsilon,Bo')
+  const edited = csv('EventName,Text,Character', 'A,Alpha,Bo', 'B,Beta two,Bo', 'C,Гамма,Cy', 'D,Delta,', 'E,Epsilon,Bo', 'F,Phi,')
+  const imported = () => {
+    const p = project([])
+    commitTable(p, first.rows, options(tableMapping(first)))
+    return p
+  }
+  const lineB = (p: Project) => p.cues.find((c) => c.key === 'B')!
+
+  it('turns a changed text into a suggestion and counts it apart', () => {
+    const p = imported()
+    const o = options(tableMapping(edited))
+    const summary = previewTable(p, edited.rows, o)
+    expect(summary).toEqual({ added: 1, updated: 0, suggested: 1, unchanged: 4, skipped: 0 })
+    expect(lineB(p).suggestedText).toBeUndefined()
+    const { committed } = importInto(p, edited, o)
+    expect(committed.summary).toEqual(summary)
+    expect(lineB(p)).toMatchObject({ text: 'Beta', suggestedText: 'Beta two' })
+    expect(committed.undo.fields).toEqual([{ cueId: lineB(p).id, from: { suggestedText: null }, to: { suggestedText: 'Beta two' } }])
+    run(p, { type: 'cue.acceptSuggestion', cueId: lineB(p).id })
+    expect(lineB(p).text).toBe('Beta two')
+    expect(lineB(p).suggestedText).toBeUndefined()
+  })
+
+  it('replaces the text as before when Replace is on', () => {
+    const p = imported()
+    const o = options(tableMapping(edited), { replaceTranslations: true })
+    expect(previewTable(p, edited.rows, o)).toEqual({ added: 1, updated: 1, suggested: 0, unchanged: 4, skipped: 0 })
+    commitTable(p, edited.rows, o)
+    expect(lineB(p).text).toBe('Beta two')
+    expect('suggestedText' in lineB(p)).toBe(false)
+  })
+
+  it('fills an empty text directly and does not suggest the same text twice', () => {
+    const p = imported()
+    lineB(p).text = ''
+    const o = options(tableMapping(edited))
+    commitTable(p, edited.rows, o)
+    expect(lineB(p).text).toBe('Beta two')
+    expect('suggestedText' in lineB(p)).toBe(false)
+    lineB(p).text = 'Typed'
+    commitTable(p, edited.rows, o)
+    expect(lineB(p).suggestedText).toBe('Beta two')
+    const again = commitTable(p, edited.rows, o)
+    expect(again.summary).toEqual({ added: 0, updated: 0, suggested: 0, unchanged: 6, skipped: 0 })
+    expect(again.changes).toBeNull()
+  })
+
+  it('counts a row with a suggestion as suggested even when other fields changed', () => {
+    const p = imported()
+    const summary = previewTable(p, csv('EventName,Text,Character', 'B,Beta two,Cy').rows, options({ id: 0, translation: 1, character: 2 }))
+    expect(summary).toEqual({ added: 0, updated: 0, suggested: 1, unchanged: 0, skipped: 0 })
+  })
+
+  it('one undo removes the suggestions with the new lines; redo brings them back', async () => {
+    const p = imported()
+    const before = structuredClone(p.cues)
+    const { step } = importInto(p, edited, options(tableMapping(edited)))
+    await step('undo')
+    expect(p.cues).toEqual(before)
+    expect('suggestedText' in lineB(p)).toBe(false)
+    await step('redo')
+    expect(lineB(p).suggestedText).toBe('Beta two')
+    expect(p.cues.map((c) => c.key)).toEqual(['A', 'B', 'C', 'D', 'E', 'F'])
+  })
+
+  it('undo of a replaced text keeps a pending suggestion', async () => {
+    const p = imported()
+    lineB(p).suggestedText = 'Pending'
+    const { step } = importInto(p, edited, options(tableMapping(edited), { replaceTranslations: true }))
+    expect(lineB(p)).toMatchObject({ text: 'Beta two', suggestedText: 'Pending' })
+    await step('undo')
+    expect(lineB(p)).toMatchObject({ text: 'Beta', suggestedText: 'Pending' })
+  })
+
+  it('undo keeps a suggestion that changed after the import and restores a replaced one', async () => {
+    const p = imported()
+    lineB(p).suggestedText = 'Older'
+    const first = importInto(p, edited, options(tableMapping(edited)))
+    expect(first.committed.undo.fields).toEqual([{ cueId: lineB(p).id, from: { suggestedText: 'Older' }, to: { suggestedText: 'Beta two' } }])
+    await first.step('undo')
+    expect(lineB(p).suggestedText).toBe('Older')
+    const second = importInto(p, edited, options(tableMapping(edited)))
+    run(p, { type: 'cue.rejectSuggestion', cueId: lineB(p).id })
+    await second.step('undo')
+    expect('suggestedText' in lineB(p)).toBe(false)
+    expect(lineB(p).text).toBe('Beta')
   })
 })
 
@@ -269,7 +356,7 @@ describe('template projects', () => {
       applyTable(direct, table.rows, mapping, 'id', replace)
       const strip = (p: Project) => ({ ...p, cues: p.cues.map(({ id: _id, ...rest }) => rest) })
       expect(strip(viaCommit)).toEqual(strip(direct))
-      expect(tableMapping(table, base.cues)).toEqual(mapping)
+      expect(tableMapping(table)).toEqual(mapping)
     }
   })
 })
@@ -397,6 +484,9 @@ describe('table.step validation', () => {
     }
     expect(projectCommandSchema.parse(command)).toEqual(command)
     expect(() => projectCommandSchema.parse({ ...command, fields: [{ cueId: 'a', from: { status: 'x' }, to: {} }] })).toThrow()
+    const suggestion = { ...command, fields: [{ cueId: 'a', from: { suggestedText: null }, to: { suggestedText: 'next' } }] }
+    expect(projectCommandSchema.parse(suggestion)).toEqual(suggestion)
+    expect(() => projectCommandSchema.parse({ ...command, fields: [{ cueId: 'a', from: { suggestedText: 1 }, to: {} }] })).toThrow()
     expect(() => projectCommandSchema.parse({ ...command, remove: [''] })).toThrow()
   })
 
@@ -454,7 +544,7 @@ describe('table cell bounds', () => {
       ['good', 'Kept', 'Hero'],
     ]
     const result = applyTable(project, rows, { id: 0, translation: 1, character: 2 }, 'id', false)
-    expect(result.summary).toEqual({ added: 1, updated: 0, unchanged: 0, skipped: 2 })
+    expect(result.summary).toEqual({ added: 1, updated: 0, suggested: 0, unchanged: 0, skipped: 2 })
     expect(project.cues.map((cue) => cue.key)).toEqual(['good'])
   })
 
@@ -462,9 +552,9 @@ describe('table cell bounds', () => {
     const project = { cues: [], characters: [] }
     const rows = [['x'.repeat(LINE_TEXT_MAX + 1)], ['Short line']]
     const result = applyTable(project, rows, { translation: 0 }, 'id', false)
-    expect(result.summary).toEqual({ added: 1, updated: 0, unchanged: 0, skipped: 1 })
+    expect(result.summary).toEqual({ added: 1, updated: 0, suggested: 0, unchanged: 0, skipped: 1 })
     const script = parseTableFile('script.txt', `${'y'.repeat(LINE_TEXT_MAX + 1)}\n\nFine\n`)
-    const fromScript = applyTable({ cues: [], characters: [] }, script.rows, tableMapping(script, []), 'id', false)
+    const fromScript = applyTable({ cues: [], characters: [] }, script.rows, tableMapping(script), 'id', false)
     expect(fromScript.summary.skipped).toBe(1)
     expect(fromScript.summary.added).toBe(1)
   })
@@ -475,7 +565,7 @@ describe('duplicate keys', () => {
     const project = { cues: [], characters: [] }
     const rows = [['K', 'First', 'Bo'], ['K', '', 'Ada'], ['L', 'Other', ''], ['K', 'Last', '']]
     const result = applyTable(project, rows, { id: 0, translation: 1, character: 2 }, 'id', true)
-    expect(result.summary).toEqual({ added: 2, updated: 0, unchanged: 0, skipped: 0 })
+    expect(result.summary).toEqual({ added: 2, updated: 0, suggested: 0, unchanged: 0, skipped: 0 })
     expect(project.cues.map((cue) => [cue.key, cue.text, cue.characterId])).toEqual([
       ['K', 'Last', 'Ada'],
       ['L', 'Other', ''],
@@ -487,7 +577,7 @@ describe('duplicate keys', () => {
     const bo = { id: 'Bo', name: 'Bo' } as Character
     const project = { cues: [cue('a', { key: 'A', characterId: 'Bo' })], characters: [bo] }
     const result = applyTable(project, [['A', 'Cy'], ['A', 'Bo']], { id: 0, character: 1 }, 'id', false)
-    expect(result.summary).toEqual({ added: 0, updated: 0, unchanged: 1, skipped: 0 })
+    expect(result.summary).toEqual({ added: 0, updated: 0, suggested: 0, unchanged: 1, skipped: 0 })
     expect(project.characters).toEqual([bo])
   })
 })

@@ -1,6 +1,7 @@
 import { useMemo, useState, type DragEvent } from 'react'
 import { sourceLabel, type Project } from '@shared/domain'
-import { audioSources } from '@shared/import-table'
+import { audioSources, tableColumnLabels, type TableColumn } from '@shared/import-table'
+import { isManualProject } from '@shared/lines'
 import type { TableImportResult } from '@shared/ipc'
 import { api } from '../api'
 
@@ -53,6 +54,7 @@ interface Props {
 export function SourcesPanel({ project, tables, onPick, onDrop, busy }: Props) {
   const [over, setOver] = useState(false)
   const audio = useMemo(() => audioSources(project.cues), [project.cues])
+  const labels = useMemo(() => tableColumnLabels(!isManualProject(project)), [project])
   const videos = project.sources ?? []
   const regions = useMemo(() => {
     const map = new Map<string, number>()
@@ -137,13 +139,19 @@ export function SourcesPanel({ project, tables, onPick, onDrop, busy }: Props) {
               <div className="nm">{table.name}</div>
               <div className="sb">
                 {nnn(table.rows)} rows ·{' '}
-                {(Object.keys(table.mapping) as (keyof typeof table.mapping)[]).join(', ') || 'no columns'}
+                {(Object.keys(table.mapping) as TableColumn[]).map((column) => labels[column]).join(', ') || 'no columns'}
               </div>
             </div>
             <span className="m">
               {nnn(table.summary.added)} new
               <br />
               {nnn(table.summary.updated)} updated
+              {table.summary.suggested > 0 && (
+                <>
+                  <br />
+                  {nnn(table.summary.suggested)} suggested
+                </>
+              )}
             </span>
           </div>
         ))}
