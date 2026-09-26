@@ -9,6 +9,8 @@ import {
   tableMapping,
   type TableOptions,
   TABLE_ROWS_MAX,
+  CUE_KEY_MAX,
+  CHARACTER_ID_MAX,
 } from '../src/shared/import-table'
 import { emptyEdits, type Character, type Cue, type Project, type Take } from '../src/shared/domain'
 import { newLineCue } from '../src/shared/lines'
@@ -409,5 +411,19 @@ describe('table size bound', () => {
     const rows = Array.from({ length: TABLE_ROWS_MAX + 1 }, (_, i) => `line ${i}`).join('\n')
     expect(() => parseTableFile('big.csv', `Text\n${rows}\n`)).toThrow(/more than/)
     expect(parseTableFile('ok.csv', 'Text\nOne\n').rows).toHaveLength(1)
+  })
+})
+
+describe('table cell bounds', () => {
+  it('skips rows whose key or character would not survive the undo and redo commands', () => {
+    const project = { cues: [], characters: [] }
+    const rows = [
+      ['k'.repeat(CUE_KEY_MAX + 1), 'Too long key', ''],
+      ['ok', 'Fine', 'c'.repeat(CHARACTER_ID_MAX + 1)],
+      ['good', 'Kept', 'Hero'],
+    ]
+    const result = applyTable(project, rows, { id: 0, translation: 1, character: 2 }, 'id', false)
+    expect(result.summary).toEqual({ added: 1, updated: 0, unchanged: 0, skipped: 2 })
+    expect(project.cues.map((cue) => cue.key)).toEqual(['good'])
   })
 })

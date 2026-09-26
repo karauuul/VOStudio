@@ -78,6 +78,8 @@ export interface TableFile {
 }
 
 export const TABLE_ROWS_MAX = 100_000
+export const CUE_KEY_MAX = 4096
+export const CHARACTER_ID_MAX = 200
 
 function bounded(file: TableFile): TableFile {
   if (file.rows.length > TABLE_ROWS_MAX) throw new Error(`Table has more than ${TABLE_ROWS_MAX} rows`)
@@ -191,7 +193,12 @@ export function applyTable(
     const id = cellAt(cells, idColumn)
     const source = cellAt(cells, mapping.text)
     const translation = cellAt(cells, mapping.translation)
-    if (idColumn === undefined ? !source && !translation : !id) {
+    const character = cellAt(cells, mapping.character)
+    if (
+      (idColumn === undefined ? !source && !translation : !id) ||
+      id.length > CUE_KEY_MAX ||
+      character.length > CHARACTER_ID_MAX
+    ) {
       summary.skipped++
       continue
     }
@@ -213,7 +220,6 @@ export function applyTable(
       if (cue.status === 'empty') cue.status = 'translated'
       touched = true
     }
-    const character = cellAt(cells, mapping.character)
     if (character) {
       const characterId = ensureCharacter(project, character)
       if (cue.characterId !== characterId) {

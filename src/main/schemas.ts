@@ -2,7 +2,7 @@ import path from 'path'
 import { z } from 'zod'
 import { isProjectDirIn, isSafeId, isValidProjectName } from '@shared/project-summary'
 import { CREATE_LINES_MAX, LINE_TEXT_MAX } from '@shared/lines'
-import { TABLE_ROWS_MAX } from '@shared/import-table'
+import { CHARACTER_ID_MAX, CUE_KEY_MAX, TABLE_ROWS_MAX } from '@shared/import-table'
 import {
   DUCK_MAX_DB,
   DUCK_MIN_DB,
@@ -368,8 +368,8 @@ const takeSchema = z
 export const cueSchema = z
   .object({
     id: safeId,
-    characterId: z.string().max(200),
-    key: z.string().max(4096),
+    characterId: z.string().max(CHARACTER_ID_MAX),
+    key: z.string().max(CUE_KEY_MAX),
     fields: z.record(z.string()),
     sourceText: z.string(),
     text: z.string(),
