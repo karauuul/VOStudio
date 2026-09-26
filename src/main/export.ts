@@ -203,7 +203,9 @@ async function measureLoudness(file: string): Promise<LoudnessMeasure> {
 }
 
 async function postGainDb(job: ExportJob, rendered: string): Promise<number> {
-  if (job.loudnessTarget) return targetGainDb(job.loudnessTarget, await measureLoudness(rendered))
+  if (job.loudnessTarget) {
+    return targetGainDb(job.loudnessTarget, await measureLoudness(rendered), job.format !== 'wav')
+  }
   if (!job.matchLoudnessRef) return 0
   const [reference, actual] = await Promise.all([
     measureLoudness(job.matchLoudnessRef),

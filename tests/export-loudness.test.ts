@@ -278,3 +278,13 @@ describe('export applies the loudness target with ffmpeg', () => {
     expect(output.lufs).toBeLessThan(-25)
   })
 })
+
+describe('lossy headroom', () => {
+  it('keeps 1 dB of headroom below peak targets and the LUFS ceiling for lossy formats', () => {
+    expect(targetGainDb({ mode: 'peak', db: -1 }, { lufs: -30, peak: -10 }, true)).toBeCloseTo(8)
+    expect(targetGainDb({ mode: 'peak', db: -1 }, { lufs: -30, peak: -10 })).toBeCloseTo(9)
+    expect(targetGainDb({ mode: 'lufs', db: -16 }, { lufs: -30, peak: -3 }, true)).toBeCloseTo(1)
+    expect(targetGainDb({ mode: 'lufs', db: -16 }, { lufs: -30, peak: -3 })).toBeCloseTo(2)
+    expect(targetGainDb({ mode: 'lufs', db: -16 }, { lufs: -30, peak: -20 }, true)).toBeCloseTo(14)
+  })
+})

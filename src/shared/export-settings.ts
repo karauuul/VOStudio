@@ -204,6 +204,7 @@ export function loudnessGainDb(referenceLufs: number | null, renderedLufs: numbe
 
 export const TARGET_GAIN_LIMIT_DB = 30
 export const LUFS_PEAK_CEILING_DB = -1
+export const LOSSY_HEADROOM_DB = 1
 export const SILENCE_LUFS = -70
 
 export interface LoudnessMeasure {
@@ -214,9 +215,10 @@ export interface LoudnessMeasure {
 const targetGain = (db: number): number =>
   Math.round(clamp(db, -TARGET_GAIN_LIMIT_DB, TARGET_GAIN_LIMIT_DB) * 100) / 100
 
-export function targetGainDb(target: LoudnessTarget, { lufs, peak }: LoudnessMeasure): number {
+export function targetGainDb(target: LoudnessTarget, { lufs, peak }: LoudnessMeasure, lossy = false): number {
   if (peak === null || !Number.isFinite(peak)) return 0
-  if (target.mode === 'peak') return targetGain(target.db - peak)
+  const headroom = lossy ? LOSSY_HEADROOM_DB : 0
+  if (target.mode === 'peak') return targetGain(target.db - headroom - peak)
   if (lufs === null || !Number.isFinite(lufs) || lufs <= SILENCE_LUFS) return 0
-  return targetGain(Math.min(target.db - lufs, LUFS_PEAK_CEILING_DB - peak))
+  return targetGain(Math.min(target.db - lufs, LUFS_PEAK_CEILING_DB - headroom - peak))
 }
