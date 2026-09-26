@@ -153,9 +153,13 @@ export function ProjectHome({
             <span className="home-badges">
               {p.stats ? (
                 <>
-                  <span className="pb">{p.stats.cues} cues</span>
-                  <span className="pb ok">{p.stats.voiced} outputs</span>
-                  <span className="pb ok">{p.stats.approved} approved</span>
+                  <span className="pb">
+                    {p.stats.cues} {p.stats.cues === 1 ? 'line' : 'lines'}
+                  </span>
+                  <span className="pb ok">
+                    {p.stats.voiced} {p.stats.voiced === 1 ? 'output' : 'outputs'}
+                  </span>
+                  <span className="pb ok">{p.stats.approved} done</span>
                 </>
               ) : (
                 <span className="pb warn">Unreadable</span>

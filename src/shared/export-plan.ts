@@ -53,9 +53,8 @@ function withExt(name: string, ext: string): string {
   return current ? `${name.slice(0, -current.length)}.${ext}` : `${name}.${ext}`
 }
 
-export function exportName(project: Project, cue: Cue, take: Take): string {
-  const ext = take.file.format
-  const named = project.exportTemplate
+function nameFrom(template: string, project: Project, cue: Cue, ext: string): string {
+  const named = template
     .replace(/\{EventName\}/g, cue.fields['EventName'] ?? cue.key)
     .replace(/\{exportName\}/g, cue.fields['exportName'] || cue.key)
     .replace(/\{WemId\}/g, cue.key)
@@ -63,6 +62,18 @@ export function exportName(project: Project, cue: Cue, take: Take): string {
     .replace(/\{ext\}/g, ext)
   const target = formatSpec(project.export?.format).ext
   return target ? withExt(named, target) : named
+}
+
+export function exportName(project: Project, cue: Cue, take: Take): string {
+  return nameFrom(project.exportTemplate, project, cue, take.file.format)
+}
+
+export function exportNamePreview(project: Project, cue: Cue): string {
+  const take = outputTakeOf(cue, project)
+  if (take) return exportName(project, cue, take)
+  const target = formatSpec(project.export?.format).ext
+  const template = target ? project.exportTemplate : project.exportTemplate.replace(/\.?\{ext\}/g, '')
+  return nameFrom(template, project, cue, target ?? '')
 }
 
 export function mixesOriginal(cue: Cue): boolean {

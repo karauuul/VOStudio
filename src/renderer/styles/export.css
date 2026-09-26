@@ -65,6 +65,10 @@
   font-weight: 400;
 }
 
+.exp-foot .ico {
+  margin-left: auto;
+}
+
 .exp-tbar {
   height: 44px;
   flex: none;
@@ -102,6 +106,8 @@
   color: var(--tx3);
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   background: var(--panel);
 }
 

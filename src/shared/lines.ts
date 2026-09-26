@@ -41,6 +41,10 @@ export function showsAi(cue: Cue, project: Pick<Project, 'characters' | 'provide
   )
 }
 
+export function isManualProject(project: Pick<Project, 'cues' | 'characters' | 'provider'>): boolean {
+  return !project.cues.some((cue) => showsAi(cue, project))
+}
+
 export function hasReference(cue: Pick<Cue, 'referenceAudio' | 'region' | 'stems'>): boolean {
   return cue.referenceAudio !== undefined || cue.region !== undefined || (cue.stems?.length ?? 0) > 0
 }
