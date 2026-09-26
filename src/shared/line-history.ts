@@ -1,6 +1,7 @@
 import { sanitizeRevision } from './approval'
 import type { Character, Cue } from './domain'
 import { outputStateKey, type ChangeSet, type FieldStep, type OriginalState, type OutputState, type PlacedCue, type ProjectCommand } from './project-commands'
+import { hasComposition } from './sources'
 
 export type LineChange =
   | {
@@ -67,6 +68,17 @@ export function recordLineEdit(history: LineHistory, change: LineChange, at: num
 export function removesLines(edit: LineEdit, dir: StepDir): boolean {
   if (edit.kind === 'table') return dir === 'undo' && edit.ids.length > 0
   return edit.kind === 'cues' && (dir === 'undo') === edit.undoRemoves
+}
+
+export function refuseWorkRemoval(history: LineHistory, dir: StepDir, cues: readonly Cue[]): boolean {
+  if (dir !== 'undo') return false
+  const stack = history.undo
+  const top = stack[stack.length - 1]
+  if (!top || !('ids' in top) || !removesLines(top, dir)) return false
+  const ids = new Set(top.ids)
+  if (!cues.some((cue) => ids.has(cue.id) && hasComposition(cue))) return false
+  stack.pop()
+  return true
 }
 
 export function lineStepCommand(edit: LineEdit, dir: StepDir): ProjectCommand {

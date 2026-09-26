@@ -36,15 +36,16 @@ const DECAY_TO_SILENCE = Math.log(1000)
 export function buildImpulseResponse(
   ctx: BaseAudioContext,
   size: number,
-  decay: number
+  decay: number,
+  channels: number
 ): AudioBuffer {
   const sr = ctx.sampleRate
   const frames = Math.max(1, Math.ceil(decay * sr))
-  const ir = ctx.createBuffer(2, frames, sr)
+  const ir = ctx.createBuffer(channels, frames, sr)
   const attack = Math.max(1, (0.004 + 0.05 * size) * sr)
   const lpA = 0.25 + 0.7 * (1 - size)
 
-  for (let ch = 0; ch < 2; ch++) {
+  for (let ch = 0; ch < channels; ch++) {
     const data = ir.getChannelData(ch)
     const rnd = prng(seedOf(size, decay, ch))
     let lp = 0
@@ -66,10 +67,15 @@ export function buildImpulseResponse(
 
 const irCache = new WeakMap<BaseAudioContext, Map<string, AudioBuffer>>()
 
-function impulseResponse(ctx: BaseAudioContext, size: number, decay: number): AudioBuffer {
+function impulseResponse(
+  ctx: BaseAudioContext,
+  size: number,
+  decay: number,
+  channels: number
+): AudioBuffer {
   const s = Math.round(size * 100) / 100
   const d = Math.round(decay * 100) / 100
-  const key = `${s}|${d}`
+  const key = `${s}|${d}|${channels}`
   let byKey = irCache.get(ctx)
   if (!byKey) {
     byKey = new Map()
@@ -77,17 +83,23 @@ function impulseResponse(ctx: BaseAudioContext, size: number, decay: number): Au
   }
   const hit = byKey.get(key)
   if (hit) return hit
-  const ir = buildImpulseResponse(ctx, s, d)
+  const ir = buildImpulseResponse(ctx, s, d, channels)
   byKey.set(key, ir)
   return ir
 }
 
-function reverbSend(ctx: BaseAudioContext, input: AudioNode, r: ReverbEffect, out: AudioNode): number {
+function reverbSend(
+  ctx: BaseAudioContext,
+  input: AudioNode,
+  r: ReverbEffect,
+  out: AudioNode,
+  channels: number
+): number {
   const s = sanitizeReverb(r)
   const { dry, wet } = mixGains(s.mix)
   const conv = ctx.createConvolver()
   conv.normalize = false
-  conv.buffer = impulseResponse(ctx, s.size, s.decay)
+  conv.buffer = impulseResponse(ctx, s.size, s.decay, channels > 1 ? 2 : 1)
   const g = ctx.createGain()
   g.gain.value = wet
   const pre = s.preDelay ?? 0
@@ -121,11 +133,19 @@ function delaySend(ctx: BaseAudioContext, input: AudioNode, e: DelayEffect, out:
   return dry
 }
 
-function sends(ctx: BaseAudioContext, input: AudioNode, fx: ClipEffects): AudioNode {
+function sends(
+  ctx: BaseAudioContext,
+  input: AudioNode,
+  fx: ClipEffects,
+  channels: number
+): AudioNode {
   const sum = ctx.createGain()
+  sum.channelCount = channels
+  sum.channelCountMode = 'explicit'
+  sum.channelInterpretation = 'speakers'
   const dryGain = ctx.createGain()
   let dry = 1
-  if (effectOn(fx.reverb)) dry *= reverbSend(ctx, input, fx.reverb!, sum)
+  if (effectOn(fx.reverb)) dry *= reverbSend(ctx, input, fx.reverb!, sum, channels)
   if (effectOn(fx.delay)) dry *= delaySend(ctx, input, fx.delay!, sum)
   dryGain.gain.value = dry
   input.connect(dryGain)

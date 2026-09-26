@@ -1,6 +1,6 @@
-import { compDuration, compOriginalStart, isEmptyComp, withSourceEffects } from './comp'
+import { compDuration, compEffectsTail, compOriginalStart, isEmptyComp, withSourceEffects } from './comp'
 import { clipSpeed, DEFAULT_DUCK_DB, type ClipEdits, type CompClip, type CompTrack, type Cue, type CueComp, type Project, type ProjectSource, type Take } from './domain'
-import { hasEffects } from './effects'
+import { effectsTail, hasEffects } from './effects'
 import { hasValidVoicedOutput, usesCompOutput } from './approval'
 import { compTracks, resolveTake, type TakeLookup } from './library'
 import { formatSpec, lengthMode, loudnessMode, type ExportSettings } from './export-settings'
@@ -253,9 +253,13 @@ export function takeLength(take: Take): number {
 export function contentLength(cue: Cue, take: Take, project: TakeLookup): number {
   const comp = outputComp(cue, project)
   const base = comp ? compDuration(comp) : takeLength(take)
-  return mixesOriginal(cue)
+  const tail = comp
+    ? compEffectsTail(resolveCompClips(project, cue, comp).map((r) => r.clip), comp.tracks)
+    : effectsTail(take.edits.effects)
+  const content = mixesOriginal(cue)
     ? Math.max(base, compOriginalStart(cue.comp) + (originalLength(cue) ?? 0))
     : base
+  return content + tail
 }
 
 export function renderWindow(

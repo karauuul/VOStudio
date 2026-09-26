@@ -92,6 +92,7 @@ export interface ClipGraphOptions {
   seek?: number
   crossfadeIn?: number
   crossfadeOut?: number
+  channels?: number
 }
 
 function fadeNode(
@@ -173,7 +174,7 @@ export function buildClipGraph(
   gain.gain.value = dbToGain(edits.gainDb)
   node.connect(gain)
 
-  const output = connectEffects(ctx, gain, edits.effects, buffer.numberOfChannels)
+  const output = connectEffects(ctx, gain, edits.effects, opts.channels ?? buffer.numberOfChannels)
 
   return {
     source,
@@ -220,6 +221,10 @@ export function originalVoiceEnd(orig: OriginalVoice): number {
   return Math.max(0, orig.start ?? 0) + originalVoiceLength(orig)
 }
 
+export function compChannels(voices: readonly { buffer: AudioBuffer }[]): number {
+  return voices.reduce((n, v) => Math.max(n, v.buffer.numberOfChannels), 1)
+}
+
 export interface ScheduleCompOptions extends ClipGraphOptions {
   tracks?: CompTrack[]
   originals?: OriginalVoice[]
@@ -228,7 +233,8 @@ export interface ScheduleCompOptions extends ClipGraphOptions {
 function trackBuses(
   ctx: BaseAudioContext,
   destination: AudioNode,
-  tracks: CompTrack[] | undefined
+  tracks: CompTrack[] | undefined,
+  channels: number
 ): (trackId: string) => AudioNode {
   if (!tracks) return () => destination
   const soloed = tracks.some((t) => t.solo)
@@ -240,7 +246,7 @@ function trackBuses(
     const gain = ctx.createGain()
     const audible = !track || (!track.muted && (!soloed || track.solo))
     gain.gain.value = audible ? dbToGain(track?.gainDb ?? 0) : 0
-    connectEffects(ctx, gain, track?.effects, destination.channelCount).connect(destination)
+    connectEffects(ctx, gain, track?.effects, channels).connect(destination)
     buses.set(trackId, gain)
     return gain
   }
@@ -256,7 +262,8 @@ export function scheduleComp(
   const seek = Math.max(0, opts.seek ?? 0)
   const voices: ScheduledVoice[] = []
   const plan = compRenderPlan(sources.map((s) => s.clip))
-  const busFor = trackBuses(ctx, destination, opts.tracks)
+  const channels = compChannels(sources)
+  const busFor = trackBuses(ctx, destination, opts.tracks, channels)
 
   for (let i = 0; i < sources.length; i++) {
     const s = sources[i]
@@ -273,6 +280,7 @@ export function scheduleComp(
       seek: localSeek,
       crossfadeIn: plan[i].crossfadeIn,
       crossfadeOut: plan[i].crossfadeOut,
+      channels,
     })
     if (!(graph.duration > 0)) continue
     graph.output.connect(busFor(clipTrackId(c)))

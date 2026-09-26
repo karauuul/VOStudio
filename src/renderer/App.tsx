@@ -20,7 +20,8 @@ import {
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '@shared/ipc'
 import { pickHistory, redoStale, type UndoSide } from '@shared/undo-route'
-import { isManualProject, planScriptPaste, showsAi } from '@shared/lines'
+import { dropCompRedo, nextCompEdit, pruneCompHistory, recordCompEdit, type CompHistory } from '@shared/comp-history'
+import { isManualProject, PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
 import { TABLE_FILE } from '@shared/import-table'
 import { keyedQueue } from '@shared/keyed-queue'
 import type { UpdateStatus } from '@shared/updater'
@@ -82,6 +83,7 @@ import {
   originalStateOf,
   outputStateIn,
   recordLineEdit,
+  refuseWorkRemoval,
   removalBlock,
   removesLines,
   runLineStep,
@@ -92,6 +94,7 @@ import {
   type LineChange,
   type LineEdit,
   type LineHistory,
+  type StepDir,
 } from '@shared/line-history'
 import { buildPrompt } from '@shared/prompt'
 import {
@@ -190,8 +193,9 @@ export default function App() {
   const fxUndoRef = useRef<TakeEffectsEdit[]>([])
   const fxRedoRef = useRef<TakeEffectsEdit[]>([])
   const linesRef = useRef<LineHistory>({ undo: [], redo: [] })
+  const compHistRef = useRef<CompHistory>(new Map())
   const replayRef = useRef(0)
-  const afterSelectRef = useRef<{ cueId: string; then: 'focus' | 'record' } | null>(null)
+  const afterSelectRef = useRef<{ cueId: string; then: 'focus' | 'record' | StepDir } | null>(null)
   const creatingRef = useRef(false)
   const exportingRef = useRef(false)
   const targetTrackRef = useRef<Record<string, string>>({})
@@ -250,7 +254,7 @@ export default function App() {
   const onEdit = useCallback(() => {
     fxRedoRef.current = []
     linesRef.current.redo = []
-    compRef.current?.dropRedo()
+    dropCompRedo(compHistRef.current)
   }, [])
 
   const session = useProjectSession({ onStatus: pushStatus, onBootstrap, onEdit })
@@ -314,6 +318,7 @@ export default function App() {
     fxUndoRef.current = []
     fxRedoRef.current = []
     linesRef.current = { undo: [], redo: [] }
+    compHistRef.current.clear()
     afterSelectRef.current = null
   }, [])
 
@@ -815,6 +820,7 @@ export default function App() {
       }
       await dispatch({ type: 'cue.setComp', cueId, comp: placedComp })
       lastPlacedRef.current.set(cueId, { base: cue.comp, comp: placedComp })
+      recordCompEdit(compHistRef.current, cueId, stored?.clips.length ? stored : null, Date.now())
     }),
     [placeQueue, projectRef, dispatch, isActiveCue, selectSource]
   )
@@ -1163,13 +1169,29 @@ export default function App() {
     void openNewLine('record').catch((e: unknown) => pushStatus('err', String(e)))
   }, [projectRef, openNewLine, pushStatus])
 
+  const compStep = useCallback((dir: StepDir) => {
+    replayRef.current++
+    try {
+      if (dir === 'undo') compRef.current?.undo()
+      else compRef.current?.redo()
+    } finally {
+      replayRef.current--
+    }
+  }, [])
+
   useEffect(() => {
     const next = afterSelectRef.current
     if (!next || next.cueId !== activeCue?.id) return
     afterSelectRef.current = null
     if (next.then === 'focus') focusTextRef.current?.()
-    else recRef.current?.()
-  }, [activeCue?.id])
+    else if (next.then === 'record') recRef.current?.()
+    else compStep(next.then)
+  }, [activeCue?.id, compStep])
+
+  const cues = project?.cues
+  useEffect(() => {
+    if (cues) pruneCompHistory(compHistRef.current, cues.map((cue) => cue.id))
+  }, [cues])
 
   const lineRemovalBlock = useCallback(
     (ids: string[]): string | null =>
@@ -1254,6 +1276,10 @@ export default function App() {
 
   const lineStep = useCallback(
     async (dir: 'undo' | 'redo'): Promise<void> => {
+      if (refuseWorkRemoval(linesRef.current, dir, projectRef.current?.cues ?? [])) {
+        pushStatus('info', 'Line has recordings')
+        return
+      }
       const stack = dir === 'undo' ? linesRef.current.undo : linesRef.current.redo
       const top = stack[stack.length - 1]
       const removal = top && 'ids' in top && removesLines(top, dir) ? top.ids : null
@@ -1290,10 +1316,10 @@ export default function App() {
 
   const historyStep = useCallback(
     (dir: 'undo' | 'redo') => {
-      const comp = compRef.current
+      const comps = compHistRef.current
       const topAt = (stack: { at: number }[]): number | null => stack[stack.length - 1]?.at ?? null
       const undoAt: Record<UndoSide, number | null> = {
-        comp: comp?.lastEditAt('undo') ?? null,
+        comp: nextCompEdit(comps, 'undo')?.at ?? null,
         fx: topAt(fxUndoRef.current),
         line: topAt(linesRef.current.undo),
       }
@@ -1302,12 +1328,13 @@ export default function App() {
         return others.length > 0 ? Math.max(...others) : null
       }
       if (redoStale(topAt(fxRedoRef.current), newestOther('fx'))) fxRedoRef.current = []
-      if (redoStale(comp?.lastEditAt('redo') ?? null, newestOther('comp'))) comp?.dropRedo()
+      if (redoStale(nextCompEdit(comps, 'redo')?.at ?? null, newestOther('comp'))) dropCompRedo(comps)
       if (redoStale(topAt(linesRef.current.redo), newestOther('line'))) linesRef.current.redo = []
       const from = dir === 'undo' ? fxUndoRef : fxRedoRef
+      const comp = nextCompEdit(comps, dir)
       const side = pickHistory(
         {
-          comp: comp?.lastEditAt(dir) ?? null,
+          comp: comp?.at ?? null,
           fx: topAt(from.current),
           line: topAt(dir === 'undo' ? linesRef.current.undo : linesRef.current.redo),
         },
@@ -1317,13 +1344,20 @@ export default function App() {
         void lineStep(dir)
         return
       }
-      replayRef.current++
-      try {
-        if (side === 'comp') {
-          if (dir === 'undo') comp?.undo()
-          else comp?.redo()
+      if (side === 'comp' && comp) {
+        if (comp.cueId === activeCueIdRef.current) {
+          compStep(dir)
           return
         }
+        const request = { cueId: comp.cueId, then: dir }
+        afterSelectRef.current = request
+        void selectCue(comp.cueId).then((selected) => {
+          if (!selected && afterSelectRef.current === request) afterSelectRef.current = null
+        })
+        return
+      }
+      replayRef.current++
+      try {
         if (side !== 'fx') return
         const entry = from.current.pop()
         if (!entry) return
@@ -1335,7 +1369,7 @@ export default function App() {
         replayRef.current--
       }
     },
-    [applyTakeEffects, lineStep]
+    [applyTakeEffects, lineStep, compStep, selectCue]
   )
 
   const textHistoryKey = useCallback(
@@ -1509,11 +1543,15 @@ export default function App() {
 
   const doneNext = useCallback(() => {
     const cue = activeCue
-    if (!cue || !hasValidVoicedOutput(cue, projectRef.current ?? undefined)) return
+    if (!cue) return
+    if (!hasValidVoicedOutput(cue, projectRef.current ?? undefined)) {
+      pushStatus('info', 'No audio')
+      return
+    }
     void setDone(cue.id, true).then((ok) => {
       if (ok) move(1)
     })
-  }, [activeCue, projectRef, setDone, move])
+  }, [activeCue, projectRef, setDone, move, pushStatus])
 
   const handlers: KeyboardHandlers = useMemo(
     () => ({
@@ -1694,7 +1732,11 @@ export default function App() {
   ]
 
   const spliceTranslation = (el: HTMLTextAreaElement, insert: string): void => {
-    onText(el.value.slice(0, el.selectionStart) + insert + el.value.slice(el.selectionEnd))
+    if (pasteOverflows(el.value, el.selectionStart, el.selectionEnd, insert)) {
+      pushStatus('err', PARAGRAPH_TOO_LONG)
+      return
+    }
+    onText(el.value.slice(0, el.selectionStart) + insert.replace(/\r\n?/g, '\n') + el.value.slice(el.selectionEnd))
   }
 
   const lineMenu = (cue: Cue): MenuEntry[] => [
@@ -1930,6 +1972,7 @@ export default function App() {
     onAcceptSuggestion,
     onRejectSuggestion,
     onPasteScript: pasteScript,
+    onPasteOverflow: () => pushStatus('err', PARAGRAPH_TOO_LONG),
     onHistoryKey: textHistoryKey,
     onCharacter: onCueCharacter,
     onVoiceChange,
@@ -2061,6 +2104,7 @@ export default function App() {
       if (activeCueId) setTimelineView((m) => ({ ...m, [activeCueId]: v }))
     },
     onComp: onSetComp,
+    compHistory: compHistRef.current,
     onOriginal: (original) => {
       if (!activeCueId) return
       void dispatch({ type: 'cue.setOriginal', cueId: activeCueId, original }).catch((e: unknown) =>
