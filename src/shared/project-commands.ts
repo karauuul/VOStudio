@@ -1,4 +1,4 @@
-import { approveCue, changeCompOutput, changeCueSourceText, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval, sanitizeApproval, sanitizeCueOutput, setExcluded } from './approval'
+import { approveCue, sanitizeRevision, changeCompOutput, changeCueSourceText, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval, sanitizeApproval, sanitizeCueOutput, setExcluded } from './approval'
 import { compProblem, normalizeComp } from './comp'
 import { sanitizeEffects } from './effects'
 import {
@@ -30,7 +30,7 @@ import {
   type Stem,
   type VoiceSettings,
 } from './domain'
-import { referencedByOtherComp, resolveTake } from './library'
+import { referencedByOtherComp, resolveTake, type TakeLookup } from './library'
 import { sanitizeExportSettings, type ExportSettings } from './export-settings'
 import { mixesOriginal } from './export-plan'
 import { newLineCue, nextLineNumber } from './lines'
@@ -65,6 +65,7 @@ export type ProjectCommand =
     }
   | { type: 'cue.useTakeAsOriginal'; cueId: string; takeId: string }
   | ({ type: 'cue.restoreOriginal'; cueId: string; whenState: OutputState } & OriginalState)
+  | ({ type: 'cue.restoreOutput'; cueId: string; whenState: OutputState; whenTextRevision: number } & OutputState)
   | { type: 'character.setVoiceSettings'; characterId: string; settings: VoiceSettings }
   | { type: 'character.create'; id: string; name: string }
   | { type: 'character.rename'; characterId: string; name: string }
@@ -131,8 +132,21 @@ const cueById = (project: Project, id: string): Cue => {
   return cue
 }
 
-const outputStateKey = ({ status, output, approval }: OutputState): string =>
+export function savedText(cue: Cue, text: string, project?: TakeLookup): Cue {
+  const next = changeCueText(cue, text, project)
+  return next.status === 'empty' && text.trim() ? { ...next, status: 'translated' } : next
+}
+
+export const outputStateKey = ({ status, output, approval }: OutputState): string =>
   JSON.stringify({ status, output: sanitizeCueOutput(output), approval: sanitizeApproval(approval) })
+
+function restoreOutputState(cue: Cue, state: OutputState): void {
+  cue.status = state.status
+  if (state.output === undefined) delete cue.output
+  else cue.output = structuredClone(state.output)
+  if (state.approval === undefined) delete cue.approval
+  else cue.approval = structuredClone(state.approval)
+}
 
 const characterById = (project: Project, id: string): Character => {
   const character = project.characters.find((item) => item.id === id)
@@ -389,8 +403,7 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
   switch (command.type) {
     case 'cue.saveText':
       if (command.ifText !== undefined && cue.text !== command.ifText) break
-      Object.assign(cue, changeCueText(cue, command.text, project))
-      if (cue.status === 'empty' && command.text.trim()) cue.status = 'translated'
+      Object.assign(cue, savedText(cue, command.text, project))
       break
     case 'cue.approve':
       if (command.approved) Object.assign(cue, approveCue(cue, command.approvedAt, project))
@@ -528,13 +541,13 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
         if (mixesOriginal(cue)) Object.assign(cue, invalidateVoicedOutput(cue, project))
         break
       }
-      cue.status = command.status
-      if (command.output === undefined) delete cue.output
-      else cue.output = structuredClone(command.output)
-      if (command.approval === undefined) delete cue.approval
-      else cue.approval = structuredClone(command.approval)
+      restoreOutputState(cue, command)
       break
     }
+    case 'cue.restoreOutput':
+      if (sanitizeRevision(cue.textRevision) !== command.whenTextRevision) break
+      if (outputStateKey(cue) === outputStateKey(command.whenState)) restoreOutputState(cue, command)
+      break
     case 'cue.setCharacter': {
       if (command.characterId) characterById(project, command.characterId)
       if (cue.characterId === command.characterId) break
