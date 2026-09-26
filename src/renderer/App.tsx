@@ -110,6 +110,8 @@ import {
   type ProviderModel,
 } from '@shared/provider-models'
 import { exportNamePreview, originalRef } from '@shared/export-plan'
+import { withDraft } from '@shared/text-draft'
+import { useTextDraft } from './text-draft-store'
 import { splitStems } from './audio/stems'
 import { runPlan } from './export/run-export'
 import { durationQueue, reportTakeDuration } from './audio/duration-backfill'
@@ -255,6 +257,7 @@ export default function App() {
   const {
     project,
     projectRef,
+    draft,
     setProject,
     mutateCue,
     dispatch: sessionDispatch,
@@ -386,9 +389,14 @@ export default function App() {
 
   const visible = grouped.cues
 
-  const activeCue = useMemo(
+  const storedCue = useMemo(
     () => project?.cues.find((c) => c.id === activeCueId),
     [project, activeCueId]
+  )
+  const activeCue = useMemo(() => withDraft(storedCue, draft), [storedCue, draft])
+  const latestCue = useCallback(
+    (cue: Cue): Cue => withDraft(activeCue && cue.id === activeCue.id ? activeCue : cue, useTextDraft.getState().draft),
+    [activeCue]
   )
   const activeCharacter = useMemo(
     () => project?.characters.find((c) => c.id === activeCue?.characterId),
@@ -673,8 +681,9 @@ export default function App() {
 
   const onCopy = useCallback(
     (kind: CopyKind, target?: Cue) => {
-      const cue = target ?? activeCue
-      if (!cue || !project) return
+      const base = target ?? activeCue
+      if (!base || !project) return
+      const cue = latestCue(base)
       const text =
         kind === 'source'
           ? cue.sourceText
@@ -686,7 +695,7 @@ export default function App() {
         (e: unknown) => pushStatus('err', String(e))
       )
     },
-    [activeCue, project, pushStatus]
+    [activeCue, latestCue, project, pushStatus]
   )
 
   const revealFile = useCallback(
@@ -894,7 +903,7 @@ export default function App() {
 
   const generate = useCallback(
     (kind: GenTarget['kind'], onClipId?: string) => {
-      const cue = activeCue
+      const cue = activeCue && latestCue(activeCue)
       if (!cue) return
       const clip = onClipId
         ? { clipId: onClipId, text: clipTargetText(project ?? undefined, cue, onClipId) }
@@ -914,6 +923,7 @@ export default function App() {
     },
     [
       activeCue,
+      latestCue,
       project,
       clipTarget,
       textSel,
@@ -927,16 +937,18 @@ export default function App() {
 
   const generateSelected = useCallback(
     async (cues: Cue[]) => {
-      if (refuseWhileExporting() || refuseWithoutKey() || !(await flushText())) return
+      if (refuseWhileExporting() || refuseWithoutKey()) return
+      const latest = cues.map(latestCue)
+      if (!(await flushText())) return
       let queued = 0
-      for (const cue of cues) {
+      for (const cue of latest) {
         if (isCueBusyNow(cue.id)) continue
         submitTts(cue.id, cue.text, false)
         queued++
       }
       pushStatus('info', `Queued ${queued} ${queued === 1 ? 'job' : 'jobs'}`)
     },
-    [flushText, submitTts, pushStatus, refuseWhileExporting, refuseWithoutKey]
+    [latestCue, flushText, submitTts, pushStatus, refuseWhileExporting, refuseWithoutKey]
   )
 
   const assignCharacter = useCallback(
@@ -966,10 +978,11 @@ export default function App() {
   const goRoute = useCallback(
     (next: Route) => {
       if (next === route) return
+      void flushText()
       if (guardRef.current?.(() => setRoute(next))) return
       setRoute(next)
     },
-    [route]
+    [route, flushText]
   )
 
   const openFilter = useCallback(
@@ -1052,11 +1065,14 @@ export default function App() {
   )
 
   const saveVersion = useCallback(() => {
-    void api['project:saveVersion']({}).then(
-      (versions) => pushStatus('ok', `Saved v${versions[versions.length - 1]?.n ?? 1}`),
-      (e: unknown) => pushStatus('err', String(e))
-    )
-  }, [pushStatus])
+    void flushText().then((saved) => {
+      if (!saved) return
+      return api['project:saveVersion']({}).then(
+        (versions) => pushStatus('ok', `Saved v${versions[versions.length - 1]?.n ?? 1}`),
+        (e: unknown) => pushStatus('err', String(e))
+      )
+    })
+  }, [flushText, pushStatus])
 
   const onKeySaved = useCallback(() => {
     setHasKey(true)
@@ -1213,8 +1229,8 @@ export default function App() {
         return
       }
       const run = async (): Promise<void> => {
+        const before = latestCue(cue).text
         if (!(await flushText())) return
-        const before = projectRef.current?.cues.find((c) => c.id === cue.id)?.text ?? cue.text
         await execute(plan.create)
         const lines: LineChange = {
           kind: 'cues',
@@ -1233,7 +1249,7 @@ export default function App() {
       }
       void run().catch((e: unknown) => pushStatus('err', String(e)))
     },
-    [activeCue, refuseWhileExporting, flushText, projectRef, execute, pushLineEdit, pushStatus]
+    [activeCue, latestCue, refuseWhileExporting, flushText, execute, pushLineEdit, pushStatus]
   )
 
   const lineStep = useCallback(
@@ -1325,11 +1341,11 @@ export default function App() {
   const textHistoryKey = useCallback(
     (dir: 'undo' | 'redo'): boolean => {
       const cue = activeCue
-      if (!cue || !textFieldStep(linesRef.current, dir, cue.id, cue.text)) return false
+      if (!cue || !textFieldStep(linesRef.current, dir, cue.id, latestCue(cue).text)) return false
       historyStep(dir)
       return true
     },
-    [activeCue, historyStep]
+    [activeCue, latestCue, historyStep]
   )
 
   const importFiles = useCallback(
@@ -1829,7 +1845,7 @@ export default function App() {
 
   const translationMenu = (range: TextRange, el: HTMLTextAreaElement): MenuEntry[] => {
     const comp = activeCue?.comp
-    const hit = comp && activeCue ? locateText(comp, activeCue, project, range) : null
+    const hit = comp && activeCue ? locateText(comp, latestCue(activeCue), project, range) : null
     const hasRange = range.end > range.start
     const copySelection = (): void => {
       void navigator.clipboard.writeText(el.value.slice(range.start, range.end))
@@ -1880,6 +1896,7 @@ export default function App() {
     characters: project.characters,
     groups: grouped.groups,
     activeCueId,
+    activeText: activeCue?.text,
     search,
     onSearch: setSearch,
     onSelect: selectCue,

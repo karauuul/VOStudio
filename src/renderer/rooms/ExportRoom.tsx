@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Project } from '@shared/domain'
 import type { ExportInfo } from '@shared/ipc'
 import type { ExportSettings } from '@shared/export-settings'
@@ -30,7 +30,7 @@ interface Props {
   endExport: () => void
 }
 
-export function ExportRoom({
+export const ExportRoom = memo(function ExportRoom({
   hidden,
   project,
   onStatus,
@@ -203,4 +203,4 @@ export function ExportRoom({
       />
     </div>
   )
-}
+}, (prev, next) => prev.hidden && next.hidden)

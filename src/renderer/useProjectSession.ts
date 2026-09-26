@@ -1,6 +1,8 @@
 import {
+  startTransition,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type Dispatch,
@@ -10,9 +12,11 @@ import {
 import type { Cue, Project, UiSessionState } from '@shared/domain'
 import type { TakeDurationUpdate } from '@shared/ipc'
 import { applyChangeSet, type ChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
+import { settleDraft, withSavedText, type TextDraft } from '@shared/text-draft'
 import { api } from './api'
 import { durationQueue } from './audio/duration-backfill'
 import { playback } from './playback'
+import { useTextDraft } from './text-draft-store'
 
 export type StatusKind = 'ok' | 'err' | 'info'
 
@@ -44,6 +48,7 @@ function applyDurations(project: Project, items: TakeDurationUpdate[]): Project 
 export interface ProjectSession {
   project: Project | null
   projectRef: MutableRefObject<Project | null>
+  draft: TextDraft | null
   setProject: Dispatch<SetStateAction<Project | null>>
   mutateCue: (cueId: string, fn: (c: Cue) => Cue) => void
   dispatch: (command: ProjectCommand, replay?: boolean) => Promise<ChangeSet>
@@ -63,11 +68,12 @@ export function useProjectSession(o: {
   onEdit: () => void
 }): ProjectSession {
   const [project, setProject] = useState<Project | null>(null)
+  const [, setDraftSeen] = useState(0)
   const projectRef = useRef<Project | null>(null)
   projectRef.current = project
   const revisionRef = useRef(0)
   const textTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingText = useRef<{ id: string; text: string } | null>(null)
+  const pendingText = useRef<TextDraft | null>(null)
   const textGenRef = useRef(0)
   const uiTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingUi = useRef<UiSessionState | null>(null)
@@ -128,8 +134,13 @@ export function useProjectSession(o: {
     if (!p) return Promise.resolve(true)
     pendingText.current = null
     const gen = ++textGenRef.current
-    return dispatch({ type: 'cue.saveText', cueId: p.id, text: p.text }).then(
-      () => true,
+    return dispatch({ type: 'cue.saveText', cueId: p.cueId, text: p.text }).then(
+      (changes) => {
+        const saved = changes.cues?.find((c) => c.id === p.cueId)
+        if (saved) setProject((current) => withSavedText(current, saved))
+        useTextDraft.setState((s) => ({ draft: settleDraft(s.draft, p) }))
+        return true
+      },
       (e: unknown) => {
         if (gen === textGenRef.current && !pendingText.current) pendingText.current = p
         statusRef.current('err', String(e))
@@ -140,15 +151,52 @@ export function useProjectSession(o: {
 
   const onText = useCallback(
     (cueId: string, text: string) => {
-      mutateCue(cueId, (c) => ({ ...c, text }))
       const prev = pendingText.current
-      if (prev && prev.id !== cueId) void flushText()
-      pendingText.current = { id: cueId, text }
+      if (prev && prev.cueId !== cueId) void flushText()
+      const next = { cueId, text }
+      pendingText.current = next
+      useTextDraft.setState({ draft: next })
       if (textTimer.current) clearTimeout(textTimer.current)
       textTimer.current = setTimeout(() => void flushText(), 1200)
     },
-    [mutateCue, flushText]
+    [flushText]
   )
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const unsubscribe = useTextDraft.subscribe(() => {
+      clearTimeout(timer)
+      timer = setTimeout(() => startTransition(() => setDraftSeen((n) => n + 1)), 100)
+    })
+    return () => {
+      clearTimeout(timer)
+      unsubscribe()
+    }
+  }, [])
+
+  useLayoutEffect(() => {
+    if (useTextDraft.getState().draft?.saved) useTextDraft.setState({ draft: null })
+  }, [project])
+
+  useEffect(() => {
+    let saving = false
+    let refused: TextDraft | null = null
+    const onUnload = (e: BeforeUnloadEvent): void => {
+      if (!pendingText.current || pendingText.current === refused) return
+      e.preventDefault()
+      e.returnValue = false
+      if (saving) return
+      saving = true
+      const attempt = pendingText.current
+      void flushText().then((saved) => {
+        saving = false
+        if (saved) window.close()
+        else if (pendingText.current === attempt) refused = attempt
+      })
+    }
+    window.addEventListener('beforeunload', onUnload)
+    return () => window.removeEventListener('beforeunload', onUnload)
+  }, [flushText])
 
   const flushVoice = useCallback(() => {
     if (voiceTimer.current) {
@@ -232,6 +280,7 @@ export function useProjectSession(o: {
   return {
     project,
     projectRef,
+    draft: useTextDraft.getState().draft,
     setProject,
     mutateCue,
     dispatch,

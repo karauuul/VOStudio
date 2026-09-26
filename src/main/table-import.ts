@@ -12,6 +12,7 @@ import {
 import type { Project } from '@shared/domain'
 import type { TableImportResult, TablePreview, TableRequest } from '@shared/ipc'
 import type { ChangeSet } from '@shared/project-commands'
+import { readXlsx } from './xlsx'
 
 const MAX_BYTES = 64 * 1024 * 1024
 const PREVIEW_ROWS = 20
@@ -24,7 +25,11 @@ export async function readTable(file: string): Promise<ReadTable> {
   const stat = await fs.stat(file)
   if (!stat.isFile()) throw new Error(`Not a file: ${file}`)
   if (stat.size > MAX_BYTES) throw new Error(`Table is larger than ${MAX_BYTES / 1024 / 1024} MB`)
-  return { path: file, ...parseTableFile(file, await fs.readFile(file, 'utf-8')) }
+  const data = await fs.readFile(file)
+  return {
+    path: file,
+    ...(/\.xlsx$/i.test(file) ? readXlsx(data, MAX_BYTES) : parseTableFile(file, data.toString('utf-8'))),
+  }
 }
 
 const optionsFor = (project: Project, table: TableFile, req: TableRequest): TableOptions => ({
