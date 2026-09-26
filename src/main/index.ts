@@ -714,7 +714,7 @@ function registerHandlers(): void {
     const cue = project.cues.find((c) => c.id === parsed.cueId)
     if (!cue) throw new Error('Cue not found')
     const character = project.characters.find((c) => c.id === cue.characterId)
-    if (!character) throw new Error('Cue has no character assigned')
+    if (!character) throw new Error('Line has no character')
     if (!character.provider.voiceId) {
       throw new Error(`No voice configured for character "${character.name}"`)
     }
@@ -777,7 +777,7 @@ function registerHandlers(): void {
     }
 
     const character = project.characters.find((c) => c.id === cue.characterId)
-    if (!character) throw new Error('Cue has no character assigned')
+    if (!character) throw new Error('Line has no character')
     if (!character.provider.voiceId) {
       throw new Error(`No voice configured for character "${character.name}"`)
     }

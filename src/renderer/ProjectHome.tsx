@@ -74,7 +74,8 @@ export function ProjectHome({
       const result = await api['project:importTemplate'](preview.dir)
       const snapshot = parseSnapshot(result.snapshot)
       onOpen(snapshot)
-      onStatus('ok', `Imported ${snapshot.project.cues.length} cues`)
+      const lines = snapshot.project.cues.length
+      onStatus('ok', `Imported ${lines} ${lines === 1 ? 'line' : 'lines'}`)
       if (result.warnings.length > 0) {
         onStatus('info', `${result.warnings.length} warnings: ${result.warnings[0].reason}`)
       }
