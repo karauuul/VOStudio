@@ -163,6 +163,13 @@ export function exportSignature(settings: ExportSettings | undefined, template: 
   return [formatSpec(clean?.format).id, loudness, lengthMode(clean), template].join('|')
 }
 
+const MP3_RATES = [48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000]
+
+export function mp3Rate(rate: number): number {
+  if (MP3_RATES.includes(rate)) return rate
+  return rate % 11025 === 0 ? 44100 : 48000
+}
+
 export function estimateBytes(seconds: number, id: ExportFormatId | undefined): number {
   return Math.max(0, seconds) * formatSpec(id).bytesPerSecond
 }

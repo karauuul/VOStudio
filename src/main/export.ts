@@ -39,6 +39,7 @@ import {
   formatSpec,
   loudnessGainDb,
   loudnessMode,
+  mp3Rate,
   loudnessTarget,
   parseEbur128,
   parseSamplePeak,
@@ -195,6 +196,8 @@ function toBuffer(wav: unknown): Buffer {
   throw new Error('Expected an ArrayBuffer with rendered WAV data')
 }
 
+const WAV_RATE_OFFSET = 24
+
 async function measureLoudness(file: string, rate?: number): Promise<LoudnessMeasure> {
   try {
     const filter = `${rate ? `aresample=${rate},` : ''}ebur128=peak=sample`
@@ -205,15 +208,15 @@ async function measureLoudness(file: string, rate?: number): Promise<LoudnessMea
   }
 }
 
-async function postGainDb(job: ExportJob, rendered: string): Promise<number> {
+async function postGainDb(job: ExportJob, rendered: string, rate: number): Promise<number> {
   if (job.loudnessTarget) {
-    const measured = await measureLoudness(rendered, job.sampleRate)
+    const measured = await measureLoudness(rendered, rate)
     return targetGainDb(job.loudnessTarget, measured, job.format !== 'wav')
   }
   if (!job.matchLoudnessRef) return 0
   const [reference, actual] = await Promise.all([
     measureLoudness(job.matchLoudnessRef),
-    measureLoudness(rendered, job.sampleRate),
+    measureLoudness(rendered, rate),
   ])
   return loudnessGainDb(reference.lufs, actual.lufs)
 }
@@ -230,12 +233,15 @@ export async function encodeJob(outPath: string, wav: unknown): Promise<ExportRe
   const tmp = path.join(os.tmpdir(), `vostudio-export-${randomUUID()}.wav`)
   try {
     await fs.writeFile(tmp, bytes)
-    const gain = await postGainDb(job, tmp)
+    const renderedRate = bytes.readUInt32LE(WAV_RATE_OFFSET)
+    const rate = job.sampleRate ?? (job.format === 'mp3' ? mp3Rate(renderedRate) : renderedRate)
+    const gain = await postGainDb(job, tmp, rate)
     await runFfmpeg([
       '-i',
       tmp,
       ...(gain === 0 ? [] : ['-af', `volume=${gain}dB`]),
       ...job.formatArgs,
+      ...(job.sampleRate === undefined && rate !== renderedRate ? ['-ar', String(rate)] : []),
       outPath,
     ])
   } finally {
