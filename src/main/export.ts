@@ -38,9 +38,13 @@ import {
   formatSpec,
   loudnessGainDb,
   loudnessMode,
+  loudnessTarget,
   parseEbur128,
+  parseSamplePeak,
+  targetGainDb,
   videoMode,
   videoName,
+  type LoudnessMeasure,
 } from '@shared/export-settings'
 import { renderChunks, videoTimelinePlan } from '@shared/sources'
 import { sanitizeRevision } from '@shared/approval'
@@ -79,6 +83,7 @@ const STAGING_DIR = 'export.staging'
 function toJobs(items: PlannedTake[], outDir: string, project: Project): ExportJob[] {
   const spec = formatSpec(project.export?.format)
   const matchLoudness = loudnessMode(project.export) === 'match'
+  const target = loudnessTarget(project.export)
   return items.map((p) => {
     const outPath = path.join(outDir, p.name)
     const format = containerOf(p.name)
@@ -98,6 +103,7 @@ function toJobs(items: PlannedTake[], outDir: string, project: Project): ExportJ
       hasEdits: hasEdits(p.take.edits),
       edits: p.take.edits,
       ...(matchLoudness && ref ? { matchLoudnessRef: ref } : {}),
+      ...(target ? { loudnessTarget: target } : {}),
       ...(plan ? { compPlan: plan } : {}),
     }
   })
@@ -187,21 +193,23 @@ function toBuffer(wav: unknown): Buffer {
   throw new Error('Expected an ArrayBuffer with rendered WAV data')
 }
 
-async function measureLufs(file: string): Promise<number | null> {
+async function measureLoudness(file: string): Promise<LoudnessMeasure> {
   try {
-    return parseEbur128(await ffmpegStderr(['-i', file, '-af', 'ebur128', '-f', 'null', '-']))
+    const stderr = await ffmpegStderr(['-i', file, '-af', 'ebur128=peak=sample', '-f', 'null', '-'])
+    return { lufs: parseEbur128(stderr), peak: parseSamplePeak(stderr) }
   } catch {
-    return null
+    return { lufs: null, peak: null }
   }
 }
 
-async function matchGainDb(job: ExportJob, rendered: string): Promise<number> {
+async function postGainDb(job: ExportJob, rendered: string): Promise<number> {
+  if (job.loudnessTarget) return targetGainDb(job.loudnessTarget, await measureLoudness(rendered))
   if (!job.matchLoudnessRef) return 0
   const [reference, actual] = await Promise.all([
-    measureLufs(job.matchLoudnessRef),
-    measureLufs(rendered),
+    measureLoudness(job.matchLoudnessRef),
+    measureLoudness(rendered),
   ])
-  return loudnessGainDb(reference, actual)
+  return loudnessGainDb(reference.lufs, actual.lufs)
 }
 
 export async function encodeJob(outPath: string, wav: unknown): Promise<ExportResult> {
@@ -216,7 +224,7 @@ export async function encodeJob(outPath: string, wav: unknown): Promise<ExportRe
   const tmp = path.join(os.tmpdir(), `vostudio-export-${randomUUID()}.wav`)
   try {
     await fs.writeFile(tmp, bytes)
-    const gain = await matchGainDb(job, tmp)
+    const gain = await postGainDb(job, tmp)
     await runFfmpeg([
       '-i',
       tmp,
