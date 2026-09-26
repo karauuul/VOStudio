@@ -232,7 +232,6 @@ export interface TablePreview {
 export interface TableImportResult {
   path: string
   name: string
-  headers: string[]
   mapping: TableMapping
   rows: number
   summary: TableSummary

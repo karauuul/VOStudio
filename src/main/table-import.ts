@@ -59,7 +59,6 @@ export function importTableFile(
     result: {
       path: table.path,
       name: path.basename(table.path),
-      headers: table.headers,
       mapping: options.mapping,
       rows: table.rows.length,
       summary: committed.summary,
