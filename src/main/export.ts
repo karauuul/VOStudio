@@ -30,6 +30,7 @@ import {
   exportedLines,
   indexBound,
   mergeExported,
+  supersededFiles,
   type DeliverExported,
   type DeliverReport,
   type DeliverSummary,
@@ -304,6 +305,9 @@ export async function finishExport(
   await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
   await copyTree(stagingDir, outDir)
   await fs.rm(stagingDir, { recursive: true, force: true })
+  for (const file of supersededFiles(previous?.exported ?? [], exported)) {
+    await fs.rm(path.join(outDir, file), { force: true })
+  }
   return {
     ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }),
     reportPath: path.join(outDir, 'report.json'),

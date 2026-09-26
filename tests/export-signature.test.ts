@@ -4,7 +4,7 @@ import path from 'path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 import { exportSignature, type ExportSettings } from '../src/shared/export-settings'
-import { exportedLines, type DeliverExported } from '../src/shared/deliver'
+import { exportedLines, mergeExported, supersededFiles, type DeliverExported } from '../src/shared/deliver'
 import {
   matchesLineFilter,
   readinessRows,
@@ -254,5 +254,41 @@ describe('export records the signature in report.json', () => {
     await exportLines(['a'])
     r = await rows(p)
     expect([r.a.changed, r.b.changed, r.old.changed]).toEqual([false, true, false])
+  })
+
+  it('a line re-exported under a new name replaces its old file and report entry', async () => {
+    const p = project({ format: 'wav-48-24' }, ['a', 'b'])
+    const renamed = path.join(root, 'R.vostudio')
+    store.adoptProject(p, renamed)
+    await exportLines(['a', 'b'])
+    const audio = path.join(renamed, 'export', 'audio')
+    await fs.mkdir(audio, { recursive: true })
+    for (const name of ['a.wav', 'b.wav']) await fs.writeFile(path.join(audio, name), 'old')
+
+    p.export = { ...p.export, format: 'mp3-192' }
+    await exportLines(['a'])
+
+    const report = JSON.parse(await fs.readFile(path.join(renamed, 'export', 'report.json'), 'utf8'))
+    expect(report.exported.map((e: DeliverExported) => e.file).sort()).toEqual(['audio/a.mp3', 'audio/b.wav'])
+    expect((await fs.readdir(audio)).sort()).toEqual(['b.wav'])
+    expect((await rows(p)).a.changed).toBe(false)
+  })
+})
+
+describe('superseded files', () => {
+  const entry = (cueId: string, file: string): DeliverExported => ({ cueId, exportName: cueId, file, bytes: 1, sha256: 'x' })
+
+  it('are the previous files of re-exported lines that the new export did not rewrite', () => {
+    const previous = [entry('a', 'audio/a.wav'), entry('b', 'audio/b.wav'), entry('c', 'audio/C.wav')]
+    const current = [entry('a', 'audio/a.mp3'), entry('c', 'audio/c.wav')]
+    expect(supersededFiles(previous, current)).toEqual(['audio/a.wav'])
+    expect(mergeExported(previous, current).map((e) => e.file)).toEqual(['audio/b.wav', 'audio/a.mp3', 'audio/c.wav'])
+  })
+
+  it('never point outside the audio folder', () => {
+    const previous = ['../a.wav', 'audio/../../a.wav', 'audio/sub/a.wav', 'audio/..', 'audio\\..\\a.wav', '/etc/a.wav'].map((file) =>
+      entry('a', file)
+    )
+    expect(supersededFiles(previous, [entry('a', 'audio/a.mp3')])).toEqual([])
   })
 })

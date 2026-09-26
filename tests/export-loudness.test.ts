@@ -220,6 +220,14 @@ describe('sample peak and target gain', () => {
     expect(isFastPath(wav, 'a.wav', undefined, { loudness: 'lufs' })).toBe(false)
     expect(isFastPath(wav, 'a.wav', undefined, { loudness: 'peak' })).toBe(false)
   })
+
+  it('explicit formats always encode instead of copying the source bytes', () => {
+    const wav = take('t', 'E:/p/t.wav')
+    expect(isFastPath(wav, 'a.wav', undefined, { format: 'source' })).toBe(true)
+    for (const format of ['wav-48-24', 'wav-44-16'] as const) expect(isFastPath(wav, 'a.wav', undefined, { format })).toBe(false)
+    expect(isFastPath(take('m', 'E:/p/m.mp3'), 'a.mp3', undefined, { format: 'mp3-192' })).toBe(false)
+    expect(isFastPath(take('o', 'E:/p/o.ogg'), 'a.ogg', undefined, { format: 'ogg' })).toBe(false)
+  })
 })
 
 describe('export applies the loudness target with ffmpeg', () => {

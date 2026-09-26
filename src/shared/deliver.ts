@@ -93,12 +93,27 @@ export function buildReport(
   }
 }
 
+const replacedBy = (current: DeliverExported[]): ((e: DeliverExported) => boolean) => {
+  const fresh = new Set(current.map((e) => e.file.toLowerCase()))
+  const cues = new Set(current.map((e) => e.cueId))
+  return (e) => fresh.has(e.file.toLowerCase()) || cues.has(e.cueId)
+}
+
 export function mergeExported(
   previous: DeliverExported[],
   current: DeliverExported[]
 ): DeliverExported[] {
+  const replaced = replacedBy(current)
+  return [...previous.filter((e) => !replaced(e)), ...current]
+}
+
+export function supersededFiles(previous: DeliverExported[], current: DeliverExported[]): string[] {
   const fresh = new Set(current.map((e) => e.file.toLowerCase()))
-  return [...previous.filter((e) => !fresh.has(e.file.toLowerCase())), ...current]
+  const replaced = replacedBy(current)
+  return previous
+    .filter((e) => replaced(e) && !fresh.has(e.file.toLowerCase()))
+    .map((e) => e.file)
+    .filter((file) => /^audio\/[^/\\]+$/.test(file) && !/^audio\/\.\.?$/.test(file))
 }
 
 export function exportedLines(report: Pick<DeliverReport, 'exported'>): ExportedLines {
