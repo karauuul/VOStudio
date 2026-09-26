@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyChangeSet, applyProjectCommand } from '../src/shared/project-commands'
 import { approvalState } from '../src/shared/approval'
 import { emptyEdits, type Cue, type Project } from '../src/shared/domain'
-import { settleDraft, withDraft, type TextDraft } from '../src/shared/text-draft'
+import { settleDraft, withDraft, withSavedText, type TextDraft } from '../src/shared/text-draft'
 
 function project(): Project {
   return {
@@ -44,6 +44,29 @@ describe('text draft overlay', () => {
     expect(shown.textRevision).toBe(stored.textRevision)
     expect(shown.approval).toBe(stored.approval)
     expect(approvalState(shown, p)).toBe('approved')
+  })
+})
+
+describe('reconciling a save whose change set arrived after a newer change', () => {
+  it('puts the saved text and revision on the local line and keeps the newer changes', () => {
+    const inMain = project()
+    applyProjectCommand(inMain, { type: 'cue.saveText', cueId: 'c', text: 'saved' })
+    const saved = cueOf(inMain, 'c')
+    const local = project()
+    const newer = { ...cueOf(local, 'c'), notes: 'from a job' }
+    local.cues = [newer, cueOf(local, 'd')]
+
+    const next = withSavedText(local, saved)!
+
+    expect(cueOf(next, 'c')).toEqual({ ...newer, text: 'saved', textRevision: saved.textRevision })
+    expect(cueOf(next, 'd')).toBe(cueOf(local, 'd'))
+  })
+
+  it('leaves the project untouched when the save already landed', () => {
+    const p = project()
+    applyProjectCommand(p, { type: 'cue.saveText', cueId: 'c', text: 'saved' })
+    expect(withSavedText(p, cueOf(p, 'c'))).toBe(p)
+    expect(withSavedText(null, cueOf(p, 'c'))).toBeNull()
   })
 })
 

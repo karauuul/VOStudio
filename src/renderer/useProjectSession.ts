@@ -12,7 +12,7 @@ import {
 import type { Cue, Project, UiSessionState } from '@shared/domain'
 import type { TakeDurationUpdate } from '@shared/ipc'
 import { applyChangeSet, type ChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
-import { settleDraft, type TextDraft } from '@shared/text-draft'
+import { settleDraft, withSavedText, type TextDraft } from '@shared/text-draft'
 import { api } from './api'
 import { durationQueue } from './audio/duration-backfill'
 import { playback } from './playback'
@@ -135,7 +135,9 @@ export function useProjectSession(o: {
     pendingText.current = null
     const gen = ++textGenRef.current
     return dispatch({ type: 'cue.saveText', cueId: p.cueId, text: p.text }).then(
-      () => {
+      (changes) => {
+        const saved = changes.cues?.find((c) => c.id === p.cueId)
+        if (saved) setProject((current) => withSavedText(current, saved))
         useTextDraft.setState((s) => ({ draft: settleDraft(s.draft, p) }))
         return true
       },
@@ -185,10 +187,11 @@ export function useProjectSession(o: {
       e.returnValue = false
       if (saving) return
       saving = true
+      const attempt = pendingText.current
       void flushText().then((saved) => {
         saving = false
         if (saved) window.close()
-        else refused = pendingText.current
+        else if (pendingText.current === attempt) refused = attempt
       })
     }
     window.addEventListener('beforeunload', onUnload)
