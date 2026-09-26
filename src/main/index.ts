@@ -26,6 +26,7 @@ import {
   recBeginSchema,
   recChunkSchema,
   recFinishSchema,
+  recFinishPassesSchema,
 } from './schemas'
 import { emit } from './emit'
 import * as store from './project-store'
@@ -82,6 +83,7 @@ import {
   appendRecording,
   beginRecording,
   closeRecordings,
+  finishPasses,
   finishRecording,
   recoverRecordings,
 } from './recording-session'
@@ -644,6 +646,11 @@ function registerHandlers(): void {
   typedHandle('rec:finish', (req) => {
     const parsed = recFinishSchema.parse(req)
     return finishRecording(parsed.session, parsed.fragment === true, emitChange)
+  })
+
+  typedHandle('rec:finishPasses', (req) => {
+    const parsed = recFinishPassesSchema.parse(req)
+    return finishPasses(parsed.session, parsed.passes, emitChange)
   })
 
   typedHandle('rec:abort', (req) => abortRecording(recAbortSchema.parse(req).session))

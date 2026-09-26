@@ -210,6 +210,7 @@ interface CompState {
   startPos: number
   bus: Bus | null
   once?: boolean
+  onLoop?: () => void
 }
 
 type Mode = 'idle' | 'clip' | 'comp'
@@ -548,7 +549,7 @@ function compUrls(resolved: ResolvedComp): string[] {
 
 export async function playComp(
   resolved: ResolvedComp,
-  opts: { id?: string; seek?: number; once?: boolean; onStart?: () => void } = {}
+  opts: { id?: string; seek?: number; once?: boolean; onStart?: () => void; onLoop?: () => void } = {}
 ): Promise<void> {
   halt()
   dropComp()
@@ -600,6 +601,7 @@ export async function playComp(
     startPos: 0,
     bus: null,
     ...(opts.once ? { once: true } : {}),
+    ...(opts.onLoop ? { onLoop: opts.onLoop } : {}),
   }
   const p = new Promise<void>((res) => waiters.push(res))
   startComp(opts.seek ?? from, true)
@@ -746,6 +748,11 @@ function tick(): void {
     const s = comp
     const stopAt = s.startPos < s.until ? s.until : s.dur
     if (now >= s.at + (stopAt - s.startPos)) {
+      if (s.onLoop) {
+        startComp(s.from, false)
+        s.onLoop()
+        return
+      }
       teardown()
       pausedPos = stopAt >= s.dur ? s.from : stopAt
       if (looping && !s.once) {
