@@ -5,6 +5,7 @@ import {
   isEditor,
   keyScope,
   keyText,
+  labelText,
   resolveKey,
   SHORTCUT_GROUPS,
   type Binding,
@@ -313,6 +314,57 @@ describe('scope precedence', () => {
     for (const b of BINDINGS) expect(b.scopes.length).toBeGreaterThan(0)
     const used = new Set(BINDINGS.flatMap((b) => b.scopes))
     for (const s of scopes) expect(used.has(s) || s === 'popover').toBe(true)
+  })
+})
+
+describe('ripple delete', () => {
+  it('Shift+Delete ripples in the timeline scope only; plain Delete still lifts', () => {
+    expect(action({ code: 'Delete', shiftKey: true, scope: 'timeline' })).toBe('rippleDelete')
+    expect(action({ code: 'Delete', scope: 'timeline' })).toBe('deleteClip')
+    for (const scope of ['workspace', 'text', 'grid', 'gridText', 'deliver', 'home', 'popover'] as Scope[]) {
+      expect(action({ code: 'Delete', shiftKey: true, scope })).toBeNull()
+    }
+    expect(action({ code: 'Delete', shiftKey: true, ctrlKey: true, scope: 'timeline' })).toBeNull()
+    expect(action({ code: 'Delete', shiftKey: true, scope: 'timeline', repeat: true })).toBeNull()
+  })
+
+  it('shows as Shift+Del in the Timeline group', () => {
+    expect(keyText(of('rippleDelete'))).toBe('Shift+Del')
+    expect(groupOf(of('rippleDelete'))).toBe('Timeline')
+  })
+})
+
+describe('redo aliases', () => {
+  it('Ctrl+Y redoes next to Ctrl+Shift+Z in the work scopes', () => {
+    for (const scope of ['workspace', 'timeline'] as Scope[]) {
+      expect(action({ code: 'KeyY', ctrlKey: true, scope })).toBe('redo')
+      expect(action({ code: 'KeyY', metaKey: true, scope })).toBe('redo')
+      expect(action({ code: 'KeyZ', ctrlKey: true, shiftKey: true, scope })).toBe('redo')
+      expect(action({ code: 'KeyZ', ctrlKey: true, scope })).toBe('undo')
+      expect(action({ code: 'KeyY', scope })).toBe('acceptSuggestion')
+    }
+  })
+
+  it('stays out of text fields and other rooms, and does not repeat', () => {
+    for (const scope of ['text', 'gridText', 'grid', 'deliver', 'home'] as Scope[]) {
+      expect(action({ code: 'KeyY', ctrlKey: true, scope })).toBeNull()
+    }
+    expect(action({ code: 'KeyY', ctrlKey: true, shiftKey: true })).toBeNull()
+    expect(action({ code: 'KeyY', ctrlKey: true, repeat: true })).toBeNull()
+  })
+})
+
+describe('labels in manual lines', () => {
+  it('E focuses the translation in AI lines and the text in manual lines', () => {
+    expect(labelText(of('focusText'), true)).toBe('Focus translation')
+    expect(labelText(of('focusText'), false)).toBe('Focus text')
+  })
+
+  it('every other label reads the same in both modes', () => {
+    for (const b of BINDINGS.filter((x) => x.label && x.action !== 'focusText')) {
+      expect(labelText(b, false)).toBe(b.label)
+      expect(labelText(b, true)).toBe(b.label)
+    }
   })
 })
 

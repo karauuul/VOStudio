@@ -1084,7 +1084,6 @@ input.tl-name:focus {
   border-radius: 2px;
   opacity: 0;
   z-index: 3;
-  pointer-events: none;
 }
 
 .tl-clip:hover .fh,

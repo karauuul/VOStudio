@@ -1,7 +1,7 @@
-import { BINDINGS, groupOf, keyText, SHORTCUT_GROUPS } from './keyboard'
+import { BINDINGS, groupOf, keyText, labelText, SHORTCUT_GROUPS } from './keyboard'
 import { Overlay } from './Overlay'
 
-export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
+export function ShortcutsDialog({ ai, onClose }: { ai: boolean; onClose: () => void }) {
   const labelled = BINDINGS.filter((b) => b.label)
 
   return (
@@ -15,7 +15,7 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
               <div className="sec-h">{g.title}</div>
               {rows.map((b) => (
                 <div className="keymap-row" key={b.action}>
-                  <span>{b.label}</span>
+                  <span>{labelText(b, ai)}</span>
                   <kbd>{keyText(b)}</kbd>
                 </div>
               ))}

@@ -1,4 +1,4 @@
-import type { Cue, Project } from './domain'
+import type { Cue, Project, Take } from './domain'
 import type { ProjectCommand } from './project-commands'
 
 const LINE_NAME = /^Line (\d+)$/
@@ -28,6 +28,10 @@ export function newLineCue(id: string, n: number, text = ''): Cue {
   }
 }
 
+export function isGeneratedTake(take: Pick<Take, 'kind'>): boolean {
+  return take.kind === 'tts' || take.kind === 'sts'
+}
+
 export function showsAi(cue: Cue, project: Pick<Project, 'characters' | 'provider'>): boolean {
   return (
     cue.sourceText.trim() !== '' ||
@@ -35,7 +39,7 @@ export function showsAi(cue: Cue, project: Pick<Project, 'characters' | 'provide
     cue.referenceDuration !== undefined ||
     cue.region !== undefined ||
     cue.characterId !== '' ||
-    cue.takes.some((t) => t.kind === 'tts' || t.kind === 'sts') ||
+    cue.takes.some(isGeneratedTake) ||
     project.characters.length > 0 ||
     project.provider !== undefined
   )
