@@ -72,7 +72,7 @@ import {
   shouldSelectCandidate,
   type PreviewSource,
 } from '@shared/workspace-source'
-import { hasValidVoicedOutput } from '@shared/approval'
+import { hasValidVoicedOutput, isDone } from '@shared/approval'
 import { compDuration, isEmptyComp } from '@shared/comp'
 import { libraryRow, lineLabel, locateText, punchClip, resolveTake, type LibraryRow } from '@shared/library'
 import type { ChangeSet, ProjectCommand, ProjectSnapshot } from '@shared/project-commands'
@@ -108,7 +108,7 @@ import {
   type GenMode,
   type ProviderModel,
 } from '@shared/provider-models'
-import { originalRef } from '@shared/export-plan'
+import { exportNamePreview, originalRef } from '@shared/export-plan'
 import { splitStems } from './audio/stems'
 import { runPlan } from './export/run-export'
 import { durationQueue, reportTakeDuration } from './audio/duration-backfill'
@@ -398,6 +398,11 @@ export default function App() {
   )
 
   const activeTakes = useMemo(() => (activeCue ? liveTakes(activeCue) : []), [activeCue])
+
+  const doneCount = useMemo(
+    () => (project ? project.cues.filter((c) => isDone(c, project)).length : 0),
+    [project]
+  )
 
   const aspectRatio = (width?: number, height?: number): string => {
     if (!width || !height) return '16:9'
@@ -1627,11 +1632,13 @@ export default function App() {
     )
   }
 
+  const homeItem: MenuItem = { label: 'Home', disabled: bulk || exporting || busyCount > 0, onClick: goHome }
+
   const menuItems: MenuItem[] = [
     ...(updateStatus?.phase === 'ready'
       ? [{ label: 'Update ready · Restart', onClick: () => void api['updater:restart']() }]
       : []),
-    { label: 'Home', disabled: bulk || exporting || busyCount > 0, onClick: goHome },
+    homeItem,
     ...(project.csvBinding
       ? [{ label: 'Sync CSV', disabled: bulk || exporting, onClick: () => void syncCsv() }]
       : []),
@@ -2063,7 +2070,7 @@ export default function App() {
     selection,
     sourceTakeId,
     original: activeCue?.original,
-    exportName: activeCue ? activeCue.fields['exportName'] || activeCue.key : '',
+    exportName: activeCue ? exportNamePreview(project, activeCue) : '',
     compRef,
     propsRef,
     onCharacter: onCueCharacter,
@@ -2100,6 +2107,7 @@ export default function App() {
         route={route}
         onRoute={goRoute}
         items={menuItems}
+        home={homeItem}
         jobsPending={jobCount}
         jobsFailed={jobFailed}
         onJobs={() => setShowJobs(true)}
@@ -2135,6 +2143,7 @@ export default function App() {
         hidden={route !== 'work'}
         lines={lines}
         total={project.cues.length}
+        done={doneCount}
         source={activeSource ?? null}
         text={text}
         cueText={cueText}

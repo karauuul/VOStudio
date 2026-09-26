@@ -18,6 +18,7 @@ import { timecode } from './TimelinePanel'
 const STEP_SECONDS = 0.1
 const GAIN_KEY = 'vo.monitor.gain'
 const METER_DECAY = 0.86
+const ASPECTS = ['16:9', '4:3', '1:1']
 
 export interface ProgramSourceView {
   takeId: string
@@ -295,6 +296,7 @@ export function ProgramPanel({
   }, [showVideo, playing, videoBase])
 
   const off = onSource ? false : !(total > 0)
+  const sourceAspect = video ? video.aspect : '16:9'
 
   const frame = (
     <div className="frame">
@@ -384,10 +386,12 @@ export function ProgramPanel({
               value={aspect}
               onChange={(e) => setAspect(e.target.value)}
             >
-              <option value="source">{video ? video.aspect : '16:9'}</option>
-              <option value="16 / 9">16:9</option>
-              <option value="4 / 3">4:3</option>
-              <option value="1 / 1">1:1</option>
+              <option value="source">{sourceAspect}</option>
+              {ASPECTS.filter((a) => a !== sourceAspect).map((a) => (
+                <option key={a} value={a.replace(':', ' / ')}>
+                  {a}
+                </option>
+              ))}
             </select>
           </span>
         )}
