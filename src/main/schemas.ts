@@ -372,7 +372,10 @@ export const recFinishPassesSchema = z.object({
         .refine((p) => p.to > p.from, { message: 'Pass ends before it starts' })
     )
     .min(1)
-    .max(LOOP_PASS_MAX),
+    .max(LOOP_PASS_MAX)
+    .refine((passes) => passes.every((p, i) => i === 0 || p.from >= passes[i - 1].to), {
+      message: 'Passes must be sorted and must not overlap',
+    }),
 })
 
 export const recAbortSchema = z.object({ session: recSession })
