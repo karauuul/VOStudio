@@ -63,7 +63,7 @@ export function detectMapping(headers: string[]): TableMapping {
   return mapping
 }
 
-export const TABLE_FILE = /\.(csv|tsv|txt)$/i
+export const TABLE_FILE = /\.(csv|tsv|txt|xlsx)$/i
 
 export function tableDelimiter(fileName: string, firstLine: string): ',' | '\t' {
   if (/\.tsv$/i.test(fileName)) return '\t'
@@ -86,12 +86,20 @@ export const previewCell = (cell: string): string =>
 export const CUE_KEY_MAX = 4096
 export const CHARACTER_ID_MAX = 200
 
+export const TOO_MANY_ROWS = `Table has more than ${TABLE_ROWS_MAX} rows`
+export const TOO_MANY_COLUMNS = `Table has more than ${TABLE_COLUMNS_MAX} columns`
+
 function bounded(file: TableFile): TableFile {
-  if (file.rows.length > TABLE_ROWS_MAX) throw new Error(`Table has more than ${TABLE_ROWS_MAX} rows`)
+  if (file.rows.length > TABLE_ROWS_MAX) throw new Error(TOO_MANY_ROWS)
   if (file.headers.length > TABLE_COLUMNS_MAX || file.rows.some((cells) => cells.length > TABLE_COLUMNS_MAX)) {
-    throw new Error(`Table has more than ${TABLE_COLUMNS_MAX} columns`)
+    throw new Error(TOO_MANY_COLUMNS)
   }
   return file
+}
+
+export function headedTable(headers: string[], rows: string[][]): TableFile {
+  if (headers.length === 0) throw new Error('Table has no header row')
+  return bounded({ script: false, headers, rows })
 }
 
 export function parseTableFile(fileName: string, raw: string): TableFile {
@@ -100,8 +108,7 @@ export function parseTableFile(fileName: string, raw: string): TableFile {
     return bounded({ script: true, headers: [], rows: splitParagraphs(raw.replace(/^\uFEFF/, '')).map((part) => [part]) })
   }
   const csv = parseCsv(raw, tableDelimiter(fileName, firstLine))
-  if (csv.headers.length === 0) throw new Error('Table has no header row')
-  return bounded({ script: false, headers: csv.headers, rows: csv.rows })
+  return headedTable(csv.headers, csv.rows)
 }
 
 export function tableMapping(
