@@ -94,7 +94,7 @@ export interface PlacedCue {
   index: number
 }
 
-export type LineFields = Partial<Pick<Cue, 'sourceText' | 'text' | 'characterId'>>
+export type LineFields = Partial<Pick<Cue, 'sourceText' | 'text' | 'characterId'>> & { suggestedText?: string | null }
 
 export interface FieldStep {
   cueId: string
@@ -249,6 +249,12 @@ function stepFields(project: Project, cue: Cue, from: LineFields, to: LineFields
     next = { ...next, characterId }
     next = { ...next, ...invalidateVoicedOutput(next, project) }
   }
+  const suggestion = to.suggestedText
+  const pending = next.suggestedText ?? null
+  if (suggestion !== undefined && pending === from.suggestedText && pending !== suggestion) {
+    const { suggestedText: _dropped, ...rest } = next
+    next = suggestion === null ? rest : { ...rest, suggestedText: suggestion }
+  }
   return next
 }
 
@@ -272,6 +278,7 @@ function tableStep(project: Project, command: Extract<ProjectCommand, { type: 't
     const next = stepFields(project, cue, from, to)
     if (next === cue) continue
     Object.assign(cue, next)
+    if (next.suggestedText === undefined) delete cue.suggestedText
     touched.add(cueId)
   }
   for (const character of command.dropCharacters) {
