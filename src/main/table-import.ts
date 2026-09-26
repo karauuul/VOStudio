@@ -3,6 +3,7 @@ import path from 'path'
 import {
   commitTable,
   parseTableFile,
+  previewCell,
   previewTable,
   tableMapping,
   type TableFile,
@@ -39,8 +40,8 @@ export function previewTableFile(project: Project, table: ReadTable, req: TableR
     path: table.path,
     name: path.basename(table.path),
     script: table.script,
-    headers: table.headers,
-    rows: table.rows.slice(0, PREVIEW_ROWS),
+    headers: table.headers.map(previewCell),
+    rows: table.rows.slice(0, PREVIEW_ROWS).map((cells) => cells.map(previewCell)),
     total: table.rows.length,
     mapping: options.mapping,
     summary: previewTable(project, table.rows, options),

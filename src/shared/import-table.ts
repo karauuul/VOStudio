@@ -79,6 +79,10 @@ export interface TableFile {
 
 export const TABLE_ROWS_MAX = 100_000
 export const TABLE_COLUMNS_MAX = 4096
+export const PREVIEW_CELL_MAX = 200
+
+export const previewCell = (cell: string): string =>
+  cell.length > PREVIEW_CELL_MAX ? `${cell.slice(0, PREVIEW_CELL_MAX - 1)}…` : cell
 export const CUE_KEY_MAX = 4096
 export const CHARACTER_ID_MAX = 200
 

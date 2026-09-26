@@ -12,6 +12,8 @@ import {
   type TableOptions,
   TABLE_ROWS_MAX,
   TABLE_COLUMNS_MAX,
+  PREVIEW_CELL_MAX,
+  previewCell,
   CUE_KEY_MAX,
   CHARACTER_ID_MAX,
 } from '../src/shared/import-table'
@@ -486,5 +488,14 @@ describe('duplicate keys', () => {
     const result = applyTable(project, [['A', 'Cy'], ['A', 'Bo']], { id: 0, character: 1 }, 'id', false)
     expect(result.summary).toEqual({ added: 0, updated: 0, unchanged: 1, skipped: 0 })
     expect(project.characters).toEqual([bo])
+  })
+})
+
+describe('preview cells', () => {
+  it('shortens long cells so the preview stays small', () => {
+    expect(previewCell('short')).toBe('short')
+    const long = previewCell('x'.repeat(PREVIEW_CELL_MAX * 10))
+    expect(long).toHaveLength(PREVIEW_CELL_MAX)
+    expect(long.endsWith('…')).toBe(true)
   })
 })
