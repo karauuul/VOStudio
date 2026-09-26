@@ -2,7 +2,7 @@ import { mkdtempSync, promises as fs } from 'fs'
 import os from 'os'
 import path from 'path'
 import { describe, expect, it, vi } from 'vitest'
-import type { CommandResult } from '../src/shared/project-commands'
+import { parseSnapshot, type CommandResult } from '../src/shared/project-commands'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 
 vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }))
@@ -46,14 +46,14 @@ describe('take append', () => {
     expect(take.file.relPath).toBe(path.join(dir, 'audio', 'takes', 'c', 'rec.wav'))
     expect(await exists(take.file.relPath)).toBe(true)
     expect(published.map((r) => r.revision)).toEqual([1])
-    expect(repository.snapshot().project.cues[0].takes).toEqual([take])
+    expect(repository.projectForMain().cues[0].takes).toEqual([take])
   })
 
   it('rejects and removes the file when its repository is detached during the write', async () => {
     const dirA = mkdtempSync(path.join(os.tmpdir(), 'vostudio-take-a-'))
     const repositoryA = new SerialProjectRepository(project('a'), vi.fn(), 1)
     const initialB = project('b')
-    const repositoryB = new SerialProjectRepository(initialB, vi.fn(), 1)
+    const repositoryB = new SerialProjectRepository(structuredClone(initialB), vi.fn(), 1)
     const publish = vi.fn()
 
     const writing = appendTake({ repository: repositoryA, dir: dirA }, 'c', 'rec.wav', Buffer.from('wav'), publish, build)
@@ -63,7 +63,7 @@ describe('take append', () => {
     await detaching
     expect(await exists(path.join(dirA, 'audio', 'takes', 'c', 'rec.wav'))).toBe(false)
     expect(publish).not.toHaveBeenCalled()
-    expect(repositoryB.snapshot()).toEqual({ revision: 0, project: initialB })
+    expect(parseSnapshot(repositoryB.snapshot())).toEqual({ revision: 0, project: initialB })
   })
 })
 
@@ -81,7 +81,7 @@ describe('take file import', () => {
     expect(take.duration).toBeCloseTo(0.3, 1)
     expect(await exists(src)).toBe(true)
     expect(published).toHaveLength(1)
-    expect(repository.snapshot().project.cues[0].takes).toEqual([take])
+    expect(repository.projectForMain().cues[0].takes).toEqual([take])
   })
 
   it('refuses video and unknown files without touching the project', async () => {
@@ -170,7 +170,7 @@ describe('exclusive take files', () => {
     const target = path.join(dir, 'audio', 'takes', 'c', 't_same.wav')
     const winner = results[0].status === 'fulfilled' ? firstBytes : secondBytes
     expect(await fs.readFile(target)).toEqual(winner)
-    expect(repository.snapshot().project.cues[0].takes).toEqual([ok[0].value])
+    expect(repository.projectForMain().cues[0].takes).toEqual([ok[0].value])
     expect((await fs.readdir(path.dirname(target))).filter((n) => n.startsWith('.part-'))).toEqual([])
   })
 
