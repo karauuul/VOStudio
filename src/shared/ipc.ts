@@ -141,6 +141,7 @@ export interface ExportJob {
   srcPath: string
   format: ExportFormat
   formatArgs: string[]
+  sampleRate?: number
   fastPath: boolean
   hasEdits: boolean
   edits: ClipEdits

@@ -4,6 +4,8 @@ import path from 'path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 import {
+  EXPORT_FORMATS,
+  mp3Rate,
   LOUDNESS_MODES,
   loudnessMode,
   loudnessTarget,
@@ -218,6 +220,14 @@ describe('sample peak and target gain', () => {
     expect(isFastPath(wav, 'a.wav', undefined, { loudness: 'lufs' })).toBe(false)
     expect(isFastPath(wav, 'a.wav', undefined, { loudness: 'peak' })).toBe(false)
   })
+
+  it('explicit formats always encode instead of copying the source bytes', () => {
+    const wav = take('t', 'E:/p/t.wav')
+    expect(isFastPath(wav, 'a.wav', undefined, { format: 'source' })).toBe(true)
+    for (const format of ['wav-48-24', 'wav-44-16'] as const) expect(isFastPath(wav, 'a.wav', undefined, { format })).toBe(false)
+    expect(isFastPath(take('m', 'E:/p/m.mp3'), 'a.mp3', undefined, { format: 'mp3-192' })).toBe(false)
+    expect(isFastPath(take('o', 'E:/p/o.ogg'), 'a.ogg', undefined, { format: 'ogg' })).toBe(false)
+  })
 })
 
 describe('export applies the loudness target with ffmpeg', () => {
@@ -276,6 +286,75 @@ describe('export applies the loudness target with ffmpeg', () => {
     expect(input.peak).toBeGreaterThan(-8)
     near(output.peak, -1, 0.2)
     expect(output.lufs).toBeLessThan(-25)
+  })
+
+  const HIGH_TONE_BETWEEN_SAMPLES = 'aevalsrc=0.25*sin(2*PI*12000*t+PI/4):s=48000:d=1'
+  const QUIET_TONE_WITH_HIGH_BURST =
+    'aevalsrc=0.02*sin(2*PI*440*t)+0.5*sin(2*PI*12000*t+PI/4)*between(t\\,1\\,1.01):s=48000:d=3'
+  const PRINTED_PEAK_ROUNDING_DB = 0.1
+
+  const resampledPeak = async (file: string, rate: number): Promise<number | null> =>
+    parseSamplePeak(
+      await ffmpegStderr(['-i', file, '-af', `aresample=${rate},ebur128=peak=sample`, '-f', 'null', '-'])
+    )
+
+  it('every resampling format carries the rate its ffmpeg args convert to', () => {
+    for (const f of EXPORT_FORMATS) {
+      const i = f.args.indexOf('-ar')
+      expect(i < 0 ? undefined : Number(f.args[i + 1])).toBe(f.rate)
+    }
+  })
+
+  const peaksBelowTargetAfterResampling = async (
+    signal: string,
+    settings: ExportSettings
+  ): Promise<void> => {
+    const { input, output } = await exportSignal(signal, settings)
+    const resampled = await resampledPeak(path.join(root, 'signal.wav'), 44100)
+    expect(resampled! - input.peak!).toBeGreaterThan(2)
+    expect(output.peak).toBeLessThanOrEqual(-1 + PRINTED_PEAK_ROUNDING_DB)
+    expect(output.peak).toBeGreaterThanOrEqual(-1 - 2 * PRINTED_PEAK_ROUNDING_DB)
+  }
+
+  it('Peak −1 holds after 48 → 44.1 kHz resampling moves the sample peak up', async () => {
+    await peaksBelowTargetAfterResampling(HIGH_TONE_BETWEEN_SAMPLES, {
+      format: 'wav-44-16',
+      loudness: 'peak',
+      peakTarget: -1,
+    })
+  })
+
+  const FLAT_TOP_ABOVE_24K =
+    'aevalsrc=0.25*(sin(2*PI*9000*t)+0.25*sin(2*PI*27000*t)+0.08*sin(2*PI*45000*t)):s=96000:d=2'
+
+  it('a 96 kHz render exported as MP3 is encoded and measured at 48 kHz', async () => {
+    const { input, output } = await exportSignal(FLAT_TOP_ABOVE_24K, {
+      format: 'mp3-192',
+      loudness: 'peak',
+      peakTarget: -1,
+    })
+    expect((await resampledPeak(path.join(root, 'signal.wav'), 48000))! - input.peak!).toBeGreaterThan(1.2)
+    const out = path.join(root, 'P.vostudio')
+    const [mp3] = (await fs.readdir(out, { recursive: true })).filter((f) => String(f).endsWith('.mp3'))
+    expect(await ffmpegStderr(['-i', path.join(out, String(mp3)), '-f', 'null', '-'])).toMatch(/48000 Hz/)
+    expect(output.peak).toBeLessThanOrEqual(-1)
+  })
+
+  it('the Target LUFS ceiling holds after 48 → 44.1 kHz resampling moves the sample peak up', async () => {
+    await peaksBelowTargetAfterResampling(QUIET_TONE_WITH_HIGH_BURST, {
+      format: 'wav-44-16',
+      loudness: 'lufs',
+    })
+  })
+})
+
+describe('mp3 encode rate', () => {
+  it('keeps rates MP3 supports and maps higher ones to their family', () => {
+    for (const rate of [48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000]) expect(mp3Rate(rate)).toBe(rate)
+    expect(mp3Rate(96000)).toBe(48000)
+    expect(mp3Rate(192000)).toBe(48000)
+    expect(mp3Rate(88200)).toBe(44100)
+    expect(mp3Rate(176400)).toBe(44100)
   })
 })
 

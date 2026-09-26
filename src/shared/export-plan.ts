@@ -147,6 +147,7 @@ export function isFastPath(
   if (hasEdits(take.edits)) return false
   if (loudnessMode(settings) !== 'off') return false
   if (lengthMode(settings) === 'pad') return false
+  if (formatSpec(settings?.format).args.length > 0) return false
   if (cue && mixesOriginal(cue)) return false
   return extOf(outName) === '.' + take.file.format
 }

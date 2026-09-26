@@ -8,7 +8,7 @@ import {
   planBatch,
   renderLength,
 } from './export-plan'
-import { estimateBytes, lengthMode } from './export-settings'
+import { estimateBytes, exportSignature, lengthMode } from './export-settings'
 import { lineLabel } from './library'
 
 export const LONGER_TOLERANCE = 0.1
@@ -32,6 +32,7 @@ export interface LineRow {
 export interface ExportedLine {
   revision: number
   version?: number
+  signature?: string
 }
 
 export type ExportedLines = Record<string, ExportedLine>
@@ -49,6 +50,7 @@ export function readinessRows(project: Project, exported: ExportedLines = {}): L
   const byCue = new Map(planned.map((p) => [p.cue.id, p]))
   const collided = new Set(findCollisions(planned).flatMap((c) => c.cueKeys))
   const mode = lengthMode(project.export)
+  const signature = exportSignature(project.export, project.exportTemplate)
 
   return project.cues.map((cue: Cue): LineRow => {
     const last = exported[cue.key]
@@ -74,7 +76,9 @@ export function readinessRows(project: Project, exported: ExportedLines = {}): L
     const original = originalLength(cue)
     const over = original === undefined ? 0 : outputLength - original
     const changed =
-      last !== undefined && last.revision !== sanitizeRevision(cue.output?.revision)
+      last !== undefined &&
+      (last.revision !== sanitizeRevision(cue.output?.revision) ||
+        (last.signature !== undefined && last.signature !== signature))
     if (collided.has(cue.key)) {
       return { ...base, name: p.name, outputLength, status: 'collision', changed }
     }
