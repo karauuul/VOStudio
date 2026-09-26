@@ -401,7 +401,7 @@ export function ProgramPanel({
       <div className="trn">
         <span className="tc">
           {timecode(video ? videoAt : pos)}{' '}
-          <span>/ {timecode(video ? video.duration : total)}</span>
+          {!onSource && <span>/ {timecode(video ? video.duration : total)}</span>}
         </span>
         <div className="tb">
           <button

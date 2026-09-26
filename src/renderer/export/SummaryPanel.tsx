@@ -4,6 +4,7 @@ import { formatBytes } from '@shared/export-settings'
 interface Props {
   summary: ReadinessSummary
   manual: boolean
+  originals: boolean
   lastVersion?: number
   videos: { id: string; name: string; out: string; lines: number }[]
   busy: boolean
@@ -31,6 +32,7 @@ function Row({ label, value, total }: { label: string; value: number; total: num
 export function SummaryPanel({
   summary,
   manual,
+  originals,
   lastVersion,
   videos,
   busy,
@@ -73,10 +75,12 @@ export function SummaryPanel({
         No audio
         <b>{summary.noAudio}</b>
       </button>
-      <button className="exp-sum dim" onClick={() => onFilter('notready')}>
-        Longer than original
-        <b>{summary.longer}</b>
-      </button>
+      {originals && (
+        <button className="exp-sum dim" onClick={() => onFilter('notready')}>
+          Longer than original
+          <b>{summary.longer}</b>
+        </button>
+      )}
       <button className="exp-sum dim" onClick={() => onFilter('notready')}>
         Name collision
         <b>{summary.collision}</b>

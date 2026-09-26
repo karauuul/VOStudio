@@ -12,6 +12,7 @@ import {
 } from '@shared/readiness'
 import { matchesSearch } from '@shared/cue-filter'
 import { isManualProject } from '@shared/lines'
+import { hasOriginals } from '@shared/export-plan'
 import { api } from '../api'
 import { runPlan, runVideo, type ExportProgress } from '../export/run-export'
 import { videoMode, videoName } from '@shared/export-settings'
@@ -71,6 +72,7 @@ export const ExportRoom = memo(function ExportRoom({
   )
   const summary = useMemo(() => summarize(project, rows), [project, rows])
   const manual = useMemo(() => isManualProject(project), [project])
+  const originals = useMemo(() => hasOriginals(project), [project])
 
   const byId = useMemo(() => new Map(project.cues.map((c) => [c.id, c])), [project])
   const visible = useMemo(() => {
@@ -164,6 +166,7 @@ export const ExportRoom = memo(function ExportRoom({
     <div className="main exp" hidden={hidden}>
       <OutputPanel
         project={project}
+        originals={originals}
         outDir={info?.outDir ?? '—'}
         last={info?.last ?? null}
         onSettings={settings}
@@ -177,6 +180,7 @@ export const ExportRoom = memo(function ExportRoom({
       <ReadinessTable
         rows={visible}
         total={project.cues.length}
+        originals={originals}
         counts={summary}
         filter={filter}
         onFilter={setFilter}
@@ -193,6 +197,7 @@ export const ExportRoom = memo(function ExportRoom({
       <SummaryPanel
         summary={summary}
         manual={manual}
+        originals={originals}
         {...(info?.last?.version === undefined ? {} : { lastVersion: info.last.version })}
         videos={videos}
         busy={busy}

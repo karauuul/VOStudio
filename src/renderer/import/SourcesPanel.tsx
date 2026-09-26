@@ -41,6 +41,7 @@ export function spanText(seconds: number): string {
 }
 
 const nnn = (n: number): string => n.toLocaleString('en-US')
+const counted = (n: number, word: string): string => `${nnn(n)} ${n === 1 ? word : `${word}s`}`
 
 interface Props {
   project: Project
@@ -106,10 +107,10 @@ export function SourcesPanel({ project, tables, onPick, onDrop, busy }: Props) {
             <div>
               <div className="nm">{row.name}</div>
               <div className="sb">
-                {nnn(row.files)} files · {row.formats.join(', ')} · {spanText(row.duration)}
+                {counted(row.files, 'file')} · {row.formats.join(', ')} · {spanText(row.duration)}
               </div>
             </div>
-            <span className="m">{nnn(row.lines)} lines</span>
+            <span className="m">{counted(row.lines, 'line')}</span>
           </div>
         ))}
 
@@ -124,7 +125,7 @@ export function SourcesPanel({ project, tables, onPick, onDrop, busy }: Props) {
                 {sourceLabel(source)}
               </div>
             </div>
-            <span className="m">{nnn(regions.get(source.id) ?? 0)} lines</span>
+            <span className="m">{counted(regions.get(source.id) ?? 0, 'line')}</span>
           </div>
         ))}
 
@@ -136,7 +137,7 @@ export function SourcesPanel({ project, tables, onPick, onDrop, busy }: Props) {
             <div>
               <div className="nm">{table.name}</div>
               <div className="sb">
-                {nnn(table.rows)} rows ·{' '}
+                {counted(table.rows, 'row')} ·{' '}
                 {(Object.keys(table.mapping) as (keyof typeof table.mapping)[]).join(', ') || 'no columns'}
               </div>
             </div>

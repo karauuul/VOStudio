@@ -329,9 +329,9 @@ function Row2({ children }: { children: ReactNode }) {
   return <div className="row2">{children}</div>
 }
 
-function Ro({ label, value, unit }: { label: string; value: string; unit?: string }) {
+function Ro({ label, value, unit, wide }: { label: string; value: string; unit?: string; wide?: boolean }) {
   return (
-    <div className="cp-num">
+    <div className={wide ? 'cp-num w2' : 'cp-num'}>
       <span className="cp-k">{label}</span>
       <b className="props-v">
         <span className="props-t">{value}</span>
@@ -353,7 +353,7 @@ function CharacterField({
   onChange: (id: string) => void
 }) {
   return (
-    <div className="cp-num">
+    <div className="cp-num w2">
       <span className="cp-k">{label}</span>
       <select className="props-sel" value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">No character</option>
@@ -768,7 +768,7 @@ function TrackTab({
 
       <Sec>Track</Sec>
       <Row2>
-        <div className="cp-num">
+        <div className="cp-num w2">
           <span className="cp-k">Name</span>
           <input
             className="props-in"
@@ -803,18 +803,18 @@ function TrackTab({
           <span className="cp-k">State</span>
           <span className="props-tg">
             <button
-              className={track.muted ? 'on' : ''}
-              aria-pressed={track.muted}
-              onClick={() => set({ muted: !track.muted })}
-            >
-              M
-            </button>
-            <button
               className={track.solo ? 'on' : ''}
               aria-pressed={track.solo}
               onClick={() => set({ solo: !track.solo })}
             >
               S
+            </button>
+            <button
+              className={track.muted ? 'on' : ''}
+              aria-pressed={track.muted}
+              onClick={() => set({ muted: !track.muted })}
+            >
+              M
             </button>
           </span>
         </div>
@@ -872,7 +872,7 @@ function LineTab({
 
       <Sec>Line</Sec>
       <Row2>
-        <Ro label="Id" value={id} />
+        <Ro label="Id" value={id} wide />
         <CharacterField
           label="Character"
           characters={characters}
@@ -1047,12 +1047,12 @@ function SourceTab({
 
       <Sec>Generated with</Sec>
       <Row2>
-        <Ro label="Voice" value={characterName(characters, owner?.characterId)} />
+        <Ro label="Voice" value={characterName(characters, owner?.characterId)} wide />
         <Ro label="Speed" value={(v?.speed ?? 1).toFixed(2)} unit="×" />
         <Ro label="Stability" value={String(toPercent(v?.stability ?? 0))} />
         <Ro label="Similarity" value={String(toPercent(v?.similarity ?? 0))} />
         <Ro label="Style" value={String(toPercent(v?.style ?? 0))} />
-        <Ro label="Model" value={take.meta.model ?? '—'} />
+        <Ro label="Model" value={take.meta.model ?? '—'} wide />
       </Row2>
 
       <Sec>Used in</Sec>

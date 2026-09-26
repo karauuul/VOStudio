@@ -15,6 +15,7 @@ export interface LibraryPanelProps {
   onInsert: (row: LibraryRow) => void
   onImport?: () => void
   menu?: (row: LibraryRow) => MenuEntry[]
+  onListHeight?: (height: number) => void
 }
 
 type Tab = 'line' | 'project'
@@ -32,6 +33,7 @@ export function LibraryPanel({
   onInsert,
   onImport,
   menu,
+  onListHeight,
 }: LibraryPanelProps) {
   const [tab, setTab] = useState<Tab>('line')
   const [query, setQuery] = useState('')
@@ -119,6 +121,7 @@ export function LibraryPanel({
         ref={listRef}
         className="lib-scroll"
         data={items}
+        totalListHeightChanged={onListHeight}
         computeItemKey={(_, item) => item.key}
         itemContent={(_, item) =>
           item.kind === 'group' ? (

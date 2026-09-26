@@ -5,6 +5,7 @@ import { statusWords, type LineFilter, type LineRow } from '@shared/readiness'
 interface Props {
   rows: LineRow[]
   total: number
+  originals: boolean
   counts: { ready: number; changed: number; notReady: number }
   filter: LineFilter
   onFilter: (f: LineFilter) => void
@@ -55,6 +56,7 @@ function secs(v: number | undefined): string {
 export function ReadinessTable({
   rows,
   total,
+  originals,
   counts,
   filter,
   onFilter,
@@ -115,9 +117,9 @@ export function ReadinessTable({
             <tr>
               <th>Line</th>
               <th>File</th>
-              <th style={{ width: 88 }}>Original</th>
+              {originals && <th style={{ width: 88 }}>Original</th>}
               <th style={{ width: 80 }}>Output</th>
-              <th style={{ width: 140 }}>Status</th>
+              <th style={{ width: 132 }}>Status</th>
               <th style={{ width: 60 }}>Done</th>
               <th style={{ width: 92 }}>Exported</th>
             </tr>
@@ -129,7 +131,7 @@ export function ReadinessTable({
                 {row.label}
               </td>
               <td title={row.name}>{row.name || '—'}</td>
-              <td className="mono">{secs(row.originalLength)}</td>
+              {originals && <td className="mono">{secs(row.originalLength)}</td>}
               <td className={row.outputLength === undefined ? 'mono' : 'mono exp-hi'}>
                 {secs(row.outputLength)}
               </td>

@@ -36,6 +36,7 @@ import { runFfmpeg } from './ffmpeg'
 import { parseCsv } from '@shared/csv'
 import { applyRules } from '@shared/pronunciation'
 import { NO_LANGUAGE_CODE_MODEL } from '@shared/provider-models'
+import { DEFAULT_EXPORT_TEMPLATE } from '@shared/export-plan'
 import {
   emptyEdits,
   singleFlight,
@@ -135,6 +136,8 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
+    minWidth: 1280,
+    minHeight: 720,
     title: 'VO Studio',
     backgroundColor: '#191b1e',
     webPreferences: {
@@ -406,7 +409,7 @@ const emptyProjectBase = (name: string): Omit<Project, 'id' | 'schemaVersion' | 
   cues: [],
   sessions: [],
   pronunciationRules: '',
-  exportTemplate: '{EventName}.{ext}',
+  exportTemplate: DEFAULT_EXPORT_TEMPLATE,
   ui: { filter: '', search: '' },
 })
 

@@ -22,6 +22,7 @@ import { DragNumber } from '../cue/DragNumber'
 
 interface Props {
   project: Project
+  originals: boolean
   outDir: string
   last: LastExport | null
   onSettings: (patch: Partial<ExportSettings>) => void
@@ -40,10 +41,20 @@ function stamp(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-export function OutputPanel({ project, outDir, last, onSettings, onTemplate, onPickDir, onReveal }: Props) {
+export function OutputPanel({
+  project,
+  originals,
+  outDir,
+  last,
+  onSettings,
+  onTemplate,
+  onPickDir,
+  onReveal,
+}: Props) {
   const [template, setTemplate] = useState(project.exportTemplate)
   const [video, setVideo] = useState(project.export?.videoName ?? DEFAULT_VIDEO_NAME)
   const loudness = loudnessMode(project.export)
+  const length = lengthMode(project.export)
 
   useEffect(() => setTemplate(project.exportTemplate), [project.exportTemplate])
   useEffect(
@@ -110,7 +121,7 @@ export function OutputPanel({ project, outDir, last, onSettings, onTemplate, onP
           value={loudness}
           onChange={(e) => onSettings({ loudness: e.target.value as ExportSettings['loudness'] })}
         >
-          {LOUDNESS_MODES.map((m) => (
+          {LOUDNESS_MODES.filter((m) => originals || m.id !== 'match' || m.id === loudness).map((m) => (
             <option key={m.id} value={m.id}>
               {m.label}
             </option>
@@ -155,10 +166,10 @@ export function OutputPanel({ project, outDir, last, onSettings, onTemplate, onP
       <div className="exp-kvp">
         Length
         <select
-          value={lengthMode(project.export)}
+          value={length}
           onChange={(e) => onSettings({ length: e.target.value as ExportSettings['length'] })}
         >
-          {LENGTH_MODES.map((m) => (
+          {LENGTH_MODES.filter((m) => originals || m.id !== 'pad' || m.id === length).map((m) => (
             <option key={m.id} value={m.id}>
               {m.label}
             </option>

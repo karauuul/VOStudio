@@ -2,7 +2,7 @@ import { compDuration, compEffectsTail, compOriginalStart, isEmptyComp, withSour
 import { clipSpeed, DEFAULT_DUCK_DB, type ClipEdits, type CompClip, type CompTrack, type Cue, type CueComp, type Project, type ProjectSource, type Take } from './domain'
 import { effectsTail, hasEffects } from './effects'
 import { hasValidVoicedOutput, usesCompOutput } from './approval'
-import { compTracks, resolveTake, type TakeLookup } from './library'
+import { compTracks, lineLabel, resolveTake, type TakeLookup } from './library'
 import { formatSpec, lengthMode, loudnessMode, type ExportSettings } from './export-settings'
 import type { VideoLineComp } from './sources'
 
@@ -53,8 +53,11 @@ function withExt(name: string, ext: string): string {
   return current ? `${name.slice(0, -current.length)}.${ext}` : `${name}.${ext}`
 }
 
+export const DEFAULT_EXPORT_TEMPLATE = '{Name}.{ext}'
+
 function nameFrom(template: string, project: Project, cue: Cue, ext: string): string {
   const named = template
+    .replace(/\{Name\}/g, lineLabel(cue))
     .replace(/\{EventName\}/g, cue.fields['EventName'] ?? cue.key)
     .replace(/\{exportName\}/g, cue.fields['exportName'] || cue.key)
     .replace(/\{WemId\}/g, cue.key)
@@ -134,6 +137,10 @@ export function originalLength(cue: Cue): number | undefined {
   if (cue.region) return cue.region.out - cue.region.in
   const d = cue.referenceDuration
   return d !== undefined && d > 0 ? d : undefined
+}
+
+export function hasOriginals(project: Pick<Project, 'cues'>): boolean {
+  return project.cues.some((cue) => cue.referenceAudio !== undefined || cue.region !== undefined)
 }
 
 export function isFastPath(
