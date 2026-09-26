@@ -1,5 +1,5 @@
 import type { Character, Cue } from './domain'
-import type { ChangeSet, FieldStep, OriginalState, OutputState, PlacedCue, ProjectCommand } from './project-commands'
+import { outputStateKey, type ChangeSet, type FieldStep, type OriginalState, type OutputState, type PlacedCue, type ProjectCommand } from './project-commands'
 
 export type LineChange =
   | {
@@ -19,6 +19,7 @@ export type LineChange =
       focus: string
     }
   | { kind: 'original'; cueId: string; takeId: string; before: OriginalState; after: OutputState }
+  | { kind: 'done'; cueId: string; before: OutputState; after: OutputState }
 
 export type LineEdit = LineChange & { at: number }
 
@@ -49,6 +50,12 @@ export function outputStateIn(changes: ChangeSet, cueId: string): OutputState {
   return outputStateOf(cue)
 }
 
+export function doneChange(before: Cue, changes: ChangeSet): LineChange | null {
+  const from = outputStateOf(before)
+  const to = outputStateIn(changes, before.id)
+  return outputStateKey(from) === outputStateKey(to) ? null : { kind: 'done', cueId: before.id, before: from, after: to }
+}
+
 export function recordLineEdit(history: LineHistory, change: LineChange, at: number): void {
   history.undo.push({ ...change, at })
   if (history.undo.length > LINE_HISTORY_LIMIT) history.undo.shift()
@@ -61,6 +68,10 @@ export function removesLines(edit: LineEdit, dir: StepDir): boolean {
 }
 
 export function lineStepCommand(edit: LineEdit, dir: StepDir): ProjectCommand {
+  if (edit.kind === 'done') {
+    const [from, to] = dir === 'undo' ? [edit.after, edit.before] : [edit.before, edit.after]
+    return { type: 'cue.restoreOutput', cueId: edit.cueId, whenState: from, ...to }
+  }
   if (edit.kind === 'original') {
     return dir === 'undo'
       ? { type: 'cue.restoreOriginal', cueId: edit.cueId, whenState: edit.after, ...edit.before }
@@ -83,6 +94,7 @@ export function lineStepCommand(edit: LineEdit, dir: StepDir): ProjectCommand {
 }
 
 export function steppedEdit(edit: LineEdit, dir: StepDir, changes: ChangeSet, current: Cue | undefined): LineEdit {
+  if (edit.kind === 'done') return edit
   if (edit.kind === 'original') {
     if (dir === 'undo' || !current) return edit
     return { ...edit, before: originalStateOf(current), after: outputStateIn(changes, edit.cueId) }

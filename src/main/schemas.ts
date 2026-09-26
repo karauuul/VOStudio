@@ -555,6 +555,7 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
     ...outputStateSchema.shape,
     whenState: outputStateSchema,
   }),
+  cueId.extend({ type: z.literal('cue.restoreOutput'), ...outputStateSchema.shape, whenState: outputStateSchema }),
   characterId.extend({ type: z.literal('character.setVoiceSettings'), settings: voiceSettingsSchema }),
   z.object({ type: z.literal('character.create'), id: z.string().min(1).max(200), name: characterName }),
   characterId.extend({ type: z.literal('character.rename'), name: characterName }),

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { applyProjectCommand, type ChangeSet, type ProjectCommand } from '../src/shared/project-commands'
-import { emptyEdits, type Cue, type Project } from '../src/shared/domain'
+import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
+import { approvalState, isDone } from '../src/shared/approval'
 import { CREATE_LINES_MAX, LINE_TEXT_MAX, planScriptPaste } from '../src/shared/lines'
 import { projectCommandSchema } from '../src/main/schemas'
 import {
+  doneChange,
   lineStepCommand,
   originalStateOf,
   outputStateIn,
@@ -144,6 +146,90 @@ describe('line history', () => {
     expect(history.undo).toHaveLength(100)
     expect(history.undo[0].at).toBe(5)
     expect(history.redo).toEqual([])
+  })
+})
+
+describe('undoing Done', () => {
+  const take = (id: string): Take => ({ id, kind: 'tts', createdAt: 'now', file: { fileId: id, relPath: `/p/${id}.wav`, format: 'wav' }, duration: 1, meta: {}, edits: emptyEdits() })
+  const voiced = (): Cue => cue('a', { text: 'T', status: 'generated', takes: [take('t'), take('u')], finalTakeId: 't' })
+
+  function toggled(p: Project, s: ReturnType<typeof session>, approved: boolean): Cue {
+    const before = structuredClone(p.cues[0])
+    const change = doneChange(before, s.edit({ type: 'cue.approve', cueId: 'a', approved, approvedAt: 'then' }))
+    if (change) recordLineEdit(s.history, change, 1)
+    return before
+  }
+
+  it('undoes and redoes Done exactly, keeping the approval time', async () => {
+    const p = project([voiced()])
+    const s = session(p)
+    const before = toggled(p, s, true)
+    const done = structuredClone(p.cues[0])
+    expect(isDone(done, p)).toBe(true)
+    await s.step('undo')
+    expect(p.cues[0]).toEqual(before)
+    expect(p.cues[0]).not.toHaveProperty('output')
+    await s.step('redo')
+    expect(p.cues[0]).toEqual(done)
+    await s.step('undo')
+    expect(p.cues[0]).toEqual(before)
+  })
+
+  it('undo of Not done brings back the earlier approval, not a fresh one', async () => {
+    const p = project([voiced()])
+    applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'earlier' })
+    const s = session(p)
+    const before = toggled(p, s, false)
+    expect(isDone(p.cues[0], p)).toBe(false)
+    await s.step('undo')
+    expect(p.cues[0]).toEqual(before)
+    expect(p.cues[0].approval?.approvedAt).toBe('earlier')
+    await s.step('redo')
+    expect(isDone(p.cues[0], p)).toBe(false)
+    expect(p.cues[0]).not.toHaveProperty('approval')
+  })
+
+  it('leaves a line alone whose output or approval changed after the step', async () => {
+    const later: ProjectCommand[] = [
+      { type: 'cue.setFinalTake', cueId: 'a', takeId: 'u' },
+      { type: 'cue.approve', cueId: 'a', approved: false },
+      { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'later' },
+    ]
+    for (const command of later) {
+      const p = project([voiced()])
+      const s = session(p)
+      toggled(p, s, true)
+      applyProjectCommand(p, command)
+      const current = structuredClone(p.cues[0])
+      await s.step('undo')
+      expect(p.cues[0]).toEqual(current)
+      await s.step('redo')
+      expect(p.cues[0]).toEqual(current)
+    }
+    const p = project([voiced()])
+    const s = session(p)
+    toggled(p, s, true)
+    applyProjectCommand(p, { type: 'cue.setFinalTake', cueId: 'a', takeId: 'u' })
+    await s.step('undo')
+    expect(approvalState(p.cues[0], p)).toBe('stale')
+  })
+
+  it('records nothing when the toggle changed nothing', () => {
+    const p = project([voiced()])
+    const before = structuredClone(p.cues[0])
+    expect(doneChange(before, applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: false }))).toBeNull()
+  })
+
+  it('sends undo and redo through the command schema unchanged', () => {
+    const p = project([voiced()])
+    applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'earlier' })
+    const before = structuredClone(p.cues[0])
+    const change = doneChange(before, applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: false }))
+    if (!change) throw new Error('no change')
+    for (const dir of ['undo', 'redo'] as const) {
+      const command = lineStepCommand({ ...change, at: 1 }, dir)
+      expect(projectCommandSchema.parse(command)).toEqual(command)
+    }
   })
 })
 
