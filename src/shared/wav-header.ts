@@ -3,6 +3,10 @@ export const WAV_HEADER_BYTES = 44
 export const WAV_PCM = 1
 export const WAV_FLOAT = 3
 
+export type PcmBitDepth = 16 | 24
+
+export const pcmBitDepth = (value: unknown): PcmBitDepth => (value === 24 ? 24 : 16)
+
 function writeAscii(view: DataView, offset: number, text: string): void {
   for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i))
 }

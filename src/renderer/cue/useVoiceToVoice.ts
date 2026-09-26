@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { MAX_STS_SECONDS, type Cue, type Take, type VoiceSettings } from '@shared/domain'
 import { recordingGuard } from '@shared/recording-guard'
 import type { AppSettings } from '@shared/ipc'
+import { pcmBitDepth } from '@shared/wav-header'
 import { api, audioUrl } from '../api'
 import { useRecorder, type RecordedClip, type RecorderApi } from '../audio/recorder'
 import { clipId, transport } from '../audio/transport'
@@ -109,6 +110,7 @@ export function useVoiceToVoice({
       rec.start({
         cueId: cue.id,
         device: appSettings.micDeviceLabel ?? appSettings.micDeviceId,
+        bitDepth: pcmBitDepth(appSettings.recordBitDepth),
         countIn: appSettings.countIn,
         autoReference: appSettings.autoReference,
         referenceUrl: cue.referenceAudio ? audioUrl(cue.referenceAudio.relPath) : undefined,
@@ -127,6 +129,7 @@ export function useVoiceToVoice({
       rec.start({
         cueId: cue.id,
         device: appSettings.micDeviceLabel ?? appSettings.micDeviceId,
+        bitDepth: pcmBitDepth(appSettings.recordBitDepth),
         countIn: appSettings.countIn,
         autoReference: false,
       })
@@ -258,6 +261,7 @@ export function useVoiceToVoice({
     rec.start({
       cueId: cue.id,
       device: appSettings.micDeviceLabel ?? appSettings.micDeviceId,
+      bitDepth: pcmBitDepth(appSettings.recordBitDepth),
       countIn: false,
       autoReference: false,
       preroll: () =>

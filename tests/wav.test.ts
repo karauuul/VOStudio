@@ -4,7 +4,9 @@ import {
   encodeWav,
   encodeWavFloat32,
   floatToPcm16,
+  floatToPcm24,
   interleave,
+  pcm24,
   pcmDuration,
   WAV_HEADER_BYTES,
 } from '../src/renderer/audio/wav'
@@ -82,6 +84,38 @@ describe('encodeWav — samples', () => {
     expect(floatToPcm16(2)).toBe(32767)
     expect(floatToPcm16(-2)).toBe(-32768)
     expect(floatToPcm16(NaN)).toBe(0)
+  })
+})
+
+describe('pcm24 — 24-bit recording samples', () => {
+  it('quantizes like the 16-bit path at 24-bit scale', () => {
+    expect(floatToPcm24(0.5)).toBe(Math.round(0.5 * 0x7fffff))
+    expect(floatToPcm24(-0.5)).toBe(-0x400000)
+    expect(floatToPcm24(1)).toBe(0x7fffff)
+    expect(floatToPcm24(-1)).toBe(-0x800000)
+    expect(floatToPcm24(2)).toBe(0x7fffff)
+    expect(floatToPcm24(-2)).toBe(-0x800000)
+    expect(floatToPcm24(NaN)).toBe(0)
+    expect(floatToPcm24(Infinity)).toBe(0)
+  })
+
+  it('packs signed little-endian triplets', () => {
+    const bytes = pcm24(new Float32Array([1, -1, 0.5, NaN, -1 / 0x800000]))
+    expect(Array.from(bytes)).toEqual([
+      0xff, 0xff, 0x7f,
+      0x00, 0x00, 0x80,
+      0x00, 0x00, 0x40,
+      0x00, 0x00, 0x00,
+      0xff, 0xff, 0xff,
+    ])
+  })
+
+  it('round trips through a 24-bit reader', () => {
+    const samples = new Float32Array([0.25, -0.75, 0.001])
+    const bytes = Buffer.from(pcm24(samples))
+    for (let i = 0; i < samples.length; i++) {
+      expect(bytes.readIntLE(i * 3, 3)).toBe(floatToPcm24(samples[i]))
+    }
   })
 })
 

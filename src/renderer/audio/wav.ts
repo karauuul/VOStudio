@@ -14,6 +14,23 @@ export function pcm16(samples: Float32Array): Int16Array {
   return out
 }
 
+export function floatToPcm24(v: number): number {
+  if (!Number.isFinite(v)) return 0
+  const c = v < -1 ? -1 : v > 1 ? 1 : v
+  return c < 0 ? Math.round(c * 0x800000) : Math.round(c * 0x7fffff)
+}
+
+export function pcm24(samples: Float32Array): Uint8Array {
+  const out = new Uint8Array(samples.length * 3)
+  for (let i = 0; i < samples.length; i++) {
+    const v = floatToPcm24(samples[i])
+    out[i * 3] = v & 0xff
+    out[i * 3 + 1] = (v >> 8) & 0xff
+    out[i * 3 + 2] = (v >> 16) & 0xff
+  }
+  return out
+}
+
 export function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
   const dataBytes = samples.length * 2
   const header = wavHeader(dataBytes, sampleRate)

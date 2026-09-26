@@ -1,6 +1,7 @@
 import type { Take } from '@shared/domain'
+import type { PcmBitDepth } from '@shared/wav-header'
 import { api } from '../api'
-import { pcm16 } from './wav'
+import { pcm16, pcm24 } from './wav'
 
 const CHUNK_SECONDS = 0.5
 
@@ -11,21 +12,32 @@ export interface RecStream {
   abort: () => void
 }
 
-export function openRecStream(cueId: string, sampleRate: number, onError: (error: unknown) => void): RecStream {
+const encoders: Record<PcmBitDepth, (samples: Float32Array) => Uint8Array> = {
+  16: (samples) => new Uint8Array(pcm16(samples).buffer),
+  24: pcm24,
+}
+
+export function openRecStream(
+  cueId: string,
+  sampleRate: number,
+  bitDepth: PcmBitDepth,
+  onError: (error: unknown) => void
+): RecStream {
   const batchFrames = Math.round(sampleRate * CHUNK_SECONDS)
+  const encode = encoders[bitDepth]
   let session: Promise<string> | null = null
   let chain: Promise<unknown> = Promise.resolve()
-  let batch: Int16Array[] = []
+  let batch: Uint8Array[] = []
   let batched = 0
   let frames = 0
   let open = true
   let failed: unknown = null
 
-  const id = (): Promise<string> => (session ??= api['rec:begin']({ cueId, sampleRate }))
+  const id = (): Promise<string> => (session ??= api['rec:begin']({ cueId, sampleRate, bitDepth }))
 
   const send = (): void => {
     if (batched === 0) return
-    const pcm = new Int16Array(batched)
+    const pcm = new Uint8Array(batched * (bitDepth / 8))
     let at = 0
     for (const part of batch) {
       pcm.set(part, at)
@@ -49,7 +61,7 @@ export function openRecStream(cueId: string, sampleRate: number, onError: (error
     frames: () => frames,
     push: (samples) => {
       if (!open || samples.length === 0) return
-      batch.push(pcm16(samples))
+      batch.push(encode(samples))
       batched += samples.length
       frames += samples.length
       if (batched >= batchFrames) send()
