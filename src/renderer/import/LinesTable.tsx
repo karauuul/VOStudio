@@ -11,13 +11,13 @@ import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import type { Cue, Project } from '@shared/domain'
 import { matchesSearch } from '@shared/cue-filter'
 import {
+  hasSourceMaterial,
   importCounts,
   importTabs,
   lineDot,
   matchesImportTab,
   type ImportTab,
 } from '@shared/import-table'
-import { isManualProject } from '@shared/lines'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 import { useWire } from '../cue/useWire'
 
@@ -80,7 +80,7 @@ export function LinesTable({
   const vRef = useRef<VirtuosoHandle>(null)
   const anchorRef = useRef(0)
   const pop = useContextMenu()
-  const ai = useMemo(() => !isManualProject(project), [project])
+  const ai = useMemo(() => hasSourceMaterial(project), [project])
   const tabs = importTabs(ai)
   const tab = tabs.some((t) => t.id === picked) ? picked : 'all'
   const columns = ai ? COLUMNS : MANUAL_COLUMNS

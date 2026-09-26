@@ -3,6 +3,7 @@ import { parseCsv } from '../src/shared/csv'
 import {
   applyTable,
   detectMapping,
+  hasSourceMaterial,
   importCounts,
   importTabs,
   lineDot,
@@ -251,6 +252,16 @@ describe('import tabs and counts', () => {
 
   it('picks the row dot', () => {
     expect(cues.map(lineDot)).toEqual(['ready', 'transcript', 'none'])
+  })
+
+  it('uses the translation layout only when the project has source material', () => {
+    const line = (over: Partial<Cue> = {}): Cue => ({ id: 'x', characterId: '', key: 'k', fields: {}, sourceText: '', text: 't', status: 'translated', notes: '', takes: [], ...over })
+    const tts = { id: 'g', kind: 'tts' as const, createdAt: 'now', file: { fileId: 'g', relPath: '/p/g.mp3', format: 'mp3' as const }, duration: 1, meta: {}, edits: { trimStart: 0, trimEnd: 0, gainDb: 0, fadeIn: { duration: 0, shape: 'equalPower' as const }, fadeOut: { duration: 0, shape: 'equalPower' as const } } }
+    expect(hasSourceMaterial({ cues: [line({ takes: [tts] })] })).toBe(false)
+    expect(hasSourceMaterial({ cues: [line()], languages: { source: 'en', target: 'uk' } })).toBe(true)
+    expect(hasSourceMaterial({ cues: [line({ sourceText: 'Hello' })] })).toBe(true)
+    expect(hasSourceMaterial({ cues: [line({ referenceAudio: { fileId: 'r', relPath: '/p/r.wav', format: 'wav' } })] })).toBe(true)
+    expect(hasSourceMaterial({ cues: [line({ region: { sourceId: 's', in: 0, out: 1 } })] })).toBe(true)
   })
 
   it('keeps the translation tabs', () => {
