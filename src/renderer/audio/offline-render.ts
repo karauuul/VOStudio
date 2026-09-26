@@ -1,10 +1,11 @@
-import { compDuration, compEffectsTail, compHasReverb, compUsesWorklets } from '@shared/comp'
+import { compDuration, compEffectsTail, compUsesWorklets } from '@shared/comp'
 import type { ClipEdits, CompTrack } from '@shared/domain'
 import { effectsTail, usesWorklets } from '@shared/effects'
 import { playBounds } from '@shared/resume'
 import { ensureEffectWorklets } from './effect-worklets'
 import {
   buildClipGraph,
+  compChannels,
   originalVoiceEnd,
   renderDuration,
   scheduleComp,
@@ -35,10 +36,7 @@ export async function renderBufferOffline(
   }
   const sampleRate = buffer.sampleRate
   const frames = Math.max(1, Math.ceil((dur + effectsTail(edits.effects)) * sampleRate))
-  const channels = edits.effects?.reverb
-    ? Math.max(2, buffer.numberOfChannels)
-    : buffer.numberOfChannels
-  const ctx = new OfflineAudioContext(channels, frames, sampleRate)
+  const ctx = new OfflineAudioContext(buffer.numberOfChannels, frames, sampleRate)
   if (usesWorklets(edits.effects)) await ensureEffectWorklets(ctx)
   const plan = buildClipGraph(ctx, buffer, edits)
   plan.output.connect(ctx.destination)
@@ -104,16 +102,14 @@ export async function renderCompOffline(
       `Render region leaves nothing to export (${from.toFixed(3)}s…${to.toFixed(3)}s of ${total.toFixed(3)}s)`
     )
   }
+  const voices = [...sources, ...originals]
   let sampleRate = 0
-  let channels = 1
-  for (const s of [...sources, ...originals]) {
+  for (const s of voices) {
     if (s.buffer.sampleRate > sampleRate) sampleRate = s.buffer.sampleRate
-    if (s.buffer.numberOfChannels > channels) channels = s.buffer.numberOfChannels
   }
   if (!(sampleRate > 0)) throw new Error('Composition sources have no sample rate')
-  if (compHasReverb(clips, tracks)) channels = Math.max(2, channels)
   const frames = Math.max(1, Math.ceil(dur * sampleRate))
-  const ctx = new OfflineAudioContext(channels, frames, sampleRate)
+  const ctx = new OfflineAudioContext(compChannels(voices), frames, sampleRate)
   if (compUsesWorklets(clips, tracks)) await ensureEffectWorklets(ctx)
   scheduleComp(ctx, sources, ctx.destination, { when: 0, seek: from, tracks, originals })
   return ctx.startRendering()
