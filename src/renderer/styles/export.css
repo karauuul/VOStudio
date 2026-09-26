@@ -22,6 +22,23 @@
   font-size: 12px;
 }
 
+.exp-kvp .cp-num {
+  justify-content: flex-start;
+}
+
+.exp-kvp .cp-k {
+  display: none;
+}
+
+.exp-kvp .cp-in {
+  height: 26px;
+}
+
+.exp-kvp .cp-in input {
+  width: 44px;
+  height: auto;
+}
+
 .exp-kvp input.mono,
 .exp-kvp .field.mono {
   font: 12px var(--mono);
