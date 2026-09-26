@@ -605,6 +605,7 @@ export interface PunchRequest {
   duration: number
   hidden: number
   at: number
+  until?: number
   targetTrackId?: string
 }
 
@@ -616,7 +617,7 @@ export function punchClip(comp: CueComp | undefined, req: PunchRequest): PlacedC
     return null
   }
   const trackId = resolveTargetTrack(base, req.targetTrackId)
-  const cleared = clearSpan(base, trackId, at, Infinity)
+  const cleared = clearSpan(base, trackId, at, req.until ?? Infinity)
   const clip: CompClip = {
     id: newCompClipId(),
     sourceTakeId: req.takeId,

@@ -1,9 +1,11 @@
-import { promises as fs } from 'fs'
+import { createReadStream, createWriteStream, promises as fs } from 'fs'
 import type { FileHandle } from 'fs/promises'
 import path from 'path'
+import { pipeline } from 'stream/promises'
 import { randomUUID } from 'crypto'
 import { z } from 'zod'
 import { emptyEdits, type Cue, type Take } from '@shared/domain'
+import type { PassRange } from '@shared/loop-record'
 import type { CommandResult } from '@shared/project-commands'
 import { maxRecordSeconds } from '@shared/take-import'
 import { WAV_HEADER_BYTES, wavDataBytes, wavHeader, type PcmBitDepth } from '@shared/wav-header'
@@ -168,11 +170,7 @@ export async function appendRecording(id: string, pcm: Buffer): Promise<void> {
   })
 }
 
-export async function finishRecording(
-  id: string,
-  fragment: boolean,
-  publish: (result: CommandResult) => void
-): Promise<Take> {
+async function endRecording(id: string): Promise<{ rec: Recording; frames: number }> {
   const rec = live(id)
   recordings.delete(id)
   const frames = await enqueue(rec, async () => {
@@ -186,10 +184,58 @@ export async function finishRecording(
     await discard(rec.abs)
     throw new Error('Nothing was recorded')
   }
+  return { rec, frames }
+}
+
+export async function finishRecording(
+  id: string,
+  fragment: boolean,
+  publish: (result: CommandResult) => void
+): Promise<Take> {
+  const { rec, frames } = await endRecording(id)
   const take = await adopt(rec.session, rec.cueId, rec.abs, rec.sampleRate, frames, fragment, publish)
   await rec.session.repository.flush()
   await discard(rec.abs)
   return take
+}
+
+function copyFrames(rec: Recording, pass: PassRange, abs: string): Promise<void> {
+  const size = sampleBytes(rec.bitDepth)
+  const dataBytes = (pass.to - pass.from) * size
+  const start = WAV_HEADER_BYTES + pass.from * size
+  return pipeline(
+    async function* () {
+      yield Buffer.from(wavHeader(dataBytes, rec.sampleRate, 1, rec.bitDepth))
+      yield* createReadStream(rec.abs, { start, end: start + dataBytes - 1 })
+      if (dataBytes % 2) yield Buffer.alloc(1)
+    },
+    createWriteStream(abs, { flags: 'wx' })
+  )
+}
+
+export async function finishPasses(
+  id: string,
+  passes: readonly PassRange[],
+  publish: (result: CommandResult) => void
+): Promise<Take[]> {
+  const { rec, frames } = await endRecording(id)
+  if (passes.some((p) => p.from < 0 || p.to <= p.from || p.to > frames)) {
+    throw new Error('Loop pass is outside the recording')
+  }
+  const base = takeBase()
+  const takes: Take[] = []
+  for (const [i, pass] of passes.entries()) {
+    const fileName = `${base}_${i + 1}_loop.wav`
+    takes.push(
+      await appendTake(rec.session, rec.cueId, fileName, (abs) => copyFrames(rec, pass, abs), publish, (cue, abs) => ({
+        take: recordingTake(cue, abs, fileName, rec.sampleRate, pass.to - pass.from, true),
+        select: false,
+      }))
+    )
+  }
+  await rec.session.repository.flush()
+  await discard(rec.abs)
+  return takes
 }
 
 export async function abortRecording(id: string): Promise<void> {

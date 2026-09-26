@@ -167,6 +167,7 @@ export default function App() {
   const propsRef = useRef<PropsApi | null>(null)
   const recRef = useRef<(() => void) | null>(null)
   const punchRef = useRef<(() => void) | null>(null)
+  const loopRef = useRef<(() => void) | null>(null)
   const escRef = useRef<(() => boolean) | null>(null)
   const recActiveRef = useRef<(() => boolean) | null>(null)
   const guardRef = useRef<((proceed: () => void) => boolean) | null>(null)
@@ -762,7 +763,11 @@ export default function App() {
         }
         const placed =
           placement.kind === 'punch'
-            ? punchClip(comp, { ...request, hidden: placement.hidden })
+            ? punchClip(comp, {
+                ...request,
+                hidden: placement.hidden,
+                ...(placement.until === undefined ? {} : { until: placement.until }),
+              })
             : recordClip(comp, request)
         if (!placed) throw new Error('nothing was recorded after the punch point')
         comp = placed.comp
@@ -1496,6 +1501,7 @@ export default function App() {
       rejectSuggestion: onRejectSuggestion,
       toggleRecord: recordLine,
       punchRecord: () => punchRef.current?.(),
+      loopRecord: () => loopRef.current?.(),
       escape: () => {
         if (escRef.current?.()) return true
         if (sourceTakeId === null) return false
@@ -1878,6 +1884,7 @@ export default function App() {
         onPlace: placeOnComp,
         recRef,
         punchRef,
+        loopRef,
         escRef,
         recActiveRef,
         guardRef,

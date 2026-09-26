@@ -18,6 +18,7 @@ import type { CommandResult, ProjectCommand, ProjectSnapshot } from './project-c
 import type { ProjectSummary } from './project-summary'
 import type { PcmBitDepth } from './wav-header'
 import type { LatencySetting } from './punch'
+import type { PassRange } from './loop-record'
 
 export interface CsvPreview {
   headers: string[]
@@ -286,6 +287,7 @@ export interface IpcApi {
   'rec:begin': (req: { cueId: string; sampleRate: number; bitDepth?: PcmBitDepth }) => Promise<string>
   'rec:chunk': (req: { session: string; pcm: ArrayBuffer }) => Promise<void>
   'rec:finish': (req: { session: string; fragment?: boolean }) => Promise<Take>
+  'rec:finishPasses': (req: { session: string; passes: PassRange[] }) => Promise<Take[]>
   'rec:abort': (req: { session: string }) => Promise<void>
 
   'take:importFiles': (cueId: string, paths: string[]) => Promise<{ takes: Take[]; failed: string[] }>

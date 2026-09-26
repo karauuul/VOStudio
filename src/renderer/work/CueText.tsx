@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, type MutableRefObject } from 'react'
-import { resolveVoiceSettings, type Character, type Cue, type Take } from '@shared/domain'
+import { resolveVoiceSettings, type Character, type CompRegion, type Cue, type Take } from '@shared/domain'
 import type { GenTarget } from '@shared/generation'
 import type { AppSettings } from '@shared/ipc'
 import { useVoiceToVoice, type RecordPlacement } from '../cue/useVoiceToVoice'
@@ -24,6 +24,7 @@ export interface CueTextProps {
   ) => Promise<void>
   recRef: MutableRefObject<(() => void) | null>
   punchRef: MutableRefObject<(() => void) | null>
+  loopRef: MutableRefObject<(() => void) | null>
   escRef: MutableRefObject<(() => boolean) | null>
   recActiveRef: MutableRefObject<(() => boolean) | null>
   guardRef: MutableRefObject<((proceed: () => void) => boolean) | null>
@@ -47,6 +48,7 @@ export function CueText({
   onPlace,
   recRef,
   punchRef,
+  loopRef,
   escRef,
   recActiveRef,
   guardRef,
@@ -84,6 +86,17 @@ export function CueText({
     [compRef]
   )
   const punchMark = useCallback((at: number | null) => compRef.current?.punchMark(at), [compRef])
+  const region = useCallback((): CompRegion | null => compRef.current?.region() ?? null, [compRef])
+  const loop = useCallback(
+    (
+      range: CompRegion,
+      lead: number,
+      onPass: (at: number) => void,
+      onInterrupt: (early: boolean) => void
+    ): Promise<PrerollStart> =>
+      compRef.current?.loop(range, lead, onPass, onInterrupt) ?? Promise.reject(new Error('No timeline')),
+    [compRef]
+  )
 
   const v2v = useVoiceToVoice({
     cue,
@@ -99,6 +112,8 @@ export function CueText({
     targetTrack,
     preroll,
     punchMark,
+    region,
+    loop,
     keepMicWarm,
     onPlace,
   })
@@ -115,6 +130,7 @@ export function CueText({
 
   useWire(recRef, v2v.toggleRec)
   useWire(punchRef, v2v.punch)
+  useWire(loopRef, v2v.loopRecord)
   useWire(escRef, v2v.onEscape)
   useWire(recActiveRef, recActive)
   useWire(guardRef, v2v.guard)
@@ -134,7 +150,13 @@ export function CueText({
       recordDisabled={v2v.converting}
       recMeter={
         v2v.rec.phase === 'recording'
-          ? { elapsed: v2v.rec.elapsed, level: v2v.rec.level, clipped: v2v.rec.clipped, limit: v2v.rec.limit }
+          ? {
+              elapsed: v2v.rec.elapsed,
+              level: v2v.rec.level,
+              clipped: v2v.rec.clipped,
+              limit: v2v.rec.limit,
+              ...(v2v.loopPass > 0 ? { pass: v2v.loopPass } : {}),
+            }
           : undefined
       }
     />
