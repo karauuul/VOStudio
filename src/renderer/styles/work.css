@@ -1183,6 +1183,7 @@ input.tl-name:focus {
 }
 
 .tl-ph.punch {
+  z-index: 6;
   background: var(--err);
 }
 
