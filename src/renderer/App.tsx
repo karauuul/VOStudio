@@ -20,7 +20,7 @@ import {
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '@shared/ipc'
 import { pickHistory, redoStale, type UndoSide } from '@shared/undo-route'
-import { PARAGRAPH_TOO_LONG, planScriptPaste, showsAi } from '@shared/lines'
+import { PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
 import { TABLE_FILE } from '@shared/import-table'
 import { keyedQueue } from '@shared/keyed-queue'
 import type { UpdateStatus } from '@shared/updater'
@@ -1697,7 +1697,11 @@ export default function App() {
   ]
 
   const spliceTranslation = (el: HTMLTextAreaElement, insert: string): void => {
-    onText(el.value.slice(0, el.selectionStart) + insert + el.value.slice(el.selectionEnd))
+    if (pasteOverflows(el.value, el.selectionStart, el.selectionEnd, insert)) {
+      pushStatus('err', PARAGRAPH_TOO_LONG)
+      return
+    }
+    onText(el.value.slice(0, el.selectionStart) + insert.replace(/\r\n?/g, '\n') + el.value.slice(el.selectionEnd))
   }
 
   const lineMenu = (cue: Cue): MenuEntry[] => [
