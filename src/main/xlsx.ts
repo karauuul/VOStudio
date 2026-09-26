@@ -2,6 +2,7 @@ import path from 'path'
 import { inflateRawSync } from 'zlib'
 import {
   headedTable,
+  TABLE_CELLS_MAX,
   TABLE_COLUMNS_MAX,
   TABLE_ROWS_MAX,
   TOO_MANY_COLUMNS,
@@ -175,7 +176,7 @@ function cellText(type: string, value: string, inline: string, shared: string[])
   return value
 }
 
-function sheetRows(xml: string, shared: string[], cap: number): string[][] {
+function sheetRows(xml: string, shared: string[], cellLimit: number): string[][] {
   const start = xml.indexOf('<sheetData')
   const end = xml.indexOf('</sheetData>', start)
   const body = start < 0 || end < 0 ? '' : xml.slice(start, end)
@@ -214,7 +215,7 @@ function sheetRows(xml: string, shared: string[], cap: number): string[][] {
       if (text) {
         if (column >= TABLE_COLUMNS_MAX) throw new Error(TOO_MANY_COLUMNS)
         total += Math.max(0, column + 1 - cells.length)
-        if (total > cap) throw new Error(`Table has more than ${cap} cells`)
+        if (total > cellLimit) throw new Error(`Table has more than ${cellLimit} cells`)
         while (cells.length < column) cells.push('')
         cells[column] = text
       }
@@ -225,7 +226,7 @@ function sheetRows(xml: string, shared: string[], cap: number): string[][] {
   return rows
 }
 
-export function readXlsx(file: Buffer, cap: number): TableFile {
+export function readXlsx(file: Buffer, cap: number, cellLimit = TABLE_CELLS_MAX): TableFile {
   if (!file.subarray(0, 4).equals(ZIP_MAGIC)) {
     throw new Error('Not an .xlsx workbook (password-protected and .xls files are not supported)')
   }
@@ -243,7 +244,7 @@ export function readXlsx(file: Buffer, cap: number): TableFile {
   const sheetPath = target.startsWith('/') ? target.slice(1) : path.posix.join('xl', target)
   const xml = part(sheetPath)
   if (xml === undefined) throw invalid(`${sheetPath} is missing`)
-  const rows = sheetRows(xml, sharedStrings(part('xl/sharedStrings.xml') ?? ''), cap)
+  const rows = sheetRows(xml, sharedStrings(part('xl/sharedStrings.xml') ?? ''), cellLimit)
   const headers = rows.shift() ?? []
   const width = rows.reduce((max, cells) => Math.max(max, cells.length), headers.length)
   return headedTable(headers.length > 0 ? [...headers, ...Array<string>(width - headers.length).fill('')] : headers, rows)

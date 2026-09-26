@@ -5,6 +5,7 @@ import { deflateRawSync } from 'zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   parseTableFile,
+  TABLE_CELLS_MAX,
   TABLE_COLUMNS_MAX,
   TABLE_FILE,
   TABLE_ROWS_MAX,
@@ -330,8 +331,11 @@ describe('readXlsx table bounds', () => {
 
   it('caps the cells that sparse references would pad', () => {
     const rows = Array.from({ length: 5 }, (_, i) => `<row r="${i + 1}"><c r="FAN${i + 1}"><v>1</v></c></row>`).join('')
-    expect(read(book(rows), 30_000).rows).toHaveLength(4)
-    expect(() => read(book(rows), 10_000)).toThrow('more than 10000 cells')
+    expect(readXlsx(zip(book(rows)), CAP, 30_000).rows).toHaveLength(4)
+    expect(() => readXlsx(zip(book(rows)), CAP, 10_000)).toThrow('more than 10000 cells')
+    expect(TABLE_CELLS_MAX).toBeLessThanOrEqual(4_000_000)
+    const bomb = Array.from({ length: 1000 }, (_, i) => `<row r="${i + 1}"><c r="FAN${i + 1}"><v>1</v></c></row>`).join('')
+    expect(() => readXlsx(zip(book(bomb)), 64 * 1024 * 1024)).toThrow(`more than ${TABLE_CELLS_MAX} cells`)
   })
 })
 

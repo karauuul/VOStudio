@@ -86,6 +86,8 @@ export const previewCell = (cell: string): string =>
 export const CUE_KEY_MAX = 4096
 export const CHARACTER_ID_MAX = 200
 
+export const TABLE_CELLS_MAX = 4_000_000
+
 export const TOO_MANY_ROWS = `Table has more than ${TABLE_ROWS_MAX} rows`
 export const TOO_MANY_COLUMNS = `Table has more than ${TABLE_COLUMNS_MAX} columns`
 
