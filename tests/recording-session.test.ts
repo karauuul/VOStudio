@@ -356,7 +356,7 @@ describe('loop passes', () => {
     expect(last.readInt16LE(WAV_HEADER_BYTES)).toBe(9000)
     expect(last.readInt16LE(last.length - 2)).toBe(10499)
     expect(new Set(takes.map((t) => t.file.relPath)).size).toBe(3)
-    expect(repository.snapshot().project.cues[0].takes).toEqual(takes)
+    expect(repository.projectForMain().cues[0].takes).toEqual(takes)
     expect(published).toHaveLength(3)
     expect(await listRecordings(dir)).toEqual([])
   })
@@ -384,7 +384,7 @@ describe('loop passes', () => {
     expect(repository.snapshot().revision).toBe(0)
     expect(await listRecordings(dir)).toHaveLength(2)
     expect(await recoverRecordings({ repository, dir })).toBe(1)
-    expect(repository.snapshot().project.cues[0].takes[0].duration).toBe(1000 / RATE)
+    expect(repository.projectForMain().cues[0].takes[0].duration).toBe(1000 / RATE)
   })
 
   it('an empty loop recording leaves no file and no take', async () => {
