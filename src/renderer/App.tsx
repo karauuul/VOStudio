@@ -82,6 +82,7 @@ import {
   originalStateOf,
   outputStateIn,
   recordLineEdit,
+  refuseWorkRemoval,
   removalBlock,
   removesLines,
   runLineStep,
@@ -1254,6 +1255,10 @@ export default function App() {
 
   const lineStep = useCallback(
     async (dir: 'undo' | 'redo'): Promise<void> => {
+      if (refuseWorkRemoval(linesRef.current, dir, projectRef.current?.cues ?? [])) {
+        pushStatus('info', 'Line has recordings')
+        return
+      }
       const stack = dir === 'undo' ? linesRef.current.undo : linesRef.current.redo
       const top = stack[stack.length - 1]
       const removal = top && 'ids' in top && removesLines(top, dir) ? top.ids : null
