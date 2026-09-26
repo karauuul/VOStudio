@@ -1523,6 +1523,7 @@ export default function App() {
         }
         compRef.current?.deleteSelected()
       },
+      nudgeClips: (steps) => compRef.current?.nudge(steps),
       splitClip: () => compRef.current?.split(),
       splitAtPlayhead: () => compRef.current?.splitAtPlayhead(),
       healClip: () => compRef.current?.heal(),

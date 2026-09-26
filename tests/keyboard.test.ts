@@ -485,3 +485,35 @@ describe('quick session keys', () => {
     expect(action({ code: 'KeyZ', ctrlKey: true, scope: 'text' })).toBeNull()
   })
 })
+
+describe('nudge clips', () => {
+  const nudge = (over: Partial<KeyInput> & { code: string }): Binding | null =>
+    resolveKey(key({ scope: 'timeline', altKey: true, ...over }))
+
+  it('Alt+arrows nudge one step, Alt+Shift+arrows five', () => {
+    expect(nudge({ code: 'ArrowLeft' })).toMatchObject({ action: 'nudgeClips', steps: -1 })
+    expect(nudge({ code: 'ArrowRight' })).toMatchObject({ action: 'nudgeClips', steps: 1 })
+    expect(nudge({ code: 'ArrowLeft', shiftKey: true })).toMatchObject({ steps: -5 })
+    expect(nudge({ code: 'ArrowRight', shiftKey: true })).toMatchObject({ steps: 5 })
+  })
+
+  it('belongs to the timeline only and ignores held repeats', () => {
+    for (const scope of ['workspace', 'text', 'grid', 'gridText', 'deliver', 'home'] as Scope[]) {
+      expect(nudge({ code: 'ArrowLeft', scope })).toBeNull()
+    }
+    expect(nudge({ code: 'ArrowRight', repeat: true })).toBeNull()
+  })
+
+  it('AltGr and Ctrl+Alt do not nudge, plain arrows keep their meaning', () => {
+    expect(nudge({ code: 'ArrowLeft', ctrlKey: true })).toBeNull()
+    expect(nudge({ code: 'ArrowRight', metaKey: true })).toBeNull()
+    expect(action({ code: 'ArrowLeft', scope: 'timeline' })).toBeNull()
+    expect(action({ code: 'ArrowUp', scope: 'timeline' })).toBe('prev')
+    expect(nudge({ code: 'ArrowUp' })).toBeNull()
+  })
+
+  it('shows one row with the Alt badge', () => {
+    expect(keyText(of('nudgeClips'))).toBe('Alt+←/→')
+    expect(groupOf(of('nudgeClips'))).toBe('Timeline')
+  })
+})

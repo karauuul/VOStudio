@@ -262,6 +262,15 @@ export function wordSnapPoints(comp: CueComp, cue: Cue, project: TakeLookup): nu
   return [...new Set(out.map((t) => Math.round(t * 1e6) / 1e6))].sort((a, b) => a - b)
 }
 
+export function stationarySnapPoints(
+  comp: CueComp,
+  movingIds: readonly string[],
+  cue: Cue,
+  project: TakeLookup
+): number[] {
+  return wordSnapPoints({ ...comp, clips: comp.clips.filter((c) => !movingIds.includes(c.id)) }, cue, project)
+}
+
 export function nearestPoint(points: readonly number[], t: number, tolerance = Infinity): number {
   let best = t
   let bestD = tolerance
