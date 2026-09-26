@@ -405,6 +405,34 @@ export function removeClip(comp: CueComp, clipId: string): CueComp {
   return clips.length === comp.clips.length ? comp : withClips(comp, clips)
 }
 
+export function rippleDelete(comp: CueComp, clipIds: readonly string[]): CueComp {
+  const ids = new Set(clipIds)
+  const gone = comp.clips.filter((c) => ids.has(c.id))
+  if (gone.length === 0) return comp
+  const closed = new Set(
+    gone.flatMap((g) => {
+      const prev = siblings(comp, g.id)?.prev
+      return prev && !ids.has(prev.id) ? [prev.id] : []
+    })
+  )
+  const shift = (c: CompClip): number =>
+    gone.reduce(
+      (sum, g) =>
+        clipTrackId(g) === clipTrackId(c) && clipEnd(g) <= c.start + COMP_EPS
+          ? sum + clipTimelineDuration(g)
+          : sum,
+      0
+    )
+  const clips = comp.clips
+    .filter((c) => !ids.has(c.id))
+    .map((c) => {
+      const d = shift(c)
+      const kept = closed.has(c.id) ? stripCrossfade(c) : c
+      return d > 0 ? { ...kept, start: c.start - d } : kept
+    })
+  return withClips(comp, clips)
+}
+
 export function findInsertSlot(
   comp: CueComp,
   duration: number,

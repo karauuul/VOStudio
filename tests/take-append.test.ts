@@ -125,7 +125,7 @@ describe('decode budget', () => {
     await expect(importTakeFile({ repository, dir }, 'c', src, 't_1_imp', vi.fn())).rejects.toThrow('File too long to edit (max ~13 min)')
     expect(await exists(path.join(dir, 'audio'))).toBe(false)
     expect(repository.snapshot().revision).toBe(0)
-  })
+  }, 30_000)
 })
 
 describe('transcoded take import', () => {

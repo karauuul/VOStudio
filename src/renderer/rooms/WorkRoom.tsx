@@ -72,6 +72,7 @@ interface Props {
   hidden: boolean
   lines: ComponentProps<typeof LinesPanel>
   total: number
+  done: number
   source: ProjectSource | null
   text: TextPanelProps
   cueText: ComponentProps<typeof CueText> | null
@@ -89,6 +90,7 @@ export function WorkRoom({
   hidden,
   lines,
   total,
+  done,
   source,
   text,
   cueText,
@@ -175,6 +177,7 @@ export function WorkRoom({
     [size, fitted]
   )
 
+  const count = total > 0 ? `${done}/${total} done` : total
   const cue = text.cue
   const region = cue?.region
   const regionLabel = region ? `${timecode(region.in)} – ${timecode(region.out)}` : null
@@ -204,7 +207,7 @@ export function WorkRoom({
     >
       <section className="panel">
         <div className="phd">
-          Lines <span className="n">{source ? `${total} · ${source.name}` : total}</span>
+          Lines <span className="n">{source ? `${count} · ${source.name}` : count}</span>
           <button className="btn ghost add-line" onClick={onAddLine}>
             + Line
           </button>

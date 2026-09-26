@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyChangeSet, applyProjectCommand, audioWithinRoots, commandAudioPaths, type ProjectCommand } from '../src/shared/project-commands'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 import { cueSchema, projectCommandSchema } from '../src/main/schemas'
-import { hasReference, newLineCue, nextLineNumber, replacesWholeText, showsAi, splitParagraphs } from '../src/shared/lines'
+import { hasReference, isGeneratedTake, isManualProject, newLineCue, nextLineNumber, replacesWholeText, showsAi, splitParagraphs } from '../src/shared/lines'
 import { isInsideDir, uniqueProjectName } from '../src/shared/project-summary'
 import { takeFileKind } from '../src/shared/take-import'
 import { pickHistory } from '../src/shared/undo-route'
@@ -598,6 +598,24 @@ describe('AI sections visibility', () => {
     expect(showsAi(cue('v', { takes: [take('s', { kind: 'sts' })] }), p)).toBe(true)
     expect(showsAi(cue('m'), { ...p, characters: [ada] })).toBe(true)
     expect(showsAi(cue('m'), { ...p, provider: { tts: { model: 'eleven_v3' } } })).toBe(true)
+  })
+
+  it('only generated takes can be regenerated', () => {
+    expect(isGeneratedTake(take('t'))).toBe(true)
+    expect(isGeneratedTake(take('s', { kind: 'sts' }))).toBe(true)
+    for (const kind of ['recording', 'imported', 'composite'] as const) {
+      expect(isGeneratedTake(take('x', { kind }))).toBe(false)
+    }
+  })
+
+  it('a project is manual while none of its lines shows AI', () => {
+    expect(isManualProject(project([]))).toBe(true)
+    const own = cue('m', { takes: [take('i', { kind: 'imported' })] })
+    expect(isManualProject(project([newLineCue('n', 1, 'my text'), own]))).toBe(true)
+    expect(isManualProject(project([newLineCue('n', 1), cue('s', { sourceText: 'Hi' })]))).toBe(false)
+    expect(isManualProject(project([cue('g', { region: { sourceId: 'src', in: 0, out: 1 } })]))).toBe(false)
+    expect(isManualProject({ ...project([newLineCue('n', 1)]), characters: [ada] })).toBe(false)
+    expect(isManualProject({ ...project([newLineCue('n', 1)]), provider: { tts: { model: 'eleven_v3' } } })).toBe(false)
   })
 
   it('has reference audio only with an original, a source region or stems', () => {

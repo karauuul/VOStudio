@@ -739,6 +739,14 @@
   clip-path: polygon(100% 0, 0 0, 100% 100%);
 }
 
+.tl-mk.punch {
+  pointer-events: none;
+}
+
+.tl-mk.punch::before {
+  background: var(--err);
+}
+
 .tl-lanes {
   position: relative;
   min-height: 0;
@@ -1084,7 +1092,6 @@ input.tl-name:focus {
   border-radius: 2px;
   opacity: 0;
   z-index: 3;
-  pointer-events: none;
 }
 
 .tl-clip:hover .fh,
@@ -1172,6 +1179,15 @@ input.tl-name:focus {
   left: -5px;
   border: 5px solid transparent;
   border-top: 8px solid #fff;
+}
+
+.tl-ph.punch {
+  z-index: 6;
+  background: var(--err);
+}
+
+.tl-ph.punch::before {
+  border-top-color: var(--err);
 }
 
 .tl-tools {
@@ -1540,7 +1556,7 @@ input.tl-name:focus {
 .props .row2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0 16px;
+  gap: 0 12px;
   padding: 6px 16px;
 }
 
@@ -1548,7 +1564,7 @@ input.tl-name:focus {
   display: grid;
   grid-template-columns: 60px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   height: 34px;
 }
 
@@ -1564,7 +1580,7 @@ input.tl-name:focus {
 
 .props .row2 .cp-in {
   height: var(--ctl);
-  padding: 0 8px;
+  padding: 0 6px;
   border: 1px solid var(--line2);
   border-radius: var(--r);
   background: var(--bg);
@@ -1579,6 +1595,7 @@ input.tl-name:focus {
 }
 
 .props .cp-u {
+  min-width: 0;
   font: 11px var(--mono);
   color: var(--tx3);
 }

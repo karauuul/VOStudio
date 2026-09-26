@@ -36,6 +36,7 @@ import { replacesWholeText, splitParagraphs } from '@shared/lines'
 import { DragNumber } from '../cue/DragNumber'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 import { clockOf } from '@shared/timeline-math'
+import { meterFill } from '@shared/meter'
 
 const REMAINING_SHOWN_SECONDS = 60
 
@@ -72,6 +73,7 @@ export interface TextPanelProps {
   hasClip?: boolean
   onRecord?: () => void
   recording?: boolean
+  arming?: boolean
   recordDisabled?: boolean
   recMeter?: RecMeter
   originalMenu?: () => MenuEntry[]
@@ -366,6 +368,7 @@ export function TextPanel({
   hasClip = false,
   onRecord,
   recording,
+  arming,
   recordDisabled,
   recMeter,
   originalMenu,
@@ -407,14 +410,14 @@ export function TextPanel({
       disabled={off || !!recordDisabled}
       onClick={() => onRecord?.()}
     >
-      {recording ? 'Stop' : 'Record'}
+      {arming ? 'Arming' : recording ? 'Stop' : 'Record'}
     </button>
   )
 
   const meter = recMeter && (
     <>
       <span className={'prog-meter rec-meter' + (recMeter.clipped ? ' clip' : '')} aria-hidden="true">
-        <i style={{ transform: `scaleX(${Math.min(1, recMeter.level).toFixed(3)})` }} />
+        <i style={{ transform: `scaleX(${meterFill(recMeter.level).toFixed(3)})` }} />
       </span>
       {recMeter.clipped && <span className="rec-clip">CLIP</span>}
       <span className="n">

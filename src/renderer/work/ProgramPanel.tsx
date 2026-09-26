@@ -8,6 +8,7 @@ import {
 } from 'react'
 import type { WordTiming } from '@shared/domain'
 import { mapToOriginal, subtitleAt } from '@shared/subtitles'
+import { meterFill } from '@shared/meter'
 import { audioUrl } from '../api'
 import { clipId, transport, type TransportState } from '../audio/transport'
 import { useWire } from '../cue/useWire'
@@ -18,6 +19,7 @@ import { timecode } from './TimelinePanel'
 const STEP_SECONDS = 0.1
 const GAIN_KEY = 'vo.monitor.gain'
 const METER_DECAY = 0.86
+const ASPECTS = ['16:9', '4:3', '1:1']
 
 export interface ProgramSourceView {
   takeId: string
@@ -230,7 +232,7 @@ export function ProgramPanel({
   useEffect(() => {
     const level = (v: number): void => {
       const el = meterRef.current
-      if (el) el.style.transform = `scaleX(${v.toFixed(3)})`
+      if (el) el.style.transform = `scaleX(${meterFill(v).toFixed(3)})`
     }
     if (!state.playing) {
       level(0)
@@ -295,6 +297,7 @@ export function ProgramPanel({
   }, [showVideo, playing, videoBase])
 
   const off = onSource ? false : !(total > 0)
+  const sourceAspect = video ? video.aspect : '16:9'
 
   const frame = (
     <div className="frame">
@@ -384,10 +387,12 @@ export function ProgramPanel({
               value={aspect}
               onChange={(e) => setAspect(e.target.value)}
             >
-              <option value="source">{video ? video.aspect : '16:9'}</option>
-              <option value="16 / 9">16:9</option>
-              <option value="4 / 3">4:3</option>
-              <option value="1 / 1">1:1</option>
+              <option value="source">{sourceAspect}</option>
+              {ASPECTS.filter((a) => a !== sourceAspect).map((a) => (
+                <option key={a} value={a.replace(':', ' / ')}>
+                  {a}
+                </option>
+              ))}
             </select>
           </span>
         )}

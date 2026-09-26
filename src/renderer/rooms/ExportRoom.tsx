@@ -11,6 +11,7 @@ import {
   type LineRow,
 } from '@shared/readiness'
 import { matchesSearch } from '@shared/cue-filter'
+import { isManualProject } from '@shared/lines'
 import { api } from '../api'
 import { runPlan, runVideo, type ExportProgress } from '../export/run-export'
 import { videoMode, videoName } from '@shared/export-settings'
@@ -69,6 +70,7 @@ export function ExportRoom({
     [project, info?.last?.lines]
   )
   const summary = useMemo(() => summarize(project, rows), [project, rows])
+  const manual = useMemo(() => isManualProject(project), [project])
 
   const byId = useMemo(() => new Map(project.cues.map((c) => [c.id, c])), [project])
   const visible = useMemo(() => {
@@ -97,6 +99,11 @@ export function ExportRoom({
       (e: unknown) => onStatus('err', String(e))
     )
   }, [settings, onStatus])
+
+  const reveal = useCallback(() => {
+    if (!info) return
+    void api['shell:reveal'](`${info.outDir}/audio`).catch((e: unknown) => onStatus('err', String(e)))
+  }, [info, onStatus])
 
   const openSelected = useCallback(() => {
     if (selected) onOpenCue(selected)
@@ -162,6 +169,7 @@ export function ExportRoom({
         onSettings={settings}
         onTemplate={(template) => onCommand({ type: 'project.setExportTemplate', template })}
         onPickDir={pickDir}
+        onReveal={reveal}
       />
 
       <div className="gutter" />
@@ -184,6 +192,7 @@ export function ExportRoom({
 
       <SummaryPanel
         summary={summary}
+        manual={manual}
         {...(info?.last?.version === undefined ? {} : { lastVersion: info.last.version })}
         videos={videos}
         busy={busy}

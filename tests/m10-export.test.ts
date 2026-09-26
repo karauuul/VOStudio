@@ -318,6 +318,14 @@ describe('readiness', () => {
     expect(r.exportedVersion).toBeUndefined()
   })
 
+  it('rows are labelled like the lines list', () => {
+    const named = cue('line-001', { fields: { EventName: 'Line 1' } })
+    const bare = cue('VO_ADA_001', { fields: {} })
+    const r = rows(project([named, bare]))
+    expect(r['line-001'].label).toBe('Line 1')
+    expect(r['VO_ADA_001'].label).toBe('VO_ADA_001')
+  })
+
   it('lengths come from the reference and the render window', () => {
     const r = rows(project([ready]))['ready']
     expect(r.originalLength).toBe(3.5)

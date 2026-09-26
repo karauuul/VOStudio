@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Take as SavedTake } from '@shared/domain'
 import { latencyEstimate } from '@shared/punch'
+import { micHoldMs } from '@shared/recording-guard'
 import { maxRecordSeconds } from '@shared/take-import'
 import type { PcmBitDepth } from '@shared/wav-header'
 import { pcmDuration } from './wav'
@@ -75,9 +76,9 @@ const BEEP_GAP = 0.55
 const BEEPS = 3
 const LEAD_IN = 0.12
 const DONE_TIMEOUT_MS = 500
-const LATE_MARGIN_MS = 300
 const CLIP_LEVEL = 0.99
 const LIMIT_MARGIN_SECONDS = 1
+const ARM_TIMEOUT_MS = 10_000
 
 let moduleUrlCache: string | null = null
 function workletModuleUrl(): string {
@@ -118,6 +119,7 @@ interface Rig {
   ring: Ring
   device?: string
   disposed: boolean
+  firstSamples: Promise<void>
 }
 
 interface RigHandlers {
@@ -162,6 +164,10 @@ async function buildRig(device: string | undefined, h: RigHandlers): Promise<Rig
       node.connect(sink)
       sink.connect(ctx.destination)
 
+      let heard = (): void => {}
+      const firstSamples = new Promise<void>((resolve) => {
+        heard = resolve
+      })
       const rig: Rig = {
         stream,
         ctx,
@@ -171,6 +177,7 @@ async function buildRig(device: string | undefined, h: RigHandlers): Promise<Rig
         ring: createRingForRate(ctx.sampleRate),
         device,
         disposed: false,
+        firstSamples,
       }
 
       const maxGap = Math.round(MAX_GAP_SECONDS * ctx.sampleRate)
@@ -186,6 +193,7 @@ async function buildRig(device: string | undefined, h: RigHandlers): Promise<Rig
         }
         if (m.samples) {
           ringWrite(rig.ring, m.samples, m.at ?? rig.ring.end, maxGap)
+          heard()
           h.onCaptured()
         }
         if (typeof m.rms === 'number') h.onLevel(m.rms, m.peak ?? 0)
@@ -200,6 +208,27 @@ async function buildRig(device: string | undefined, h: RigHandlers): Promise<Rig
     for (const t of stream.getTracks()) t.stop()
     throw err
   }
+}
+
+function capturing(r: Rig): Promise<Rig> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('the microphone returned no samples')),
+      ARM_TIMEOUT_MS
+    )
+    void r.firstSamples.then(() => {
+      clearTimeout(timer)
+      resolve(r)
+    })
+  })
+}
+
+function healthy(r: Rig): boolean {
+  return (
+    !r.disposed &&
+    r.ctx.state !== 'closed' &&
+    r.stream.getAudioTracks().some((t) => t.readyState === 'live')
+  )
 }
 
 function inputLatency(stream: MediaStream): unknown {
@@ -270,7 +299,7 @@ function hushReference(t: Take): void {
   transport.stop()
 }
 
-export function useRecorder(): RecorderApi {
+export function useRecorder(keepWarm: boolean): RecorderApi {
   const [phase, setPhaseState] = useState<RecPhase>('idle')
   const [mic, setMicState] = useState<MicState>('off')
   const [countIn, setCountIn] = useState(0)
@@ -295,6 +324,8 @@ export function useRecorder(): RecorderApi {
   const takeRef = useRef<Take | null>(null)
   const takeGen = useRef(0)
   const doneTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const parkTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const keepRef = useRef(keepWarm)
 
   const phaseRef = useRef<RecPhase>('idle')
   const levelRef = useRef(0)
@@ -358,6 +389,21 @@ export function useRecorder(): RecorderApi {
     }
   }, [])
 
+  const park = useCallback(() => {
+    if (parkTimer.current) clearTimeout(parkTimer.current)
+    parkTimer.current = null
+    if (takeRef.current || (!rigRef.current && !warmPromise.current)) return
+    const hold = micHoldMs(keepRef.current, document.hidden)
+    if (hold === 0) {
+      teardownRig()
+      return
+    }
+    parkTimer.current = setTimeout(() => {
+      parkTimer.current = null
+      if (!takeRef.current) teardownRig()
+    }, hold)
+  }, [teardownRig])
+
   const finalize = useCallback(
     (t: Take, r: Rig) => {
       if (t.finalized || t.cancelled) return
@@ -373,7 +419,7 @@ export function useRecorder(): RecorderApi {
       const frames = stream?.frames() ?? 0
       if (takeRef.current === t) takeRef.current = null
 
-      teardownRig()
+      park()
 
       if (!stream || frames === 0) {
         stream?.abort()
@@ -395,7 +441,7 @@ export function useRecorder(): RecorderApi {
       }
       setPhase('preview')
     },
-    [setError, setPhase, teardownRig]
+    [setError, setPhase, park]
   )
 
   const finalizeRef = useRef(finalize)
@@ -422,7 +468,10 @@ export function useRecorder(): RecorderApi {
   const warm = useCallback(
     (device?: string): Promise<Rig> => {
       const cur = rigRef.current
-      if (cur && !cur.disposed && cur.device === device) return Promise.resolve(cur)
+      if (cur && healthy(cur) && cur.device === device) {
+        void cur.ctx.resume().catch(() => {})
+        return Promise.resolve(cur)
+      }
       if (warmPromise.current && warmDevice.current === device) return warmPromise.current
       if (!navigator.mediaDevices?.getUserMedia) {
         const msg = 'Microphone is not available in this environment'
@@ -477,13 +526,13 @@ export function useRecorder(): RecorderApi {
     }
     hushCue()
     discardClip()
-    teardownRig()
+    park()
     if (aliveRef.current) {
       setElapsed(0)
       setCountIn(0)
     }
     setPhase('idle')
-  }, [discardClip, hushCue, setPhase, teardownRig])
+  }, [discardClip, hushCue, setPhase, park])
 
   const failStream = useCallback(
     (t: Take, err: unknown) => {
@@ -541,7 +590,7 @@ export function useRecorder(): RecorderApi {
       const t = newTake(++takeGen.current)
       takeRef.current = t
 
-      const rigPromise = warm(opts.device)
+      const rigPromise = warm(opts.device).then(capturing)
       rigPromise.catch(() => {
       })
 
@@ -578,8 +627,12 @@ export function useRecorder(): RecorderApi {
             if (t.cancelled || takeRef.current !== t) return
           }
 
+          const r = await rigPromise
+          if (t.cancelled || takeRef.current !== t || r.disposed) return
+
           if (opts.countIn) {
             const c = await ensureCue()
+            if (t.cancelled || takeRef.current !== t) return
             if (c) {
               const now = c.ctx.currentTime
               try {
@@ -597,9 +650,6 @@ export function useRecorder(): RecorderApi {
               setPhase('countin')
             }
           }
-
-          const r = await rigPromise
-          if (t.cancelled || takeRef.current !== t || r.disposed) return
 
           const perfNow = performance.now()
           const ctxNow = r.ctx.currentTime
@@ -619,13 +669,6 @@ export function useRecorder(): RecorderApi {
             return
           }
 
-          if (perfNow > t.startAtMs - LATE_MARGIN_MS) {
-            const atMs = Math.max(perfNow + LEAD_IN * 1000, t.startAtMs + BEEP_GAP * 1000)
-            const c = await ensureCue()
-            if (c) beep(c.ctx, c.gain, c.ctx.currentTime + (atMs - performance.now()) / 1000, true)
-            t.beeps++
-            t.startAtMs = atMs
-          }
           t.startFrame = Math.round((ctxNow + (t.startAtMs - perfNow) / 1000) * rate)
           arm()
         } catch (err) {
@@ -671,6 +714,16 @@ export function useRecorder(): RecorderApi {
   }, [phase, setPhase])
 
   useEffect(() => {
+    keepRef.current = keepWarm
+    park()
+  }, [keepWarm, park])
+
+  useEffect(() => {
+    document.addEventListener('visibilitychange', park)
+    return () => document.removeEventListener('visibilitychange', park)
+  }, [park])
+
+  useEffect(() => {
     aliveRef.current = true
     const bye = (): void => {
       disposeRig(rigRef.current)
@@ -681,6 +734,7 @@ export function useRecorder(): RecorderApi {
       aliveRef.current = false
       window.removeEventListener('pagehide', bye)
       if (doneTimer.current) clearTimeout(doneTimer.current)
+      if (parkTimer.current) clearTimeout(parkTimer.current)
       const t = takeRef.current
       if (t) hushReference(t)
       takeRef.current = null
