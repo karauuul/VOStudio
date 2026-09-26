@@ -3,7 +3,9 @@ import { parseCsv } from '../src/shared/csv'
 import {
   applyTable,
   detectMapping,
+  hasSourceMaterial,
   importCounts,
+  importTabs,
   lineDot,
   matchAudioFiles,
   matchesImportTab,
@@ -19,6 +21,7 @@ import {
   type Project,
 } from '../src/shared/domain'
 import { applyChangeSet, applyProjectCommand } from '../src/shared/project-commands'
+import { isManualProject } from '../src/shared/lines'
 
 const cue = (over: Partial<Cue> & { key: string }): Cue => ({
   id: `id-${over.key}`,
@@ -249,6 +252,41 @@ describe('import tabs and counts', () => {
 
   it('picks the row dot', () => {
     expect(cues.map(lineDot)).toEqual(['ready', 'transcript', 'none'])
+  })
+
+  it('uses the translation layout only when the project has source material', () => {
+    const line = (over: Partial<Cue> = {}): Cue => ({ id: 'x', characterId: '', key: 'k', fields: {}, sourceText: '', text: 't', status: 'translated', notes: '', takes: [], ...over })
+    const tts = { id: 'g', kind: 'tts' as const, createdAt: 'now', file: { fileId: 'g', relPath: '/p/g.mp3', format: 'mp3' as const }, duration: 1, meta: {}, edits: { trimStart: 0, trimEnd: 0, gainDb: 0, fadeIn: { duration: 0, shape: 'equalPower' as const }, fadeOut: { duration: 0, shape: 'equalPower' as const } } }
+    expect(hasSourceMaterial({ cues: [line({ takes: [tts] })] })).toBe(false)
+    expect(hasSourceMaterial({ cues: [line()], languages: { source: 'en', target: 'uk' } })).toBe(true)
+    expect(hasSourceMaterial({ cues: [line({ sourceText: 'Hello' })] })).toBe(true)
+    expect(hasSourceMaterial({ cues: [line({ referenceAudio: { fileId: 'r', relPath: '/p/r.wav', format: 'wav' } })] })).toBe(true)
+    expect(hasSourceMaterial({ cues: [line({ region: { sourceId: 's', in: 0, out: 1 } })] })).toBe(true)
+    expect(hasSourceMaterial({ cues: [line({ referenceDuration: 2.5 })] })).toBe(true)
+    expect(hasSourceMaterial({ cues: [line({ referenceDuration: 0 })] })).toBe(false)
+  })
+
+  it('keeps the translation tabs', () => {
+    expect(importTabs(true)).toEqual([
+      { id: 'all', label: 'All' },
+      { id: 'notranscript', label: 'No transcript' },
+      { id: 'notranslation', label: 'No translation' },
+      { id: 'unmatched', label: 'No audio' },
+    ])
+  })
+
+  it('offers only text tabs in a manual project built from a table', () => {
+    const p = project([])
+    const headers = ['EventName', 'Text', 'Character']
+    const mapping = detectMapping(headers)
+    applyTable(p, [['a', 'One', 'ADA'], ['b', 'Two', 'ADA'], ['c', '', 'BOB']], mapping, 'id', false)
+    expect(isManualProject(p)).toBe(true)
+    expect(importTabs(false)).toEqual([
+      { id: 'all', label: 'All' },
+      { id: 'notranslation', label: 'No text' },
+    ])
+    expect(importCounts(p.cues)).toMatchObject({ lines: 3, notranslation: 1 })
+    expect(p.cues.filter((c) => matchesImportTab(c, 'notranslation')).map((c) => c.key)).toEqual(['c'])
   })
 })
 
