@@ -21,6 +21,8 @@ import {
   stationarySnapPoints,
   wordSnapPoints,
   wordsFromAlignment,
+  type LibraryGroup,
+  type LibraryRow,
 } from '../src/shared/library'
 import { compProblem } from '../src/shared/comp'
 import {
@@ -249,6 +251,48 @@ describe('libraryRow', () => {
 
   it('never returns a deleted take', () => {
     expect(libraryRow(a, p, 'gone')).toBeUndefined()
+  })
+
+  it('matches the row of the full library derivation for every kind of take', () => {
+    const at = (s: number): string => `2026-01-01T00:00:0${s}.000Z`
+    const mine = cue('a', {
+      text: 'Mine',
+      takes: [
+        take('a1', { createdAt: at(1) }),
+        take('a2', { createdAt: at(2), meta: { text: 'Other words' } }),
+        take('a3', { createdAt: at(3), kind: 'recording' }),
+        take('a4', { createdAt: at(4), deletedAt: 'then' }),
+      ],
+      comp: { clips: [clip({ sourceTakeId: 'b1' }), clip({ id: 'c2', sourceTakeId: 'a3' })] },
+    })
+    const b = cue('b', {
+      text: 'Shared',
+      takes: [
+        take('b1', { createdAt: at(5), pinned: true }),
+        take('b2', { createdAt: at(1) }),
+        take('b3', { createdAt: at(2), pinned: true, deletedAt: 'then' }),
+        take('b4', { createdAt: at(3), pinned: true, kind: 'recording' }),
+      ],
+    })
+    const c = cue('c', {
+      text: 'Shared',
+      takes: [take('c1', { createdAt: at(4), pinned: true }), take('c2', { createdAt: at(1) })],
+      comp: { clips: [clip({ sourceTakeId: 'b1' })] },
+    })
+    const all = project([mine, b, c])
+    const reference = (active: Cue, id: string): LibraryRow | undefined => {
+      const find = (groups: LibraryGroup[]): LibraryRow | undefined =>
+        groups.flatMap((g) => g.rows).find((r) => r.take.id === id)
+      return find(libraryGroups(active, all)) ?? find(projectLibrary(active, all))
+    }
+    const ids = [...all.cues.flatMap((x) => x.takes.map((t) => t.id)), 'missing']
+    const stale = { ...mine, takes: mine.takes.filter((t) => t.id !== 'a2') }
+    for (const active of [mine, b, c, stale]) {
+      for (const id of ids) expect(libraryRow(active, all, id)).toEqual(reference(active, id))
+    }
+    expect(libraryRow(mine, all, 'b1')).toMatchObject({ cueId: 'b', used: true })
+    expect(libraryRow(mine, all, 'c2')).toMatchObject({ cueId: 'c', label: 'v1' })
+    expect(libraryRow(stale, all, 'a2')).toMatchObject({ cueId: 'a' })
   })
 })
 

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import type { Cue } from '@shared/domain'
 import { libraryGroups, projectLibrary, type LibraryGroup, type LibraryRow } from '@shared/library'
-import { fmt, getPeaks, sourceColor, Wave, type Peaks } from '../Waveform'
+import { cachedPeaks, fmt, getPeaks, sourceColor, Wave, type Peaks } from '../Waveform'
 import { DRAG_TYPE } from './TimelinePanel'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 
@@ -18,6 +19,10 @@ export interface LibraryPanelProps {
 
 type Tab = 'line' | 'project'
 
+type Item =
+  | { kind: 'group'; key: string; group: LibraryGroup }
+  | { kind: 'row'; key: string; row: LibraryRow }
+
 export function LibraryPanel({
   cue,
   cues,
@@ -31,42 +36,36 @@ export function LibraryPanel({
   const [tab, setTab] = useState<Tab>('line')
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
-  const [peaks, setPeaks] = useState<Record<string, Peaks>>({})
   const pop = useContextMenu()
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<VirtuosoHandle>(null)
 
-  const groups: LibraryGroup[] = cue
-    ? tab === 'line'
-      ? libraryGroups(cue, { cues })
-      : projectLibrary(cue, { cues })
-    : []
+  const groups = useMemo<LibraryGroup[]>(
+    () =>
+      cue ? (tab === 'line' ? libraryGroups(cue, { cues }) : projectLibrary(cue, { cues })) : [],
+    [cue, cues, tab]
+  )
 
-  const q = query.trim().toLowerCase()
-  const shown = q ? groups.filter((g) => g.text.toLowerCase().includes(q)) : groups
-
-  const paths = shown.flatMap((g) => g.rows.map((r) => r.take.file.relPath))
-  const pathKey = paths.join('\n')
-
-  useEffect(() => {
-    let alive = true
-    for (const path of new Set(pathKey ? pathKey.split('\n') : [])) {
-      void getPeaks(path)
-        .then((p) => {
-          if (alive) setPeaks((m) => (m[path] ? m : { ...m, [path]: p }))
-        })
-        .catch(() => {})
-    }
-    return () => {
-      alive = false
-    }
-  }, [pathKey])
+  const items = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const out: Item[] = []
+    groups.forEach((group, gi) => {
+      if (q && !group.text.toLowerCase().includes(q)) return
+      out.push({ kind: 'group', key: `${group.lineId ?? ''}:${gi}:${group.text}`, group })
+      for (let i = group.rows.length - 1; i >= 0; i--) {
+        const row = group.rows[i]
+        out.push({ kind: 'row', key: row.take.id, row })
+      }
+    })
+    return out
+  }, [groups, query])
+  const itemsRef = useRef(items)
+  itemsRef.current = items
 
   const highlight = clipTakeId && clipTakeId !== selectedTakeId ? clipTakeId : null
   useEffect(() => {
     if (!highlight) return
-    scrollRef.current
-      ?.querySelector(`[data-take="${CSS.escape(highlight)}"]`)
-      ?.scrollIntoView({ block: 'nearest' })
+    const index = itemsRef.current.findIndex((it) => it.kind === 'row' && it.row.take.id === highlight)
+    if (index >= 0) listRef.current?.scrollIntoView({ index, behavior: 'auto' })
   }, [highlight, tab])
 
   return (
@@ -116,38 +115,55 @@ export function LibraryPanel({
         </button>
       </div>
 
-      <div className="lib-scroll" ref={scrollRef}>
-        {shown.map((group, gi) => (
-          <div key={`${group.lineId ?? ''}:${gi}:${group.text}`}>
-            <div className="grp">
-              <span className="lab">{group.text}</span>
-              {group.pinned && (
-                <span className="pin">
-                  <PinIcon />
-                  {group.useCount ?? 0}&times;
-                </span>
-              )}
-              {group.lineId && <span className="lid">{group.lineId}</span>}
-            </div>
-            {[...group.rows].reverse().map((row) => (
-              <Row
-                key={row.take.id}
-                row={row}
-                peaks={peaks[row.take.file.relPath] ?? null}
-                selected={row.take.id === selectedTakeId}
-                highlighted={row.take.id === highlight}
-                onSelect={onSelect}
-                onInsert={onInsert}
-                onMenu={(row, e) => menu && pop.open(e, menu(row))}
-              />
-            ))}
-          </div>
-        ))}
-      </div>
+      <Virtuoso
+        ref={listRef}
+        className="lib-scroll"
+        data={items}
+        computeItemKey={(_, item) => item.key}
+        itemContent={(_, item) =>
+          item.kind === 'group' ? (
+            <GroupHeader group={item.group} />
+          ) : (
+            <Row
+              row={item.row}
+              selected={item.row.take.id === selectedTakeId}
+              highlighted={item.row.take.id === highlight}
+              onSelect={onSelect}
+              onInsert={onInsert}
+              onMenu={(row, e) => menu && pop.open(e, menu(row))}
+            />
+          )
+        }
+      />
 
       {pop.node}
     </section>
   )
+}
+
+function GroupHeader({ group }: { group: LibraryGroup }) {
+  return (
+    <div className="grp">
+      <span className="lab">{group.text}</span>
+      {group.pinned && (
+        <span className="pin">
+          <PinIcon />
+          {group.useCount ?? 0}&times;
+        </span>
+      )}
+      {group.lineId && <span className="lid">{group.lineId}</span>}
+    </div>
+  )
+}
+
+function usePeaks(path: string): Peaks | null {
+  const [peaks, setPeaks] = useState(() => cachedPeaks(path))
+  useEffect(() => {
+    const ctl = new AbortController()
+    getPeaks(path, { background: true, signal: ctl.signal }).then(setPeaks, () => {})
+    return () => ctl.abort()
+  }, [path])
+  return peaks
 }
 
 function PinIcon() {
@@ -160,7 +176,6 @@ function PinIcon() {
 
 function Row({
   row,
-  peaks,
   selected,
   highlighted,
   onSelect,
@@ -168,20 +183,19 @@ function Row({
   onMenu,
 }: {
   row: LibraryRow
-  peaks: Peaks | null
   selected: boolean
   highlighted: boolean
   onSelect: (row: LibraryRow) => void
   onInsert: (row: LibraryRow) => void
   onMenu: (row: LibraryRow, e: ReactMouseEvent) => void
 }) {
+  const peaks = usePeaks(row.take.file.relPath)
   const cls =
     'it' + (row.used ? ' used' : '') + (selected ? ' sel' : '') + (highlighted ? ' hi' : '')
   return (
     <div
       className={cls}
       data-take={row.take.id}
-      tabIndex={-1}
       onContextMenu={(e) => {
         if (!selected) onSelect(row)
         onMenu(row, e)
