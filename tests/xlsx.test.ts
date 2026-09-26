@@ -160,9 +160,16 @@ describe('readXlsx cells', () => {
       '<c r="D2"><v>3.5</v></c><c r="E2" t="n"><v>-2E-3</v></c><c r="F2" t="e"><v>#DIV/0!</v></c><c r="G2" s="1"><f>A1</f><v>42</v></c></row>'
     expect(read(book(rows))).toEqual({
       script: false,
-      headers: ['Key', 'Value'],
+      headers: ['Key', 'Value', '', '', '', '', ''],
       rows: [['ab', 'TRUE', 'FALSE', '3.5', '-2E-3', '#DIV/0!', '42']],
     })
+  })
+
+  it('keeps data columns past the last named header mappable, like a csv header ending in a comma', async () => {
+    const rows = `<row r="1">${inline('A1', 'ID')}</row><row r="2">${inline('A2', 'a')}${inline('B2', 'text')}</row>`
+    const table = read(book(rows))
+    expect(table).toEqual({ script: false, headers: ['ID', ''], rows: [['a', 'text']] })
+    expect(table).toEqual(parseTableFile('same.csv', 'ID,\na,text\n'))
   })
 
   it('places sparse cells by reference, fills skipped rows and drops trailing empty rows', () => {
@@ -182,7 +189,7 @@ describe('readXlsx cells', () => {
 
   it('positions rows and cells without references sequentially', () => {
     const rows = '<row><c><v>1</v></c><c><v>2</v></c></row><row><c r="B2"><v>3</v></c><c><v>4</v></c></row>'
-    expect(read(book(rows))).toEqual({ script: false, headers: ['1', '2'], rows: [['', '3', '4']] })
+    expect(read(book(rows))).toEqual({ script: false, headers: ['1', '2', ''], rows: [['', '3', '4']] })
   })
 
   it('decodes entities, character references, Cyrillic text and Excel escapes', () => {
@@ -191,7 +198,7 @@ describe('readXlsx cells', () => {
       `<row r="2"><c r="A2" t="s"><v>0</v></c>${inline('B2', 'one_x000D_\ntwo _x005F_x0041_')}<c r="C2" t="str"><v>&amp;amp;</v></c></row>`
     expect(read(book(rows, '<si><t>Слово</t></si>'))).toEqual({
       script: false,
-      headers: [`a <b> & "c" 'd'`, 'Текст 😀'],
+      headers: [`a <b> & "c" 'd'`, 'Текст 😀', ''],
       rows: [['Слово', 'one\r\ntwo _x0041_', '&amp;']],
     })
   })

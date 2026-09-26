@@ -245,5 +245,6 @@ export function readXlsx(file: Buffer, cap: number): TableFile {
   if (xml === undefined) throw invalid(`${sheetPath} is missing`)
   const rows = sheetRows(xml, sharedStrings(part('xl/sharedStrings.xml') ?? ''), cap)
   const headers = rows.shift() ?? []
-  return headedTable(headers, rows)
+  const width = rows.reduce((max, cells) => Math.max(max, cells.length), headers.length)
+  return headedTable(headers.length > 0 ? [...headers, ...Array<string>(width - headers.length).fill('')] : headers, rows)
 }
