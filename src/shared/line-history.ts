@@ -71,7 +71,8 @@ export function removesLines(edit: LineEdit, dir: StepDir): boolean {
 }
 
 export function refuseWorkRemoval(history: LineHistory, dir: StepDir, cues: readonly Cue[]): boolean {
-  const stack = dir === 'undo' ? history.undo : history.redo
+  if (dir !== 'undo') return false
+  const stack = history.undo
   const top = stack[stack.length - 1]
   if (!top || !('ids' in top) || !removesLines(top, dir)) return false
   const ids = new Set(top.ids)

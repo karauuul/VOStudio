@@ -424,7 +424,7 @@ describe('history never removes lines that hold work', () => {
     expect(p.cues[0].takes).toHaveLength(1)
   })
 
-  it('refuses a redo that would delete a line holding work and keeps the rest of redo', async () => {
+  it('lets redo repeat an explicit delete of a line holding work', async () => {
     const p = project([cue('a'), cue('b', { takes: [take('t')] })])
     const s = session(p)
     const changes = s.edit({ type: 'cue.delete', cueIds: ['b'] })
@@ -432,9 +432,9 @@ describe('history never removes lines that hold work', () => {
     expect(refuseWorkRemoval(s.history, 'undo', p.cues)).toBe(false)
     await s.step('undo')
     expect(ids(p)).toEqual(['a', 'b'])
-    expect(refuseWorkRemoval(s.history, 'redo', p.cues)).toBe(true)
-    expect(ids(p)).toEqual(['a', 'b'])
-    expect(s.history.redo).toEqual([])
+    expect(refuseWorkRemoval(s.history, 'redo', p.cues)).toBe(false)
+    await s.step('redo')
+    expect(ids(p)).toEqual(['a'])
   })
 
   it('refuses a table undo that would remove imported lines holding work', () => {
