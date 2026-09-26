@@ -140,7 +140,7 @@ export function originalLength(cue: Cue): number | undefined {
 }
 
 export function hasOriginals(project: Pick<Project, 'cues'>): boolean {
-  return project.cues.some((cue) => cue.referenceAudio !== undefined || cue.region !== undefined)
+  return project.cues.some((cue) => cue.referenceAudio !== undefined || originalLength(cue) !== undefined)
 }
 
 export function isFastPath(

@@ -138,6 +138,11 @@ describe('hasOriginals', () => {
     expect(hasOriginals({ cues: [cue('1'), cue('2', { referenceAudio: reference })] })).toBe(true)
     expect(hasOriginals({ cues: [cue('3', { region: { sourceId: 's', in: 1, out: 2 } })] })).toBe(true)
   })
+
+  it('true for a timing-only original and false for a zero duration', () => {
+    expect(hasOriginals({ cues: [cue('4', { referenceDuration: 2.5 })] })).toBe(true)
+    expect(hasOriginals({ cues: [cue('5', { referenceDuration: 0 })] })).toBe(false)
+  })
 })
 
 describe('exportNamePreview', () => {
