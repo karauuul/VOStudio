@@ -1,5 +1,5 @@
 export type ExportFormatId = 'source' | 'wav-48-24' | 'wav-44-16' | 'mp3-192' | 'ogg'
-export type LoudnessMode = 'match' | 'off'
+export type LoudnessMode = 'match' | 'lufs' | 'peak' | 'off'
 export type LengthMode = 'trim' | 'pad' | 'asis'
 export type VideoMode = 'copy' | 'audio'
 
@@ -7,6 +7,8 @@ export interface ExportSettings {
   outDir?: string
   format?: ExportFormatId
   loudness?: LoudnessMode
+  lufsTarget?: number
+  peakTarget?: number
   length?: LengthMode
   video?: VideoMode
   videoName?: string
@@ -81,8 +83,24 @@ export function formatSpec(id: ExportFormatId | undefined): ExportFormatSpec {
 
 export const LOUDNESS_MODES: { id: LoudnessMode; label: string }[] = [
   { id: 'match', label: 'Match original' },
+  { id: 'lufs', label: 'Target LUFS' },
+  { id: 'peak', label: 'Peak' },
   { id: 'off', label: 'Off' },
 ]
+
+export const LUFS_TARGET_DEFAULT = -16
+export const LUFS_TARGET_MIN = -35
+export const LUFS_TARGET_MAX = -10
+export const PEAK_TARGET_DEFAULT = -1
+export const PEAK_TARGET_MIN = -12
+export const PEAK_TARGET_MAX = 0
+
+const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
+
+function snapDb(value: unknown, perDb: number, lo: number, hi: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return clamp(Math.round(value * perDb) / perDb, lo, hi)
+}
 
 export const LENGTH_MODES: { id: LengthMode; label: string }[] = [
   { id: 'trim', label: 'Trim to in / out' },
@@ -96,7 +114,11 @@ export function sanitizeExportSettings(value: unknown): ExportSettings | undefin
   const out: ExportSettings = {}
   if (typeof row.outDir === 'string' && row.outDir.trim()) out.outDir = row.outDir.trim()
   if (EXPORT_FORMATS.some((f) => f.id === row.format)) out.format = row.format
-  if (row.loudness === 'match' || row.loudness === 'off') out.loudness = row.loudness
+  if (LOUDNESS_MODES.some((m) => m.id === row.loudness)) out.loudness = row.loudness
+  const lufs = snapDb(row.lufsTarget, 1, LUFS_TARGET_MIN, LUFS_TARGET_MAX)
+  if (lufs !== undefined) out.lufsTarget = lufs
+  const peak = snapDb(row.peakTarget, 10, PEAK_TARGET_MIN, PEAK_TARGET_MAX)
+  if (peak !== undefined) out.peakTarget = peak
   if (row.length === 'trim' || row.length === 'pad' || row.length === 'asis') out.length = row.length
   if (row.video === 'copy' || row.video === 'audio') out.video = row.video
   if (typeof row.videoName === 'string' && row.videoName.trim()) out.videoName = row.videoName.trim()
@@ -109,6 +131,26 @@ export function lengthMode(settings: ExportSettings | undefined): LengthMode {
 
 export function loudnessMode(settings: ExportSettings | undefined): LoudnessMode {
   return settings?.loudness ?? 'off'
+}
+
+export function lufsTarget(settings: ExportSettings | undefined): number {
+  return settings?.lufsTarget ?? LUFS_TARGET_DEFAULT
+}
+
+export function peakTarget(settings: ExportSettings | undefined): number {
+  return settings?.peakTarget ?? PEAK_TARGET_DEFAULT
+}
+
+export interface LoudnessTarget {
+  mode: 'lufs' | 'peak'
+  db: number
+}
+
+export function loudnessTarget(settings: ExportSettings | undefined): LoudnessTarget | undefined {
+  const mode = loudnessMode(settings)
+  if (mode === 'lufs') return { mode, db: lufsTarget(settings) }
+  if (mode === 'peak') return { mode, db: peakTarget(settings) }
+  return undefined
 }
 
 export function estimateBytes(seconds: number, id: ExportFormatId | undefined): number {
@@ -138,6 +180,17 @@ export function parseEbur128(stderr: string): number | null {
   return last
 }
 
+const PEAK_RE = /Peak:\s*(-inf|-?\d+(?:\.\d+)?)\s*dBFS/g
+
+export function parseSamplePeak(stderr: string): number | null {
+  let last: number | null = null
+  for (const m of stderr.matchAll(PEAK_RE)) {
+    const v = Number(m[1])
+    last = Number.isFinite(v) ? v : null
+  }
+  return last
+}
+
 export const LOUDNESS_GAIN_LIMIT_DB = 24
 
 export function loudnessGainDb(referenceLufs: number | null, renderedLufs: number | null): number {
@@ -147,4 +200,25 @@ export function loudnessGainDb(referenceLufs: number | null, renderedLufs: numbe
   if (gain > LOUDNESS_GAIN_LIMIT_DB) return LOUDNESS_GAIN_LIMIT_DB
   if (gain < -LOUDNESS_GAIN_LIMIT_DB) return -LOUDNESS_GAIN_LIMIT_DB
   return Math.round(gain * 100) / 100
+}
+
+export const TARGET_GAIN_LIMIT_DB = 30
+export const LUFS_PEAK_CEILING_DB = -1
+export const LOSSY_HEADROOM_DB = 1
+export const SILENCE_LUFS = -70
+
+export interface LoudnessMeasure {
+  lufs: number | null
+  peak: number | null
+}
+
+const targetGain = (db: number): number =>
+  Math.round(clamp(db, -TARGET_GAIN_LIMIT_DB, TARGET_GAIN_LIMIT_DB) * 100) / 100
+
+export function targetGainDb(target: LoudnessTarget, { lufs, peak }: LoudnessMeasure, lossy = false): number {
+  if (peak === null || !Number.isFinite(peak)) return 0
+  const headroom = lossy ? LOSSY_HEADROOM_DB : 0
+  if (target.mode === 'peak') return targetGain(target.db - headroom - peak)
+  if (lufs === null || !Number.isFinite(lufs) || lufs <= SILENCE_LUFS) return 0
+  return targetGain(Math.min(target.db - lufs, LUFS_PEAK_CEILING_DB - headroom - peak))
 }

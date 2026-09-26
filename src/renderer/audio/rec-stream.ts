@@ -1,4 +1,5 @@
 import type { Take } from '@shared/domain'
+import type { PassRange } from '@shared/loop-record'
 import type { PcmBitDepth } from '@shared/wav-header'
 import { api } from '../api'
 import { pcm16, pcm24 } from './wav'
@@ -9,6 +10,7 @@ export interface RecStream {
   frames: () => number
   push: (samples: Float32Array) => void
   finish: (fragment: boolean) => Promise<Take>
+  finishPasses: (passes: readonly PassRange[]) => Promise<Take[]>
   abort: () => void
 }
 
@@ -57,6 +59,16 @@ export function openRecStream(
     })
   }
 
+  const close = <T>(call: (sid: string) => Promise<T>): Promise<T> => {
+    open = false
+    send()
+    return chain.then(async () => {
+      if (failed) throw failed
+      if (!session) throw new Error('Nothing was recorded')
+      return call(await session)
+    })
+  }
+
   return {
     frames: () => frames,
     push: (samples) => {
@@ -66,15 +78,8 @@ export function openRecStream(
       frames += samples.length
       if (batched >= batchFrames) send()
     },
-    finish: (fragment) => {
-      open = false
-      send()
-      return chain.then(async () => {
-        if (failed) throw failed
-        if (!session) throw new Error('Nothing was recorded')
-        return api['rec:finish']({ session: await session, fragment })
-      })
-    },
+    finish: (fragment) => close((sid) => api['rec:finish']({ session: sid, fragment })),
+    finishPasses: (passes) => close((sid) => api['rec:finishPasses']({ session: sid, passes: [...passes] })),
     abort: () => {
       if (!open) return
       open = false

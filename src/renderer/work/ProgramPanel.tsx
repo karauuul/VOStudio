@@ -125,16 +125,14 @@ export function ProgramPanel({
     setPeaks(null)
     const path = source?.relPath
     if (!path) return
-    let alive = true
-    void getPeaks(path).then(
+    const ctl = new AbortController()
+    getPeaks(path, { signal: ctl.signal }).then(
       (p) => {
-        if (alive) setPeaks(p)
+        if (!ctl.signal.aborted) setPeaks(p)
       },
       () => {}
     )
-    return () => {
-      alive = false
-    }
+    return () => ctl.abort()
   }, [source?.relPath])
 
   const sourceDur = peaks?.duration || source?.duration || 0

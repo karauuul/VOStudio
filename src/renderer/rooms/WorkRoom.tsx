@@ -83,6 +83,7 @@ interface Props {
   onAddLine: () => void
   onRecord: () => void
   onPickAudio: () => void
+  onPickTable: () => void
   onDropFiles: (files: File[]) => void
 }
 
@@ -101,6 +102,7 @@ export function WorkRoom({
   onAddLine,
   onRecord,
   onPickAudio,
+  onPickTable,
   onDropFiles,
 }: Props) {
   const [over, setOver] = useState(false)
@@ -211,6 +213,9 @@ export function WorkRoom({
           <button className="btn ghost add-line" onClick={onAddLine}>
             + Line
           </button>
+          <button className="btn ghost add-line" onClick={onPickTable}>
+            Table
+          </button>
         </div>
         <LinesPanel {...lines} />
       </section>
@@ -266,6 +271,9 @@ export function WorkRoom({
               <div className="work-empty">
                 <button className="btn ghost" onClick={onAddLine}>
                   + Line
+                </button>
+                <button className="btn ghost" onClick={onPickTable}>
+                  Table
                 </button>
                 <button className="btn rec" data-hk="toggleRecord" onClick={onRecord}>
                   Record <kbd>R</kbd>

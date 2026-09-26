@@ -166,12 +166,13 @@ describe('applyTable', () => {
     expect(p.cues[0].sourceText).toBe('Hello')
   })
 
-  it('does nothing without an id column', () => {
+  it('appends new lines without an id column and leaves existing lines alone', () => {
     const p = project([cue({ key: 'A' })])
     const r = applyTable(p, rows('A,Hello,,'), { text: 1 }, 'id', false)
     expect(r.matched).toBe(0)
-    expect(p.cues).toHaveLength(1)
+    expect(p.cues).toHaveLength(2)
     expect(p.cues[0].sourceText).toBe('')
+    expect(p.cues[1]).toMatchObject({ key: 'line-001', sourceText: 'Hello', fields: { EventName: 'Line 1' } })
   })
 
   it('stales an approval when the source text changes', () => {
