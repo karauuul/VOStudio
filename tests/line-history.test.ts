@@ -10,6 +10,7 @@ import {
   originalStateOf,
   outputStateIn,
   recordLineEdit,
+  refuseWorkRemoval,
   removalBlock,
   runLineStep,
   steppedEdit,
@@ -410,5 +411,89 @@ describe('undoing a split paste never overwrites later edits', () => {
     const before = structuredClone(p)
     applyProjectCommand(p, { type: 'cue.saveText', cueId: 'a', text: 'x', ifText: 'then' })
     expect(p).toEqual(before)
+  })
+})
+
+describe('history never removes lines that hold work', () => {
+  const take = (id: string, over: Partial<Take> = {}): Take => ({ id, kind: 'recording', createdAt: 'now', file: { fileId: id, relPath: `/p/${id}.wav`, format: 'wav' }, duration: 1, meta: {}, edits: emptyEdits(), ...over })
+  const clip = (takeId: string) => ({ id: `c-${takeId}`, sourceTakeId: takeId, srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits() })
+
+  function pasted() {
+    const p = project([cue('a', { text: 'old' }), cue('b')])
+    const s = session(p)
+    s.edit({ type: 'cue.create', afterCueId: 'b', lines: [{ id: 'x', text: 'Earlier.' }] })
+    recordLineEdit(s.history, { kind: 'cues', undoRemoves: true, ids: ['x'], snapshots: [], focus: 'x' }, 1)
+    s.edit({ type: 'cue.create', afterCueId: 'a', lines: [{ id: 'n1', text: 'Two.' }, { id: 'n2', text: 'Three.' }] })
+    s.edit({ type: 'cue.saveText', cueId: 'a', text: 'One.' })
+    recordLineEdit(s.history, { kind: 'cues', undoRemoves: true, ids: ['n1', 'n2'], snapshots: [], focus: 'a', text: { cueId: 'a', before: 'old', after: 'One.' } }, 2)
+    return { p, s }
+  }
+
+  it('refuses a paste undo once a pasted line has a take, drops the entry and reaches the older one next', async () => {
+    const { p, s } = pasted()
+    p.cues[2].takes.push(take('t'))
+    const before = structuredClone(p)
+    expect(refuseWorkRemoval(s.history, 'undo', p.cues)).toBe(true)
+    expect(p).toEqual(before)
+    expect(s.history.undo.map((e) => e.at)).toEqual([1])
+    expect(s.history.redo).toEqual([])
+    expect(refuseWorkRemoval(s.history, 'undo', p.cues)).toBe(false)
+    await s.step('undo')
+    expect(ids(p)).toEqual(['a', 'n1', 'n2', 'b'])
+    expect(p.cues[2].takes).toHaveLength(1)
+  })
+
+  it('refuses when a pasted line only has clips on its timeline', () => {
+    const { p, s } = pasted()
+    p.cues[0].takes.push(take('t', { pinned: true }))
+    p.cues[1].comp = { clips: [clip('t')] }
+    expect(refuseWorkRemoval(s.history, 'undo', p.cues)).toBe(true)
+    expect(ids(p)).toEqual(['a', 'n1', 'n2', 'b', 'x'])
+  })
+
+  it('still undoes the paste when the pasted lines were left untouched', async () => {
+    const { p, s } = pasted()
+    p.cues[0].takes.push(take('t'))
+    p.cues[0].comp = { clips: [clip('t')] }
+    p.cues[1].takes.push(take('gone', { deletedAt: 'then' }))
+    expect(refuseWorkRemoval(s.history, 'undo', p.cues)).toBe(false)
+    expect(s.history.undo).toHaveLength(2)
+    await s.step('undo')
+    expect(ids(p)).toEqual(['a', 'b', 'x'])
+    expect(p.cues[0].text).toBe('old')
+    expect(p.cues[0].takes).toHaveLength(1)
+  })
+
+  it('lets redo repeat an explicit delete of a line holding work', async () => {
+    const p = project([cue('a'), cue('b', { takes: [take('t')] })])
+    const s = session(p)
+    const changes = s.edit({ type: 'cue.delete', cueIds: ['b'] })
+    recordLineEdit(s.history, { kind: 'cues', undoRemoves: false, ids: ['b'], snapshots: changes.removedCues ?? [], focus: 'b' }, 1)
+    expect(refuseWorkRemoval(s.history, 'undo', p.cues)).toBe(false)
+    await s.step('undo')
+    expect(ids(p)).toEqual(['a', 'b'])
+    expect(refuseWorkRemoval(s.history, 'redo', p.cues)).toBe(false)
+    await s.step('redo')
+    expect(ids(p)).toEqual(['a'])
+  })
+
+  it('refuses a table undo that would remove imported lines holding work', () => {
+    const p = project([cue('a'), cue('m', { takes: [take('t')] })])
+    const history: LineHistory = { undo: [{ kind: 'table', ids: ['m'], snapshots: [], fields: [], characters: [], focus: 'm', at: 1 }], redo: [] }
+    expect(refuseWorkRemoval(history, 'undo', p.cues)).toBe(true)
+    expect(history.undo).toEqual([])
+  })
+
+  it('leaves steps alone that remove nothing', () => {
+    const p = project([cue('a', { takes: [take('t')] })])
+    const history: LineHistory = {
+      undo: [{ kind: 'done', cueId: 'a', textRevision: 0, before: { status: 'empty' }, after: { status: 'generated' }, at: 1 }],
+      redo: [{ kind: 'cues', undoRemoves: true, ids: ['a'], snapshots: [], focus: 'a', at: 2 }],
+    }
+    expect(refuseWorkRemoval(history, 'undo', p.cues)).toBe(false)
+    expect(refuseWorkRemoval(history, 'redo', p.cues)).toBe(false)
+    expect(refuseWorkRemoval({ undo: [], redo: [] }, 'undo', p.cues)).toBe(false)
+    expect(history.undo).toHaveLength(1)
+    expect(history.redo).toHaveLength(1)
   })
 })
