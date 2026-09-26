@@ -46,4 +46,22 @@ describe('stem files', () => {
     expect(await exists(path.dirname(orphan[0].file.relPath))).toBe(false)
     expect(second[0].file.fileId).toBe(`c1/${path.basename(second[0].file.relPath)}`)
   })
+
+  it('keeps stems a saved version still uses, even under an old project path', async () => {
+    const project = await store.createProject('stems-versioned', base())
+    const dir = store.getProjectDir()!
+    const kept = await store.saveStems('c1', Buffer.from('V1'), Buffer.from('R1'))
+    const dropped = await store.saveStems('c2', Buffer.from('V2'), Buffer.from('R2'))
+    const moved = kept.map((stem) => ({
+      ...stem,
+      file: { ...stem.file, relPath: stem.file.relPath.replace(dir, 'E:\\Old\\stems-versioned.vostudio').replace(/\//g, '\\') },
+    }))
+    await fs.mkdir(path.join(dir, 'versions'), { recursive: true })
+    await fs.writeFile(path.join(dir, 'versions', 'v1.json'), JSON.stringify({ cues: [{ id: 'c1', stems: moved }] }, null, 2))
+    expect(project.cues.every((c) => !c.stems)).toBe(true)
+    await store.dropUnusedStems()
+    for (const stem of kept) expect(await exists(stem.file.relPath)).toBe(true)
+    for (const stem of dropped) expect(await exists(stem.file.relPath)).toBe(false)
+    expect(await exists(path.dirname(dropped[0].file.relPath))).toBe(false)
+  })
 })

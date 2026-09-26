@@ -114,6 +114,7 @@ import {
 } from '@shared/provider-models'
 import { exportNamePreview, originalRef } from '@shared/export-plan'
 import { withDraft } from '@shared/text-draft'
+import { restoreBlock } from '@shared/versions'
 import { useTextDraft } from './text-draft-store'
 import { splitStems } from './audio/stems'
 import { runPlan } from './export/run-export'
@@ -270,6 +271,7 @@ export default function App() {
     debounceVoice,
     saveUi,
     onText: sessionText,
+    replace: replaceProject,
   } = session
 
   const refuseWhileExporting = useCallback((): boolean => {
@@ -1211,6 +1213,34 @@ export default function App() {
         () => false
       )),
     [flushText, flushVoice]
+  )
+
+  const restoreVersion = useCallback(
+    (n: number) => {
+      const block = restoreBlock({
+        exporting: exportingRef.current,
+        recording: recActiveRef.current?.() ?? false,
+        busy: busyCountNow() > 0,
+      })
+      if (block) {
+        pushStatus('info', block)
+        return
+      }
+      const run = async (): Promise<void> => {
+        if (!(await flushPending())) return
+        const snapshot = parseSnapshot(await api['project:restoreVersion']({ n }))
+        playback.stop()
+        resetHistory()
+        replaceProject(snapshot)
+        setPreviewCueId(undefined)
+        setTextSel(null)
+        const active = activeCueIdRef.current
+        if (active && !snapshot.project.cues.some((c) => c.id === active)) setActiveCueId(undefined)
+        pushStatus('ok', `Restored v${n}`)
+      }
+      void run().catch((e: unknown) => pushStatus('err', String(e)))
+    },
+    [flushPending, resetHistory, replaceProject, pushStatus]
   )
 
   const prepareLineRemoval = useCallback(
@@ -2198,6 +2228,7 @@ export default function App() {
         onRename={renameProject}
         versions={project.versions ?? []}
         onSaveVersion={saveVersion}
+        onRestore={restoreVersion}
         route={route}
         onRoute={goRoute}
         items={menuItems}

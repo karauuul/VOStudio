@@ -100,3 +100,16 @@ export function rebasePaths(project: Project, moved: ReadonlyMap<string, string>
   })
   return changed
 }
+
+const STEM_TAIL = /(?:^|\/)audio\/+stems\/+([^/]+)\/+([^/]+)$/i
+
+export function stemKey(file: string): string {
+  const unified = unifySeparators(file)
+  const m = STEM_TAIL.exec(unified)
+  return m ? `stems/${m[1]}/${m[2]}`.toLowerCase() : unified.toLowerCase()
+}
+
+export function stemKeysIn(json: string): string[] {
+  const text = json.replace(/\\\\/g, '/')
+  return [...text.matchAll(/audio\/+stems\/+([^"/]+)\/+([^"/]+)"/gi)].map((m) => `stems/${m[1]}/${m[2]}`.toLowerCase())
+}

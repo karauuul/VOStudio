@@ -102,6 +102,16 @@ describe('repository mutations', () => {
     expect((await repo.execute({ type: 'cue.saveText', cueId: 'a', text: 'ok' })).revision).toBe(1)
   })
 
+  it('continues from a starting revision and persists the next change', async () => {
+    const persist = vi.fn(async () => undefined)
+    const repo = new SerialProjectRepository(project(), persist, 1, 7)
+    expect(repo.currentRevision()).toBe(7)
+    expect(repo.snapshot().revision).toBe(7)
+    expect((await repo.execute({ type: 'cue.saveText', cueId: 'a', text: 'next' })).revision).toBe(8)
+    await repo.flush()
+    expect(persist).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects mutations after detach', async () => {
     const repo = new SerialProjectRepository(project(), vi.fn(), 1)
     await repo.detach()

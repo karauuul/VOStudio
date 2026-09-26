@@ -8,6 +8,7 @@ export interface MenuItem {
   label: string
   onClick: () => void
   disabled?: boolean
+  checked?: boolean
 }
 
 const ROOMS: { id: Route; label: string }[] = [
@@ -96,7 +97,8 @@ function Menu({
             <button
               key={item.label}
               className="menu-item"
-              role="menuitem"
+              role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
+              aria-checked={item.checked}
               disabled={item.disabled}
               onClick={() => {
                 onOpen(false)
@@ -118,6 +120,7 @@ interface Props {
   onRename: (name: string) => void
   versions: ProjectVersion[]
   onSaveVersion: () => void
+  onRestore: (n: number) => void
   route: Route
   onRoute: (next: Route) => void
   items: MenuItem[]
@@ -133,6 +136,7 @@ export function TopBar({
   onRename,
   versions,
   onSaveVersion,
+  onRestore,
   route,
   onRoute,
   items,
@@ -202,9 +206,11 @@ export function TopBar({
           </>
         }
         disabled={versions.length === 0}
-        items={[...versions]
-          .reverse()
-          .map((v) => ({ label: v.name ? `v${v.n} · ${v.name}` : `v${v.n}`, onClick: () => {} }))}
+        items={[...versions].reverse().map((v) => ({
+          label: v.name ? `v${v.n} · ${v.name}` : `v${v.n}`,
+          checked: v === latest,
+          onClick: () => onRestore(v.n),
+        }))}
         open={open === 'versions'}
         onOpen={(next) => setOpen(next ? 'versions' : null)}
       />
