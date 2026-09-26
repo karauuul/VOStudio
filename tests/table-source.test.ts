@@ -439,6 +439,7 @@ describe('table size bound', () => {
     expect(parseTableFile('ok.csv', 'Text\nOne\n').rows).toHaveLength(1)
     const wide = Array.from({ length: TABLE_COLUMNS_MAX + 1 }, (_, i) => `c${i}`).join(',')
     expect(() => parseTableFile('wide.csv', `${wide}\n`)).toThrow(/columns/)
+    expect(() => parseTableFile('wide-row.csv', `Text\n${wide}\n`)).toThrow(/columns/)
     expect(tableImportSchema.safeParse({ path: '/t.csv', rule: 'id', mapping: { id: TABLE_COLUMNS_MAX - 1 } }).success).toBe(true)
     expect(tableImportSchema.safeParse({ path: '/t.csv', rule: 'id', mapping: { id: TABLE_COLUMNS_MAX } }).success).toBe(false)
   })

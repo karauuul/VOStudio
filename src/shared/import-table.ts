@@ -88,7 +88,9 @@ export const CHARACTER_ID_MAX = 200
 
 function bounded(file: TableFile): TableFile {
   if (file.rows.length > TABLE_ROWS_MAX) throw new Error(`Table has more than ${TABLE_ROWS_MAX} rows`)
-  if (file.headers.length > TABLE_COLUMNS_MAX) throw new Error(`Table has more than ${TABLE_COLUMNS_MAX} columns`)
+  if (file.headers.length > TABLE_COLUMNS_MAX || file.rows.some((cells) => cells.length > TABLE_COLUMNS_MAX)) {
+    throw new Error(`Table has more than ${TABLE_COLUMNS_MAX} columns`)
+  }
   return file
 }
 
