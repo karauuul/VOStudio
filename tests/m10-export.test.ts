@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
+import { emptyEdits, type CompClip, type Cue, type Project, type Take } from '../src/shared/domain'
+import {
+  DEFAULT_DELAY,
+  DEFAULT_REVERB,
+  delayTail,
+  setEffectEnabled,
+  type ClipEffects,
+} from '../src/shared/effects'
+import { compDuration, compEffectsTail } from '../src/shared/comp'
+import { playBounds } from '../src/shared/resume'
 import {
   EXPORT_FORMATS,
   estimateBytes,
@@ -189,6 +198,144 @@ describe('render length', () => {
   })
 })
 
+describe('render length carries the effects tail the render adds', () => {
+  const withFx = (effects: ClipEffects, over: Partial<Take> = {}): Take =>
+    take('t', { ...over, edits: { ...emptyEdits(), ...over.edits, effects } })
+  const plain = (t: Take, over: Partial<Cue> = {}): Cue => cue('1', { takes: [t], ...over })
+  const compClip = (over: Partial<CompClip> = {}): CompClip => ({
+    id: 'a',
+    sourceTakeId: 't',
+    srcIn: 0,
+    srcOut: 2,
+    start: 0,
+    edits: emptyEdits(),
+    ...over,
+  })
+  const onComp = (t: Take, clips: CompClip[], over: Partial<Cue> = {}): Cue =>
+    cue('1', { takes: [t], comp: { clips }, output: { kind: 'comp', revision: 1 }, ...over })
+
+  it('a reverb on a single take adds pre-delay and decay after the take', () => {
+    const t = withFx({ reverb: DEFAULT_REVERB })
+    expect(renderLength(plain(t), t, project([plain(t)]))).toBeCloseTo(4.2, 9)
+    const pre = withFx({ reverb: { ...DEFAULT_REVERB, preDelay: 0.05 } })
+    expect(renderLength(plain(pre), pre, project([plain(pre)]))).toBeCloseTo(4.25, 9)
+  })
+
+  it('a delay on a single take adds its repeats until silence', () => {
+    const t = withFx({ delay: DEFAULT_DELAY })
+    expect(delayTail(DEFAULT_DELAY)).toBeCloseTo(1.75, 9)
+    expect(renderLength(plain(t), t, project([plain(t)]))).toBeCloseTo(4.75, 9)
+  })
+
+  it('trims and speed shorten the take but not its tail', () => {
+    const t = withFx({ reverb: DEFAULT_REVERB }, { duration: 4, edits: { ...emptyEdits(), trimEnd: 1, timeStretch: 2 } })
+    expect(renderLength(plain(t), t, project([plain(t)]))).toBeCloseTo(2.7, 9)
+  })
+
+  it('a comp adds the tail of its last-ending clip', () => {
+    const t = take('t')
+    const c = onComp(t, [
+      compClip(),
+      compClip({ id: 'b', srcOut: 1, start: 2, edits: { ...emptyEdits(), effects: { reverb: DEFAULT_REVERB } } }),
+    ])
+    expect(renderLength(c, t, project([c]))).toBeCloseTo(4.2, 9)
+  })
+
+  it('an earlier clip whose long delay outruns the last clip sets the end', () => {
+    const t = take('t')
+    const long = { time: 0.5, feedback: 0.5, mix: 0.3 }
+    const c = onComp(t, [
+      compClip({ edits: { ...emptyEdits(), effects: { delay: long } } }),
+      compClip({ id: 'b', srcOut: 1, start: 2 }),
+    ])
+    expect(renderLength(c, t, project([c]))).toBeCloseTo(2 + delayTail(long), 9)
+    expect(renderLength(c, t, project([c]))).toBeCloseTo(7, 9)
+  })
+
+  it('a comp clip inherits the tail of its source take effects', () => {
+    const t = withFx({ reverb: DEFAULT_REVERB })
+    const c = onComp(t, [compClip()])
+    expect(renderLength(c, t, project([c]))).toBeCloseTo(3.2, 9)
+  })
+
+  it('a track reverb tails the clips on that track', () => {
+    const t = take('t')
+    const c = cue('1', {
+      takes: [t],
+      comp: {
+        clips: [compClip({ trackId: 'tr' })],
+        tracks: [{ id: 'tr', name: 'Track 1', gainDb: 0, muted: false, solo: false, effects: { reverb: DEFAULT_REVERB } }],
+      },
+      output: { kind: 'comp', revision: 1 },
+    })
+    expect(renderLength(c, t, project([c]))).toBeCloseTo(3.2, 9)
+  })
+
+  it('a trim region still cuts the tail like the render does', () => {
+    const t = take('t')
+    const c = onComp(t, [compClip({ edits: { ...emptyEdits(), effects: { reverb: DEFAULT_REVERB } } })], {
+      comp: {
+        clips: [compClip({ edits: { ...emptyEdits(), effects: { reverb: DEFAULT_REVERB } } })],
+        region: { in: 0.5, out: 2.5 },
+      },
+    })
+    expect(renderLength(c, t, project([c], { export: { length: 'trim' } }))).toBe(2)
+  })
+
+  it('Pad to original pads only when the original outlasts the tail too', () => {
+    const t = withFx({ reverb: DEFAULT_REVERB })
+    const short = plain(t)
+    const pShort = project([short], { export: { length: 'pad' } })
+    expect(renderWindow(short, t, pShort)).toBeUndefined()
+    expect(renderLength(short, t, pShort)).toBeCloseTo(4.2, 9)
+    expect(compPlanFor(short, t, pShort)).toBeUndefined()
+
+    const long = plain(t, { referenceDuration: 5 })
+    const pLong = project([long], { export: { length: 'pad' } })
+    expect(renderWindow(long, t, pLong)).toEqual({ in: 0, out: 5 })
+    expect(renderLength(long, t, pLong)).toBe(5)
+  })
+
+  it('equals the stop bound the offline render takes from the plan it is given', () => {
+    const t = withFx({ delay: DEFAULT_DELAY })
+    const c = onComp(t, [compClip(), compClip({ id: 'b', srcOut: 1, start: 1.5 })], {
+      original: { exportMode: 'on', duckDb: -9 },
+      referenceDuration: 2,
+    })
+    const p = project([c], { export: { length: 'asis' } })
+    const plan = compPlanFor(c, t, p)!
+    const clips = plan.clips.map((k, i) => ({ ...k, id: String(i), sourceTakeId: '' }))
+    const total = Math.max(compDuration({ clips }), ...plan.originals!.map((o) => (o.start ?? 0) + o.duration))
+    const { from, until } = playBounds(total, plan.region, compEffectsTail(clips, plan.tracks))
+    expect(renderLength(c, t, p)).toBeCloseTo(until - from, 9)
+    expect(renderLength(c, t, p)).toBeCloseTo(2.5 + 1.75, 9)
+  })
+
+  it('a longer tail flags the line and grows the size estimate', () => {
+    const t = withFx({ reverb: DEFAULT_REVERB })
+    const c = plain(t)
+    const p = project([c])
+    const [row] = readinessRows(p)
+    expect(row.outputLength).toBeCloseTo(4.2, 9)
+    expect(row.status).toBe('longer')
+    expect(row.overBy).toBeCloseTo(0.7, 9)
+    const asis = project([c], { export: { length: 'asis' } })
+    expect(summarize(asis, readinessRows(asis)).bytes).toBeCloseTo(estimateBytes(4.2, undefined), 6)
+  })
+
+  it('lines without an audible effect keep exactly the old lengths', () => {
+    const bypassed = withFx(setEffectEnabled({ reverb: DEFAULT_REVERB }, 'reverb', false)!)
+    const pitched = withFx({ pitch: { semitones: 3 } })
+    for (const t of [take('t'), bypassed, pitched]) {
+      const c = plain(t)
+      expect(renderLength(c, t, project([c]))).toBe(3)
+      expect(renderWindow(c, t, project([c], { export: { length: 'pad' } }))).toEqual({ in: 0, out: 3.5 })
+    }
+    const c = onComp(take('t'), [compClip(), compClip({ id: 'b', srcOut: 1, start: 2 })])
+    expect(renderLength(c, c.takes[0], project([c]))).toBe(3)
+  })
+})
+
 describe('the Original lane on export', () => {
   const mixed = cue('1', { original: { exportMode: 'on', duckDb: -12 } })
 
@@ -292,6 +439,12 @@ describe('readiness', () => {
     expect(rows(p)['long'].overBy).toBeCloseTo(2.5, 6)
     expect(statusWords(rows(p)['long'])).toBe('Longer by 2.50s')
     expect(rows(project([longA], { export: { length: 'asis' } }))['long'].status).toBe('ready')
+  })
+
+  it('a difference of exactly the tolerance is still Ready despite float rounding', () => {
+    const edge = cue('edge', { takes: [take('te', { duration: 2.5 })], referenceDuration: 2.4 })
+    expect(2.5 - 2.4).toBeGreaterThan(0.1)
+    expect(rows(project([edge]))['edge'].status).toBe('ready')
   })
 
   it('a difference under the tolerance is still Ready', () => {
