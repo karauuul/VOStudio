@@ -269,6 +269,9 @@ export function applyTable(
         cue.suggestedText = translation
         suggested = true
       }
+    } else if (translation && cue.suggestedText !== undefined) {
+      delete cue.suggestedText
+      touched = true
     }
     if (character) {
       const characterId = ensureCharacter(project, character)

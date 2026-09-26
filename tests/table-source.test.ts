@@ -284,6 +284,17 @@ describe('re-import without Replace', () => {
     expect('suggestedText' in lineB(p)).toBe(false)
   })
 
+  it('a table reverted to the current text clears the pending suggestion', async () => {
+    const p = imported()
+    importInto(p, edited, options(tableMapping(edited)))
+    expect(lineB(p).suggestedText).toBe('Beta two')
+    const reverted = importInto(p, first, options(tableMapping(first)))
+    expect(reverted.committed.summary).toMatchObject({ updated: 1 })
+    expect('suggestedText' in lineB(p)).toBe(false)
+    await reverted.step('undo')
+    expect(lineB(p).suggestedText).toBe('Beta two')
+  })
+
   it('fills an empty text directly and does not suggest the same text twice', () => {
     const p = imported()
     lineB(p).text = ''
