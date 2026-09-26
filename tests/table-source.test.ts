@@ -231,7 +231,7 @@ describe('dry run', () => {
     const before = structuredClone(p)
     const summary = previewTable(p, table.rows, o)
     expect(p).toEqual(before)
-    expect(summary).toEqual({ added: 1, updated: 2, unchanged: 1, skipped: 1 })
+    expect(summary).toEqual({ added: 1, updated: 2, unchanged: 0, skipped: 1 })
     expect(commitTable(p, table.rows, o).summary).toEqual(summary)
   })
 
@@ -247,7 +247,7 @@ describe('dry run', () => {
     const p = project([])
     const o = options(tableMapping(table, p.cues))
     commitTable(p, table.rows, o)
-    expect(previewTable(p, table.rows, o)).toEqual({ added: 0, updated: 0, unchanged: 4, skipped: 1 })
+    expect(previewTable(p, table.rows, o)).toEqual({ added: 0, updated: 0, unchanged: 3, skipped: 1 })
   })
 })
 
@@ -459,5 +459,27 @@ describe('table cell bounds', () => {
     const fromScript = applyTable({ cues: [], characters: [] }, script.rows, tableMapping(script, []), 'id', false)
     expect(fromScript.summary.skipped).toBe(1)
     expect(fromScript.summary.added).toBe(1)
+  })
+})
+
+describe('duplicate keys', () => {
+  it('merges rows with the same key so intermediate values leave no side effects', () => {
+    const project = { cues: [], characters: [] }
+    const rows = [['K', 'First', 'Bo'], ['K', '', 'Ada'], ['L', 'Other', ''], ['K', 'Last', '']]
+    const result = applyTable(project, rows, { id: 0, translation: 1, character: 2 }, 'id', true)
+    expect(result.summary).toEqual({ added: 2, updated: 0, unchanged: 0, skipped: 0 })
+    expect(project.cues.map((cue) => [cue.key, cue.text, cue.characterId])).toEqual([
+      ['K', 'Last', 'Ada'],
+      ['L', 'Other', ''],
+    ])
+    expect(project.characters.map((c) => c.id)).toEqual(['Ada'])
+  })
+
+  it('a key that returns to its original values records no change', () => {
+    const bo = { id: 'Bo', name: 'Bo' } as Character
+    const project = { cues: [cue('a', { key: 'A', characterId: 'Bo' })], characters: [bo] }
+    const result = applyTable(project, [['A', 'Cy'], ['A', 'Bo']], { id: 0, character: 1 }, 'id', false)
+    expect(result.summary).toEqual({ added: 0, updated: 0, unchanged: 1, skipped: 0 })
+    expect(project.characters).toEqual([bo])
   })
 })

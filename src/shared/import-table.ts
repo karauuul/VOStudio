@@ -172,6 +172,25 @@ const keyedCue = (key: string): Cue => ({
   takes: [],
 })
 
+export function coalesceRows(rows: string[][], keyColumn: number): string[][] {
+  const merged = new Map<string, string[]>()
+  const out: string[][] = []
+  for (const cells of rows) {
+    const key = (cells[keyColumn] ?? '').trim()
+    const seen = key ? merged.get(key) : undefined
+    if (!seen) {
+      const copy = [...cells]
+      if (key) merged.set(key, copy)
+      out.push(copy)
+      continue
+    }
+    cells.forEach((cell, i) => {
+      if (cell.trim()) seen[i] = cell
+    })
+  }
+  return out
+}
+
 export function applyTable(
   project: Pick<Project, 'cues' | 'characters'>,
   rows: string[][],
@@ -189,7 +208,7 @@ export function applyTable(
   let matched = 0
   let line = nextLineNumber(project.cues)
 
-  for (const cells of rows) {
+  for (const cells of idColumn === undefined ? rows : coalesceRows(rows, idColumn)) {
     const id = cellAt(cells, idColumn)
     const source = cellAt(cells, mapping.text)
     const translation = cellAt(cells, mapping.translation)
