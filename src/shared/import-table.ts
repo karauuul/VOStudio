@@ -1,6 +1,6 @@
 import { changeCueSourceText, changeCueText } from './approval'
 import { parseCsv } from './csv'
-import { newLineCue, nextLineNumber, splitParagraphs } from './lines'
+import { LINE_TEXT_MAX, newLineCue, nextLineNumber, splitParagraphs } from './lines'
 import type { ChangeSet, FieldStep, LineFields } from './project-commands'
 import {
   characterColor,
@@ -197,7 +197,9 @@ export function applyTable(
     if (
       (idColumn === undefined ? !source && !translation : !id) ||
       id.length > CUE_KEY_MAX ||
-      character.length > CHARACTER_ID_MAX
+      character.length > CHARACTER_ID_MAX ||
+      source.length > LINE_TEXT_MAX ||
+      translation.length > LINE_TEXT_MAX
     ) {
       summary.skipped++
       continue

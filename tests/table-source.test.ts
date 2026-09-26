@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { LINE_TEXT_MAX } from '../src/shared/lines'
 import {
   applyTable,
   assignColumn,
@@ -425,5 +426,16 @@ describe('table cell bounds', () => {
     const result = applyTable(project, rows, { id: 0, translation: 1, character: 2 }, 'id', false)
     expect(result.summary).toEqual({ added: 1, updated: 0, unchanged: 0, skipped: 2 })
     expect(project.cues.map((cue) => cue.key)).toEqual(['good'])
+  })
+
+  it('skips rows whose text would exceed the editor limit', () => {
+    const project = { cues: [], characters: [] }
+    const rows = [['x'.repeat(LINE_TEXT_MAX + 1)], ['Short line']]
+    const result = applyTable(project, rows, { translation: 0 }, 'id', false)
+    expect(result.summary).toEqual({ added: 1, updated: 0, unchanged: 0, skipped: 1 })
+    const script = parseTableFile('script.txt', `${'y'.repeat(LINE_TEXT_MAX + 1)}\n\nFine\n`)
+    const fromScript = applyTable({ cues: [], characters: [] }, script.rows, tableMapping(script, []), 'id', false)
+    expect(fromScript.summary.skipped).toBe(1)
+    expect(fromScript.summary.added).toBe(1)
   })
 })
