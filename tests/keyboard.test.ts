@@ -288,7 +288,8 @@ describe('scope precedence', () => {
       expect(action({ code, scope: 'workspace' })).toBeNull()
     }
     expect(action({ code: 'KeyR', scope: 'timeline' })).toBe('toggleRecord')
-    expect(action({ code: 'KeyR', shiftKey: true, scope: 'workspace' })).toBeNull()
+    expect(action({ code: 'KeyR', shiftKey: true, scope: 'workspace' })).toBe('loopRecord')
+    expect(action({ code: 'KeyR', ctrlKey: true, scope: 'workspace' })).toBeNull()
   })
 
   it('workspace actions stay available in the timeline scope', () => {
@@ -308,6 +309,20 @@ describe('scope precedence', () => {
     for (const scope of ['text', 'grid', 'gridText', 'deliver', 'home'] as Scope[]) {
       expect(action({ code: 'KeyD', shiftKey: true, scope })).toBeNull()
     }
+  })
+
+  it('Shift+R loop-records from the work scopes only and is listed', () => {
+    for (const scope of ['workspace', 'timeline'] as Scope[]) {
+      expect(action({ code: 'KeyR', shiftKey: true, scope })).toBe('loopRecord')
+      expect(action({ code: 'KeyR', ctrlKey: true, shiftKey: true, scope })).toBeNull()
+      expect(action({ code: 'KeyR', shiftKey: true, repeat: true, scope })).toBeNull()
+    }
+    for (const scope of ['text', 'grid', 'gridText', 'deliver', 'home'] as Scope[]) {
+      expect(action({ code: 'KeyR', shiftKey: true, scope })).toBeNull()
+    }
+    expect(keyText(of('loopRecord'))).toBe('Shift+R')
+    expect(labelText(of('loopRecord'), false)).toBe('Loop record')
+    expect(groupOf(of('loopRecord'))).toBe('Work')
   })
 
   it('every binding declares at least one scope and no scope is unreachable', () => {

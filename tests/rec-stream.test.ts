@@ -15,6 +15,10 @@ const fakeApi = {
     calls.push({ channel: 'rec:finish', req })
     return { id: 'take' }
   }),
+  'rec:finishPasses': vi.fn(async (req: Record<string, unknown>) => {
+    calls.push({ channel: 'rec:finishPasses', req })
+    return [{ id: 'p1' }, { id: 'p2' }]
+  }),
   'rec:abort': vi.fn(async (req: Record<string, unknown>) => {
     calls.push({ channel: 'rec:abort', req })
   }),
@@ -68,6 +72,18 @@ describe('recording stream', () => {
     expect(first.readIntLE(3999 * 3, 3)).toBe(-0x800000)
     expect(last.length).toBe(9)
     expect(last.readIntLE(6, 3)).toBe(0x7fffff)
+  })
+
+  it('finishes into passes after the last chunk', async () => {
+    reset()
+    const s = openRecStream('c', 8000, 16, vi.fn())
+    s.push(new Float32Array(3000))
+    const passes = [{ from: 0, to: 1000 }, { from: 1200, to: 2200 }]
+    expect(await s.finishPasses(passes)).toEqual([{ id: 'p1' }, { id: 'p2' }])
+    expect(calls.map((c) => c.channel)).toEqual(['rec:begin', 'rec:chunk', 'rec:finishPasses'])
+    expect(calls[2].req).toStrictEqual({ session: 'session-1', passes })
+    s.push(new Float32Array(10))
+    expect(s.frames()).toBe(3000)
   })
 
   it('abort deletes an opened session and ignores later samples', async () => {
