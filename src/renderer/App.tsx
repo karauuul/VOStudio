@@ -77,7 +77,7 @@ import type { ChangeSet, ProjectCommand, ProjectSnapshot } from '@shared/project
 import {
   lineStepCommand,
   originalStateOf,
-  outputRevisionIn,
+  outputStateIn,
   recordLineEdit,
   removalBlock,
   removesLines,
@@ -1377,7 +1377,7 @@ export default function App() {
       const before = originalStateOf(cue)
       void execute({ type: 'cue.useTakeAsOriginal', cueId, takeId })
         .then((changes) =>
-          pushLineEdit({ kind: 'original', cueId, takeId, before, whenOutputRevision: outputRevisionIn(changes, cueId) })
+          pushLineEdit({ kind: 'original', cueId, takeId, before, after: outputStateIn(changes, cueId) })
         )
         .catch((e: unknown) => pushStatus('err', String(e)))
     },

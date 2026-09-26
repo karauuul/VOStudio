@@ -247,6 +247,12 @@ export const cueApprovalSchema = z.object({
   approvedAt: z.string().min(1),
 }).nullable()
 
+const outputStateSchema = z.object({
+  status: z.enum(['empty', 'translated', 'generated', 'approved', 'excluded']),
+  output: cueOutputSchema.optional(),
+  approval: cueApprovalSchema.optional(),
+})
+
 export const cueRevisionFieldsSchema = z.object({
   textRevision: revisionSchema.optional(),
   output: cueOutputSchema.optional(),
@@ -261,9 +267,12 @@ export const REC_CHUNK_MAX_BYTES = 4 * 1024 * 1024
 
 const recSession = z.string().uuid()
 
+export const pcmBitDepthSchema = z.union([z.literal(16), z.literal(24)])
+
 export const recBeginSchema = z.object({
   cueId: z.string().min(1).max(200),
   sampleRate: z.number().int().min(8000).max(384000),
+  bitDepth: pcmBitDepthSchema.optional(),
 })
 
 export const recChunkSchema = z.object({
@@ -272,7 +281,7 @@ export const recChunkSchema = z.object({
     .custom<ArrayBuffer | ArrayBufferView>((v) => v instanceof ArrayBuffer || ArrayBuffer.isView(v), {
       message: 'Expected PCM bytes',
     })
-    .refine((v) => v.byteLength > 0 && v.byteLength <= REC_CHUNK_MAX_BYTES && v.byteLength % 2 === 0, {
+    .refine((v) => v.byteLength > 0 && v.byteLength <= REC_CHUNK_MAX_BYTES, {
       message: 'Invalid PCM chunk size',
     }),
 })
@@ -402,10 +411,8 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('cue.restoreOriginal'),
     referenceAudio: audioRefSchema.nullable(),
     referenceDuration: finite.min(0).nullable(),
-    status: z.enum(['empty', 'translated', 'generated', 'approved', 'excluded']),
-    output: cueOutputSchema.optional(),
-    approval: cueApprovalSchema.optional(),
-    whenOutputRevision: revisionSchema,
+    ...outputStateSchema.shape,
+    whenState: outputStateSchema,
   }),
   characterId.extend({ type: z.literal('character.setVoiceSettings'), settings: voiceSettingsSchema }),
   z.object({ type: z.literal('character.create'), id: z.string().min(1).max(200), name: characterName }),
@@ -434,6 +441,7 @@ export const appSettingsSchema = z.object({
   micDeviceId: z.string().max(500).optional(),
   micDeviceLabel: z.string().max(500).optional(),
   outputDeviceLabel: z.string().max(500).optional(),
+  recordBitDepth: pcmBitDepthSchema.optional(),
   countIn: z.boolean(),
   autoReference: z.boolean(),
 })

@@ -646,7 +646,7 @@ function registerHandlers(): void {
 
   typedHandle('rec:begin', (req) => {
     const parsed = recBeginSchema.parse(req)
-    return beginRecording(requireSession(), parsed.cueId, parsed.sampleRate)
+    return beginRecording(requireSession(), parsed.cueId, parsed.sampleRate, parsed.bitDepth)
   })
 
   typedHandle('rec:chunk', (req) => {

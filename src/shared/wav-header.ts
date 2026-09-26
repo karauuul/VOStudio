@@ -3,6 +3,10 @@ export const WAV_HEADER_BYTES = 44
 export const WAV_PCM = 1
 export const WAV_FLOAT = 3
 
+export type PcmBitDepth = 16 | 24
+
+export const pcmBitDepth = (value: unknown): PcmBitDepth => (value === 24 ? 24 : 16)
+
 function writeAscii(view: DataView, offset: number, text: string): void {
   for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i))
 }
@@ -21,7 +25,7 @@ export function wavHeader(
   const header = new Uint8Array(WAV_HEADER_BYTES)
   const view = new DataView(header.buffer)
   writeAscii(view, 0, 'RIFF')
-  view.setUint32(4, 36 + dataBytes, true)
+  view.setUint32(4, 36 + dataBytes + (dataBytes % 2), true)
   writeAscii(view, 8, 'WAVE')
   writeAscii(view, 12, 'fmt ')
   view.setUint32(16, 16, true)
