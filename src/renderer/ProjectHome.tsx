@@ -33,6 +33,19 @@ export function ProjectHome({
 
   useEffect(refresh, [refresh])
 
+  const relist = useCallback(async (): Promise<void> => {
+    const listed = await api['project:list']().catch(() => null)
+    if (!listed) return
+    setProjects(listed)
+    setSelected((prev) => (prev && listed.some((p) => p.dir === prev) ? prev : null))
+  }, [])
+
+  useEffect(() => {
+    const onFocus = (): void => void relist()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [relist])
+
   useEffect(() => {
     if (!menuFor) return
     const close = (): void => setMenuFor(null)
@@ -55,7 +68,16 @@ export function ProjectHome({
     [onStatus]
   )
 
-  const open = (dir: string): void => run(async () => onOpen(parseSnapshot(await api['project:open'](dir))))
+  const open = (dir: string): void =>
+    run(async () => {
+      const snapshot = await api['project:open'](dir).catch(async (e: unknown) => {
+        await relist()
+        throw e
+      })
+      if (snapshot) return onOpen(parseSnapshot(snapshot))
+      await relist()
+      onStatus('err', 'Project folder not found')
+    })
 
   const pickTemplate = (): void =>
     run(async () => {
