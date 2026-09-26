@@ -6,18 +6,18 @@ import { z } from 'zod'
 import { emptyEdits, type Cue, type Take } from '@shared/domain'
 import type { CommandResult } from '@shared/project-commands'
 import { maxRecordSeconds } from '@shared/take-import'
-import { WAV_HEADER_BYTES, wavDataBytes, wavHeader } from '@shared/wav-header'
+import { WAV_HEADER_BYTES, wavDataBytes, wavHeader, type PcmBitDepth } from '@shared/wav-header'
 import type { SerialProjectRepository } from './project-repository'
 import { audioFilePath } from './project-store'
+import { pcmBitDepthSchema } from './schemas'
 import { appendTake, takeBase, type TakeSession } from './take-append'
-
-const PCM_BYTES = 2
 
 interface Recording {
   session: TakeSession
   cueId: string
   abs: string
   sampleRate: number
+  bitDepth: PcmBitDepth
   handle: FileHandle
   written: number
   limit: number
@@ -30,41 +30,48 @@ const sidecarSchema = z.object({
   cueId: z.string().min(1).max(200),
   sampleRate: z.number().int().min(8000).max(384000),
   startedAt: z.string().max(100),
+  bitDepth: pcmBitDepthSchema.optional(),
 })
 
 export const recordingsDir = (root: string): string => path.join(root, 'audio', 'recordings')
 const sidecarOf = (abs: string): string => `${abs}.json`
 
-export function recordingLimitBytes(sampleRate: number): number {
-  return (maxRecordSeconds(sampleRate) + 1) * sampleRate * PCM_BYTES
+const sampleBytes = (bitDepth: PcmBitDepth): number => bitDepth / 8
+
+export function recordingLimitBytes(sampleRate: number, bitDepth: PcmBitDepth = 16): number {
+  return (maxRecordSeconds(sampleRate) + 1) * sampleRate * sampleBytes(bitDepth)
 }
 
-function recordingTake(cue: Cue, abs: string, fileName: string, sampleRate: number, dataBytes: number, fragment: boolean): Take {
+function recordingTake(cue: Cue, abs: string, fileName: string, sampleRate: number, frames: number, fragment: boolean): Take {
   return {
     id: randomUUID(),
     kind: 'recording',
     createdAt: new Date().toISOString(),
     file: { fileId: `${cue.id}/${fileName}`, relPath: abs, format: 'wav', sampleRate, channels: 1 },
-    duration: dataBytes / PCM_BYTES / sampleRate,
+    duration: frames / sampleRate,
     meta: cue.text ? { text: cue.text } : {},
     edits: emptyEdits(),
     ...(fragment ? { fragment: true as const } : {}),
   }
 }
 
-async function seal(handle: FileHandle, sampleRate: number): Promise<number> {
+async function seal(handle: FileHandle, sampleRate: number, bitDepth: PcmBitDepth): Promise<number> {
   const { size } = await handle.stat()
-  const dataBytes = wavDataBytes(size, PCM_BYTES)
-  if (size !== WAV_HEADER_BYTES + dataBytes) await handle.truncate(WAV_HEADER_BYTES + dataBytes)
-  await handle.write(wavHeader(dataBytes, sampleRate), 0, WAV_HEADER_BYTES, 0)
+  const dataBytes = wavDataBytes(size, sampleBytes(bitDepth))
+  const end = WAV_HEADER_BYTES + dataBytes
+  if (size !== end + (dataBytes % 2)) {
+    await handle.truncate(end)
+    if (dataBytes % 2) await handle.truncate(end + 1)
+  }
+  await handle.write(wavHeader(dataBytes, sampleRate, 1, bitDepth), 0, WAV_HEADER_BYTES, 0)
   await handle.sync()
-  return dataBytes
+  return dataBytes / sampleBytes(bitDepth)
 }
 
-async function sealFile(abs: string, sampleRate: number): Promise<number> {
+async function sealFile(abs: string, sampleRate: number, bitDepth: PcmBitDepth): Promise<number> {
   const handle = await fs.open(abs, 'r+')
   try {
-    return await seal(handle, sampleRate)
+    return await seal(handle, sampleRate, bitDepth)
   } finally {
     await handle.close()
   }
@@ -75,13 +82,13 @@ async function adopt(
   cueId: string,
   partial: string,
   sampleRate: number,
-  dataBytes: number,
+  frames: number,
   fragment: boolean,
   publish: (result: CommandResult) => void
 ): Promise<Take> {
   const fileName = path.basename(partial)
   return appendTake(session, cueId, fileName, (abs) => fs.link(partial, abs), publish, (cue, abs) => ({
-    take: recordingTake(cue, abs, fileName, sampleRate, dataBytes, fragment),
+    take: recordingTake(cue, abs, fileName, sampleRate, frames, fragment),
     select: false,
   }))
 }
@@ -108,7 +115,12 @@ function enqueue<T>(rec: Recording, fn: () => Promise<T>): Promise<T> {
   return run
 }
 
-export async function beginRecording(session: TakeSession, cueId: string, sampleRate: number): Promise<string> {
+export async function beginRecording(
+  session: TakeSession,
+  cueId: string,
+  sampleRate: number,
+  bitDepth: PcmBitDepth = 16
+): Promise<string> {
   if (!session.repository.isLive()) throw new Error('No project is open')
   if (!session.repository.projectForMain().cues.some((c) => c.id === cueId)) throw new Error('Cue not found')
   const dir = recordingsDir(session.dir)
@@ -117,8 +129,8 @@ export async function beginRecording(session: TakeSession, cueId: string, sample
   const abs = path.join(dir, fileName)
   const handle = await fs.open(abs, 'wx+')
   try {
-    await handle.write(wavHeader(0, sampleRate), 0, WAV_HEADER_BYTES, 0)
-    const sidecar = { cueId, sampleRate, startedAt: new Date().toISOString() }
+    await handle.write(wavHeader(0, sampleRate, 1, bitDepth), 0, WAV_HEADER_BYTES, 0)
+    const sidecar = { cueId, sampleRate, startedAt: new Date().toISOString(), ...(bitDepth === 16 ? {} : { bitDepth }) }
     await fs.writeFile(sidecarOf(abs), JSON.stringify(sidecar), { flag: 'wx' })
   } catch (error) {
     await handle.close().catch(() => undefined)
@@ -131,9 +143,10 @@ export async function beginRecording(session: TakeSession, cueId: string, sample
     cueId,
     abs,
     sampleRate,
+    bitDepth,
     handle,
     written: 0,
-    limit: recordingLimitBytes(sampleRate),
+    limit: recordingLimitBytes(sampleRate, bitDepth),
     queue: Promise.resolve(),
   })
   return id
@@ -141,7 +154,7 @@ export async function beginRecording(session: TakeSession, cueId: string, sample
 
 export async function appendRecording(id: string, pcm: Buffer): Promise<void> {
   const rec = live(id)
-  if (pcm.length % PCM_BYTES !== 0) throw new Error('Recording chunk is not whole samples')
+  if (pcm.length % sampleBytes(rec.bitDepth) !== 0) throw new Error('Recording chunk is not whole samples')
   if (rec.written + pcm.length > rec.limit) throw new Error('Recording is too long')
   const at = WAV_HEADER_BYTES + rec.written
   rec.written += pcm.length
@@ -162,18 +175,18 @@ export async function finishRecording(
 ): Promise<Take> {
   const rec = live(id)
   recordings.delete(id)
-  const dataBytes = await enqueue(rec, async () => {
+  const frames = await enqueue(rec, async () => {
     try {
-      return await seal(rec.handle, rec.sampleRate)
+      return await seal(rec.handle, rec.sampleRate, rec.bitDepth)
     } finally {
       await rec.handle.close()
     }
   })
-  if (dataBytes === 0) {
+  if (frames === 0) {
     await discard(rec.abs)
     throw new Error('Nothing was recorded')
   }
-  const take = await adopt(rec.session, rec.cueId, rec.abs, rec.sampleRate, dataBytes, fragment, publish)
+  const take = await adopt(rec.session, rec.cueId, rec.abs, rec.sampleRate, frames, fragment, publish)
   await rec.session.repository.flush()
   await discard(rec.abs)
   return take
@@ -223,10 +236,10 @@ export async function recoverRecordings(session: TakeSession): Promise<number> {
       continue
     }
     try {
-      const dataBytes = await sealFile(abs, meta.sampleRate)
-      if (dataBytes > 0) {
+      const frames = await sealFile(abs, meta.sampleRate, meta.bitDepth ?? 16)
+      if (frames > 0) {
         await fs.rm(audioFilePath(session.dir, 'takes', cue.id, path.basename(abs)), { force: true })
-        await adopt(session, cue.id, abs, meta.sampleRate, dataBytes, false, () => undefined)
+        await adopt(session, cue.id, abs, meta.sampleRate, frames, false, () => undefined)
         recovered++
       }
       done.push(abs)

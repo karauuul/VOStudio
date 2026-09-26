@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Take as SavedTake } from '@shared/domain'
 import { maxRecordSeconds } from '@shared/take-import'
+import type { PcmBitDepth } from '@shared/wav-header'
 import { pcmDuration } from './wav'
 import {
   createRingForRate,
@@ -37,6 +38,7 @@ export interface RecordedClip {
 export interface StartOptions {
   cueId: string
   device?: string
+  bitDepth: PcmBitDepth
   countIn: boolean
   autoReference: boolean
   referenceUrl?: string
@@ -537,7 +539,7 @@ export function useRecorder(): RecorderApi {
             const rate = r.ctx.sampleRate
             const from = Math.round(r.ctx.currentTime * rate)
             t.sent = from
-            t.stream = openRecStream(opts.cueId, rate, (err) => failStream(t, err))
+            t.stream = openRecStream(opts.cueId, rate, opts.bitDepth, (err) => failStream(t, err))
             t.refPlaying = true
             setPhase('countin')
             const punchMs = await opts.preroll()
@@ -590,7 +592,7 @@ export function useRecorder(): RecorderApi {
           const arm = (): void => {
             t.sent = t.startFrame - Math.round(PREROLL_SECONDS * rate)
             t.limit = maxRecordSeconds(rate) - LIMIT_MARGIN_SECONDS
-            t.stream = openRecStream(opts.cueId, rate, (err) => failStream(t, err))
+            t.stream = openRecStream(opts.cueId, rate, opts.bitDepth, (err) => failStream(t, err))
             if (aliveRef.current) setLimit(t.limit)
           }
 

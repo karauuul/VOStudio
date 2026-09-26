@@ -31,7 +31,7 @@ const reset = (): void => {
 describe('recording stream', () => {
   it('batches pcm16 chunks in order and finishes after the last one', async () => {
     reset()
-    const s = openRecStream('c', 8000, vi.fn())
+    const s = openRecStream('c', 8000, 16, vi.fn())
     s.push(new Float32Array(3000).fill(0.5))
     s.push(new Float32Array(3000).fill(-1))
     s.push(new Float32Array(10).fill(1))
@@ -39,7 +39,7 @@ describe('recording stream', () => {
     const take = await s.finish(true)
     expect(take).toEqual({ id: 'take' })
     expect(calls.map((c) => c.channel)).toEqual(['rec:begin', 'rec:chunk', 'rec:chunk', 'rec:finish'])
-    expect(calls[0].req).toEqual({ cueId: 'c', sampleRate: 8000 })
+    expect(calls[0].req).toStrictEqual({ cueId: 'c', sampleRate: 8000, bitDepth: 16 })
     const first = new Int16Array(calls[1].req['pcm'] as ArrayBuffer)
     const last = new Int16Array(calls[2].req['pcm'] as ArrayBuffer)
     expect(first.length).toBe(6000)
@@ -52,9 +52,27 @@ describe('recording stream', () => {
     expect(calls.some((c) => c.channel === 'rec:abort')).toBe(false)
   })
 
+  it('24-bit streams whole little-endian samples, odd frame counts included', async () => {
+    reset()
+    const s = openRecStream('c', 8000, 24, vi.fn())
+    s.push(new Float32Array(3999).fill(0.5))
+    s.push(new Float32Array(2).fill(-1))
+    s.push(new Float32Array(3).fill(1))
+    await s.finish(false)
+    expect(calls.map((c) => c.channel)).toEqual(['rec:begin', 'rec:chunk', 'rec:chunk', 'rec:finish'])
+    expect(calls[0].req).toStrictEqual({ cueId: 'c', sampleRate: 8000, bitDepth: 24 })
+    const first = Buffer.from(calls[1].req['pcm'] as ArrayBuffer)
+    const last = Buffer.from(calls[2].req['pcm'] as ArrayBuffer)
+    expect(first.length).toBe(4001 * 3)
+    expect(first.readIntLE(0, 3)).toBe(Math.round(0.5 * 0x7fffff))
+    expect(first.readIntLE(3999 * 3, 3)).toBe(-0x800000)
+    expect(last.length).toBe(9)
+    expect(last.readIntLE(6, 3)).toBe(0x7fffff)
+  })
+
   it('abort deletes an opened session and ignores later samples', async () => {
     reset()
-    const s = openRecStream('c', 8000, vi.fn())
+    const s = openRecStream('c', 8000, 16, vi.fn())
     s.push(new Float32Array(4000))
     s.abort()
     s.push(new Float32Array(4000))
@@ -65,7 +83,7 @@ describe('recording stream', () => {
     reset()
     failChunk = true
     const onError = vi.fn()
-    const s = openRecStream('c', 8000, onError)
+    const s = openRecStream('c', 8000, 16, onError)
     s.push(new Float32Array(4000))
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1))
     s.push(new Float32Array(4000))
@@ -76,9 +94,9 @@ describe('recording stream', () => {
 
   it('nothing captured means no session at all', async () => {
     reset()
-    const s = openRecStream('c', 8000, vi.fn())
+    const s = openRecStream('c', 8000, 16, vi.fn())
     s.abort()
-    await expect(openRecStream('c', 8000, vi.fn()).finish(false)).rejects.toThrow('Nothing was recorded')
+    await expect(openRecStream('c', 8000, 16, vi.fn()).finish(false)).rejects.toThrow('Nothing was recorded')
     expect(calls).toEqual([])
   })
 })

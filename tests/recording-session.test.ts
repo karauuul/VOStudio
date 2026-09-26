@@ -48,20 +48,35 @@ const pcm = (frames: number, value = 1000): Buffer => {
   return out
 }
 
+const pcm24 = (frames: number, value = 100000): Buffer => {
+  const out = Buffer.alloc(frames * 3)
+  for (let i = 0; i < frames; i++) out.writeIntLE(value, i * 3, 3)
+  return out
+}
+
 const exists = (file: string): Promise<boolean> => fs.stat(file).then(() => true, () => false)
 const listRecordings = async (dir: string): Promise<string[]> => (await fs.readdir(recordingsDir(dir))).sort()
 
-async function crashLeftovers(dir: string, cueId: string, dataBytes: number, name = 't_crash_rec.wav'): Promise<string> {
+async function crashLeftovers(
+  dir: string,
+  cueId: string,
+  dataBytes: number,
+  name = 't_crash_rec.wav',
+  bitDepth?: 16 | 24
+): Promise<string> {
   await fs.mkdir(recordingsDir(dir), { recursive: true })
   const abs = path.join(recordingsDir(dir), name)
-  await fs.writeFile(abs, Buffer.concat([Buffer.from(wavHeader(0, RATE)), Buffer.alloc(dataBytes, 7)]))
-  await fs.writeFile(`${abs}.json`, JSON.stringify({ cueId, sampleRate: RATE, startedAt: 'now' }))
+  await fs.writeFile(abs, Buffer.concat([Buffer.from(wavHeader(0, RATE, 1, bitDepth)), Buffer.alloc(dataBytes, 7)]))
+  await fs.writeFile(`${abs}.json`, JSON.stringify({ cueId, sampleRate: RATE, startedAt: 'now', bitDepth }))
   return abs
 }
 
 describe('recording IPC schemas', () => {
   it('accepts well-formed requests', () => {
-    expect(recBeginSchema.parse({ cueId: 'c', sampleRate: 48000 })).toEqual({ cueId: 'c', sampleRate: 48000 })
+    expect(recBeginSchema.parse({ cueId: 'c', sampleRate: 48000 })).toStrictEqual({ cueId: 'c', sampleRate: 48000 })
+    expect(recBeginSchema.parse({ cueId: 'c', sampleRate: 48000, bitDepth: 24 })).toStrictEqual({ cueId: 'c', sampleRate: 48000, bitDepth: 24 })
+    expect(recBeginSchema.parse({ cueId: 'c', sampleRate: 48000, bitDepth: 16 }).bitDepth).toBe(16)
+    expect(recChunkSchema.safeParse({ session: SESSION, pcm: new ArrayBuffer(3) }).success).toBe(true)
     expect(recChunkSchema.safeParse({ session: SESSION, pcm: new ArrayBuffer(4096) }).success).toBe(true)
     expect(recChunkSchema.safeParse({ session: SESSION, pcm: new Uint8Array(8) }).success).toBe(true)
     expect(recFinishSchema.parse({ session: SESSION, fragment: true })).toEqual({ session: SESSION, fragment: true })
@@ -73,7 +88,8 @@ describe('recording IPC schemas', () => {
     expect(recBeginSchema.safeParse({ cueId: 'c', sampleRate: 44100.5 }).success).toBe(false)
     expect(recBeginSchema.safeParse({ cueId: 'c', sampleRate: 1000 }).success).toBe(false)
     expect(recChunkSchema.safeParse({ session: 'nope', pcm: new ArrayBuffer(2) }).success).toBe(false)
-    expect(recChunkSchema.safeParse({ session: SESSION, pcm: new ArrayBuffer(3) }).success).toBe(false)
+    expect(recBeginSchema.safeParse({ cueId: 'c', sampleRate: 48000, bitDepth: 32 }).success).toBe(false)
+    expect(recBeginSchema.safeParse({ cueId: 'c', sampleRate: 48000, bitDepth: '24' }).success).toBe(false)
     expect(recChunkSchema.safeParse({ session: SESSION, pcm: new ArrayBuffer(0) }).success).toBe(false)
     expect(recChunkSchema.safeParse({ session: SESSION, pcm: new ArrayBuffer(REC_CHUNK_MAX_BYTES + 2) }).success).toBe(false)
     expect(recChunkSchema.safeParse({ session: SESSION, pcm: 'bytes' }).success).toBe(false)
@@ -94,6 +110,19 @@ describe('wav header', () => {
     expect(wavDataBytes(WAV_HEADER_BYTES)).toBe(0)
     expect(wavDataBytes(10)).toBe(0)
   })
+
+  it('describes 24-bit mono and keeps whole 3-byte frames', () => {
+    const header = Buffer.from(wavHeader(300, 44100, 1, 24))
+    expect(header.readUInt16LE(20)).toBe(1)
+    expect(header.readUInt16LE(22)).toBe(1)
+    expect(header.readUInt32LE(24)).toBe(44100)
+    expect(header.readUInt32LE(28)).toBe(44100 * 3)
+    expect(header.readUInt16LE(32)).toBe(3)
+    expect(header.readUInt16LE(34)).toBe(24)
+    expect(header.readUInt32LE(40)).toBe(300)
+    expect(wavDataBytes(WAV_HEADER_BYTES + 1001, 3)).toBe(999)
+    expect(wavDataBytes(WAV_HEADER_BYTES + 2, 3)).toBe(0)
+  })
 })
 
 describe('recording ceiling', () => {
@@ -106,6 +135,11 @@ describe('recording ceiling', () => {
 
   it('bounds the 16-bit file with one second of slack', () => {
     expect(recordingLimitBytes(48000)).toBe((1638 + 1) * 48000 * 2)
+    expect(recordingLimitBytes(48000, 16)).toBe(recordingLimitBytes(48000))
+  })
+
+  it('scales the file bound with the sample size, not the time ceiling', () => {
+    expect(recordingLimitBytes(48000, 24)).toBe((1638 + 1) * 48000 * 3)
   })
 })
 
@@ -116,7 +150,9 @@ describe('recording session', () => {
     const id = await beginRecording({ repository, dir }, 'c', RATE)
     const [partialName, sidecarName] = await listRecordings(dir)
     expect(sidecarName).toBe(`${partialName}.json`)
-    expect(JSON.parse(await fs.readFile(path.join(recordingsDir(dir), sidecarName), 'utf-8'))).toMatchObject({ cueId: 'c', sampleRate: RATE })
+    const sidecar = JSON.parse(await fs.readFile(path.join(recordingsDir(dir), sidecarName), 'utf-8'))
+    expect(Object.keys(sidecar)).toEqual(['cueId', 'sampleRate', 'startedAt'])
+    expect(sidecar).toMatchObject({ cueId: 'c', sampleRate: RATE })
 
     await appendRecording(id, pcm(24000, 100))
     await appendRecording(id, pcm(24000, -100))
@@ -138,6 +174,39 @@ describe('recording session', () => {
     expect(await listRecordings(dir)).toEqual([])
     expect(published).toHaveLength(1)
     expect(repository.snapshot().project.cues[0].takes).toEqual([take])
+  })
+
+  it('streams a 24-bit take with its own header, sidecar and duration', async () => {
+    const { dir, repository } = setup()
+    const id = await beginRecording({ repository, dir }, 'c', RATE, 24)
+    const [partialName, sidecarName] = await listRecordings(dir)
+    const sidecar = JSON.parse(await fs.readFile(path.join(recordingsDir(dir), sidecarName), 'utf-8'))
+    expect(sidecar).toMatchObject({ cueId: 'c', sampleRate: RATE, bitDepth: 24 })
+    expect((await fs.readFile(path.join(recordingsDir(dir), partialName))).subarray(0, WAV_HEADER_BYTES)).toEqual(
+      Buffer.from(wavHeader(0, RATE, 1, 24))
+    )
+
+    await appendRecording(id, pcm24(24001, 100000))
+    await appendRecording(id, pcm24(23999, -100000))
+    const take = await finishRecording(id, false, () => undefined)
+    expect(take).toMatchObject({ kind: 'recording', duration: 1, file: { format: 'wav', sampleRate: RATE, channels: 1 } })
+    const bytes = await fs.readFile(take.file.relPath)
+    expect(bytes.length).toBe(WAV_HEADER_BYTES + 144000)
+    expect(bytes.subarray(0, WAV_HEADER_BYTES)).toEqual(Buffer.from(wavHeader(144000, RATE, 1, 24)))
+    expect(bytes.readIntLE(WAV_HEADER_BYTES, 3)).toBe(100000)
+    expect(bytes.readIntLE(WAV_HEADER_BYTES + 24000 * 3, 3)).toBe(100000)
+    expect(bytes.readIntLE(WAV_HEADER_BYTES + 24001 * 3, 3)).toBe(-100000)
+    expect(await listRecordings(dir)).toEqual([])
+  })
+
+  it('a 24-bit session takes only whole 3-byte samples and scales its byte limit', async () => {
+    const { dir, repository } = setup()
+    const id = await beginRecording({ repository, dir }, 'c', 8000, 24)
+    await expect(appendRecording(id, Buffer.alloc(2))).rejects.toThrow('whole samples')
+    await expect(appendRecording(id, Buffer.alloc(4))).rejects.toThrow('whole samples')
+    await appendRecording(id, Buffer.alloc(3))
+    await expect(appendRecording(id, Buffer.alloc(recordingLimitBytes(8000, 24)))).rejects.toThrow('too long')
+    await abortRecording(id)
   })
 
   it('completes short positional writes before advancing', async () => {
@@ -257,15 +326,55 @@ describe('recording recovery', () => {
     expect(persist).toHaveBeenCalled()
   })
 
+  it('recovers an old sidecar without a bit depth as 16-bit', async () => {
+    const { dir, repository } = setup()
+    const abs = await crashLeftovers(dir, 'c', 1001)
+    expect(Object.keys(JSON.parse(await fs.readFile(`${abs}.json`, 'utf-8')))).not.toContain('bitDepth')
+    expect(await recoverRecordings({ repository, dir })).toBe(1)
+    const take = repository.snapshot().project.cues[0].takes[0]
+    expect(take.duration).toBe(500 / RATE)
+    expect((await fs.readFile(take.file.relPath)).subarray(0, WAV_HEADER_BYTES)).toEqual(Buffer.from(wavHeader(1000, RATE)))
+  })
+
+  it('pads an odd-sized 24-bit data chunk as RIFF requires', async () => {
+    const { dir, repository } = setup()
+    const id = await beginRecording({ repository, dir }, 'c', RATE, 24)
+    await appendRecording(id, pcm24(3, 5))
+    const take = await finishRecording(id, false, () => undefined)
+    const bytes = await fs.readFile(take.file.relPath)
+    expect(bytes.length).toBe(WAV_HEADER_BYTES + 10)
+    expect(bytes.readUInt32LE(4)).toBe(36 + 10)
+    expect(bytes.readUInt32LE(40)).toBe(9)
+    expect(bytes[WAV_HEADER_BYTES + 9]).toBe(0)
+    expect(take.duration).toBe(3 / RATE)
+  })
+
+  it('repairs a 24-bit partial by whole 3-byte frames', async () => {
+    const { dir, repository } = setup()
+    await crashLeftovers(dir, 'c', 1001, 't_crash_rec.wav', 24)
+    expect(await recoverRecordings({ repository, dir })).toBe(1)
+    const take = repository.snapshot().project.cues[0].takes[0]
+    expect(take).toMatchObject({ kind: 'recording', duration: 333 / RATE, file: { fileId: 'c/t_crash_rec.wav' } })
+    const bytes = await fs.readFile(take.file.relPath)
+    expect(bytes.length).toBe(WAV_HEADER_BYTES + 1000)
+    expect(bytes.subarray(0, WAV_HEADER_BYTES)).toEqual(Buffer.from(wavHeader(999, RATE, 1, 24)))
+    expect(bytes.readUInt32LE(4)).toBe(36 + 1000)
+    expect(bytes.readUInt32LE(40)).toBe(999)
+    expect(bytes[WAV_HEADER_BYTES + 999]).toBe(0)
+    expect(await listRecordings(dir)).toEqual([])
+  })
+
   it('leaves recordings of a missing cue and unreadable sidecars untouched', async () => {
     const { dir, repository } = setup()
     const orphan = await crashLeftovers(dir, 'gone', 100, 't_a_rec.wav')
     const broken = await crashLeftovers(dir, 'c', 100, 't_b_rec.wav')
+    const unknownDepth = await crashLeftovers(dir, 'c', 100, 't_c_rec.wav')
     await fs.writeFile(`${broken}.json`, '{not json')
-    const before = await Promise.all([orphan, broken].map((f) => fs.readFile(f)))
+    await fs.writeFile(`${unknownDepth}.json`, JSON.stringify({ cueId: 'c', sampleRate: RATE, startedAt: 'now', bitDepth: 32 }))
+    const before = await Promise.all([orphan, broken, unknownDepth].map((f) => fs.readFile(f)))
     expect(await recoverRecordings({ repository, dir })).toBe(0)
-    expect(await listRecordings(dir)).toHaveLength(4)
-    expect(await Promise.all([orphan, broken].map((f) => fs.readFile(f)))).toEqual(before)
+    expect(await listRecordings(dir)).toHaveLength(6)
+    expect(await Promise.all([orphan, broken, unknownDepth].map((f) => fs.readFile(f)))).toEqual(before)
     expect(repository.snapshot().revision).toBe(0)
   })
 
