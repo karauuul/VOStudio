@@ -6,10 +6,34 @@ const isProjectFolder = (part: string): boolean =>
 
 const unifySeparators = (p: string): string => p.replace(/[\\/]+/g, '/')
 
+function projectFolderAt(parts: string[]): number {
+  for (let i = parts.length - 2; i >= 0; i--) if (isProjectFolder(parts[i])) return i
+  return -1
+}
+
+const splitPath = (stored: string): string[] => stored.replace(/[\\/]+$/, '').split(/[\\/]+/)
+
+export function projectRootOf(stored: string): string | null {
+  const parts = splitPath(stored)
+  const at = projectFolderAt(parts)
+  return at < 0 ? null : parts.slice(0, at + 1).join('/').toLowerCase()
+}
+
+export function previousProjectRoot(project: Project): string | null {
+  const own = project.cues.flatMap((cue) => cue.takes.map((take) => take.file.relPath))
+  const counts = new Map<string, number>()
+  for (const stored of own.length > 0 ? own : projectPaths(project)) {
+    const root = projectRootOf(stored)
+    if (root) counts.set(root, (counts.get(root) ?? 0) + 1)
+  }
+  let best: string | null = null
+  for (const [root, n] of counts) if (best === null || n > (counts.get(best) ?? 0)) best = root
+  return best
+}
+
 export function relocatedPath(projectDir: string, stored: string): string | null {
-  const parts = stored.replace(/[\\/]+$/, '').split(/[\\/]+/)
-  let at = -1
-  for (let i = parts.length - 2; i >= 0 && at < 0; i--) if (isProjectFolder(parts[i])) at = i
+  const parts = splitPath(stored)
+  const at = projectFolderAt(parts)
   if (at < 0) return null
   const tail = parts.slice(at + 1)
   if (tail.some((part) => part === '' || part === '.' || part === '..')) return null

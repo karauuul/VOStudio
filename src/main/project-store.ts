@@ -29,7 +29,7 @@ import {
   type ProjectFile,
   type ProjectListing,
 } from '@shared/project-file'
-import { projectPaths, rebasePaths, relocatedPath } from '@shared/relocate'
+import { previousProjectRoot, projectPaths, projectRootOf, rebasePaths, relocatedPath } from '@shared/relocate'
 import { appSettingsSchema, projectFileSchema } from './schemas'
 
 let current: Project | null = null
@@ -324,9 +324,12 @@ export async function openProjectDir(dir: string): Promise<Project> {
 }
 
 export async function relocateMovedFiles(project: Project, dir: string): Promise<boolean> {
+  const root = previousProjectRoot(project)
+  if (root === null) return false
   const moved = new Map<string, string>()
   await Promise.all(
     [...new Set(projectPaths(project))].map(async (stored) => {
+      if (projectRootOf(stored) !== root) return
       const next = relocatedPath(dir, stored)
       if (next && (await exists(next))) moved.set(stored, next)
     })

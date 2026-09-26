@@ -70,12 +70,18 @@ export function isProjectDirIn(root: string, dir: string): boolean {
   return d.slice(0, cut) === normalizePath(root) && d.length - cut - 1 > PROJECT_SUFFIX.length
 }
 
+export const PROJECT_NAME_MAX = 80
+
 export function uniqueProjectName(taken: string[], base = 'Untitled'): string {
   const used = new Set(taken.map((name) => name.toLowerCase()))
   if (!used.has(base.toLowerCase())) return base
+  const named = (n: number): string => {
+    const suffix = ` ${n}`
+    return `${base.slice(0, PROJECT_NAME_MAX - suffix.length).trimEnd()}${suffix}`
+  }
   let n = 2
-  while (used.has(`${base} ${n}`.toLowerCase())) n++
-  return `${base} ${n}`
+  while (used.has(named(n).toLowerCase())) n++
+  return named(n)
 }
 
 export function isInsideDir(file: string, dir: string): boolean {

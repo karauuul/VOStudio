@@ -3,7 +3,7 @@ import path from 'path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import type { Cue, Project, Take } from '../src/shared/domain'
 import { projectFile } from '../src/shared/project-file'
-import { projectPaths, rebasePaths, relocatedPath } from '../src/shared/relocate'
+import { previousProjectRoot, projectPaths, projectRootOf, rebasePaths, relocatedPath } from '../src/shared/relocate'
 
 const H = vi.hoisted(() => ({
   root: `${process.env['TEMP'] ?? process.env['TMPDIR'] ?? '/tmp'}/vostudio-relocate-${Date.now()}`,
@@ -198,6 +198,17 @@ function projectAt(dir: string, external: string): Project {
   }
 }
 
+describe('previous project root', () => {
+  it('is the folder the takes live in, even when external files sit in another project folder', () => {
+    const project = projectAt('E:\\Old\\Foo.vostudio', 'D:\\Stuff')
+    project.sources![0].media = 'D:\\Else\\Bar.vostudio\\audio\\sources\\movie.mp4'
+    project.cues[0].referenceAudio!.relPath = 'D:\\Else\\Bar.vostudio\\audio\\reference\\k1.wav'
+    expect(previousProjectRoot(project)).toBe(projectRootOf('E:/Old/Foo.vostudio/audio/takes/c1/t1.wav'))
+    expect(projectRootOf('E:\\Old\\FOO.VOSTUDIO\\audio\\x.wav')).toBe(projectRootOf('e:/old/foo.vostudio/audio/y.wav'))
+    expect(projectRootOf('D:\\Stuff\\generated\\K1.mp3')).toBeNull()
+  })
+})
+
 describe('project path fields', () => {
   it('enumerates every stored path, live and deleted takes included', () => {
     const project = projectAt('/old/Foo.vostudio', '/ext')
@@ -291,6 +302,24 @@ describe('relocateMovedFiles', () => {
     const opened = await store.openProjectDir(copy)
     expect(await store.relocateMovedFiles(opened, copy)).toBe(true)
     expect(opened.cues[0].takes[0].file.relPath).toBe(path.join(copy, 'audio', 'takes', 'c1', 't1.wav'))
+    store.closeProject()
+  })
+
+  it('leaves an external file under another project folder alone when the project did not move', async () => {
+    const dir = path.join(ROOT, 'Here.vostudio')
+    const other = path.join(ROOT, 'Other.vostudio')
+    const project = projectAt(dir, path.join(H.root, 'external'))
+    const media = path.join(other, 'audio', 'sources', 'movie.mp4')
+    project.sources![0].media = media
+    for (const take of project.cues[0].takes) await touch(take.file.relPath)
+    await touch(media)
+    await touch(path.join(dir, 'audio', 'sources', 'movie.mp4'))
+    const json = await writeProject(dir, project)
+
+    const opened = await store.openProjectDir(dir)
+    expect(await store.relocateMovedFiles(opened, dir)).toBe(false)
+    expect(opened.sources![0].media).toBe(media)
+    expect(await fs.readFile(path.join(dir, 'project.json'), 'utf-8')).toBe(json)
     store.closeProject()
   })
 

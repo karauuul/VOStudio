@@ -65,6 +65,9 @@ describe('unique project name', () => {
   it('starts at Untitled and counts up past taken folders, ignoring case', () => {
     expect(uniqueProjectName([])).toBe('Untitled')
     expect(uniqueProjectName(['Other'])).toBe('Untitled')
+    const long = 'x'.repeat(80)
+    expect(uniqueProjectName([long], long)).toBe(`${'x'.repeat(78)} 2`)
+    expect(uniqueProjectName([long, `${'x'.repeat(78)} 2`], long)).toHaveLength(80)
     expect(uniqueProjectName(['untitled'])).toBe('Untitled 2')
     expect(uniqueProjectName(['Untitled', 'Untitled 2', 'UNTITLED 3'])).toBe('Untitled 4')
     expect(uniqueProjectName(['Untitled', 'Untitled 3'])).toBe('Untitled 2')
