@@ -6,7 +6,7 @@ import { projectCommandSchema } from '../src/main/schemas'
 import {
   lineStepCommand,
   originalStateOf,
-  outputRevisionIn,
+  outputStateIn,
   recordLineEdit,
   removalBlock,
   runLineStep,
@@ -109,7 +109,7 @@ describe('line history', () => {
     const s = session(p)
     const before = originalStateOf(p.cues[0])
     const changes = s.edit({ type: 'cue.useTakeAsOriginal', cueId: 'a', takeId: 't' })
-    recordLineEdit(s.history, { kind: 'original', cueId: 'a', takeId: 't', before, whenOutputRevision: outputRevisionIn(changes, 'a') }, 1)
+    recordLineEdit(s.history, { kind: 'original', cueId: 'a', takeId: 't', before, after: outputStateIn(changes, 'a') }, 1)
     await s.step('undo')
     expect(p.cues[0].referenceAudio).toEqual(ref)
     expect(p.cues[0].referenceDuration).toBe(3)
@@ -118,6 +118,24 @@ describe('line history', () => {
     expect(p.cues[0].referenceDuration).toBe(1)
     await s.step('undo')
     expect(p.cues[0].referenceAudio).toEqual(ref)
+  })
+
+  it('undo, redo, undo of Use as original keeps an exclusion made after the action', async () => {
+    const take = { id: 't', kind: 'imported' as const, createdAt: 'now', file: { fileId: 't', relPath: '/p/t.wav', format: 'wav' as const }, duration: 1, meta: {}, edits: emptyEdits() }
+    const p = project([cue('a', { text: 'T', status: 'generated', referenceAudio: { fileId: 'r', relPath: '/p/r.wav', format: 'wav' }, takes: [take], finalTakeId: 't' })])
+    const s = session(p)
+    const before = originalStateOf(p.cues[0])
+    const changes = s.edit({ type: 'cue.useTakeAsOriginal', cueId: 'a', takeId: 't' })
+    recordLineEdit(s.history, { kind: 'original', cueId: 'a', takeId: 't', before, after: outputStateIn(changes, 'a') }, 1)
+    applyProjectCommand(p, { type: 'cue.setExcluded', cueId: 'a', excluded: true })
+    await s.step('undo')
+    expect(p.cues[0].referenceAudio?.relPath).toBe('/p/r.wav')
+    expect(p.cues[0].status).toBe('excluded')
+    await s.step('redo')
+    expect(p.cues[0].referenceAudio?.relPath).toBe('/p/t.wav')
+    await s.step('undo')
+    expect(p.cues[0].referenceAudio?.relPath).toBe('/p/r.wav')
+    expect(p.cues[0].status).toBe('excluded')
   })
 
   it('caps the undo stack and clears redo on every new entry', () => {
