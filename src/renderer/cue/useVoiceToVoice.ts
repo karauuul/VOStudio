@@ -360,7 +360,7 @@ export function useVoiceToVoice({
     if (converting || preRef.current || rec.phase !== 'idle') return
     const range = region()
     if (!range) {
-      onStatus('info', 'Set In and Out first')
+      onStatus('info', 'No In/Out')
       return
     }
     const session: LoopSession = { range, trackId: targetTrack(), latency: appSettings.recordLatencyMs }
