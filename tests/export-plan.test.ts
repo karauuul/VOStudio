@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   containerOf,
+  DEFAULT_EXPORT_TEMPLATE,
   exportName,
   exportNamePreview,
   extOf,
   findCollisions,
   hasEdits,
+  hasOriginals,
   isFastPath,
   planBatch,
 } from '../src/shared/export-plan'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
+import { newLineCue } from '../src/shared/lines'
 
 function take(id: string, format: 'mp3' | 'wav' = 'mp3', edits = emptyEdits()): Take {
   return {
@@ -105,6 +108,40 @@ describe('exportName', () => {
   it('without EventName falls back to key', () => {
     const c = cue('77', { fields: {} })
     expect(exportName(project([c]), c, c.takes[0])).toBe('77.mp3')
+  })
+
+  it('{Name} is the line label: the event name, or the key when it is empty', () => {
+    const c = cue('12345')
+    expect(exportName(project([c], '{Name}.{ext}'), c, c.takes[0])).toBe('Event_12345.mp3')
+    const bare = cue('88', { fields: { EventName: '' } })
+    expect(exportName(project([bare], '{Name}.{ext}'), bare, bare.takes[0])).toBe('88.mp3')
+  })
+
+  it('the default template names a manual line after its label, as {EventName} did', () => {
+    const line = { ...newLineCue('c1', 3, 'Hello'), takes: [take('t1', 'wav')] }
+    const t = line.takes[0]
+    expect(exportName(project([line], DEFAULT_EXPORT_TEMPLATE), line, t)).toBe('Line 3.wav')
+    expect(exportName(project([line], DEFAULT_EXPORT_TEMPLATE), line, t)).toBe(
+      exportName(project([line], '{EventName}.{ext}'), line, t)
+    )
+  })
+})
+
+describe('hasOriginals', () => {
+  it('false when no line has original audio', () => {
+    expect(hasOriginals({ cues: [] })).toBe(false)
+    expect(hasOriginals({ cues: [cue('1'), newLineCue('c2', 2)] })).toBe(false)
+  })
+
+  it('true when any line has reference audio or a source region', () => {
+    const reference = { fileId: 'r', relPath: 'E:/r.wav', format: 'wav' as const }
+    expect(hasOriginals({ cues: [cue('1'), cue('2', { referenceAudio: reference })] })).toBe(true)
+    expect(hasOriginals({ cues: [cue('3', { region: { sourceId: 's', in: 1, out: 2 } })] })).toBe(true)
+  })
+
+  it('true for a timing-only original and false for a zero duration', () => {
+    expect(hasOriginals({ cues: [cue('4', { referenceDuration: 2.5 })] })).toBe(true)
+    expect(hasOriginals({ cues: [cue('5', { referenceDuration: 0 })] })).toBe(false)
   })
 })
 

@@ -201,7 +201,6 @@
 .blk {
   display: flex;
   flex-direction: column;
-  min-height: 0;
   padding: 12px 16px;
 }
 .blk .lh {
@@ -224,7 +223,7 @@
 .blk .body {
   position: relative;
   flex: 1;
-  min-height: 0;
+  min-height: 4.5em;
   margin-top: 8px;
   font: 17px/1.5 var(--sans);
   overflow: hidden;
@@ -333,10 +332,7 @@
 @container text (width < 580px) {
   .gen {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .text .ed-script {
-    grid-template-rows: minmax(88px, 1fr) minmax(88px, 1fr) auto;
-    overflow-y: auto;
+    column-gap: 12px;
   }
 }
 .gen .g .lh {
@@ -781,7 +777,7 @@
 .tl-strip {
   position: relative;
   user-select: none;
-  padding: 12px 12px 12px 16px;
+  padding: 12px 10px 12px 16px;
   border-right: 1px solid var(--line);
   display: grid;
   grid-template-rows: var(--ctl);
@@ -805,7 +801,7 @@
 .tl-strip .r1 {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -865,7 +861,7 @@ input.tl-name:focus {
 
 .tl-ms {
   display: flex;
-  gap: 3px;
+  gap: 2px;
   flex: none;
 }
 
@@ -1017,6 +1013,13 @@ input.tl-name:focus {
   font-style: normal;
   color: var(--tx3);
   flex: none;
+}
+
+.tl-clip .cn i.fx {
+  padding: 0 4px;
+  border-radius: 2px;
+  background: var(--ac-bg);
+  color: var(--ac);
 }
 
 .tl-clip .cn .w {
@@ -1233,6 +1236,7 @@ input.tl-name:focus {
   min-height: 0;
   display: grid;
   grid-template-rows: 1fr 1fr auto;
+  overflow-y: auto;
 }
 .ed-script:not(:has(> .blk.o)) {
   grid-template-rows: 1fr auto;
@@ -1389,10 +1393,31 @@ input.tl-name:focus {
 
 .trn {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   padding: 0 12px;
   border-top: 1px solid var(--line);
+  container: trn / inline-size;
+}
+
+.trn .tb {
+  justify-self: center;
+}
+
+@container trn (width < 456px) {
+  .trn .tc {
+    margin-right: 6px;
+  }
+  .trn .tc span {
+    display: none;
+  }
+  .trn .tb .ico:not(.play),
+  .trn .rt .ico {
+    width: 24px;
+  }
+  .trn .rt .prog-place:first-of-type {
+    margin-left: 2px;
+  }
 }
 
 .trn .tc {
@@ -1499,6 +1524,10 @@ input.tl-name:focus {
   font-size: 15px;
 }
 
+.props .phd .tabs button {
+  padding: 0 6px;
+}
+
 .props-body {
   flex: 1;
   min-height: 0;
@@ -1582,7 +1611,8 @@ input.tl-name:focus {
   height: 34px;
 }
 
-.props .row2 .cp-num:only-child {
+.props .row2 .cp-num:only-child,
+.props .row2 .cp-num.w2 {
   grid-template-columns: 60px minmax(0, 1fr);
   grid-column: 1 / -1;
 }
@@ -1831,6 +1861,10 @@ input.tl-name:focus {
   min-height: 0;
 }
 
+.lib .phd {
+  gap: 8px;
+}
+
 .lib .phd .tabs {
   margin-left: auto;
 }
@@ -1839,7 +1873,11 @@ input.tl-name:focus {
   margin-left: 4px;
 }
 
-.phd .copies {
+.lines-pane .phd {
+  gap: 8px;
+}
+
+.phd .acts {
   display: flex;
   align-items: center;
   gap: 2px;
@@ -1973,16 +2011,6 @@ input.tl-name:focus {
   font-style: normal;
   font-size: 11px;
   color: var(--tx3);
-}
-
-.phd .add-line {
-  height: 22px;
-  margin-left: auto;
-  padding: 0 8px;
-}
-
-.phd .add-line + .add-line {
-  margin-left: -4px;
 }
 
 .work-empty {

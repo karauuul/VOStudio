@@ -42,6 +42,7 @@ import {
   switchClipVersion,
   trackClips,
   trimClipEdge,
+  withSourceEffects,
 } from '@shared/comp'
 import {
   addTrack,
@@ -120,7 +121,7 @@ import { ghostPlacement, type GhostPlacement } from '@shared/generation'
 import { useCompEdit, sameComp } from '../cue/useCompEdit'
 import type { CompHistory } from '@shared/comp-history'
 import { useWire } from '../cue/useWire'
-import { EFFECT_KINDS, pickEffects, TRACK_EFFECT_KINDS } from '@shared/effects'
+import { EFFECT_KINDS, hasEffects, pickEffects, TRACK_EFFECT_KINDS } from '@shared/effects'
 import { copiedEffects, copyEffects, hasCopiedEffects } from '../effects-clipboard'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 import { hotkeyText, type KeyAction } from '../keyboard'
@@ -1480,7 +1481,7 @@ export function TimelinePanel({
         },
         { sep: true },
         {
-          label: 'Split at playhead',
+          label: 'Cut at playhead',
           hotkey: hotkeyText('splitAtPlayhead'),
           disabled: !(at > c.start + COMP_EPS && at < clipEnd(c) - COMP_EPS),
           onClick: () => splitClip(c.id, at),
@@ -2405,6 +2406,7 @@ function Clip({
   const versions = cue && selected && take ? clipVersions(cue, project, take.id) : []
   const speed = clipSpeed(clip.edits)
   const db = gainDrag ?? clip.edits.gainDb
+  const fx = hasEffects((take ? withSourceEffects(clip, take) : clip).edits.effects)
 
   const fadeInPx = (clip.edits.fadeIn.duration / speed) * view.pxPerSec
   const fadeOutPx = (clip.edits.fadeOut.duration / speed) * view.pxPerSec
@@ -2427,6 +2429,7 @@ function Clip({
     >
       <span className="cn">
         {label && <i>{label}</i>}
+        {fx && <i className="fx">fx</i>}
         <span className="w">{words}</span>
         {versions.length > 1 && (
           <span className="vch">

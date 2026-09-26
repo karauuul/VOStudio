@@ -2,11 +2,17 @@
   grid-template-columns: 340px 8px minmax(0, 1fr) 8px 380px;
 }
 
+@media (max-width: 1599px) {
+  .main.exp {
+    grid-template-columns: 280px 8px minmax(0, 1fr) 8px 300px;
+  }
+}
+
 .exp-kvp {
   height: 36px;
   flex: none;
   display: grid;
-  grid-template-columns: 96px 1fr;
+  grid-template-columns: 72px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   padding: 0 16px;

@@ -18,12 +18,15 @@ import { LibraryPanel } from '../work/LibraryPanel'
 import { PropertiesPanel } from '../work/PropertiesPanel'
 
 const PANES = {
-  lines: { key: 'vo.lines.w', def: 280, min: 240, max: 400 },
-  props: { key: 'vo.props.w', def: 380, min: 320, max: 480 },
+  lines: { key: 'vo.lines.w', def: 280, min: 224, max: 400 },
+  props: { key: 'vo.props.w', def: 380, min: 296, max: 480 },
   lib: { key: 'vo.lib.h', def: 500, min: 160, max: 800 },
-  prog: { key: 'vo.prog.w', def: 620, min: 480, max: 900 },
+  prog: { key: 'vo.prog.w', def: 620, min: 400, max: 900 },
   upper: { key: 'vo.upper.h', def: 410, min: 240, max: 600 },
 } as const
+
+const COMFORT = { lines: 240, props: 320, prog: 480 }
+const HARD = { lines: PANES.lines.min, props: PANES.props.min, prog: PANES.prog.min }
 
 type Pane = keyof typeof PANES
 type Sizes = Record<Pane, number>
@@ -32,6 +35,8 @@ const VERTICAL: Pane[] = ['lib', 'upper']
 const INVERTED: Pane[] = ['props', 'prog']
 const KEEP = 160
 const TEXT_MIN = 320
+const TIMELINE_MIN = 270
+const PROPS_MIN = 320
 const SPLITTERS = 24
 
 const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
@@ -106,6 +111,7 @@ export function WorkRoom({
   onDropFiles,
 }: Props) {
   const [over, setOver] = useState(false)
+  const [libList, setLibList] = useState(0)
   const [size, setSize] = useState<Sizes>(
     () =>
       Object.fromEntries(
@@ -128,12 +134,7 @@ export function WorkRoom({
 
   const fitted = {
     ...size,
-    ...fitWorkPanes(
-      size,
-      { lines: PANES.lines.min, props: PANES.props.min, prog: PANES.prog.min },
-      available,
-      TEXT_MIN
-    ),
+    ...fitWorkPanes(size, [COMFORT, HARD], available, TEXT_MIN),
   }
 
   useEffect(() => {
@@ -152,16 +153,14 @@ export function WorkRoom({
       const vertical = VERTICAL.includes(pane)
       const inverted = INVERTED.includes(pane)
       const p0 = vertical ? e.clientY : e.clientX
-      const v0 = fitted[pane]
-      const neighbor = inverted
-        ? e.currentTarget.previousElementSibling
-        : e.currentTarget.nextElementSibling
-      const room =
-        neighbor instanceof HTMLElement
-          ? vertical
-            ? neighbor.offsetHeight
-            : neighbor.offsetWidth
-          : Infinity
+      const before = e.currentTarget.previousElementSibling
+      const after = e.currentTarget.nextElementSibling
+      const own = inverted ? after : before
+      const neighbor = inverted ? before : after
+      const extent = (el: Element | null): number =>
+        el instanceof HTMLElement ? (vertical ? el.offsetHeight : el.offsetWidth) : Infinity
+      const v0 = own instanceof HTMLElement ? extent(own) : fitted[pane]
+      const room = extent(neighbor)
       const max = Math.min(cfg.max, Math.max(v0, v0 + room - KEEP))
       document.body.classList.add('resizing')
       const move = (ev: MouseEvent): void => {
@@ -207,15 +206,22 @@ export function WorkRoom({
         onDropFiles(files)
       }}
     >
-      <section className="panel">
+      <section className="panel lines-pane">
         <div className="phd">
           Lines <span className="n">{source ? `${count} · ${source.name}` : count}</span>
-          <button className="btn ghost add-line" onClick={onAddLine}>
-            + Line
-          </button>
-          <button className="btn ghost add-line" onClick={onPickTable}>
-            Table
-          </button>
+          <span className="acts">
+            <button className="ico sm" data-hk="addLine" aria-label="New line" onClick={onAddLine}>
+              <svg width="12" height="12" viewBox="0 0 12 12">
+                <path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.5" />
+              </svg>
+            </button>
+            <button className="ico sm" data-hint="Import table" aria-label="Import table" onClick={onPickTable}>
+              <svg width="13" height="13" viewBox="0 0 13 13">
+                <rect x="1.5" y="2" width="10" height="9" rx="1" fill="none" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M1.5 5h10M1.5 8h10M5 5v6" stroke="currentColor" strokeWidth="1.2" />
+              </svg>
+            </button>
+          </span>
         </div>
         <LinesPanel {...lines} />
       </section>
@@ -224,7 +230,9 @@ export function WorkRoom({
 
       <div
         className="work-center"
-        style={{ gridTemplateRows: `${size.upper}px 8px minmax(0, 1fr)` }}
+        style={{
+          gridTemplateRows: `minmax(${PANES.upper.min}px, min(${size.upper}px, calc(100% - ${TIMELINE_MIN + 8}px))) 8px minmax(0, 1fr)`,
+        }}
       >
         <div
           className="work-upper"
@@ -236,7 +244,7 @@ export function WorkRoom({
               {cue && (
                 <span className="n">{regionLabel ?? (cue.fields['EventName'] || cue.key)}</span>
               )}
-              <span className="copies">
+              <span className="acts">
                 {COPIES.map(({ kind, hint, extra }) => (
                   <button
                     key={kind}
@@ -302,8 +310,13 @@ export function WorkRoom({
 
       <div className="splitter col" onMouseDown={startDrag('props')} />
 
-      <div className="work-right" style={{ gridTemplateRows: `${size.lib}px 8px minmax(0, 1fr)` }}>
-        <LibraryPanel {...library} />
+      <div
+        className="work-right"
+        style={{
+          gridTemplateRows: `minmax(${PANES.lib.min}px, min(${size.lib}px, calc(var(--hd) + ${libList}px), calc(100% - ${PROPS_MIN + 8}px))) 8px minmax(0, 1fr)`,
+        }}
+      >
+        <LibraryPanel {...library} onListHeight={setLibList} />
 
         <div className="splitter row" onMouseDown={startDrag('lib')} />
 

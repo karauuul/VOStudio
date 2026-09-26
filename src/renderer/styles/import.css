@@ -2,6 +2,12 @@
   grid-template-columns: 340px 8px minmax(0, 1fr) 8px 380px;
 }
 
+@media (max-width: 1599px) {
+  .import-grid {
+    grid-template-columns: 280px 8px minmax(0, 1fr) 8px 300px;
+  }
+}
+
 .import-right {
   display: grid;
   grid-template-rows: auto 8px minmax(0, 1fr);
@@ -121,8 +127,8 @@
 
 .imp-search {
   margin: 0;
-  width: 260px;
-  flex: none;
+  flex: 0 1 260px;
+  min-width: 120px;
 }
 
 .tbar .btn {

@@ -27,7 +27,7 @@ export interface GridApi {
   selectAll: () => void
 }
 
-const COLUMNS = '56px 250px 64px minmax(160px, 1fr) minmax(160px, 1fr) 110px'
+const COLUMNS = '52px minmax(96px, 0.8fr) 64px minmax(120px, 1fr) minmax(120px, 1fr) minmax(72px, 110px)'
 const ROW_H = 34
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
@@ -349,7 +349,7 @@ export function LinesTable({
       />
 
       <div className="foot">
-        <b>{nnn(total.lines)}</b> lines · <b>{nnn(total.transcribed)}</b> transcribed ·{' '}
+        <b>{nnn(total.lines)}</b> {total.lines === 1 ? 'line' : 'lines'} · <b>{nnn(total.transcribed)}</b> transcribed ·{' '}
         <b>{nnn(total.translated)}</b> translated · <b>{nnn(total.unmatched)}</b> no audio
         <span className="sp" />
         <button
