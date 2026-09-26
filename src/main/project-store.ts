@@ -29,6 +29,7 @@ import {
   type ProjectFile,
   type ProjectListing,
 } from '@shared/project-file'
+import { projectPaths, rebasePaths, relocatedPath } from '@shared/relocate'
 import { appSettingsSchema, projectFileSchema } from './schemas'
 
 let current: Project | null = null
@@ -138,6 +139,15 @@ async function loadUi(dir: string, legacy: UiSessionState | undefined): Promise<
 export function defaultProjectsRoot(): string {
   const root = process.env['VOSTUDIO_PROJECTS_ROOT']
   return root && path.isAbsolute(root) ? root : path.join(app.getPath('documents'), 'VOStudio')
+}
+
+export const exists = (file: string): Promise<boolean> => fs.stat(file).then(() => true, () => false)
+
+export async function projectFolderNames(): Promise<string[]> {
+  const entries = await fs.readdir(defaultProjectsRoot()).catch(() => [])
+  return entries
+    .filter((name) => name.toLowerCase().endsWith(PROJECT_SUFFIX))
+    .map((name) => name.slice(0, -PROJECT_SUFFIX.length))
 }
 
 export async function createProject(name: string, base: Omit<Project, 'id' | 'schemaVersion' | 'createdAt'>): Promise<Project> {
@@ -311,6 +321,17 @@ export async function openProjectDir(dir: string): Promise<Project> {
   projectDir = dir
   rev = 0
   return current
+}
+
+export async function relocateMovedFiles(project: Project, dir: string): Promise<boolean> {
+  const moved = new Map<string, string>()
+  await Promise.all(
+    [...new Set(projectPaths(project))].map(async (stored) => {
+      const next = relocatedPath(dir, stored)
+      if (next && (await exists(next))) moved.set(stored, next)
+    })
+  )
+  return rebasePaths(project, moved)
 }
 
 export function closeProject(): void {

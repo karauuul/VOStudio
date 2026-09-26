@@ -277,7 +277,7 @@ export interface TakeDurationUpdate {
 
 export interface IpcApi {
   'project:list': () => Promise<ProjectSummary[]>
-  'project:open': (dir: string) => Promise<SerializedSnapshot>
+  'project:open': (dir: string) => Promise<SerializedSnapshot | null>
   'project:create': (name?: string) => Promise<SerializedSnapshot>
   'project:delete': (dir: string) => Promise<void>
   'project:close': () => Promise<void>
