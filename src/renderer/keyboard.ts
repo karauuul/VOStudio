@@ -39,6 +39,7 @@ export type KeyAction =
   | 'makeFinal'
   | 'doneNext'
   | 'deleteClip'
+  | 'rippleDelete'
   | 'nudgeClips'
   | 'splitClip'
   | 'splitAtPlayhead'
@@ -75,6 +76,7 @@ export interface Binding {
   index?: number
   steps?: number
   label?: string
+  manualLabel?: string
   keys?: string
 }
 
@@ -131,6 +133,7 @@ export const BINDINGS: Binding[] = [
   { action: 'generate', codes: ['KeyG'], mod: true, scopes: TEXT, label: 'Generate' },
   { action: 'undo', codes: ['KeyZ'], mod: true, scopes: WORK, label: 'Undo' },
   { action: 'redo', codes: ['KeyZ'], mod: true, shift: true, scopes: WORK, label: 'Redo' },
+  { action: 'redo', codes: ['KeyY'], mod: true, scopes: WORK },
   { action: 'addLine', codes: ['Enter', 'NumpadEnter'], mod: true, scopes: ['text'], label: 'New line' },
   { action: 'next', codes: ['KeyJ', 'ArrowDown'], scopes: WORK, repeat: true, label: 'Next cue' },
   {
@@ -164,7 +167,13 @@ export const BINDINGS: Binding[] = [
   { action: 'toolSelect', codes: ['KeyV'], scopes: TIMELINE, label: 'Select tool' },
   { action: 'makeFinal', codes: ['KeyF'], scopes: WORK, label: 'Set final' },
   { action: 'doneNext', codes: ['KeyA'], shift: true, scopes: WORK, label: 'Done and next' },
-  { action: 'focusText', codes: ['KeyE'], scopes: WORK, label: 'Focus translation' },
+  {
+    action: 'focusText',
+    codes: ['KeyE'],
+    scopes: WORK,
+    label: 'Focus translation',
+    manualLabel: 'Focus text',
+  },
   { action: 'toggleRecord', codes: ['KeyR'], scopes: WORK, label: 'Record' },
   { action: 'punchRecord', codes: ['KeyD'], shift: true, scopes: WORK, label: 'Punch and roll' },
   { action: 'acceptSuggestion', codes: ['KeyY'], scopes: WORK, label: 'Accept suggestion' },
@@ -193,6 +202,13 @@ export const BINDINGS: Binding[] = [
   { action: 'healClip', codes: ['KeyH'], scopes: TIMELINE, label: 'Heal' },
   { action: 'crossfadeClip', codes: ['KeyX'], scopes: TIMELINE, label: 'Crossfade' },
   { action: 'deleteClip', codes: ['Delete'], scopes: TIMELINE, label: 'Delete clip' },
+  {
+    action: 'rippleDelete',
+    codes: ['Delete'],
+    shift: true,
+    scopes: TIMELINE,
+    label: 'Ripple delete',
+  },
   {
     action: 'nudgeClips',
     codes: ['ArrowLeft'],
@@ -243,6 +259,10 @@ export function keyText(b: Binding): string {
   return [b.mod ? MOD_LABEL : '', b.alt ? 'Alt' : '', b.shift ? 'Shift' : '', codeName(code)]
     .filter(Boolean)
     .join('+')
+}
+
+export function labelText(b: Binding, ai: boolean): string {
+  return (!ai && b.manualLabel) || b.label || ''
 }
 
 export function bindingOf(action: KeyAction): Binding | null {
@@ -310,6 +330,7 @@ export interface KeyboardHandlers {
   makeFinal: () => void
   doneNext: () => void
   deleteClip: () => void
+  rippleDelete: () => void
   nudgeClips: (steps: number) => void
   splitClip: () => void
   splitAtPlayhead: () => void
