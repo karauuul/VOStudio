@@ -33,8 +33,13 @@ export interface RecordedClip {
   durationSec: number
   sampleRate: number
   hidden: number
-  latency: number
+  latency: number | null
   finish: (fragment: boolean) => Promise<SavedTake>
+}
+
+export interface PrerollStart {
+  at: number
+  played: boolean
 }
 
 export interface StartOptions {
@@ -45,7 +50,7 @@ export interface StartOptions {
   autoReference: boolean
   referenceUrl?: string
   referenceClipId?: string
-  preroll?: () => Promise<number>
+  preroll?: () => Promise<PrerollStart>
 }
 
 export interface RecorderApi {
@@ -229,7 +234,7 @@ interface Take {
   sent: number
   first: number
   limit: number
-  latency: number
+  latency: number | null
 }
 
 function newTake(gen: number): Take {
@@ -247,7 +252,7 @@ function newTake(gen: number): Take {
     sent: 0,
     first: -1,
     limit: 0,
-    latency: 0,
+    latency: null,
   }
 }
 
@@ -551,14 +556,14 @@ export function useRecorder(): RecorderApi {
             t.stream = openRecStream(opts.cueId, rate, opts.bitDepth, (err) => failStream(t, err))
             t.refPlaying = true
             setPhase('countin')
-            const punchMs = await opts.preroll()
+            const { at: punchMs, played } = await opts.preroll()
             if (t.cancelled || takeRef.current !== t || r.disposed) return
             const perfNow = performance.now()
             const ctxNow = r.ctx.currentTime
             t.startAtMs = punchMs
             t.startFrame = Math.round((ctxNow + (punchMs - perfNow) / 1000) * rate)
             t.limit = maxRecordSeconds(rate) - LIMIT_MARGIN_SECONDS - Math.max(0, t.startFrame - from) / rate
-            t.latency = latencyEstimate([...transport.outputLatency(), inputLatency(r.stream)])
+            t.latency = played ? latencyEstimate([...transport.outputLatency(), inputLatency(r.stream)]) : null
             if (aliveRef.current) setLimit(t.limit)
             return
           }

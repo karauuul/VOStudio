@@ -443,7 +443,9 @@ export const appSettingsSchema = z.object({
   micDeviceLabel: z.string().max(500).optional(),
   outputDeviceLabel: z.string().max(500).optional(),
   recordBitDepth: pcmBitDepthSchema.optional(),
-  recordLatencyMs: z.number().int().min(-RECORD_LATENCY_MAX_MS).max(RECORD_LATENCY_MAX_MS).optional(),
+  recordLatencyMs: z
+    .union([z.literal('auto'), z.number().int().min(-RECORD_LATENCY_MAX_MS).max(RECORD_LATENCY_MAX_MS)])
+    .optional(),
   punchPrerollSeconds: z.number().min(0).max(PUNCH_PREROLL_MAX).multipleOf(PUNCH_PREROLL_STEP).optional(),
   countIn: z.boolean(),
   autoReference: z.boolean(),

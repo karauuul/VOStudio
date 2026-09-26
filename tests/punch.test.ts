@@ -134,21 +134,23 @@ describe('punch latency', () => {
     expect(latencyEstimate([0.8, 0.9])).toBe(1)
   })
 
-  it('uses the estimate unless a manual value is set', () => {
-    expect(latencySeconds(undefined, 0.07)).toBeCloseTo(0.07)
-    expect(latencySeconds(undefined, 3)).toBe(1)
+  it('applies no correction when unset, the estimate on Auto and the manual value otherwise', () => {
+    expect(latencySeconds(undefined, 0.07)).toBe(0)
+    expect(latencySeconds('auto', 0.07)).toBeCloseTo(0.07)
+    expect(latencySeconds('auto', 3)).toBe(1)
     expect(latencySeconds(100, 0.07)).toBeCloseTo(0.1)
     expect(latencySeconds(0, 0.07)).toBe(0)
     expect(latencySeconds(-250, 0.07)).toBeCloseTo(-0.25)
     expect(latencySeconds(5000, 0)).toBe(1)
     expect(latencySeconds(-5000, 0)).toBe(-1)
-    expect(latencySeconds('100', 0.02)).toBeCloseTo(0.02)
+    expect(latencySeconds('100', 0.02)).toBe(0)
   })
 
   it('sanitizes a manual latency to whole milliseconds in range', () => {
     expect(recordLatencyMs(undefined)).toBeUndefined()
     expect(recordLatencyMs(Number.NaN)).toBeUndefined()
     expect(recordLatencyMs('12')).toBeUndefined()
+    expect(recordLatencyMs('auto')).toBe('auto')
     expect(recordLatencyMs(12.4)).toBe(12)
     expect(recordLatencyMs(-12.6)).toBe(-13)
     expect(recordLatencyMs(1200)).toBe(1000)

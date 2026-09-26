@@ -17,6 +17,7 @@ import type { UpdateStatus } from './updater'
 import type { CommandResult, ProjectCommand, ProjectSnapshot } from './project-commands'
 import type { ProjectSummary } from './project-summary'
 import type { PcmBitDepth } from './wav-header'
+import type { LatencySetting } from './punch'
 
 export interface CsvPreview {
   headers: string[]
@@ -45,7 +46,7 @@ export interface AppSettings {
   micDeviceLabel?: string
   outputDeviceLabel?: string
   recordBitDepth?: PcmBitDepth
-  recordLatencyMs?: number
+  recordLatencyMs?: LatencySetting
   punchPrerollSeconds?: number
   countIn: boolean
   autoReference: boolean

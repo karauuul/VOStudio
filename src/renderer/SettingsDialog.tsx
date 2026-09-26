@@ -195,15 +195,19 @@ export function SettingsDialog({
           <select
             className="set-mode"
             aria-label="Latency"
-            value={latency === undefined ? 'auto' : 'manual'}
+            value={latency === undefined ? 'off' : latency === 'auto' ? 'auto' : 'manual'}
             onChange={(e) =>
-              onSettings({ ...settings, recordLatencyMs: e.target.value === 'manual' ? 0 : undefined })
+              onSettings({
+                ...settings,
+                recordLatencyMs: e.target.value === 'manual' ? 0 : e.target.value === 'auto' ? 'auto' : undefined,
+              })
             }
           >
+            <option value="off">Off</option>
             <option value="auto">Auto</option>
             <option value="manual">Manual</option>
           </select>
-          {latency !== undefined && (
+          {typeof latency === 'number' && (
             <DragNumber
               label=""
               unit="ms"

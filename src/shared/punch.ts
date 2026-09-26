@@ -11,7 +11,10 @@ export function punchPrerollSeconds(value: unknown): number {
   return clamp(Math.round(value / PUNCH_PREROLL_STEP) * PUNCH_PREROLL_STEP, 0, PUNCH_PREROLL_MAX)
 }
 
-export function recordLatencyMs(value: unknown): number | undefined {
+export type LatencySetting = number | 'auto'
+
+export function recordLatencyMs(value: unknown): LatencySetting | undefined {
+  if (value === 'auto') return 'auto'
   if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
   return clamp(Math.round(value), -RECORD_LATENCY_MAX_MS, RECORD_LATENCY_MAX_MS)
 }
@@ -25,8 +28,9 @@ export function latencyEstimate(parts: readonly unknown[]): number {
 }
 
 export function latencySeconds(settingMs: unknown, estimate: number): number {
-  const manual = recordLatencyMs(settingMs)
-  return manual === undefined ? latencyEstimate([estimate]) : manual / 1000
+  const setting = recordLatencyMs(settingMs)
+  if (setting === undefined) return 0
+  return setting === 'auto' ? latencyEstimate([estimate]) : setting / 1000
 }
 
 export function punchHidden(hidden: number, latency: number, duration: number): number {

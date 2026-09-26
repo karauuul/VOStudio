@@ -57,7 +57,7 @@ describe('app settings persistence', () => {
   })
 
   it('round trips the latency and pre-roll overrides', () => {
-    for (const recordLatencyMs of [-1000, -35, 0, 120, 1000]) {
+    for (const recordLatencyMs of [-1000, -35, 0, 120, 1000, 'auto']) {
       const settings = { recordLatencyMs, punchPrerollSeconds: 2.5, countIn: true, autoReference: false }
       expect(appSettingsSchema.parse(structuredClone(settings))).toStrictEqual(settings)
     }
@@ -69,7 +69,7 @@ describe('app settings persistence', () => {
 
   it('rejects latency and pre-roll values outside the allowed range', () => {
     const base = { countIn: true, autoReference: false }
-    for (const recordLatencyMs of [1001, -1001, 12.5, '100', null, Number.NaN]) {
+    for (const recordLatencyMs of [1001, -1001, 12.5, '100', 'Auto', null, Number.NaN]) {
       expect(appSettingsSchema.safeParse({ ...base, recordLatencyMs }).success).toBe(false)
     }
     for (const punchPrerollSeconds of [-0.5, 10.5, 0.3, '5', null, Number.POSITIVE_INFINITY]) {

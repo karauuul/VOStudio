@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { MAX_STS_SECONDS, type Cue, type Take, type VoiceSettings } from '@shared/domain'
 import { recordingGuard } from '@shared/recording-guard'
 import type { AppSettings } from '@shared/ipc'
-import { latencySeconds, punchHidden, punchPrerollSeconds } from '@shared/punch'
+import { latencySeconds, punchHidden, punchPrerollSeconds, type LatencySetting } from '@shared/punch'
 import { pcmBitDepth } from '@shared/wav-header'
 import { api, audioUrl } from '../api'
-import { useRecorder, type RecordedClip, type RecorderApi } from '../audio/recorder'
+import { useRecorder, type PrerollStart, type RecordedClip, type RecorderApi } from '../audio/recorder'
 import { clipId, transport } from '../audio/transport'
 import { useCueBusy, useJobsStore } from '../jobs/store'
 import { credits } from './shared'
@@ -23,7 +23,7 @@ interface Options {
   selection: () => ClipSelection | null
   playhead: () => number
   targetTrack: () => string | undefined
-  preroll: (at: number, lead: number, onInterrupt: () => void) => Promise<number>
+  preroll: (at: number, lead: number, onInterrupt: () => void) => Promise<PrerollStart>
   onPlace: (
     cueId: string,
     take: Take,
@@ -75,7 +75,7 @@ export function useVoiceToVoice({
   const targetRef = useRef<string | null>(null)
   const punchRef = useRef<number | null>(null)
   const punchTrackRef = useRef<string | undefined>(undefined)
-  const punchLatencyRef = useRef<number | undefined>(undefined)
+  const punchLatencyRef = useRef<LatencySetting | undefined>(undefined)
   const savingRef = useRef(false)
   const savedClipRef = useRef<RecordedClip | null>(null)
 
@@ -185,7 +185,11 @@ export function useVoiceToVoice({
         ? undefined
         : {
             at,
-            hidden: punchHidden(clip.hidden, latencySeconds(punchLatencyRef.current, clip.latency), clip.durationSec),
+            hidden: punchHidden(
+              clip.hidden,
+              clip.latency === null ? 0 : latencySeconds(punchLatencyRef.current, clip.latency),
+              clip.durationSec
+            ),
             ...(trackId ? { trackId } : {}),
           }
     void saveClip(target).then((take) => {
@@ -267,7 +271,7 @@ export function useVoiceToVoice({
     targetRef.current = null
     punchRef.current = at
     punchTrackRef.current = targetTrack()
-    punchLatencyRef.current = lead > 0 ? appSettings.recordLatencyMs : 0
+    punchLatencyRef.current = appSettings.recordLatencyMs
     rec.start({
       cueId: cue.id,
       device: appSettings.micDeviceLabel ?? appSettings.micDeviceId,
