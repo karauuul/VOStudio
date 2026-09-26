@@ -339,6 +339,8 @@ export const detectSchema = z.object({
 
 export const saveVersionSchema = z.object({ name: z.string().max(200).optional() })
 
+export const restoreVersionSchema = z.object({ n: z.number().int().min(1).max(1_000_000) })
+
 const revisionSchema = z.number().int().min(0).max(2_147_483_647)
 
 export const cueOutputSchema = z.discriminatedUnion('kind', [

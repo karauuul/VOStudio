@@ -118,6 +118,7 @@ interface Props {
   onRename: (name: string) => void
   versions: ProjectVersion[]
   onSaveVersion: () => void
+  onRestore: (n: number) => void
   route: Route
   onRoute: (next: Route) => void
   items: MenuItem[]
@@ -133,6 +134,7 @@ export function TopBar({
   onRename,
   versions,
   onSaveVersion,
+  onRestore,
   route,
   onRoute,
   items,
@@ -202,9 +204,10 @@ export function TopBar({
           </>
         }
         disabled={versions.length === 0}
-        items={[...versions]
-          .reverse()
-          .map((v) => ({ label: v.name ? `v${v.n} · ${v.name}` : `v${v.n}`, onClick: () => {} }))}
+        items={[...versions].reverse().map((v) => ({
+          label: v.name ? `v${v.n} · ${v.name}` : `v${v.n}`,
+          onClick: () => onRestore(v.n),
+        }))}
         open={open === 'versions'}
         onOpen={(next) => setOpen(next ? 'versions' : null)}
       />

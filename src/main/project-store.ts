@@ -30,7 +30,7 @@ import {
   type ProjectFile,
   type ProjectListing,
 } from '@shared/project-file'
-import { previousProjectRoot, projectPaths, projectRootOf, rebasePaths, relocatedPath } from '@shared/relocate'
+import { previousProjectRoot, projectPaths, projectRootOf, rebasePaths, relocatedPath, stemKey, stemKeysIn } from '@shared/relocate'
 import { appSettingsSchema, projectFileSchema } from './schemas'
 
 let current: Project | null = null
@@ -287,9 +287,8 @@ export async function listProjects(): Promise<ProjectSummary[]> {
   return rows.sort((a, b) => b.modifiedAt - a.modifiedAt)
 }
 
-export async function openProjectDir(dir: string): Promise<Project> {
-  const raw = await fs.readFile(path.join(dir, 'project.json'), 'utf-8')
-  const p = JSON.parse(raw) as Project
+async function readProjectFile(file: string): Promise<Project> {
+  const p = JSON.parse(await fs.readFile(file, 'utf-8')) as Project
   projectFileSchema.parse(p)
   if (Array.isArray(p.terms)) {
     const terms = sanitizeTerms(p.terms)
@@ -321,6 +320,11 @@ export async function openProjectDir(dir: string): Promise<Project> {
     if (template) p.template = template
     else delete p.template
   }
+  return p
+}
+
+export async function openProjectDir(dir: string): Promise<Project> {
+  const p = await readProjectFile(projectJsonPath(dir))
   ui = await loadUi(dir, p.ui)
   p.ui = ui
   current = p
@@ -350,14 +354,27 @@ export function closeProject(): void {
   rev = 0
 }
 
+const versionPath = (dir: string, n: number): string => path.join(dir, 'versions', `v${n}.json`)
+
 export async function saveVersion(previous: ProjectVersion[], name?: string): Promise<ProjectVersion[]> {
   if (!projectDir) throw new Error('No project is open')
-  const dir = path.join(projectDir, 'versions')
-  await fs.mkdir(dir, { recursive: true })
+  await fs.mkdir(path.join(projectDir, 'versions'), { recursive: true })
   const n = (previous[previous.length - 1]?.n ?? 0) + 1
-  await fs.copyFile(path.join(projectDir, 'project.json'), path.join(dir, `v${n}.json`))
+  await fs.copyFile(projectJsonPath(projectDir), versionPath(projectDir, n))
   const trimmed = name?.trim()
   return [...previous, { n, ...(trimmed ? { name: trimmed } : {}), createdAt: new Date().toISOString() }]
+}
+
+export async function readVersion(n: number): Promise<Project> {
+  if (!projectDir) throw new Error('No project is open')
+  return readProjectFile(versionPath(projectDir, n))
+}
+
+export async function restoreVersion(project: Project, version: Project, n: number): Promise<Project> {
+  const versions = await saveVersion(project.versions ?? [], `Before v${n}`)
+  const restored = { ...version, id: project.id, versions }
+  await saveProject(restored)
+  return restored
 }
 
 function withoutVersions(raw: string): string {
@@ -370,8 +387,8 @@ async function matchesVersionFile(n: number): Promise<boolean> {
   if (!projectDir) return false
   try {
     const [live, saved] = await Promise.all([
-      fs.readFile(path.join(projectDir, 'project.json'), 'utf-8'),
-      fs.readFile(path.join(projectDir, 'versions', `v${n}.json`), 'utf-8'),
+      fs.readFile(projectJsonPath(projectDir), 'utf-8'),
+      fs.readFile(versionPath(projectDir, n), 'utf-8'),
     ])
     return withoutVersions(live) === withoutVersions(saved)
   } catch {
@@ -458,24 +475,36 @@ export async function saveStems(cueId: string, voice: Buffer, rest: Buffer): Pro
   ]
 }
 
+async function stemsInVersions(dir: string): Promise<Set<string>> {
+  const versions = path.join(dir, 'versions')
+  const keys = new Set<string>()
+  for (const name of await fs.readdir(versions).catch(() => [] as string[])) {
+    if (!name.endsWith('.json')) continue
+    const raw = await fs.readFile(path.join(versions, name), 'utf-8').catch(() => '')
+    for (const key of stemKeysIn(raw)) keys.add(key)
+  }
+  return keys
+}
+
 export async function dropUnusedStems(): Promise<void> {
   if (!projectDir || !current) return
-  const root = path.join(projectDir, 'audio', 'stems')
-  const used = new Set(
-    current.cues.flatMap((c) => (c.stems ?? []).map((stem) => path.resolve(stem.file.relPath).toLowerCase()))
-  )
-  const kept = new Set(current.cues.filter((c) => c.stems?.length).map((c) => c.id))
-  const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => [])
-  for (const entry of entries) {
+  const dir = projectDir
+  const root = path.join(dir, 'audio', 'stems')
+  const used = new Set(current.cues.flatMap((c) => (c.stems ?? []).map((stem) => stemKey(stem.file.relPath))))
+  const unused: string[] = []
+  for (const entry of await fs.readdir(root, { withFileTypes: true }).catch(() => [])) {
     if (!entry.isDirectory()) continue
-    const dir = path.join(root, entry.name)
-    if (!kept.has(entry.name)) {
-      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined)
-      continue
+    for (const file of await fs.readdir(path.join(root, entry.name)).catch(() => [] as string[])) {
+      const abs = path.join(root, entry.name, file)
+      if (!used.has(stemKey(abs))) unused.push(abs)
     }
-    for (const file of await fs.readdir(dir).catch(() => [])) {
-      const abs = path.join(dir, file)
-      if (!used.has(path.resolve(abs).toLowerCase())) await fs.rm(abs, { recursive: true, force: true }).catch(() => undefined)
-    }
+  }
+  if (unused.length === 0) return
+  const versioned = await stemsInVersions(dir)
+  for (const abs of unused) {
+    if (!versioned.has(stemKey(abs))) await fs.rm(abs, { recursive: true, force: true }).catch(() => undefined)
+  }
+  for (const entry of await fs.readdir(root, { withFileTypes: true }).catch(() => [])) {
+    if (entry.isDirectory()) await fs.rmdir(path.join(root, entry.name)).catch(() => undefined)
   }
 }

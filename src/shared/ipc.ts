@@ -291,6 +291,7 @@ export interface IpcApi {
   'source:detect': (req: { sourceId: string; mode: 'silence' | 'transcribe' }) => Promise<DetectResult>
   'project:command': (command: ProjectCommand) => Promise<CommandResult>
   'project:saveVersion': (req: { name?: string }) => Promise<ProjectVersion[]>
+  'project:restoreVersion': (req: { n: number }) => Promise<SerializedSnapshot>
   'ui:save': (ui: UiSessionState) => Promise<void>
 
   'suggestions:load': () => Promise<SuggestionsLoadResult>

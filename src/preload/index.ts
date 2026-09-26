@@ -17,6 +17,7 @@ const channelMap: Record<IpcChannel, true> = {
   'source:detect': true,
   'project:command': true,
   'project:saveVersion': true,
+  'project:restoreVersion': true,
   'ui:save': true,
 
   'suggestions:load': true,

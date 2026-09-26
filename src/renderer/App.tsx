@@ -114,6 +114,7 @@ import {
 } from '@shared/provider-models'
 import { exportNamePreview, originalRef } from '@shared/export-plan'
 import { withDraft } from '@shared/text-draft'
+import { restoreBlock } from '@shared/versions'
 import { useTextDraft } from './text-draft-store'
 import { splitStems } from './audio/stems'
 import { runPlan } from './export/run-export'
@@ -270,18 +271,25 @@ export default function App() {
     debounceVoice,
     saveUi,
     onText: sessionText,
+    replace: replaceProject,
   } = session
 
+  const restoringRef = useRef(false)
+  const restoreActiveRef = useRef(false)
+  const syncingRef = useRef(false)
+  const lockReason = (): string | null =>
+    exportingRef.current ? 'Export in progress' : restoringRef.current ? 'Restoring version' : null
   const refuseWhileExporting = useCallback((): boolean => {
-    if (!exportingRef.current) return false
-    pushStatus('info', 'Export in progress')
+    const reason = lockReason() ?? (restoreActiveRef.current ? 'Restoring version' : null)
+    if (!reason) return false
+    pushStatus('info', reason)
     return true
   }, [pushStatus])
 
   const execute = useCallback(
     (command: ProjectCommand, replay = false): Promise<ChangeSet> =>
-      exportingRef.current
-        ? Promise.reject(new Error('Export in progress'))
+      lockReason() !== null
+        ? Promise.reject(new Error(lockReason() ?? ''))
         : sessionDispatch(command, replay || replayRef.current > 0),
     [sessionDispatch]
   )
@@ -1049,7 +1057,9 @@ export default function App() {
   }, [leaveProject, refuseWhileExporting])
 
   async function syncCsv(): Promise<void> {
+    if (refuseWhileExporting()) return
     setBulk(true)
+    syncingRef.current = true
     try {
       await flushText()
       const r = await api['csv:sync']()
@@ -1057,6 +1067,7 @@ export default function App() {
     } catch (e) {
       pushStatus('err', String(e))
     } finally {
+      syncingRef.current = false
       setBulk(false)
     }
   }
@@ -1161,6 +1172,10 @@ export default function App() {
   }, [openNewLine, pushStatus])
 
   const recordLine = useCallback(() => {
+    if (restoringRef.current) {
+      pushStatus('info', 'Restoring version')
+      return
+    }
     if (recRef.current) {
       recRef.current()
       return
@@ -1211,6 +1226,52 @@ export default function App() {
         () => false
       )),
     [flushText, flushVoice]
+  )
+
+  const mediaJobsRef = useRef(0)
+  const restoreVersion = useCallback(
+    (n: number) => {
+      const refusal = (): string | null =>
+        restoreBlock({
+          exporting: exportingRef.current,
+          recording: recActiveRef.current?.() ?? false,
+          busy: busyCountNow() > 0 || mediaJobsRef.current > 0,
+          syncing: syncingRef.current,
+        })
+      const block = restoreActiveRef.current ? 'Restoring version' : refusal()
+      if (block) {
+        pushStatus('info', block)
+        return
+      }
+      restoreActiveRef.current = true
+      const run = async (): Promise<void> => {
+        let snapshot: ReturnType<typeof parseSnapshot>
+        try {
+          if (!(await flushPending())) return
+          restoringRef.current = true
+          const late = refusal()
+          if (late) {
+            pushStatus('info', late)
+            return
+          }
+          if (!(await flushText())) return
+          snapshot = parseSnapshot(await api['project:restoreVersion']({ n }))
+        } finally {
+          restoringRef.current = false
+          restoreActiveRef.current = false
+        }
+        playback.stop()
+        resetHistory()
+        replaceProject(snapshot)
+        setPreviewCueId(undefined)
+        setTextSel(null)
+        const active = activeCueIdRef.current
+        if (active && !snapshot.project.cues.some((c) => c.id === active)) setActiveCueId(undefined)
+        pushStatus('ok', `Restored v${n}`)
+      }
+      void run().catch((e: unknown) => pushStatus('err', String(e)))
+    },
+    [flushPending, flushText, resetHistory, replaceProject, pushStatus]
   )
 
   const prepareLineRemoval = useCallback(
@@ -1385,6 +1446,10 @@ export default function App() {
   const importFiles = useCallback(
     async (paths: string[], drop?: { trackId: string; at: number }): Promise<void> => {
       if (paths.length === 0 || refuseWhileExporting()) return
+      if (restoreActiveRef.current) {
+        pushStatus('info', 'Restoring version')
+        return
+      }
       let cueId = activeLineId()
       if (!cueId) {
         if ((projectRef.current?.cues.length ?? 0) > 0) {
@@ -1394,9 +1459,14 @@ export default function App() {
         cueId = (await openNewLine()) ?? null
         if (!cueId) return
       }
-      const { takes, failed } = await api['take:importFiles'](cueId, paths)
-      if (takes.length > 0) await placeOnComp(cueId, takes, undefined, drop)
-      if (failed.length > 0) pushStatus('err', failed.join(' · '))
+      mediaJobsRef.current++
+      try {
+        const { takes, failed } = await api['take:importFiles'](cueId, paths)
+        if (takes.length > 0) await placeOnComp(cueId, takes, undefined, drop)
+        if (failed.length > 0) pushStatus('err', failed.join(' · '))
+      } finally {
+        mediaJobsRef.current--
+      }
     },
     [refuseWhileExporting, activeLineId, projectRef, pushStatus, openNewLine, placeOnComp]
   )
@@ -1617,8 +1687,14 @@ export default function App() {
       acceptSuggestion: onAcceptSuggestion,
       rejectSuggestion: onRejectSuggestion,
       toggleRecord: recordLine,
-      punchRecord: () => punchRef.current?.(),
-      loopRecord: () => loopRef.current?.(),
+      punchRecord: () => {
+        if (restoringRef.current) pushStatus('info', 'Restoring version')
+        else punchRef.current?.()
+      },
+      loopRecord: () => {
+        if (restoringRef.current) pushStatus('info', 'Restoring version')
+        else loopRef.current?.()
+      },
       escape: () => {
         if (escRef.current?.()) return true
         if (sourceTakeId === null) return false
@@ -2118,12 +2194,18 @@ export default function App() {
       )
     },
     onSplitStems: async () => {
+      if (restoreActiveRef.current) throw new Error('Restoring version')
       if (!activeCue) throw new Error('No line selected')
       const ref = originalRef(activeCue, project.sources)
       if (!ref) throw new Error('This line has no original audio')
       pushStatus('info', 'Splitting the original into stems…')
-      const stems = await splitStems(activeCue.id, ref)
-      await dispatch({ type: 'cue.setStems', cueId: activeCue.id, stems })
+      mediaJobsRef.current++
+      try {
+        const stems = await splitStems(activeCue.id, ref)
+        await dispatch({ type: 'cue.setStems', cueId: activeCue.id, stems })
+      } finally {
+        mediaJobsRef.current--
+      }
       pushStatus('ok', 'Stems ready')
     },
     onStatus: pushStatus,
@@ -2198,6 +2280,7 @@ export default function App() {
         onRename={renameProject}
         versions={project.versions ?? []}
         onSaveVersion={saveVersion}
+        onRestore={restoreVersion}
         route={route}
         onRoute={goRoute}
         items={menuItems}

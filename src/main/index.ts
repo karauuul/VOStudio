@@ -18,6 +18,7 @@ import {
   appSettingsSchema,
   detectSchema,
   saveVersionSchema,
+  restoreVersionSchema,
   stemsSchema,
   stsSchema,
   templateDirSchema,
@@ -234,8 +235,8 @@ const transcribeSchema = z.object({
 })
 
 let projectRepository: SerialProjectRepository | null = null
-function resetRepository(project: Project): SerialProjectRepository {
-  projectRepository = new SerialProjectRepository(project, store.persistProjectFile)
+function resetRepository(project: Project, revision = 0): SerialProjectRepository {
+  projectRepository = new SerialProjectRepository(project, store.persistProjectFile, undefined, revision)
   store.adoptProject(projectRepository.projectForMain())
   return projectRepository
 }
@@ -340,10 +341,14 @@ async function repairTakeDurations(repository: SerialProjectRepository): Promise
   if (applied.length > 0) emit('takes:durations', applied)
 }
 
-async function prepareOpened(project: Project, dir: string): Promise<void> {
+async function upgradeLoaded(project: Project, dir: string): Promise<boolean> {
   const migrated = applyAlienMigration(project)
   const relocated = await store.relocateMovedFiles(project, dir)
-  if (migrated || relocated) await store.saveProject(project)
+  return migrated || relocated
+}
+
+async function prepareOpened(project: Project, dir: string): Promise<void> {
+  if (await upgradeLoaded(project, dir)) await store.saveProject(project)
 }
 
 async function consumeSuggestionsFile(
@@ -405,6 +410,8 @@ const emptyProjectBase = (name: string): Omit<Project, 'id' | 'schemaVersion' | 
   exportTemplate: DEFAULT_EXPORT_TEMPLATE,
   ui: { filter: '', search: '' },
 })
+
+let restoringVersion = false
 
 function registerHandlers(): void {
   typedHandle('project:list', () => store.listProjects())
@@ -602,6 +609,31 @@ function registerHandlers(): void {
     })
   )
 
+  typedHandle('project:restoreVersion', (req) =>
+    serialLifecycle(async () => {
+      const { n } = restoreVersionSchema.parse(req)
+      const { repository, dir } = requireSession()
+      restoringVersion = true
+      try {
+        const version = await store.readVersion(n)
+        await upgradeLoaded(version, dir)
+        await detachCurrentRepository()
+        const current = repository.projectForMain()
+        const revision = repository.currentRevision()
+        let restored: Project
+        try {
+          restored = await store.restoreVersion(current, version, n)
+        } catch (error) {
+          resetRepository(current, revision)
+          throw error
+        }
+        return resetRepository(restored, revision).snapshot()
+      } finally {
+        restoringVersion = false
+      }
+    })
+  )
+
   typedHandle('ui:save', (ui: UiSessionState) => store.saveUi(ui))
 
   typedHandle('suggestions:load', async () => {
@@ -627,6 +659,7 @@ function registerHandlers(): void {
   })
 
   typedHandle('rec:begin', (req) => {
+    if (restoringVersion) throw new Error('Restoring version')
     const parsed = recBeginSchema.parse(req)
     return beginRecording(requireSession(), parsed.cueId, parsed.sampleRate, parsed.bitDepth)
   })

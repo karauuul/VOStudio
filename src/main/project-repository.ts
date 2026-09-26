@@ -4,7 +4,6 @@ import { applyProjectCommand, serializeSnapshot, type ChangeSet, type CommandRes
 
 export class SerialProjectRepository {
   private project: Project
-  private revision = 0
   private queue: Promise<unknown> = Promise.resolve()
   private dirtyRevision = 0
   private enqueuedRevision = 0
@@ -14,12 +13,18 @@ export class SerialProjectRepository {
   private accepting = true
   private detached = false
 
-  constructor(project: Project, private readonly persist: (file: ProjectFile) => Promise<unknown>, private readonly debounceMs = 1500) {
+  constructor(
+    project: Project,
+    private readonly persist: (file: ProjectFile) => Promise<unknown>,
+    private readonly debounceMs = 1500,
+    private revision = 0
+  ) {
     this.project = project
   }
 
   snapshot(): SerializedSnapshot { return serializeSnapshot(this.revision, this.project) }
   projectForMain(): Project { return this.project }
+  currentRevision(): number { return this.revision }
   isLive(): boolean { return this.accepting && !this.detached }
 
   execute(command: ProjectCommand): Promise<CommandResult> {

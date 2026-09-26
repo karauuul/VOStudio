@@ -53,6 +53,7 @@ export interface ProjectSession {
   mutateCue: (cueId: string, fn: (c: Cue) => Cue) => void
   dispatch: (command: ProjectCommand, replay?: boolean) => Promise<ChangeSet>
   enter: (snapshot: ProjectSnapshot) => void
+  replace: (snapshot: ProjectSnapshot) => void
   close: () => Promise<boolean>
   onText: (cueId: string, text: string) => void
   flushText: () => Promise<boolean>
@@ -95,12 +96,20 @@ export function useProjectSession(o: {
     return result.changes
   }, [])
 
-  const enter = useCallback((snapshot: ProjectSnapshot) => {
+  const replace = useCallback((snapshot: ProjectSnapshot) => {
     durationQueue.reset()
     revisionRef.current = snapshot.revision
+    if (useTextDraft.getState().draft?.saved) useTextDraft.setState({ draft: null })
     setProject(snapshot.project)
-    if (snapshot.project) bootstrapRef.current(snapshot.project)
   }, [])
+
+  const enter = useCallback(
+    (snapshot: ProjectSnapshot) => {
+      replace(snapshot)
+      if (snapshot.project) bootstrapRef.current(snapshot.project)
+    },
+    [replace]
+  )
 
   useEffect(
     () =>
@@ -285,6 +294,7 @@ export function useProjectSession(o: {
     mutateCue,
     dispatch,
     enter,
+    replace,
     close,
     onText,
     flushText,

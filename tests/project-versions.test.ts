@@ -1,7 +1,8 @@
 import { mkdirSync, promises as fs } from 'fs'
 import path from 'path'
 import { describe, expect, it, vi } from 'vitest'
-import type { Project, ProjectVersion } from '../src/shared/domain'
+import { emptyEdits, type Cue, type Project, type ProjectVersion } from '../src/shared/domain'
+import { restoreBlock } from '../src/shared/versions'
 
 const H = vi.hoisted(() => ({
   root: `${process.env['TEMP'] ?? process.env['TMPDIR'] ?? '/tmp'}/vostudio-versions-${Date.now()}`,
@@ -153,5 +154,114 @@ describe('ui.json timeline view', () => {
 
     await store.saveUi({ filter: '', search: '', timeline: {} })
     expect(await readJson(path.join(DIR, 'ui.json'))).toEqual({ filter: '', search: '' })
+  })
+})
+
+describe('restoring a version', () => {
+  const DIR = path.join(H.root, 'VOStudio', 'restore-test.vostudio')
+  const autosaves = async (): Promise<number> => (await fs.readdir(path.join(DIR, 'autosave'))).length
+  const line = (id: string, text: string): Cue => ({ ...base().cues[0], id, key: id, text })
+
+  it('saves the current state as Before vN, then loads vN with one write and keeps id and versions', async () => {
+    await store.createProject('restore-test', base())
+    const project = store.getProject()!
+    project.cues = [line('cue-1', 'first'), line('cue-2', 'second')]
+    await store.persistProjectSnapshot(project)
+    project.versions = await store.saveVersion([])
+    project.cues = [line('cue-1', 'edited'), line('cue-2', 'second'), line('cue-3', 'third')]
+    await store.persistProjectSnapshot(project)
+    const writes = await autosaves()
+
+    const restored = await store.restoreVersion(project, await store.readVersion(1), 1)
+
+    expect(await autosaves()).toBe(writes + 1)
+    expect(store.getProject()).toBe(restored)
+    expect(restored.id).toBe(project.id)
+    expect(restored.versions?.map((v) => [v.n, v.name])).toEqual([
+      [1, undefined],
+      [2, 'Before v1'],
+    ])
+    const saved = await readJson(path.join(DIR, 'project.json'))
+    expect((saved['cues'] as Cue[]).map((c) => c.text)).toEqual(['first', 'second'])
+    expect(saved['id']).toBe(project.id)
+    expect(saved['versions']).toEqual(restored.versions)
+    const before = await readJson(path.join(DIR, 'versions', 'v2.json'))
+    expect((before['cues'] as Cue[]).map((c) => c.text)).toEqual(['edited', 'second', 'third'])
+  })
+
+  it('restoring Before vN brings the edited state back', async () => {
+    const project = store.getProject()!
+    const restored = await store.restoreVersion(project, await store.readVersion(2), 2)
+    expect(restored.cues.map((c) => c.text)).toEqual(['edited', 'second', 'third'])
+    expect(restored.versions?.map((v) => [v.n, v.name])).toEqual([
+      [1, undefined],
+      [2, 'Before v1'],
+      [3, 'Before v2'],
+    ])
+  })
+
+  it('a version file is sanitized like project.json, and its own id and versions are ignored', async () => {
+    const project = store.getProject()!
+    const file = path.join(DIR, 'versions', 'v1.json')
+    const raw = await readJson(file)
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        ...raw,
+        id: 'someone-else',
+        versions: [{ n: 9, createdAt: '2020-01-01T00:00:00.000Z' }],
+        terms: [{ term: '  ', translation: 'x' }, 7],
+        languages: { source: ' ', target: 'uk' },
+      })
+    )
+
+    const version = await store.readVersion(1)
+    expect(version).not.toHaveProperty('terms')
+    expect(version).not.toHaveProperty('languages')
+
+    const restored = await store.restoreVersion(project, version, 1)
+    expect(restored.id).toBe(project.id)
+    expect(restored.versions?.map((v) => v.n)).toEqual([1, 2, 3, 4])
+    const saved = await readJson(path.join(DIR, 'project.json'))
+    expect(saved['id']).toBe(project.id)
+    expect(saved).not.toHaveProperty('terms')
+  })
+
+  it('a version saved before the project folder moved gets its paths rebased', async () => {
+    const take = path.join(DIR, 'audio', 'takes', 'cue-1', 't1.wav')
+    await fs.mkdir(path.dirname(take), { recursive: true })
+    await fs.writeFile(take, '')
+    const moved = path.join(H.root, 'Elsewhere', 'Old.vostudio', 'audio', 'takes', 'cue-1', 't1.wav')
+    const raw = await readJson(path.join(DIR, 'versions', 'v1.json'))
+    const cues = raw['cues'] as Cue[]
+    cues[0].takes = [
+      {
+        id: 't1',
+        kind: 'recording',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        file: { fileId: 'cue-1/t1.wav', relPath: moved, format: 'wav' },
+        duration: 1,
+        meta: {},
+        edits: emptyEdits(),
+      },
+    ]
+    await fs.writeFile(path.join(DIR, 'versions', 'v1.json'), JSON.stringify({ ...raw, cues }))
+
+    const version = await store.readVersion(1)
+    expect(await store.relocateMovedFiles(version, DIR)).toBe(true)
+    expect(version.cues[0].takes[0].file.relPath).toBe(take)
+  })
+})
+
+describe('restore refusal', () => {
+  const idle = { exporting: false, recording: false, busy: false }
+
+  it('allows a restore only when nothing is running', () => {
+    expect(restoreBlock(idle)).toBeNull()
+    expect(restoreBlock({ ...idle, exporting: true })).toBe('Export in progress')
+    expect(restoreBlock({ ...idle, recording: true })).toBe('Stop the recording first')
+    expect(restoreBlock({ ...idle, syncing: true })).toBe('CSV sync in progress')
+    expect(restoreBlock({ ...idle, busy: true })).toBe('Generation is still running')
+    expect(restoreBlock({ exporting: true, recording: true, busy: true })).toBe('Export in progress')
   })
 })
