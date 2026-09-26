@@ -8,7 +8,6 @@ export interface MenuItem {
   label: string
   onClick: () => void
   disabled?: boolean
-  checked?: boolean
 }
 
 const ROOMS: { id: Route; label: string }[] = [
@@ -97,8 +96,7 @@ function Menu({
             <button
               key={item.label}
               className="menu-item"
-              role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
-              aria-checked={item.checked}
+              role="menuitem"
               disabled={item.disabled}
               onClick={() => {
                 onOpen(false)
@@ -208,7 +206,6 @@ export function TopBar({
         disabled={versions.length === 0}
         items={[...versions].reverse().map((v) => ({
           label: v.name ? `v${v.n} · ${v.name}` : `v${v.n}`,
-          checked: v === latest,
           onClick: () => onRestore(v.n),
         }))}
         open={open === 'versions'}

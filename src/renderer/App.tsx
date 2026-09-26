@@ -1223,13 +1223,13 @@ export default function App() {
     [flushText, flushVoice]
   )
 
-  const splittingRef = useRef(0)
+  const mediaJobsRef = useRef(0)
   const restoreVersion = useCallback(
     (n: number) => {
       const block = restoreBlock({
         exporting: exportingRef.current,
         recording: recActiveRef.current?.() ?? false,
-        busy: busyCountNow() > 0 || splittingRef.current > 0,
+        busy: busyCountNow() > 0 || mediaJobsRef.current > 0,
       })
       if (block) {
         pushStatus('info', block)
@@ -1440,9 +1440,14 @@ export default function App() {
         cueId = (await openNewLine()) ?? null
         if (!cueId) return
       }
-      const { takes, failed } = await api['take:importFiles'](cueId, paths)
-      if (takes.length > 0) await placeOnComp(cueId, takes, undefined, drop)
-      if (failed.length > 0) pushStatus('err', failed.join(' · '))
+      mediaJobsRef.current++
+      try {
+        const { takes, failed } = await api['take:importFiles'](cueId, paths)
+        if (takes.length > 0) await placeOnComp(cueId, takes, undefined, drop)
+        if (failed.length > 0) pushStatus('err', failed.join(' · '))
+      } finally {
+        mediaJobsRef.current--
+      }
     },
     [refuseWhileExporting, activeLineId, projectRef, pushStatus, openNewLine, placeOnComp]
   )
@@ -2174,12 +2179,12 @@ export default function App() {
       const ref = originalRef(activeCue, project.sources)
       if (!ref) throw new Error('This line has no original audio')
       pushStatus('info', 'Splitting the original into stems…')
-      splittingRef.current++
+      mediaJobsRef.current++
       try {
         const stems = await splitStems(activeCue.id, ref)
         await dispatch({ type: 'cue.setStems', cueId: activeCue.id, stems })
       } finally {
-        splittingRef.current--
+        mediaJobsRef.current--
       }
       pushStatus('ok', 'Stems ready')
     },
