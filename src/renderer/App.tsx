@@ -275,10 +275,11 @@ export default function App() {
   } = session
 
   const restoringRef = useRef(false)
+  const restoreActiveRef = useRef(false)
   const lockReason = (): string | null =>
     exportingRef.current ? 'Export in progress' : restoringRef.current ? 'Restoring version' : null
   const refuseWhileExporting = useCallback((): boolean => {
-    const reason = lockReason()
+    const reason = lockReason() ?? (restoreActiveRef.current ? 'Restoring version' : null)
     if (!reason) return false
     pushStatus('info', reason)
     return true
@@ -1224,7 +1225,6 @@ export default function App() {
   )
 
   const mediaJobsRef = useRef(0)
-  const restoreActiveRef = useRef(false)
   const restoreVersion = useCallback(
     (n: number) => {
       const refusal = (): string | null =>
