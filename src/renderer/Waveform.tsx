@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import type { TakeKind } from '@shared/domain'
+import { LoadQueue } from '@shared/load-queue'
 import { audioUrl } from './api'
 import { Lru } from './audio/lru'
 import { transport } from './audio/transport'
@@ -13,7 +14,10 @@ export interface Peaks {
 
 const BUCKETS = 1024
 const BUCKETS_PER_SECOND = 100
-const peakCache = new Lru<Promise<Peaks>>({ maxEntries: 256 })
+const PEAK_DECODES = 4
+const BACKGROUND = 0
+const FOREGROUND = 1
+const peakCache = new Lru<Peaks>({ maxEntries: 256 })
 
 function computePeaks(audio: AudioBuffer): Peaks {
   const d = audio.getChannelData(0)
@@ -37,14 +41,26 @@ function computePeaks(audio: AudioBuffer): Peaks {
   return { min, max, duration: audio.duration }
 }
 
-export function getPeaks(absPath: string): Promise<Peaks> {
+const peakQueue = new LoadQueue<Peaks>(PEAK_DECODES, (url, priority) =>
+  transport.getBuffer(url, priority > BACKGROUND).then((audio) => {
+    const peaks = computePeaks(audio)
+    peakCache.set(url, peaks)
+    return peaks
+  })
+)
+
+export function cachedPeaks(absPath: string): Peaks | null {
+  return peakCache.get(audioUrl(absPath)) ?? null
+}
+
+export function getPeaks(
+  absPath: string,
+  { background = false, signal }: { background?: boolean; signal?: AbortSignal } = {}
+): Promise<Peaks> {
   const url = audioUrl(absPath)
   const hit = peakCache.get(url)
-  if (hit) return hit
-  const p = transport.getBuffer(url).then(computePeaks)
-  peakCache.set(url, p)
-  void p.catch(() => peakCache.delete(url))
-  return p
+  if (hit) return Promise.resolve(hit)
+  return peakQueue.load(url, { priority: background ? BACKGROUND : FOREGROUND, signal })
 }
 
 export const GENERATED_COLOR = '#3fb8a8'
@@ -57,7 +73,7 @@ export function sourceColor(kind: TakeKind): string {
   return GENERATED_COLOR
 }
 
-export function Wave({
+export const Wave = memo(function Wave({
   peaks,
   from,
   to,
@@ -70,10 +86,14 @@ export function Wave({
 }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
-    drawWave(ref.current, peaks, from, to, color)
-  })
+    const canvas = ref.current
+    if (!canvas) return
+    const resize = new ResizeObserver(() => drawWave(canvas, peaks, from, to, color))
+    resize.observe(canvas, { box: 'device-pixel-content-box' })
+    return () => resize.disconnect()
+  }, [peaks, from, to, color])
   return <canvas ref={ref} />
-}
+})
 
 export function fmt(sec: number): string {
   if (!Number.isFinite(sec) || sec <= 0) return '—'

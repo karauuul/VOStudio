@@ -148,29 +148,32 @@ function collect(takes: Take[], fallback: (take: Take) => string): Map<string, T
   return groups
 }
 
-const usedMarker = (cue: Cue): ((rows: LibraryRow[]) => LibraryRow[]) => {
+type Mark = (rows: LibraryRow[]) => LibraryRow[]
+
+const usedMarker = (cue: Cue): Mark => {
   const used = new Set((cue.comp?.clips ?? []).map((c) => c.sourceTakeId))
   return (rows) => rows.map((r) => (used.has(r.take.id) ? { ...r, used: true } : r))
 }
 
-export function libraryGroups(cue: Cue, project: TakeLookup): LibraryGroup[] {
-  const mark = usedMarker(cue)
+function lineGroups(cue: Cue, mark: Mark): { text: string; rows: LibraryRow[] }[] {
+  return [...collect(liveTakes(cue), () => cue.text)].map(([text, takes]) => ({
+    text,
+    rows: mark(labelled(takes, () => cue.id)),
+  }))
+}
 
-  const out: LibraryGroup[] = []
-  for (const [text, takes] of collect(liveTakes(cue), () => cue.text)) {
-    out.push({ text, rows: mark(labelled(takes, () => cue.id)) })
-  }
-
+function pinnedGroups(cue: Cue, project: TakeLookup, mark: Mark): LibraryGroup[] {
   const pinned: Take[] = []
   const owner = new Map<string, Cue>()
   for (const other of project.cues) {
     if (other.id === cue.id) continue
-    for (const take of liveTakes(other)) {
-      if (take.pinned !== true) continue
+    for (const take of other.takes) {
+      if (take.deletedAt || take.pinned !== true) continue
       pinned.push(take)
       owner.set(take.id, other)
     }
   }
+  const out: LibraryGroup[] = []
   for (const [text, takes] of collect(pinned, (t) => owner.get(t.id)?.text ?? '')) {
     const ids = new Set(takes.map((t) => t.id))
     const useCount = project.cues.filter((c) =>
@@ -186,15 +189,16 @@ export function libraryGroups(cue: Cue, project: TakeLookup): LibraryGroup[] {
   return out
 }
 
+export function libraryGroups(cue: Cue, project: TakeLookup): LibraryGroup[] {
+  const mark = usedMarker(cue)
+  return [...lineGroups(cue, mark), ...pinnedGroups(cue, project, mark)]
+}
+
 export function projectLibrary(cue: Cue, project: TakeLookup): LibraryGroup[] {
   const mark = usedMarker(cue)
-  const out: LibraryGroup[] = []
-  for (const other of project.cues) {
-    for (const [text, takes] of collect(liveTakes(other), () => other.text)) {
-      out.push({ text, lineId: lineLabel(other), rows: mark(labelled(takes, () => other.id)) })
-    }
-  }
-  return out
+  return project.cues.flatMap((other) =>
+    lineGroups(other, mark).map(({ text, rows }) => ({ text, lineId: lineLabel(other), rows }))
+  )
 }
 
 export function libraryRow(
@@ -202,9 +206,18 @@ export function libraryRow(
   project: TakeLookup,
   takeId: string
 ): LibraryRow | undefined {
-  const find = (groups: LibraryGroup[]): LibraryRow | undefined =>
+  const find = (groups: { rows: LibraryRow[] }[]): LibraryRow | undefined =>
     groups.flatMap((g) => g.rows).find((r) => r.take.id === takeId)
-  return find(libraryGroups(cue, project)) ?? find(projectLibrary(cue, project))
+  const mark = usedMarker(cue)
+  const own = find(lineGroups(cue, mark))
+  if (own) return own
+  const live = (t: Take): boolean => t.id === takeId && !t.deletedAt
+  const owner = project.cues.find((c) => c.takes.some(live))
+  const take = owner?.takes.find(live)
+  if (!owner || !take) return undefined
+  const pinned =
+    owner.id !== cue.id && take.pinned === true ? find(pinnedGroups(cue, project, mark)) : undefined
+  return pinned ?? find(lineGroups(owner, mark))
 }
 
 export function clipWords(take: Take, srcIn: number, srcOut: number): WordTiming[] {
