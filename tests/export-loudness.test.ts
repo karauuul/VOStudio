@@ -173,6 +173,13 @@ describe('sample peak and target gain', () => {
     '    Peak:      -26.4 dBFS',
   ].join('\n')
 
+  it('prefers the precise astats peak over the rounded ebur128 summary', () => {
+    const precise = `${log}\n[Parsed_astats_1 @ 0x1] Overall\n[Parsed_astats_1 @ 0x1] Peak level dB: -26.437251`
+    expect(parseSamplePeak(precise)).toBe(-26.437251)
+    expect(parseSamplePeak(`${log}\n[Parsed_astats_1 @ 0x1] Peak level dB: -inf`)).toBeNull()
+    expect(parseSamplePeak('[Parsed_astats_1 @ 0x1] Peak level dB: 1.5')).toBe(1.5)
+  })
+
   it('reads the summary sample peak and ignores per-frame SPK values', () => {
     expect(parseSamplePeak(log)).toBe(-26.4)
     expect(parseEbur128(log)).toBe(-30.2)
@@ -189,6 +196,12 @@ describe('sample peak and target gain', () => {
   it('lufs mode never lifts the sample peak above −1 dBFS', () => {
     expect(targetGainDb({ mode: 'lufs', db: -16 }, { lufs: -30, peak: -10 })).toBe(9)
     expect(targetGainDb({ mode: 'lufs', db: -16 }, { lufs: -20, peak: -0.5 })).toBe(-0.5)
+  })
+
+  it('rounds the gain down so the result never lands above a peak target or the ceiling', () => {
+    expect(targetGainDb({ mode: 'peak', db: -1 }, { lufs: -30, peak: -9.996 })).toBe(8.99)
+    expect(targetGainDb({ mode: 'lufs', db: -16 }, { lufs: -30, peak: -9.996 })).toBe(8.99)
+    expect(targetGainDb({ mode: 'peak', db: -1 }, { lufs: -30, peak: 3.004 })).toBe(-4.01)
   })
 
   it('peak mode moves the sample peak onto the target', () => {
@@ -238,7 +251,7 @@ describe('export applies the loudness target with ffmpeg', () => {
   })
 
   const measure = async (file: string): Promise<LoudnessMeasure> => {
-    const log = await ffmpegStderr(['-i', file, '-af', 'ebur128=peak=sample', '-f', 'null', '-'])
+    const log = await ffmpegStderr(['-i', file, '-af', 'ebur128=peak=sample,astats=measure_perchannel=none', '-f', 'null', '-'])
     return { lufs: parseEbur128(log), peak: parseSamplePeak(log) }
   }
 
@@ -264,6 +277,8 @@ describe('export applies the loudness target with ffmpeg', () => {
     return { input: await measure(src), output: await measure(job.outPath) }
   }
 
+  const PEAK_TOLERANCE_DB = 0.01
+
   const near = (value: number | null, expected: number, tolerance: number): void => {
     expect(value).not.toBeNull()
     expect(Math.abs((value as number) - expected)).toBeLessThanOrEqual(tolerance)
@@ -278,24 +293,25 @@ describe('export applies the loudness target with ffmpeg', () => {
 
   it('the same tone exported at Peak −1 peaks at −1 dBFS', async () => {
     const { output } = await exportSignal(QUIET_TONE, { loudness: 'peak', peakTarget: -1 })
-    near(output.peak, -1, 0.2)
+    near(output.peak, -1, PEAK_TOLERANCE_DB)
+    expect(output.peak).toBeLessThanOrEqual(-1)
   })
 
   it('Target LUFS stops at a −1 dBFS sample peak instead of reaching the target', async () => {
     const { input, output } = await exportSignal(QUIET_TONE_WITH_CLICK, { loudness: 'lufs' })
     expect(input.peak).toBeGreaterThan(-8)
-    near(output.peak, -1, 0.2)
+    near(output.peak, -1, PEAK_TOLERANCE_DB)
+    expect(output.peak).toBeLessThanOrEqual(-1)
     expect(output.lufs).toBeLessThan(-25)
   })
 
   const HIGH_TONE_BETWEEN_SAMPLES = 'aevalsrc=0.25*sin(2*PI*12000*t+PI/4):s=48000:d=1'
   const QUIET_TONE_WITH_HIGH_BURST =
     'aevalsrc=0.02*sin(2*PI*440*t)+0.5*sin(2*PI*12000*t+PI/4)*between(t\\,1\\,1.01):s=48000:d=3'
-  const PRINTED_PEAK_ROUNDING_DB = 0.1
 
   const resampledPeak = async (file: string, rate: number): Promise<number | null> =>
     parseSamplePeak(
-      await ffmpegStderr(['-i', file, '-af', `aresample=${rate},ebur128=peak=sample`, '-f', 'null', '-'])
+      await ffmpegStderr(['-i', file, '-af', `aresample=${rate},ebur128=peak=sample,astats=measure_perchannel=none`, '-f', 'null', '-'])
     )
 
   it('every resampling format carries the rate its ffmpeg args convert to', () => {
@@ -312,8 +328,8 @@ describe('export applies the loudness target with ffmpeg', () => {
     const { input, output } = await exportSignal(signal, settings)
     const resampled = await resampledPeak(path.join(root, 'signal.wav'), 44100)
     expect(resampled! - input.peak!).toBeGreaterThan(2)
-    expect(output.peak).toBeLessThanOrEqual(-1 + PRINTED_PEAK_ROUNDING_DB)
-    expect(output.peak).toBeGreaterThanOrEqual(-1 - 2 * PRINTED_PEAK_ROUNDING_DB)
+    expect(output.peak).toBeLessThanOrEqual(-1)
+    near(output.peak, -1, PEAK_TOLERANCE_DB)
   }
 
   it('Peak −1 holds after 48 → 44.1 kHz resampling moves the sample peak up', async () => {
