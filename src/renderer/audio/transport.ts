@@ -150,20 +150,23 @@ const buffers = new Lru<AudioBuffer>({
 })
 const inflight = new Map<string, Promise<AudioBuffer>>()
 
-export function getBuffer(url: string): Promise<AudioBuffer> {
-  const hit = buffers.get(url)
+async function decode(url: string): Promise<AudioBuffer> {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`audio ${res.status}: ${url}`)
+  return ac().decodeAudioData(await res.arrayBuffer())
+}
+
+export function getBuffer(url: string, keep = true): Promise<AudioBuffer> {
+  const hit = keep ? buffers.get(url) : buffers.peek(url)
   if (hit) return Promise.resolve(hit)
   const running = inflight.get(url)
   if (running) return running
+  if (!keep) return decode(url)
 
-  const p = (async (): Promise<AudioBuffer> => {
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`audio ${res.status}: ${url}`)
-    const raw = await res.arrayBuffer()
-    const buf = await ac().decodeAudioData(raw)
+  const p = decode(url).then((buf) => {
     buffers.set(url, buf)
     return buf
-  })()
+  })
   inflight.set(url, p)
   void p.then(
     () => {
