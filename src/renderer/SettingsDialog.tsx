@@ -2,8 +2,16 @@ import { useEffect, useState } from 'react'
 import type { UsageInfo } from '@shared/domain'
 import type { AppSettings } from '@shared/ipc'
 import type { UpdateStatus } from '@shared/updater'
+import {
+  PUNCH_PREROLL_DEFAULT,
+  PUNCH_PREROLL_MAX,
+  RECORD_LATENCY_MAX_MS,
+  punchPrerollSeconds,
+  recordLatencyMs,
+} from '@shared/punch'
 import { pcmBitDepth } from '@shared/wav-header'
 import { api } from './api'
+import { DragNumber } from './cue/DragNumber'
 import { Overlay } from './Overlay'
 
 const UPDATE_LABEL: Record<UpdateStatus['phase'], string> = {
@@ -97,6 +105,13 @@ export function SettingsDialog({
       .finally(() => setSaving(false))
   }
 
+  const latency = recordLatencyMs(settings.recordLatencyMs)
+  const setPreroll = (v: number): void => {
+    const next = punchPrerollSeconds(v)
+    onSettings({ ...settings, punchPrerollSeconds: next === PUNCH_PREROLL_DEFAULT ? undefined : next })
+  }
+  const idle = (): void => {}
+
   const checking =
     updateStatus?.phase === 'checking' || updateStatus?.phase === 'downloading'
 
@@ -175,6 +190,47 @@ export function SettingsDialog({
             ))}
           </select>
         </label>
+        <div className="set-row">
+          <span className="set-l">Latency</span>
+          <select
+            className="set-mode"
+            aria-label="Latency"
+            value={latency === undefined ? 'auto' : 'manual'}
+            onChange={(e) =>
+              onSettings({ ...settings, recordLatencyMs: e.target.value === 'manual' ? 0 : undefined })
+            }
+          >
+            <option value="auto">Auto</option>
+            <option value="manual">Manual</option>
+          </select>
+          {latency !== undefined && (
+            <DragNumber
+              label=""
+              unit="ms"
+              value={latency}
+              min={-RECORD_LATENCY_MAX_MS}
+              max={RECORD_LATENCY_MAX_MS}
+              perPx={1}
+              decimals={0}
+              onInput={idle}
+              onCommit={(v) => onSettings({ ...settings, recordLatencyMs: recordLatencyMs(v) })}
+            />
+          )}
+        </div>
+        <div className="set-row">
+          <span className="set-l">Pre-roll</span>
+          <DragNumber
+            label=""
+            unit="s"
+            value={punchPrerollSeconds(settings.punchPrerollSeconds)}
+            min={0}
+            max={PUNCH_PREROLL_MAX}
+            perPx={0.05}
+            decimals={1}
+            onInput={idle}
+            onCommit={setPreroll}
+          />
+        </div>
 
         <div className="sec-h">Defaults</div>
         <label className="set-row tgl">

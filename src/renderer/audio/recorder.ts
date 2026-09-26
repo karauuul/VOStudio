@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Take as SavedTake } from '@shared/domain'
+import { latencyEstimate } from '@shared/punch'
 import { maxRecordSeconds } from '@shared/take-import'
 import type { PcmBitDepth } from '@shared/wav-header'
 import { pcmDuration } from './wav'
@@ -32,6 +33,7 @@ export interface RecordedClip {
   durationSec: number
   sampleRate: number
   hidden: number
+  latency: number
   finish: (fragment: boolean) => Promise<SavedTake>
 }
 
@@ -195,6 +197,10 @@ async function buildRig(device: string | undefined, h: RigHandlers): Promise<Rig
   }
 }
 
+function inputLatency(stream: MediaStream): unknown {
+  return (stream.getAudioTracks()[0]?.getSettings() as { latency?: unknown } | undefined)?.latency
+}
+
 function disposeRig(r: Rig | null): void {
   if (!r || r.disposed) return
   r.disposed = true
@@ -223,6 +229,7 @@ interface Take {
   sent: number
   first: number
   limit: number
+  latency: number
 }
 
 function newTake(gen: number): Take {
@@ -240,6 +247,7 @@ function newTake(gen: number): Take {
     sent: 0,
     first: -1,
     limit: 0,
+    latency: 0,
   }
 }
 
@@ -372,6 +380,7 @@ export function useRecorder(): RecorderApi {
         durationSec: pcmDuration(frames, rate),
         sampleRate: rate,
         hidden: Math.max(0, (t.startFrame - t.first) / rate),
+        latency: t.latency,
         finish: stream.finish,
       }
       clipRef.current = next
@@ -549,6 +558,7 @@ export function useRecorder(): RecorderApi {
             t.startAtMs = punchMs
             t.startFrame = Math.round((ctxNow + (punchMs - perfNow) / 1000) * rate)
             t.limit = maxRecordSeconds(rate) - LIMIT_MARGIN_SECONDS - Math.max(0, t.startFrame - from) / rate
+            t.latency = latencyEstimate([...transport.outputLatency(), inputLatency(r.stream)])
             if (aliveRef.current) setLimit(t.limit)
             return
           }

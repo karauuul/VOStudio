@@ -381,6 +381,19 @@
   height: 28px;
 }
 
+.set-row .set-mode {
+  flex: none;
+  width: 110px;
+}
+
+.set-row .cp-k {
+  display: none;
+}
+
+.set-row .cp-in {
+  height: 28px;
+}
+
 .set-l {
   min-width: 96px;
   color: var(--tx2);

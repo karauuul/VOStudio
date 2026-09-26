@@ -45,6 +45,8 @@ export interface AppSettings {
   micDeviceLabel?: string
   outputDeviceLabel?: string
   recordBitDepth?: PcmBitDepth
+  recordLatencyMs?: number
+  punchPrerollSeconds?: number
   countIn: boolean
   autoReference: boolean
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { MAX_STS_SECONDS, type Cue, type Take, type VoiceSettings } from '@shared/domain'
 import { recordingGuard } from '@shared/recording-guard'
 import type { AppSettings } from '@shared/ipc'
+import { latencySeconds, punchHidden, punchPrerollSeconds } from '@shared/punch'
 import { pcmBitDepth } from '@shared/wav-header'
 import { api, audioUrl } from '../api'
 import { useRecorder, type RecordedClip, type RecorderApi } from '../audio/recorder'
@@ -37,8 +38,6 @@ export interface PunchPlacement {
   hidden: number
   trackId?: string
 }
-
-export const PUNCH_PREROLL_SECONDS = 5
 
 export interface VoiceToVoice {
   rec: RecorderApi
@@ -76,6 +75,7 @@ export function useVoiceToVoice({
   const targetRef = useRef<string | null>(null)
   const punchRef = useRef<number | null>(null)
   const punchTrackRef = useRef<string | undefined>(undefined)
+  const punchLatencyRef = useRef<number | undefined>(undefined)
   const savingRef = useRef(false)
   const savedClipRef = useRef<RecordedClip | null>(null)
 
@@ -179,7 +179,15 @@ export function useVoiceToVoice({
     const target = targetRef.current
     const at = punchRef.current
     const trackId = punchTrackRef.current
-    const punch = at === null ? undefined : { at, hidden: rec.clip?.hidden ?? 0, ...(trackId ? { trackId } : {}) }
+    const clip = rec.clip
+    const punch =
+      at === null || !clip
+        ? undefined
+        : {
+            at,
+            hidden: punchHidden(clip.hidden, latencySeconds(punchLatencyRef.current, clip.latency), clip.durationSec),
+            ...(trackId ? { trackId } : {}),
+          }
     void saveClip(target).then((take) => {
       punchRef.current = null
       if (!take) return
@@ -255,9 +263,11 @@ export function useVoiceToVoice({
   const punch = useCallback(() => {
     if (converting || preRef.current || rec.phase !== 'idle') return
     const at = Math.max(0, playhead())
+    const lead = Math.min(punchPrerollSeconds(appSettings.punchPrerollSeconds), at)
     targetRef.current = null
     punchRef.current = at
     punchTrackRef.current = targetTrack()
+    punchLatencyRef.current = lead > 0 ? appSettings.recordLatencyMs : 0
     rec.start({
       cueId: cue.id,
       device: appSettings.micDeviceLabel ?? appSettings.micDeviceId,
@@ -265,7 +275,7 @@ export function useVoiceToVoice({
       countIn: false,
       autoReference: false,
       preroll: () =>
-        preroll(at, Math.min(PUNCH_PREROLL_SECONDS, at), () => {
+        preroll(at, lead, () => {
           if (punchRef.current === at) rec.cancel()
         }),
     })

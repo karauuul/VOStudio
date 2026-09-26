@@ -19,7 +19,7 @@ import {
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/ipc'
 import { isInsideDir, PROJECT_SUFFIX, summarizeProject, type ProjectStats, type ProjectSummary } from '@shared/project-summary'
-import { projectFileSchema } from './schemas'
+import { appSettingsSchema, projectFileSchema } from './schemas'
 
 let current: Project | null = null
 let rev = 0
@@ -49,7 +49,18 @@ export async function writeAppState(patch: Partial<AppState>): Promise<void> {
 
 export async function getSettings(): Promise<AppSettings> {
   const s = (await readAppState()).settings
-  return { ...DEFAULT_APP_SETTINGS, ...(s ?? {}) }
+  const merged: Record<string, unknown> = { ...DEFAULT_APP_SETTINGS, ...(s ?? {}) }
+  const parsed = appSettingsSchema.safeParse(merged)
+  if (parsed.success) return { ...merged, ...parsed.data }
+  const defaults: Record<string, unknown> = { ...DEFAULT_APP_SETTINGS }
+  for (const issue of parsed.error.issues) {
+    const key = issue.path[0]
+    if (typeof key !== 'string') continue
+    if (key in defaults) merged[key] = defaults[key]
+    else delete merged[key]
+  }
+  const repaired = appSettingsSchema.safeParse(merged)
+  return repaired.success ? { ...merged, ...repaired.data } : { ...DEFAULT_APP_SETTINGS }
 }
 
 export async function setSettings(settings: AppSettings): Promise<void> {
