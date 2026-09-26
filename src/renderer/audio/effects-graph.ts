@@ -1,13 +1,19 @@
 import {
+  dbToGain,
+  effectChain,
   effectOn,
-  hasSends,
   mixGains,
+  sanitizeCompressor,
   sanitizeDelay,
+  sanitizeEq,
+  sanitizeHighPass,
   sanitizeReverb,
   type ClipEffects,
   type DelayEffect,
+  type EffectStage,
   type ReverbEffect,
 } from '@shared/effects'
+import { connectGate, connectPitch } from './effect-worklets'
 
 function prng(seed: number): () => number {
   let a = seed >>> 0
@@ -115,19 +121,85 @@ function delaySend(ctx: BaseAudioContext, input: AudioNode, e: DelayEffect, out:
   return dry
 }
 
-export function connectEffects(
-  ctx: BaseAudioContext,
-  input: AudioNode,
-  fx: ClipEffects | undefined
-): AudioNode {
-  if (!hasSends(fx)) return input
+function sends(ctx: BaseAudioContext, input: AudioNode, fx: ClipEffects): AudioNode {
   const sum = ctx.createGain()
   const dryGain = ctx.createGain()
   let dry = 1
-  if (effectOn(fx!.reverb)) dry *= reverbSend(ctx, input, fx!.reverb!, sum)
-  if (effectOn(fx!.delay)) dry *= delaySend(ctx, input, fx!.delay!, sum)
+  if (effectOn(fx.reverb)) dry *= reverbSend(ctx, input, fx.reverb!, sum)
+  if (effectOn(fx.delay)) dry *= delaySend(ctx, input, fx.delay!, sum)
   dryGain.gain.value = dry
   input.connect(dryGain)
   dryGain.connect(sum)
   return sum
+}
+
+export const BUTTERWORTH_Q_DB = 20 * Math.log10(Math.SQRT1_2)
+
+function biquad(
+  ctx: BaseAudioContext,
+  input: AudioNode,
+  type: BiquadFilterType,
+  frequency: number,
+  gainDb: number,
+  q?: number
+): AudioNode {
+  const f = ctx.createBiquadFilter()
+  f.type = type
+  f.frequency.value = frequency
+  f.gain.value = gainDb
+  if (q !== undefined) f.Q.value = q
+  input.connect(f)
+  return f
+}
+
+function highPass(ctx: BaseAudioContext, input: AudioNode, fx: ClipEffects): AudioNode {
+  const h = sanitizeHighPass(fx.highpass!)
+  return biquad(ctx, input, 'highpass', h.frequency, 0, BUTTERWORTH_Q_DB)
+}
+
+function equalizer(ctx: BaseAudioContext, input: AudioNode, fx: ClipEffects): AudioNode {
+  const e = sanitizeEq(fx.eq!)
+  const low = biquad(ctx, input, 'lowshelf', e.lowFreq, e.lowGain)
+  const mid = biquad(ctx, low, 'peaking', e.midFreq, e.midGain, e.midQ)
+  return biquad(ctx, mid, 'highshelf', e.highFreq, e.highGain)
+}
+
+function compressor(ctx: BaseAudioContext, input: AudioNode, fx: ClipEffects): AudioNode {
+  const c = sanitizeCompressor(fx.compressor!)
+  const k = ctx.createDynamicsCompressor()
+  k.threshold.value = c.threshold
+  k.ratio.value = c.ratio
+  k.attack.value = c.attack
+  k.release.value = c.release
+  k.knee.value = c.knee
+  const makeup = ctx.createGain()
+  makeup.gain.value = dbToGain(c.makeup)
+  input.connect(k)
+  k.connect(makeup)
+  return makeup
+}
+
+type Stage = (
+  ctx: BaseAudioContext,
+  input: AudioNode,
+  fx: ClipEffects,
+  channels: number
+) => AudioNode
+
+const STAGES: Record<EffectStage, Stage> = {
+  gate: (ctx, input, fx) => connectGate(ctx, input, fx.gate),
+  highpass: highPass,
+  eq: equalizer,
+  compressor,
+  pitch: (ctx, input, fx, channels) => connectPitch(ctx, input, fx.pitch, channels),
+  sends,
+}
+
+export function connectEffects(
+  ctx: BaseAudioContext,
+  input: AudioNode,
+  fx: ClipEffects | undefined,
+  channels: number
+): AudioNode {
+  return effectChain(fx).reduce((node, stage) => STAGES[stage](ctx, node, fx!, channels), input)
 }
