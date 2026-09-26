@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { appSettingsSchema } from '../src/main/schemas'
 import { DEFAULT_APP_SETTINGS } from '../src/shared/ipc'
+import { punchPrerollSeconds, recordLatencyMs } from '../src/shared/punch'
 import { pcmBitDepth } from '../src/shared/wav-header'
 import { applySink, deviceIdForLabel } from '../src/renderer/audio/transport'
 
@@ -53,6 +54,43 @@ describe('app settings persistence', () => {
     expect(pcmBitDepth(24)).toBe(24)
     expect(pcmBitDepth(16)).toBe(16)
     for (const junk of [32, '24', null, 24.5, {}]) expect(pcmBitDepth(junk)).toBe(16)
+  })
+
+  it('round trips the latency and pre-roll overrides', () => {
+    for (const recordLatencyMs of [-1000, -35, 0, 120, 1000, 'auto']) {
+      const settings = { recordLatencyMs, punchPrerollSeconds: 2.5, countIn: true, autoReference: false }
+      expect(appSettingsSchema.parse(structuredClone(settings))).toStrictEqual(settings)
+    }
+    for (const punchPrerollSeconds of [0, 0.5, 7, 10]) {
+      const settings = { punchPrerollSeconds, countIn: false, autoReference: true }
+      expect(appSettingsSchema.parse(structuredClone(settings))).toStrictEqual(settings)
+    }
+  })
+
+  it('rejects latency and pre-roll values outside the allowed range', () => {
+    const base = { countIn: true, autoReference: false }
+    for (const recordLatencyMs of [1001, -1001, 12.5, '100', 'Auto', null, Number.NaN]) {
+      expect(appSettingsSchema.safeParse({ ...base, recordLatencyMs }).success).toBe(false)
+    }
+    for (const punchPrerollSeconds of [-0.5, 10.5, 0.3, '5', null, Number.POSITIVE_INFINITY]) {
+      expect(appSettingsSchema.safeParse({ ...base, punchPrerollSeconds }).success).toBe(false)
+    }
+  })
+
+  it('keeps settings without latency or pre-roll byte for byte and on the defaults', () => {
+    const settings = { micDeviceLabel: 'USB Mic', recordBitDepth: 24, countIn: true, autoReference: false }
+    expect(JSON.stringify(appSettingsSchema.parse(structuredClone(settings)))).toBe(JSON.stringify(settings))
+    expect(DEFAULT_APP_SETTINGS).not.toHaveProperty('recordLatencyMs')
+    expect(DEFAULT_APP_SETTINGS).not.toHaveProperty('punchPrerollSeconds')
+    expect(recordLatencyMs(DEFAULT_APP_SETTINGS.recordLatencyMs)).toBeUndefined()
+    expect(punchPrerollSeconds(DEFAULT_APP_SETTINGS.punchPrerollSeconds)).toBe(5)
+  })
+
+  it('drops a cleared override from the saved file', () => {
+    const settings = { countIn: true, autoReference: false, recordLatencyMs: undefined, punchPrerollSeconds: undefined }
+    expect(JSON.stringify(appSettingsSchema.parse(settings))).toBe(
+      JSON.stringify({ countIn: true, autoReference: false })
+    )
   })
 })
 

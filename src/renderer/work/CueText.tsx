@@ -6,6 +6,7 @@ import { useVoiceToVoice, type PunchPlacement } from '../cue/useVoiceToVoice'
 import { useWire } from '../cue/useWire'
 import { TextPanel, type TextPanelProps } from './TextPanel'
 import type { ClipSelection, CompApi } from './TimelinePanel'
+import type { PrerollStart } from '../audio/recorder'
 
 export interface CueTextProps {
   cue: Cue
@@ -76,8 +77,8 @@ export function CueText({
   const playhead = useCallback((): number => compRef.current?.playhead() ?? 0, [compRef])
   const targetTrack = useCallback((): string | undefined => compRef.current?.targetTrack(), [compRef])
   const preroll = useCallback(
-    (at: number, lead: number, onInterrupt: () => void): Promise<number> =>
-      compRef.current?.preroll(at, lead, onInterrupt) ?? Promise.resolve(performance.now()),
+    (at: number, lead: number, onInterrupt: () => void): Promise<PrerollStart> =>
+      compRef.current?.preroll(at, lead, onInterrupt) ?? Promise.resolve({ at: performance.now(), played: false }),
     [compRef]
   )
 
