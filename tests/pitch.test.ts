@@ -24,7 +24,7 @@ import {
   toggleEffect,
   type ClipEffects,
 } from '@shared/effects'
-import { compHasPitch, setClipEdits } from '@shared/comp'
+import { compUsesWorklets, setClipEdits } from '@shared/comp'
 import { emptyEdits, type CompClip, type CueComp } from '@shared/domain'
 import { clipEffectsSchema } from '../src/main/schemas'
 
@@ -330,14 +330,14 @@ const clip = (over: Partial<CompClip> = {}): CompClip => ({
   ...over,
 })
 
-describe('compHasPitch', () => {
+describe('compUsesWorklets', () => {
   it('sees pitch and does not see zero', () => {
-    expect(compHasPitch([clip()])).toBe(false)
+    expect(compUsesWorklets([clip()])).toBe(false)
     expect(
-      compHasPitch([clip({ edits: { ...emptyEdits(), effects: { pitch: { semitones: 3 } } } })])
+      compUsesWorklets([clip({ edits: { ...emptyEdits(), effects: { pitch: { semitones: 3 } } } })])
     ).toBe(true)
     expect(
-      compHasPitch([clip({ edits: { ...emptyEdits(), effects: { pitch: { semitones: 0 } } } })])
+      compUsesWorklets([clip({ edits: { ...emptyEdits(), effects: { pitch: { semitones: 0 } } } })])
     ).toBe(false)
   })
 })

@@ -1,8 +1,8 @@
-import { compDuration, compEffectsTail, compHasPitch, compHasReverb } from '@shared/comp'
+import { compDuration, compEffectsTail, compHasReverb, compUsesWorklets } from '@shared/comp'
 import type { ClipEdits, CompTrack } from '@shared/domain'
-import { effectsTail, pitchActive } from '@shared/effects'
+import { effectsTail, usesWorklets } from '@shared/effects'
 import { playBounds } from '@shared/resume'
-import { ensurePitchModule } from './pitch-node'
+import { ensureEffectWorklets } from './effect-worklets'
 import {
   buildClipGraph,
   originalVoiceEnd,
@@ -39,7 +39,7 @@ export async function renderBufferOffline(
     ? Math.max(2, buffer.numberOfChannels)
     : buffer.numberOfChannels
   const ctx = new OfflineAudioContext(channels, frames, sampleRate)
-  if (pitchActive(edits.effects?.pitch)) await ensurePitchModule(ctx)
+  if (usesWorklets(edits.effects)) await ensureEffectWorklets(ctx)
   const plan = buildClipGraph(ctx, buffer, edits)
   plan.output.connect(ctx.destination)
   plan.source.start(0, plan.offset)
@@ -114,7 +114,7 @@ export async function renderCompOffline(
   if (compHasReverb(clips, tracks)) channels = Math.max(2, channels)
   const frames = Math.max(1, Math.ceil(dur * sampleRate))
   const ctx = new OfflineAudioContext(channels, frames, sampleRate)
-  if (compHasPitch(clips)) await ensurePitchModule(ctx)
+  if (compUsesWorklets(clips, tracks)) await ensureEffectWorklets(ctx)
   scheduleComp(ctx, sources, ctx.destination, { when: 0, seek: from, tracks, originals })
   return ctx.startRendering()
 }
