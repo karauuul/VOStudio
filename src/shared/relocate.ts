@@ -13,22 +13,30 @@ function projectFolderAt(parts: string[]): number {
 
 const splitPath = (stored: string): string[] => stored.replace(/[\\/]+$/, '').split(/[\\/]+/)
 
+const windowsPath = (p: string): boolean => /^[a-z]:/i.test(p) || p.includes('\\')
+
 export function projectRootOf(stored: string): string | null {
   const parts = splitPath(stored)
   const at = projectFolderAt(parts)
-  return at < 0 ? null : parts.slice(0, at + 1).join('/').toLowerCase()
+  if (at < 0) return null
+  const root = parts.slice(0, at + 1).join('/')
+  return windowsPath(stored) ? root.toLowerCase() : root
 }
 
-export function previousProjectRoot(project: Project): string | null {
-  const own = project.cues.flatMap((cue) => cue.takes.map((take) => take.file.relPath))
+function commonestRoot(paths: string[]): string | null {
   const counts = new Map<string, number>()
-  for (const stored of own.length > 0 ? own : projectPaths(project)) {
+  for (const stored of paths) {
     const root = projectRootOf(stored)
     if (root) counts.set(root, (counts.get(root) ?? 0) + 1)
   }
   let best: string | null = null
   for (const [root, n] of counts) if (best === null || n > (counts.get(best) ?? 0)) best = root
   return best
+}
+
+export function previousProjectRoot(project: Project): string | null {
+  const takes = project.cues.flatMap((cue) => cue.takes.map((take) => take.file.relPath))
+  return commonestRoot(takes) ?? commonestRoot(projectPaths(project))
 }
 
 export function relocatedPath(projectDir: string, stored: string): string | null {

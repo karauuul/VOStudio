@@ -207,6 +207,17 @@ describe('previous project root', () => {
     expect(projectRootOf('E:\\Old\\FOO.VOSTUDIO\\audio\\x.wav')).toBe(projectRootOf('e:/old/foo.vostudio/audio/y.wav'))
     expect(projectRootOf('D:\\Stuff\\generated\\K1.mp3')).toBeNull()
   })
+
+  it('falls back to the other project files when every take lives outside a project folder', () => {
+    const project = projectAt('E:\\Old\\Foo.vostudio', 'D:\\Stuff')
+    for (const take of project.cues[0].takes) take.file.relPath = 'D:\\Stuff\\generated\\K1.mp3'
+    expect(previousProjectRoot(project)).toBe(projectRootOf('E:\\Old\\Foo.vostudio\\audio\\x.wav'))
+  })
+
+  it('keeps case for POSIX roots and folds it for Windows roots', () => {
+    expect(projectRootOf('/data/Foo.vostudio/audio/x.wav')).not.toBe(projectRootOf('/data/foo.vostudio/audio/x.wav'))
+    expect(projectRootOf('E:\\data\\Foo.vostudio\\audio\\x.wav')).toBe(projectRootOf('e:\\DATA\\foo.VOSTUDIO\\audio\\y.wav'))
+  })
 })
 
 describe('project path fields', () => {
