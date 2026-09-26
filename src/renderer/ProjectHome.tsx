@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ProjectSnapshot } from '@shared/project-commands'
+import { parseSnapshot, type ProjectSnapshot } from '@shared/project-commands'
 import type { ProjectSummary } from '@shared/project-summary'
 import { api } from './api'
 import { ConfirmDialog } from './Overlay'
@@ -55,7 +55,7 @@ export function ProjectHome({
     [onStatus]
   )
 
-  const open = (dir: string): void => run(async () => onOpen(await api['project:open'](dir)))
+  const open = (dir: string): void => run(async () => onOpen(parseSnapshot(await api['project:open'](dir))))
 
   const pickTemplate = (): void =>
     run(async () => {
@@ -72,8 +72,9 @@ export function ProjectHome({
         return
       }
       const result = await api['project:importTemplate'](preview.dir)
-      onOpen(result.snapshot)
-      onStatus('ok', `Imported ${result.snapshot.project.cues.length} cues`)
+      const snapshot = parseSnapshot(result.snapshot)
+      onOpen(snapshot)
+      onStatus('ok', `Imported ${snapshot.project.cues.length} cues`)
       if (result.warnings.length > 0) {
         onStatus('info', `${result.warnings.length} warnings: ${result.warnings[0].reason}`)
       }

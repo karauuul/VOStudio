@@ -247,7 +247,7 @@ const transcribeSchema = z.object({
 
 let projectRepository: SerialProjectRepository | null = null
 function resetRepository(project: Project): SerialProjectRepository {
-  projectRepository = new SerialProjectRepository(project, store.persistProjectSnapshot)
+  projectRepository = new SerialProjectRepository(project, store.persistProjectFile)
   store.adoptProject(projectRepository.projectForMain())
   return projectRepository
 }

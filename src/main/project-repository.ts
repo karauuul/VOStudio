@@ -1,5 +1,6 @@
 import type { Project } from '@shared/domain'
-import { applyProjectCommand, type ChangeSet, type CommandResult, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
+import { projectFile, type ProjectFile } from '@shared/project-file'
+import { applyProjectCommand, serializeSnapshot, type ChangeSet, type CommandResult, type ProjectCommand, type SerializedSnapshot } from '@shared/project-commands'
 
 export class SerialProjectRepository {
   private project: Project
@@ -13,11 +14,11 @@ export class SerialProjectRepository {
   private accepting = true
   private detached = false
 
-  constructor(project: Project, private readonly persist: (project: Project) => Promise<unknown>, private readonly debounceMs = 1500) {
-    this.project = structuredClone(project)
+  constructor(project: Project, private readonly persist: (file: ProjectFile) => Promise<unknown>, private readonly debounceMs = 1500) {
+    this.project = project
   }
 
-  snapshot(): ProjectSnapshot { return { revision: this.revision, project: structuredClone(this.project) } }
+  snapshot(): SerializedSnapshot { return serializeSnapshot(this.revision, this.project) }
   projectForMain(): Project { return this.project }
   isLive(): boolean { return this.accepting && !this.detached }
 
@@ -64,10 +65,10 @@ export class SerialProjectRepository {
     if (this.dirtyRevision <= this.enqueuedRevision) return
     const revision = this.dirtyRevision
     this.enqueuedRevision = revision
-    const snapshot = structuredClone(this.project)
+    const file = projectFile(this.project)
     this.persistRun = this.persistRun.catch(() => undefined).then(async () => {
       if (this.detached) return
-      await this.persist(snapshot)
+      await this.persist(file)
       this.persistedRevision = Math.max(this.persistedRevision, revision)
       if (!this.detached && this.dirtyRevision > this.persistedRevision) this.startPersist()
     })

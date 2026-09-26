@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { applyChangeSet, applyProjectCommand, type ProjectCommand } from '../src/shared/project-commands'
+import { applyChangeSet, applyProjectCommand, parseSnapshot, type ProjectCommand } from '../src/shared/project-commands'
+import type { ProjectFile } from '../src/shared/project-file'
 import { SerialProjectRepository } from '../src/main/project-repository'
 import {
   cueVoiceUnchanged,
@@ -13,6 +14,8 @@ import {
 import { projectCommandSchema } from '../src/main/schemas'
 import { approvalState } from '../src/shared/approval'
 import { setupImportedProject, setupOpenedProject } from '../src/main/project-import'
+
+const fromFile = (file: ProjectFile): Project => JSON.parse(file.json) as Project
 
 function project(): Project {
   return {
@@ -330,24 +333,25 @@ describe('serial project repository', () => {
     ]
     const results = await Promise.all(commands.map((c) => repo.execute(c)))
     expect(results.map((r) => r.revision)).toEqual([1, 2, 3])
-    expect(repo.snapshot().project.cues[0].text).toBe('three')
+    expect(repo.projectForMain().cues[0].text).toBe('three')
   })
 
-  it('deeply owns its project and returns detached snapshots', () => {
+  it('takes ownership of the project without copying and hands out detached snapshots', () => {
     const source = project()
     const repo = new SerialProjectRepository(source, vi.fn(), 1)
-    source.cues[0].text = 'outside'
-    const snapshot = repo.snapshot()
+    expect(repo.projectForMain()).toBe(source)
+    const snapshot = parseSnapshot(repo.snapshot())
+    expect(snapshot).toEqual({ revision: 0, project: project() })
     snapshot.project.cues[0].text = 'renderer'
-    expect(repo.snapshot().project.cues[0].text).toBe('T')
+    expect(repo.projectForMain().cues[0].text).toBe('T')
   })
 
   it('coalesces persistence without losing an edit arriving during a write', async () => {
     let release!: () => void
     const firstWrite = new Promise<void>((resolve) => { release = resolve })
     const saved: string[] = []
-    const persist = vi.fn(async (p: Project) => {
-      saved.push(p.cues[0].text)
+    const persist = vi.fn(async (file: ProjectFile) => {
+      saved.push(fromFile(file).cues[0].text)
       if (saved.length === 1) await firstWrite
     })
     const repo = new SerialProjectRepository(project(), persist, 1)
@@ -359,6 +363,40 @@ describe('serial project repository', () => {
     expect(saved).toEqual(['one', 'two'])
   })
 
+  it('writes each save as the project stood when its debounce fired', async () => {
+    let release!: () => void
+    const firstWrite = new Promise<void>((resolve) => { release = resolve })
+    const saved: string[] = []
+    const persist = vi.fn(async (file: ProjectFile) => {
+      saved.push(fromFile(file).cues[0].text)
+      if (saved.length === 1) await firstWrite
+    })
+    const repo = new SerialProjectRepository(project(), persist, 1)
+    await repo.execute({ type: 'cue.saveText', cueId: 'c', text: 'one' })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await repo.execute({ type: 'cue.saveText', cueId: 'c', text: 'two' })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await repo.execute({ type: 'cue.saveText', cueId: 'c', text: 'three' })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    release()
+    await repo.flush()
+    expect(saved).toEqual(['one', 'two', 'three'])
+  })
+
+  it('persists the project.json text without ui and the counts of the same instant', async () => {
+    const persist = vi.fn()
+    const repo = new SerialProjectRepository(project(), persist, 1)
+    await repo.execute({ type: 'cue.saveText', cueId: 'c', text: 'saved' })
+    await repo.flush()
+    const { ui: _ui, ...rest } = repo.projectForMain()
+    expect(persist).toHaveBeenCalledOnce()
+    expect(persist.mock.calls[0][0]).toEqual({
+      json: JSON.stringify(rest, null, 2),
+      name: 'P',
+      stats: { cues: 1, translated: 1, voiced: 1, approved: 0 },
+    })
+  })
+
   it('does not advance revision for a rejected command', async () => {
     const repo = new SerialProjectRepository(project(), vi.fn(), 1)
     await expect(repo.execute({ type: 'cue.setFinalTake', cueId: 'c', takeId: 'missing' })).rejects.toThrow()
@@ -367,9 +405,9 @@ describe('serial project repository', () => {
 
   it('recovers persistence after a rejected write and saves later edits', async () => {
     const saved: string[] = []
-    const persist = vi.fn(async (p: Project) => {
+    const persist = vi.fn(async (file: ProjectFile) => {
       if (persist.mock.calls.length === 1) throw new Error('disk unavailable')
-      saved.push(p.cues[0].text)
+      saved.push(fromFile(file).cues[0].text)
     })
     const repo = new SerialProjectRepository(project(), persist, 1)
     await repo.execute({ type: 'cue.saveText', cueId: 'c', text: 'first' })
@@ -390,7 +428,7 @@ describe('serial project repository', () => {
       await vi.advanceTimersByTimeAsync(100)
 
       expect(persist).toHaveBeenCalledOnce()
-      expect(persist).toHaveBeenCalledWith(expect.objectContaining({ cues: [expect.objectContaining({ text: 'dirty' })] }))
+      expect(fromFile(persist.mock.calls[0][0]).cues[0].text).toBe('dirty')
       await expect(repo.execute({ type: 'cue.saveText', cueId: 'c', text: 'late' })).rejects.toThrow('detached')
       await expect(repo.commit({ cues: [] })).rejects.toThrow('detached')
     } finally {
@@ -424,15 +462,15 @@ describe('serial project repository', () => {
     await repo.detach()
 
     await expect(queued).resolves.toMatchObject({ revision: 1 })
-    expect(repo.snapshot().project.cues[0].text).toBe('queued')
+    expect(repo.projectForMain().cues[0].text).toBe('queued')
     expect(persist).toHaveBeenCalledOnce()
   })
 
   it('remains usable when persistence fails during detach', async () => {
     const saved: string[] = []
-    const persist = vi.fn(async (p: Project) => {
+    const persist = vi.fn(async (file: ProjectFile) => {
       if (persist.mock.calls.length === 1) throw new Error('disk full')
-      saved.push(p.cues[0].text)
+      saved.push(fromFile(file).cues[0].text)
     })
     const repo = new SerialProjectRepository(project(), persist, 100)
     await repo.execute({ type: 'cue.saveText', cueId: 'c', text: 'dirty' })
@@ -441,7 +479,7 @@ describe('serial project repository', () => {
     await expect(repo.execute({ type: 'cue.saveText', cueId: 'c', text: 'still usable' })).resolves.toMatchObject({ revision: 2 })
     await expect(repo.flush()).resolves.toBeUndefined()
 
-    expect(repo.snapshot().project.cues[0].text).toBe('still usable')
+    expect(repo.projectForMain().cues[0].text).toBe('still usable')
     expect(saved).toEqual(['still usable'])
   })
 })
@@ -460,7 +498,7 @@ describe('imported project setup', () => {
       importProject: async () => { throw new Error('ui.json write rejected') },
       currentProject: () => current!,
       resetRepository: (restored) => {
-        repository = new SerialProjectRepository(restored, async (p) => { saved.push(p.cues[0].text) }, 1)
+        repository = new SerialProjectRepository(restored, async (file) => { saved.push(fromFile(file).cues[0].text) }, 1)
         return repository
       },
       finishImport: async () => undefined,
@@ -468,7 +506,7 @@ describe('imported project setup', () => {
 
     await expect(repository.execute({ type: 'cue.saveText', cueId: 'c', text: 'still open' })).resolves.toMatchObject({ revision: 1 })
     await repository.flush()
-    expect(repository.snapshot().project).toMatchObject({ id: 'previous', cues: [{ text: 'still open' }] })
+    expect(repository.projectForMain()).toMatchObject({ id: 'previous', cues: [{ text: 'still open' }] })
     expect(saved).toEqual(['still open'])
   })
 
@@ -476,8 +514,8 @@ describe('imported project setup', () => {
     const previous = project()
     previous.id = 'previous'
     const saves: string[] = []
-    const repository = new SerialProjectRepository(previous, async (p) => {
-      saves.push(p.id)
+    const repository = new SerialProjectRepository(previous, async (file) => {
+      saves.push(fromFile(file).id)
     }, 1)
     const detachCurrent = vi.fn(() => repository.detach())
 
@@ -493,7 +531,7 @@ describe('imported project setup', () => {
     expect(detachCurrent).not.toHaveBeenCalled()
     await repository.execute({ type: 'cue.saveText', cueId: 'c', text: 'still open' })
     await repository.flush()
-    expect(repository.snapshot().project.cues[0].text).toBe('still open')
+    expect(repository.projectForMain().cues[0].text).toBe('still open')
     expect(saves).toEqual(['previous'])
   })
 
@@ -506,7 +544,8 @@ describe('imported project setup', () => {
       imported.id = 'imported'
       let destination = previous.id
       const saves: string[] = []
-      const staleRepository = new SerialProjectRepository(previous, async (p) => {
+      const staleRepository = new SerialProjectRepository(previous, async (file) => {
+        const p = fromFile(file)
         saves.push(`${p.id}:${p.cues[0].text}->${destination}`)
       }, 100)
       await staleRepository.execute({ type: 'cue.saveText', cueId: 'c', text: 'dirty' })
@@ -534,8 +573,8 @@ describe('imported project setup', () => {
     imported.id = 'imported'
     let destination = previous.id
     const saves: string[] = []
-    const staleRepository = new SerialProjectRepository(previous, async (p) => {
-      saves.push(`${p.id}->${destination}`)
+    const staleRepository = new SerialProjectRepository(previous, async (file) => {
+      saves.push(`${fromFile(file).id}->${destination}`)
     }, 1)
     const queued = staleRepository.execute({ type: 'cue.saveText', cueId: 'c', text: 'queued' })
 
@@ -567,7 +606,7 @@ describe('imported project setup', () => {
       importProject: async () => { current = imported },
       currentProject: () => current,
       resetRepository: (next) => {
-        repository = new SerialProjectRepository(next, async (p) => { saved.push(p.id) }, 1)
+        repository = new SerialProjectRepository(next, async (file) => { saved.push(fromFile(file).id) }, 1)
         return repository
       },
       finishImport: async (importedRepository) => {
@@ -578,7 +617,7 @@ describe('imported project setup', () => {
     })
 
     expect(saved).toEqual(['imported'])
-    expect(snapshot.project).toMatchObject({ id: 'imported', cues: [{ suggestedText: 'Suggestion' }] })
+    expect(parseSnapshot(snapshot).project).toMatchObject({ id: 'imported', cues: [{ suggestedText: 'Suggestion' }] })
   })
 
   it('attaches openLast suggestion persistence to the opened project repository', async () => {
@@ -588,7 +627,7 @@ describe('imported project setup', () => {
     opened.id = 'opened'
     let activeProjectId = previous.id
     const saves: string[] = []
-    const persist = async (p: Project): Promise<void> => { saves.push(`${p.id}->${activeProjectId}`) }
+    const persist = async (file: ProjectFile): Promise<void> => { saves.push(`${fromFile(file).id}->${activeProjectId}`) }
     const staleRepository = new SerialProjectRepository(previous, persist, 1)
     await staleRepository.commit({ cues: [staleRepository.projectForMain().cues[0]] })
 
@@ -610,7 +649,7 @@ describe('imported project setup', () => {
 
     await staleRepository.flush()
     expect(saves).toEqual(['previous->previous', 'opened->opened'])
-    expect(snapshot?.project).toMatchObject({ id: 'opened', cues: [{ suggestedText: 'Suggestion' }] })
+    expect(snapshot && parseSnapshot(snapshot).project).toMatchObject({ id: 'opened', cues: [{ suggestedText: 'Suggestion' }] })
   })
 
   it('rolls back a half-opened project when a post-open step fails', async () => {
@@ -666,9 +705,9 @@ describe('imported project setup', () => {
     let release!: () => void
     const writing = new Promise<void>((resolve) => { release = resolve })
     const saves: string[] = []
-    const staleRepository = new SerialProjectRepository(previous, async (p) => {
+    const staleRepository = new SerialProjectRepository(previous, async (file) => {
       await writing
-      saves.push(`${p.id}->${destination}`)
+      saves.push(`${fromFile(file).id}->${destination}`)
     }, 1)
     await staleRepository.execute({ type: 'cue.saveText', cueId: 'c', text: 'dirty' })
     await new Promise((resolve) => setTimeout(resolve, 5))

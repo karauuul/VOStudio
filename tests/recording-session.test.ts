@@ -173,7 +173,7 @@ describe('recording session', () => {
     expect(bytes.readInt16LE(WAV_HEADER_BYTES + 48000)).toBe(-100)
     expect(await listRecordings(dir)).toEqual([])
     expect(published).toHaveLength(1)
-    expect(repository.snapshot().project.cues[0].takes).toEqual([take])
+    expect(repository.projectForMain().cues[0].takes).toEqual([take])
   })
 
   it('streams a 24-bit take with its own header, sidecar and duration', async () => {
@@ -315,7 +315,7 @@ describe('recording recovery', () => {
     const { dir, repository, persist } = setup()
     await crashLeftovers(dir, 'c', 1001)
     expect(await recoverRecordings({ repository, dir })).toBe(1)
-    const takes = repository.snapshot().project.cues[0].takes
+    const takes = repository.projectForMain().cues[0].takes
     expect(takes).toHaveLength(1)
     expect(takes[0]).toMatchObject({ kind: 'recording', duration: 500 / RATE, file: { fileId: 'c/t_crash_rec.wav' } })
     expect(takes[0].fragment).toBeUndefined()
@@ -331,7 +331,7 @@ describe('recording recovery', () => {
     const abs = await crashLeftovers(dir, 'c', 1001)
     expect(Object.keys(JSON.parse(await fs.readFile(`${abs}.json`, 'utf-8')))).not.toContain('bitDepth')
     expect(await recoverRecordings({ repository, dir })).toBe(1)
-    const take = repository.snapshot().project.cues[0].takes[0]
+    const take = repository.projectForMain().cues[0].takes[0]
     expect(take.duration).toBe(500 / RATE)
     expect((await fs.readFile(take.file.relPath)).subarray(0, WAV_HEADER_BYTES)).toEqual(Buffer.from(wavHeader(1000, RATE)))
   })
@@ -353,7 +353,7 @@ describe('recording recovery', () => {
     const { dir, repository } = setup()
     await crashLeftovers(dir, 'c', 1001, 't_crash_rec.wav', 24)
     expect(await recoverRecordings({ repository, dir })).toBe(1)
-    const take = repository.snapshot().project.cues[0].takes[0]
+    const take = repository.projectForMain().cues[0].takes[0]
     expect(take).toMatchObject({ kind: 'recording', duration: 333 / RATE, file: { fileId: 'c/t_crash_rec.wav' } })
     const bytes = await fs.readFile(take.file.relPath)
     expect(bytes.length).toBe(WAV_HEADER_BYTES + 1000)
@@ -384,7 +384,7 @@ describe('recording recovery', () => {
     expect(await recoverRecordings({ repository, dir })).toBe(1)
     await crashLeftovers(dir, 'c', 100)
     expect(await recoverRecordings({ repository, dir })).toBe(0)
-    expect(repository.snapshot().project.cues[0].takes).toHaveLength(1)
+    expect(repository.projectForMain().cues[0].takes).toHaveLength(1)
     expect(await listRecordings(dir)).toEqual([])
   })
 
@@ -395,7 +395,7 @@ describe('recording recovery', () => {
     await fs.mkdir(path.dirname(stale), { recursive: true })
     await fs.link(abs, stale)
     expect(await recoverRecordings({ repository, dir })).toBe(1)
-    expect(repository.snapshot().project.cues[0].takes[0].file.relPath).toBe(stale)
+    expect(repository.projectForMain().cues[0].takes[0].file.relPath).toBe(stale)
   })
 
   it('drops an empty partial without adding a take', async () => {
