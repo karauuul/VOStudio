@@ -32,7 +32,7 @@ import {
   type GenMode,
   type ProviderModel,
 } from '@shared/provider-models'
-import { replacesWholeText, splitParagraphs } from '@shared/lines'
+import { LINE_TEXT_MAX, replacesWholeText, splitParagraphs } from '@shared/lines'
 import { withDraft } from '@shared/text-draft'
 import { DragNumber } from '../cue/DragNumber'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
@@ -211,6 +211,7 @@ function Translation({
               ref={textRef}
               className="tr-in"
               value={text}
+              maxLength={LINE_TEXT_MAX}
               spellCheck={false}
               onChange={(e) => onText?.(e.target.value)}
               onPaste={(e) => {

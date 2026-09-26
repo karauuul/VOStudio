@@ -177,13 +177,19 @@ export function useProjectSession(o: {
   }, [project])
 
   useEffect(() => {
-    let leaving = false
+    let saving = false
+    let refused: TextDraft | null = null
     const onUnload = (e: BeforeUnloadEvent): void => {
-      if (leaving || !pendingText.current) return
-      leaving = true
+      if (!pendingText.current || pendingText.current === refused) return
       e.preventDefault()
       e.returnValue = false
-      void flushText().finally(() => window.close())
+      if (saving) return
+      saving = true
+      void flushText().then((saved) => {
+        saving = false
+        if (saved) window.close()
+        else refused = pendingText.current
+      })
     }
     window.addEventListener('beforeunload', onUnload)
     return () => window.removeEventListener('beforeunload', onUnload)
