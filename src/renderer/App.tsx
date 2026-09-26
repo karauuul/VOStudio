@@ -276,6 +276,7 @@ export default function App() {
 
   const restoringRef = useRef(false)
   const restoreActiveRef = useRef(false)
+  const syncingRef = useRef(false)
   const lockReason = (): string | null =>
     exportingRef.current ? 'Export in progress' : restoringRef.current ? 'Restoring version' : null
   const refuseWhileExporting = useCallback((): boolean => {
@@ -1056,7 +1057,9 @@ export default function App() {
   }, [leaveProject, refuseWhileExporting])
 
   async function syncCsv(): Promise<void> {
+    if (refuseWhileExporting()) return
     setBulk(true)
+    syncingRef.current = true
     try {
       await flushText()
       const r = await api['csv:sync']()
@@ -1064,6 +1067,7 @@ export default function App() {
     } catch (e) {
       pushStatus('err', String(e))
     } finally {
+      syncingRef.current = false
       setBulk(false)
     }
   }
@@ -1232,6 +1236,7 @@ export default function App() {
           exporting: exportingRef.current,
           recording: recActiveRef.current?.() ?? false,
           busy: busyCountNow() > 0 || mediaJobsRef.current > 0,
+          syncing: syncingRef.current,
         })
       const block = restoreActiveRef.current ? 'Restoring version' : refusal()
       if (block) {

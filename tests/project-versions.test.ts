@@ -260,6 +260,7 @@ describe('restore refusal', () => {
     expect(restoreBlock(idle)).toBeNull()
     expect(restoreBlock({ ...idle, exporting: true })).toBe('Export in progress')
     expect(restoreBlock({ ...idle, recording: true })).toBe('Stop the recording first')
+    expect(restoreBlock({ ...idle, syncing: true })).toBe('CSV sync in progress')
     expect(restoreBlock({ ...idle, busy: true })).toBe('Generation is still running')
     expect(restoreBlock({ exporting: true, recording: true, busy: true })).toBe('Export in progress')
   })
