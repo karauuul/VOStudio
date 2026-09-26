@@ -30,7 +30,7 @@ import {
   type Stem,
   type VoiceSettings,
 } from './domain'
-import { referencedByOtherComp, resolveTake } from './library'
+import { referencedByOtherComp, resolveTake, type TakeLookup } from './library'
 import { sanitizeExportSettings, type ExportSettings } from './export-settings'
 import { mixesOriginal } from './export-plan'
 import { newLineCue, nextLineNumber } from './lines'
@@ -129,6 +129,11 @@ const cueById = (project: Project, id: string): Cue => {
   const cue = project.cues.find((item) => item.id === id)
   if (!cue) throw new Error('Cue not found')
   return cue
+}
+
+export function savedText(cue: Cue, text: string, project?: TakeLookup): Cue {
+  const next = changeCueText(cue, text, project)
+  return next.status === 'empty' && text.trim() ? { ...next, status: 'translated' } : next
 }
 
 const outputStateKey = ({ status, output, approval }: OutputState): string =>
@@ -389,8 +394,7 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
   switch (command.type) {
     case 'cue.saveText':
       if (command.ifText !== undefined && cue.text !== command.ifText) break
-      Object.assign(cue, changeCueText(cue, command.text, project))
-      if (cue.status === 'empty' && command.text.trim()) cue.status = 'translated'
+      Object.assign(cue, savedText(cue, command.text, project))
       break
     case 'cue.approve':
       if (command.approved) Object.assign(cue, approveCue(cue, command.approvedAt, project))
