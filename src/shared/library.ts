@@ -573,6 +573,33 @@ export function placeClip(comp: CueComp, req: PlaceClipRequest): PlacedClip {
 
 export const PUNCH_CROSSFADE = 0.01
 
+function clearSpan(comp: CueComp, trackId: string, from: number, to: number): CueComp {
+  const onTrack = (c: CompClip): boolean => clipTrackId(c) === trackId
+  let cut = comp
+  for (const t of [from, to]) {
+    const crossing = cut.clips.find(
+      (c) => onTrack(c) && c.start < t - COMP_EPS && clipEnd(c) > t + COMP_EPS
+    )
+    if (!crossing) continue
+    const ids = t === to ? { left: newCompClipId(), right: crossing.id } : {}
+    cut = splitClipAt(cut, crossing.id, t, ids)
+  }
+  const clips = cut.clips.flatMap((c): CompClip[] => {
+    const end = clipEnd(c)
+    if (!onTrack(c) || end <= from + COMP_EPS || c.start >= to - COMP_EPS) return [c]
+    const speed = clipSpeed(c.edits)
+    const pieces: CompClip[] = []
+    const srcOut = c.srcIn + (from - c.start) * speed
+    if (c.start < from - COMP_EPS && srcOut - c.srcIn >= MIN_CLIP_SRC) pieces.push({ ...c, srcOut })
+    const srcIn = c.srcOut - (end - to) * speed
+    if (end > to + COMP_EPS && c.srcOut - srcIn >= MIN_CLIP_SRC) {
+      pieces.push({ ...c, id: pieces.length > 0 ? newCompClipId() : c.id, srcIn, start: to })
+    }
+    return pieces
+  })
+  return { ...cut, clips }
+}
+
 export interface PunchRequest {
   takeId: string
   duration: number
@@ -589,18 +616,7 @@ export function punchClip(comp: CueComp | undefined, req: PunchRequest): PlacedC
     return null
   }
   const trackId = resolveTargetTrack(base, req.targetTrackId)
-  const onTrack = (c: CompClip): boolean => clipTrackId(c) === trackId
-  const crossing = base.clips.find(
-    (c) => onTrack(c) && c.start < at - COMP_EPS && clipEnd(c) > at + COMP_EPS
-  )
-  const cut = crossing ? splitClipAt(base, crossing.id, at) : base
-  const kept = cut.clips.flatMap((c): CompClip[] => {
-    if (!onTrack(c)) return [c]
-    if (c.start >= at - COMP_EPS) return []
-    if (clipEnd(c) <= at + COMP_EPS) return [c]
-    const srcOut = c.srcIn + (at - c.start) * clipSpeed(c.edits)
-    return srcOut - c.srcIn < MIN_CLIP_SRC ? [] : [{ ...c, srcOut }]
-  })
+  const cleared = clearSpan(base, trackId, at, Infinity)
   const clip: CompClip = {
     id: newCompClipId(),
     sourceTakeId: req.takeId,
@@ -610,13 +626,42 @@ export function punchClip(comp: CueComp | undefined, req: PunchRequest): PlacedC
     edits: emptyEdits(),
     ...(base.tracks ? { trackId } : {}),
   }
-  const placed = normalizeComp({ ...cut, clips: [...kept, clip] })
-  const joined = placed.clips.find((c) => onTrack(c) && Math.abs(clipEnd(c) - at) <= COMP_EPS)
+  const placed = normalizeComp({ ...cleared, clips: [...cleared.clips, clip] })
+  const joined = placed.clips.find(
+    (c) => clipTrackId(c) === trackId && Math.abs(clipEnd(c) - at) <= COMP_EPS
+  )
   return {
     comp: joined ? setCrossfade(placed, joined.id, PUNCH_CROSSFADE) : placed,
     clipId: clip.id,
     trackId,
   }
+}
+
+export interface RecordRequest {
+  takeId: string
+  duration: number
+  at: number
+  targetTrackId?: string
+}
+
+export function recordClip(comp: CueComp | undefined, req: RecordRequest): PlacedClip {
+  const base = comp ?? { clips: [] }
+  const trackId = resolveTargetTrack(base, req.targetTrackId)
+  const at = Number.isFinite(req.at) ? Math.max(0, req.at) : 0
+  const hit = base.clips.find(
+    (c) => clipTrackId(c) === trackId && c.start <= at + COMP_EPS && at < clipEnd(c) - COMP_EPS
+  )
+  const start = hit ? hit.start : at
+  const others = hit ? { ...base, clips: base.clips.filter((c) => c.id !== hit.id) } : base
+  const cleared = clearSpan(others, trackId, start, start + req.duration)
+  return placeClip(hit ? { ...cleared, clips: [...cleared.clips, hit] } : cleared, {
+    duration: req.duration,
+    targetTrackId: trackId,
+    playhead: start,
+    sourceTakeId: req.takeId,
+    edits: emptyEdits(),
+    ...(hit ? { replaceClipId: hit.id } : {}),
+  })
 }
 
 export function wordsFromAlignment(value: unknown): WordTiming[] | undefined {

@@ -24,20 +24,20 @@ interface Options {
   playhead: () => number
   targetTrack: () => string | undefined
   preroll: (at: number, lead: number, onInterrupt: () => void) => Promise<PrerollStart>
+  punchMark: (at: number | null) => void
+  keepMicWarm: boolean
   onPlace: (
     cueId: string,
     take: Take,
     replaceClipId?: string,
     drop?: undefined,
-    punch?: PunchPlacement
+    placement?: RecordPlacement
   ) => Promise<void>
 }
 
-export interface PunchPlacement {
-  at: number
-  hidden: number
-  trackId?: string
-}
+export type RecordPlacement =
+  | { kind: 'punch'; at: number; hidden: number; trackId?: string }
+  | { kind: 'take'; at: number; trackId?: string }
 
 export interface VoiceToVoice {
   rec: RecorderApi
@@ -62,9 +62,11 @@ export function useVoiceToVoice({
   playhead,
   targetTrack,
   preroll,
+  punchMark,
+  keepMicWarm,
   onPlace,
 }: Options): VoiceToVoice {
-  const rec = useRecorder()
+  const rec = useRecorder(keepMicWarm)
   const [saving, setSaving] = useState(false)
   const submitJob = useJobsStore((s) => s.submit)
   const cueBusy = useCueBusy(cue.id)
@@ -76,6 +78,7 @@ export function useVoiceToVoice({
   const punchRef = useRef<number | null>(null)
   const punchTrackRef = useRef<string | undefined>(undefined)
   const punchLatencyRef = useRef<LatencySetting | undefined>(undefined)
+  const takeAtRef = useRef<{ at: number; trackId: string | undefined } | null>(null)
   const savingRef = useRef(false)
   const savedClipRef = useRef<RecordedClip | null>(null)
 
@@ -83,6 +86,7 @@ export function useVoiceToVoice({
     preGen.current++
     targetRef.current = null
     punchRef.current = null
+    takeAtRef.current = null
     if (!preRef.current) return
     preRef.current = false
     transport.stop()
@@ -104,9 +108,11 @@ export function useVoiceToVoice({
 
   const startRec = useCallback(() => {
     punchRef.current = null
+    takeAtRef.current = null
     const sel = selection()
     if (!sel) {
       targetRef.current = null
+      takeAtRef.current = { at: Math.max(0, playhead()), trackId: targetTrack() }
       rec.start({
         cueId: cue.id,
         device: appSettings.micDeviceLabel ?? appSettings.micDeviceId,
@@ -141,7 +147,7 @@ export function useVoiceToVoice({
     } else {
       armed()
     }
-  }, [rec, appSettings, cue.id, cue.referenceAudio, selection])
+  }, [rec, appSettings, cue.id, cue.referenceAudio, selection, playhead, targetTrack])
 
   const saveClip = useCallback(
     async (target: string | null): Promise<Take | null> => {
@@ -179,11 +185,12 @@ export function useVoiceToVoice({
     const target = targetRef.current
     const at = punchRef.current
     const trackId = punchTrackRef.current
+    const spot = takeAtRef.current
     const clip = rec.clip
-    const punch =
-      at === null || !clip
-        ? undefined
-        : {
+    const placement: RecordPlacement | undefined =
+      at !== null && clip
+        ? {
+            kind: 'punch',
             at,
             hidden: punchHidden(
               clip.hidden,
@@ -192,10 +199,14 @@ export function useVoiceToVoice({
             ),
             ...(trackId ? { trackId } : {}),
           }
+        : !target && spot
+          ? { kind: 'take', at: spot.at, ...(spot.trackId ? { trackId: spot.trackId } : {}) }
+          : undefined
     void saveClip(target).then((take) => {
       punchRef.current = null
+      takeAtRef.current = null
       if (!take) return
-      onPlace(cueId, take, target ?? undefined, undefined, punch).then(
+      onPlace(cueId, take, target ?? undefined, undefined, placement).then(
         () => onStatus('ok', 'Recording placed'),
         (e: unknown) => onStatus('err', String(e))
       )
@@ -269,6 +280,7 @@ export function useVoiceToVoice({
     const at = Math.max(0, playhead())
     const lead = Math.min(punchPrerollSeconds(appSettings.punchPrerollSeconds), at)
     targetRef.current = null
+    takeAtRef.current = null
     punchRef.current = at
     punchTrackRef.current = targetTrack()
     punchLatencyRef.current = appSettings.recordLatencyMs
@@ -284,6 +296,11 @@ export function useVoiceToVoice({
         }),
     })
   }, [converting, rec, playhead, targetTrack, preroll, cue.id, appSettings])
+
+  useEffect(() => {
+    const armed = recPhase === 'arming' || recPhase === 'countin' || recPhase === 'recording'
+    punchMark(armed ? punchRef.current : null)
+  }, [recPhase, punchMark])
 
   const recStop = rec.stop
   const recLive = rec.live

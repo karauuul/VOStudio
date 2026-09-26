@@ -170,6 +170,7 @@ export interface CompApi {
   current: () => CueComp
   splitAtPlayhead: () => void
   ghost: (request: GhostRequest | null) => void
+  punchMark: (at: number | null) => void
 }
 
 export type GhostRequest = { takeId: string; replaceClipId?: string } | { generate: true }
@@ -307,6 +308,7 @@ export function TimelinePanel({
   const [playingId, setPlayingId] = useState<string | null>(null)
   const [cutAt, setCutAt] = useState<number | null>(null)
   const [ghost, setGhost] = useState<GhostRequest | null>(null)
+  const [punchAt, setPunchAt] = useState<number | null>(null)
 
   const cueId = cue?.id ?? ''
   const [shownCue, setShownCue] = useState(cueId)
@@ -322,6 +324,7 @@ export function TimelinePanel({
     setArmSplit(false)
     setCutAt(null)
     setGhost(null)
+    setPunchAt(null)
     setUnits(cue?.region ? 'timecode' : 'seconds')
   }
 
@@ -1316,6 +1319,7 @@ export function TimelinePanel({
         if (c) splitClip(c.id, at)
       },
       ghost: setGhost,
+      punchMark: setPunchAt,
     }),
     [
       editable,
@@ -1592,6 +1596,7 @@ export function TimelinePanel({
   const step = tickStep(pxPerSec)
   const rulerTicks = width > 0 ? ticks(view, width) : []
   const xOf = (t: number): number => timeToX(view, t)
+  const punchX = punchAt === null ? null : playheadX(view, punchAt, STRIP, width)
 
   const grid = (
     <div
@@ -1804,6 +1809,7 @@ export function TimelinePanel({
               />
             </>
           )}
+          {punchAt !== null && <b className="tl-mk in punch" style={{ left: xOf(punchAt) }} />}
         </div>
       </div>
 
@@ -2186,6 +2192,9 @@ export function TimelinePanel({
             className="tl-marq"
             style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
           />
+        )}
+        {punchX !== null && (
+          <span className="tl-ph punch" style={{ transform: `translateX(${punchX.toFixed(2)}px)` }} />
         )}
         <span className="tl-ph" ref={headRef} />
       </div>
