@@ -229,6 +229,7 @@ function stepFields(project: Project, cue: Cue, from: LineFields, to: LineFields
     (characterId === '' || project.characters.some((item) => item.id === characterId))
   ) {
     next = { ...next, characterId }
+    next = { ...next, ...invalidateVoicedOutput(next, project) }
   }
   return next
 }

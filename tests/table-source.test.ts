@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { approvalState } from '../src/shared/approval'
 import { LINE_TEXT_MAX } from '../src/shared/lines'
 import {
   applyTable,
@@ -316,6 +317,27 @@ describe('import undo', () => {
 
     await step('undo')
     expect(fieldsOf(p)).toEqual(before)
+  })
+
+  it('invalidates approved output when the import or its undo changes the character', async () => {
+    const p = start()
+    Object.assign(p.cues.find((c) => c.id === 'c')!, {
+      status: 'generated',
+      takes: [{ ...take('t', 't.mp3'), kind: 'tts' as const, file: { fileId: 't', relPath: 't.mp3', format: 'mp3' as const } }],
+      finalTakeId: 't',
+    })
+    run(p, { type: 'cue.approve', cueId: 'c', approved: true, approvedAt: 'then' })
+    const revision = p.cues.find((c) => c.id === 'c')!.output?.revision ?? 0
+    const { step } = importInto(p, csv('EventName,Character', 'C,Ada'), options({ id: 0, character: 1 }))
+    const imported = p.cues.find((c) => c.id === 'c')!
+    expect(imported.characterId).toBe('Ada')
+    expect(imported.output?.revision).toBe(revision + 1)
+    expect(approvalState(imported)).toBe('stale')
+    run(p, { type: 'cue.approve', cueId: 'c', approved: true, approvedAt: 'later' })
+    await step('undo')
+    const undone = p.cues.find((c) => c.id === 'c')!
+    expect(undone.characterId).toBe('')
+    expect(approvalState(undone)).toBe('stale')
   })
 
   it('keeps edits made after the import and characters that were configured or used', async () => {

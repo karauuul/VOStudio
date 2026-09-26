@@ -1,4 +1,4 @@
-import { changeCueSourceText, changeCueText } from './approval'
+import { changeCueSourceText, changeCueText, invalidateVoicedOutput } from './approval'
 import { parseCsv } from './csv'
 import { LINE_TEXT_MAX, newLineCue, nextLineNumber, splitParagraphs } from './lines'
 import type { ChangeSet, FieldStep, LineFields } from './project-commands'
@@ -226,6 +226,7 @@ export function applyTable(
       const characterId = ensureCharacter(project, character)
       if (cue.characterId !== characterId) {
         cue.characterId = characterId
+        Object.assign(cue, invalidateVoicedOutput(cue, project))
         touched = true
       }
     }

@@ -613,6 +613,10 @@ export function timeOf(pos: number): number | null {
   return performance.now() + (s.at + (pos - s.startPos) - ctx.currentTime) * 1000
 }
 
+export function outputLatency(): number[] {
+  return ctx ? [ctx.baseLatency, ctx.outputLatency] : []
+}
+
 export function playRange(clip: Clip, from: number, to: number): Promise<void> {
   const a = Math.max(0, from)
   if (!(to > a)) return Promise.resolve()
@@ -770,6 +774,7 @@ export const transport = {
   playComp,
   playRange,
   timeOf,
+  outputLatency,
   subscribe,
   getState,
   currentClipId,

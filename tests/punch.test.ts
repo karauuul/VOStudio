@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { clipEnd, compProblem, compRenderPlan } from '../src/shared/comp'
 import { emptyEdits, type CompClip, type CompTrack, type CueComp } from '../src/shared/domain'
 import { PUNCH_CROSSFADE, punchClip } from '../src/shared/library'
+import {
+  latencyEstimate,
+  latencySeconds,
+  punchHidden,
+  punchPrerollSeconds,
+  recordLatencyMs,
+} from '../src/shared/punch'
 
 const clip = (over: Partial<CompClip> = {}): CompClip => ({
   id: 'a',
@@ -116,5 +123,77 @@ describe('punchClip', () => {
     const before = structuredClone(comp)
     punchClip(comp, punch)
     expect(comp).toEqual(before)
+  })
+})
+
+describe('punch latency', () => {
+  it('estimates from the output and input latencies it can read', () => {
+    expect(latencyEstimate([0.01, 0.04, 0.02])).toBeCloseTo(0.07)
+    expect(latencyEstimate([0.01, undefined, Number.NaN, -0.5, '0.2', null])).toBeCloseTo(0.01)
+    expect(latencyEstimate([])).toBe(0)
+    expect(latencyEstimate([0.8, 0.9])).toBe(1)
+  })
+
+  it('applies no correction when unset, the estimate on Auto and the manual value otherwise', () => {
+    expect(latencySeconds(undefined, 0.07)).toBe(0)
+    expect(latencySeconds('auto', 0.07)).toBeCloseTo(0.07)
+    expect(latencySeconds('auto', 3)).toBe(1)
+    expect(latencySeconds(100, 0.07)).toBeCloseTo(0.1)
+    expect(latencySeconds(0, 0.07)).toBe(0)
+    expect(latencySeconds(-250, 0.07)).toBeCloseTo(-0.25)
+    expect(latencySeconds(5000, 0)).toBe(1)
+    expect(latencySeconds(-5000, 0)).toBe(-1)
+    expect(latencySeconds('100', 0.02)).toBe(0)
+  })
+
+  it('sanitizes a manual latency to whole milliseconds in range', () => {
+    expect(recordLatencyMs(undefined)).toBeUndefined()
+    expect(recordLatencyMs(Number.NaN)).toBeUndefined()
+    expect(recordLatencyMs('12')).toBeUndefined()
+    expect(recordLatencyMs('auto')).toBe('auto')
+    expect(recordLatencyMs(12.4)).toBe(12)
+    expect(recordLatencyMs(-12.6)).toBe(-13)
+    expect(recordLatencyMs(1200)).toBe(1000)
+    expect(recordLatencyMs(-1200)).toBe(-1000)
+  })
+
+  it('moves the take earlier without leaving the recorded audio', () => {
+    expect(punchHidden(5, 0.1, 9)).toBeCloseTo(5.1)
+    expect(punchHidden(5, 0, 9)).toBe(5)
+    expect(punchHidden(0.05, -0.2, 9)).toBe(0)
+    expect(punchHidden(5, 1, 5.5)).toBe(5.5)
+  })
+
+  it('bounds the pre-roll to 0–10 s in half-second steps', () => {
+    for (const junk of [undefined, null, '3', Number.NaN, {}]) expect(punchPrerollSeconds(junk)).toBe(5)
+    expect(punchPrerollSeconds(0)).toBe(0)
+    expect(punchPrerollSeconds(2)).toBe(2)
+    expect(punchPrerollSeconds(2.3)).toBe(2.5)
+    expect(punchPrerollSeconds(-1)).toBe(0)
+    expect(punchPrerollSeconds(12)).toBe(10)
+  })
+
+  it('keeps the punch point and trims the latency from the take', () => {
+    const hidden = punchHidden(punch.hidden, latencySeconds(100, 0), punch.duration)
+    const r = punchClip({ clips: [clip()] }, { ...punch, hidden })
+    if (!r) throw new Error('no placement')
+    expect(added(r.comp, r.clipId)).toMatchObject({ start: 1.5, srcOut: 6 })
+    expect(added(r.comp, r.clipId).srcIn).toBeCloseTo(5.1)
+    expect(clipEnd(added(r.comp, 'a'))).toBeCloseTo(1.5)
+    expect(compProblem(r.comp)).toBeNull()
+  })
+
+  it('places exactly as before when there is no latency to correct', () => {
+    const hidden = punchHidden(punch.hidden, latencySeconds(undefined, 0), punch.duration)
+    expect(hidden).toBe(punch.hidden)
+    const before = punchClip({ clips: [clip()] }, punch)
+    const after = punchClip({ clips: [clip()] }, { ...punch, hidden })
+    if (!before || !after) throw new Error('no placement')
+    expect(after.comp.clips.map(({ id: _, ...c }) => c)).toEqual(before.comp.clips.map(({ id: _, ...c }) => c))
+  })
+
+  it('refuses when the correction leaves nothing after the punch point', () => {
+    const hidden = punchHidden(punch.hidden, latencySeconds(1000, 0), punch.duration)
+    expect(punchClip({ clips: [clip()] }, { ...punch, hidden })).toBeNull()
   })
 })

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { isProjectDirIn, isSafeId, isValidProjectName } from '@shared/project-summary'
 import { CREATE_LINES_MAX, LINE_TEXT_MAX } from '@shared/lines'
 import { CHARACTER_ID_MAX, CUE_KEY_MAX, TABLE_ROWS_MAX } from '@shared/import-table'
+import { PUNCH_PREROLL_MAX, PUNCH_PREROLL_STEP, RECORD_LATENCY_MAX_MS } from '@shared/punch'
 import {
   DUCK_MAX_DB,
   DUCK_MIN_DB,
@@ -490,6 +491,10 @@ export const appSettingsSchema = z.object({
   micDeviceLabel: z.string().max(500).optional(),
   outputDeviceLabel: z.string().max(500).optional(),
   recordBitDepth: pcmBitDepthSchema.optional(),
+  recordLatencyMs: z
+    .union([z.literal('auto'), z.number().int().min(-RECORD_LATENCY_MAX_MS).max(RECORD_LATENCY_MAX_MS)])
+    .optional(),
+  punchPrerollSeconds: z.number().min(0).max(PUNCH_PREROLL_MAX).multipleOf(PUNCH_PREROLL_STEP).optional(),
   countIn: z.boolean(),
   autoReference: z.boolean(),
 })

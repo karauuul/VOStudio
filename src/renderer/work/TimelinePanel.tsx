@@ -87,6 +87,7 @@ import { playBounds } from '@shared/resume'
 import { hasReference } from '@shared/lines'
 import { reportTakeDuration } from '../audio/duration-backfill'
 import { clipId, transport, type TransportState } from '../audio/transport'
+import type { PrerollStart } from '../audio/recorder'
 import { playback, type PlaybackOps } from '../playback'
 import { getPeaks, Wave, type Peaks } from '../Waveform'
 import { DragNumber } from '../cue/DragNumber'
@@ -152,7 +153,7 @@ export interface CompApi {
   selection: () => ClipSelection | null
   playhead: () => number
   targetTrack: () => string
-  preroll: (at: number, lead: number, onInterrupt: () => void) => Promise<number>
+  preroll: (at: number, lead: number, onInterrupt: () => void) => Promise<PrerollStart>
   editSelected: (patch: Partial<ClipEdits>, commit: boolean) => void
   moveSelected: (start: number, commit: boolean) => void
   nudge: (steps: number) => void
@@ -1232,17 +1233,17 @@ export function TimelinePanel({
       playhead: () => posRef.current,
       targetTrack: () => resolveTargetTrack(compRefLive.current, targetTrackId),
       preroll: (at, lead, onInterrupt) =>
-        new Promise<number>((resolve, reject) => {
+        new Promise<PrerollStart>((resolve, reject) => {
           const from = Math.max(0, at - lead)
           if (!resolved || !transportId || !(at > from)) {
             transport.stop()
-            resolve(performance.now())
+            resolve({ at: performance.now(), played: false })
             return
           }
           let punchMs: number | null = null
           const settle = (): void => {
             punchMs = transport.timeOf(at) ?? performance.now()
-            resolve(punchMs)
+            resolve({ at: punchMs, played: true })
           }
           const interrupted = (): void => {
             if (punchMs === null) reject(new Error('Punch pre-roll was interrupted'))
