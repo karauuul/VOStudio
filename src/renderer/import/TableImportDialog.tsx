@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MatchRule } from '@shared/domain'
-import { assignColumn, type TableColumn, type TableMapping, type TableSummary } from '@shared/import-table'
+import { assignColumn, tableColumnLabels, type TableColumn, type TableMapping, type TableSummary } from '@shared/import-table'
 import type { TablePreview } from '@shared/ipc'
 import { api } from '../api'
 import { Confirm, Overlay } from '../Overlay'
@@ -58,18 +58,13 @@ export function TableImportDialog({ path, rule, ai, onImport, onClose }: Props) 
   }, [path, rule, mapping, replace, keep])
 
   const current = mapping ?? preview?.mapping ?? {}
-  const labels: Record<TableColumn, string> = {
-    id: 'Key',
-    text: 'Original',
-    translation: ai ? 'Translation' : 'Text',
-    character: 'Character',
-  }
+  const labels = tableColumnLabels(ai)
   const fieldOf = (column: number): TableColumn | '' => FIELDS.find((field) => current[field] === column) ?? ''
   const keyed = !preview?.script && current.id !== undefined
   const summary = preview?.summary
   const columns = preview ? Math.max(1, preview.headers.length) : 1
   const ready = !!preview && !loading && !error && !busy
-  const changes = summary ? summary.added + summary.updated : 0
+  const changes = summary ? summary.added + summary.updated + summary.suggested : 0
 
   const submit = (): void => {
     setBusy(true)
@@ -84,6 +79,7 @@ export function TableImportDialog({ path, rule, ai, onImport, onClose }: Props) 
     : [
         { key: 'added', label: 'new', tone: 'ok' },
         { key: 'updated', label: 'updated', tone: 'ac' },
+        { key: 'suggested', label: 'suggested', tone: summary?.suggested ? 'warn' : '' },
         { key: 'unchanged', label: 'unchanged', tone: '' },
         { key: 'skipped', label: 'skipped', tone: summary?.skipped ? 'warn' : '' },
       ]
