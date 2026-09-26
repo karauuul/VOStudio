@@ -12,6 +12,7 @@ interface Props {
   characters: Pick<Character, 'id' | 'name'>[]
   groups: CueGroup[]
   activeCueId?: string
+  activeText?: string
   search: string
   onSearch: (s: string) => void
   onSelect: (cueId: string) => void
@@ -28,6 +29,7 @@ export function LinesPanel({
   characters,
   groups,
   activeCueId,
+  activeText,
   search,
   onSearch,
   onSelect,
@@ -121,7 +123,7 @@ export function LinesPanel({
               }}
             >
               <div>
-                <div className="t">{cue.sourceText || cue.text}</div>
+                <div className="t">{cue.sourceText || (cue.id === activeCueId ? (activeText ?? cue.text) : cue.text)}</div>
                 <div className="id">
                   {cue.region
                     ? `${names.get(cue.characterId) ?? 'no character'} · ${regionTimecode(cue.region.in)}`

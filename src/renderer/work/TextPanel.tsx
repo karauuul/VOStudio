@@ -33,10 +33,12 @@ import {
   type ProviderModel,
 } from '@shared/provider-models'
 import { replacesWholeText, splitParagraphs } from '@shared/lines'
+import { withDraft } from '@shared/text-draft'
 import { DragNumber } from '../cue/DragNumber'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 import { clockOf } from '@shared/timeline-math'
 import { meterFill } from '@shared/meter'
+import { useTextDraft } from '../text-draft-store'
 
 const REMAINING_SHOWN_SECONDS = 60
 
@@ -184,7 +186,8 @@ function Translation({
 > & { menu?: (range: TextRange, el: HTMLTextAreaElement) => MenuEntry[]; ai: boolean }) {
   const mirrorRef = useRef<HTMLDivElement>(null)
   const pop = useContextMenu()
-  const text = cue?.text ?? ''
+  const draft = useTextDraft((s) => s.draft)
+  const text = withDraft(cue, draft)?.text ?? ''
   const range = useMemo(
     () => (target ? targetRange(text, target) : null),
     [text, target]

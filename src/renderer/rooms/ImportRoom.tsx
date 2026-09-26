@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type MutableRefObject, type RefObject } from 'react'
+import { memo, useCallback, useRef, useState, type MutableRefObject, type RefObject } from 'react'
 import type { Cue, MatchRule, Project, VoiceSettings } from '@shared/domain'
 import { reviewGeneration } from '@shared/cue-filter'
 import { TABLE_FILE } from '@shared/import-table'
@@ -40,7 +40,7 @@ interface Props {
   onCancelVoice: (characterId: string) => void
 }
 
-export function ImportRoom({
+export const ImportRoom = memo(function ImportRoom({
   hidden,
   project,
   search,
@@ -232,4 +232,4 @@ export function ImportRoom({
       </div>
     </div>
   )
-}
+}, (prev, next) => prev.hidden && next.hidden)
