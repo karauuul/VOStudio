@@ -336,6 +336,19 @@ describe('recording recovery', () => {
     expect((await fs.readFile(take.file.relPath)).subarray(0, WAV_HEADER_BYTES)).toEqual(Buffer.from(wavHeader(1000, RATE)))
   })
 
+  it('pads an odd-sized 24-bit data chunk as RIFF requires', async () => {
+    const { dir, repository } = setup()
+    const id = await beginRecording({ repository, dir }, 'c', RATE, 24)
+    await appendRecording(id, pcm24(3, 5))
+    const take = await finishRecording(id, false, () => undefined)
+    const bytes = await fs.readFile(take.file.relPath)
+    expect(bytes.length).toBe(WAV_HEADER_BYTES + 10)
+    expect(bytes.readUInt32LE(4)).toBe(36 + 10)
+    expect(bytes.readUInt32LE(40)).toBe(9)
+    expect(bytes[WAV_HEADER_BYTES + 9]).toBe(0)
+    expect(take.duration).toBe(3 / RATE)
+  })
+
   it('repairs a 24-bit partial by whole 3-byte frames', async () => {
     const { dir, repository } = setup()
     await crashLeftovers(dir, 'c', 1001, 't_crash_rec.wav', 24)
@@ -343,8 +356,11 @@ describe('recording recovery', () => {
     const take = repository.snapshot().project.cues[0].takes[0]
     expect(take).toMatchObject({ kind: 'recording', duration: 333 / RATE, file: { fileId: 'c/t_crash_rec.wav' } })
     const bytes = await fs.readFile(take.file.relPath)
-    expect(bytes.length).toBe(WAV_HEADER_BYTES + 999)
+    expect(bytes.length).toBe(WAV_HEADER_BYTES + 1000)
     expect(bytes.subarray(0, WAV_HEADER_BYTES)).toEqual(Buffer.from(wavHeader(999, RATE, 1, 24)))
+    expect(bytes.readUInt32LE(4)).toBe(36 + 1000)
+    expect(bytes.readUInt32LE(40)).toBe(999)
+    expect(bytes[WAV_HEADER_BYTES + 999]).toBe(0)
     expect(await listRecordings(dir)).toEqual([])
   })
 

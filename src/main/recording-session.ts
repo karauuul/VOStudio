@@ -58,7 +58,11 @@ function recordingTake(cue: Cue, abs: string, fileName: string, sampleRate: numb
 async function seal(handle: FileHandle, sampleRate: number, bitDepth: PcmBitDepth): Promise<number> {
   const { size } = await handle.stat()
   const dataBytes = wavDataBytes(size, sampleBytes(bitDepth))
-  if (size !== WAV_HEADER_BYTES + dataBytes) await handle.truncate(WAV_HEADER_BYTES + dataBytes)
+  const end = WAV_HEADER_BYTES + dataBytes
+  if (size !== end + (dataBytes % 2)) {
+    await handle.truncate(end)
+    if (dataBytes % 2) await handle.truncate(end + 1)
+  }
   await handle.write(wavHeader(dataBytes, sampleRate, 1, bitDepth), 0, WAV_HEADER_BYTES, 0)
   await handle.sync()
   return dataBytes / sampleBytes(bitDepth)

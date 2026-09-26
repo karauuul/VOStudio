@@ -25,7 +25,7 @@ export function wavHeader(
   const header = new Uint8Array(WAV_HEADER_BYTES)
   const view = new DataView(header.buffer)
   writeAscii(view, 0, 'RIFF')
-  view.setUint32(4, 36 + dataBytes, true)
+  view.setUint32(4, 36 + dataBytes + (dataBytes % 2), true)
   writeAscii(view, 8, 'WAVE')
   writeAscii(view, 12, 'fmt ')
   view.setUint32(16, 16, true)
