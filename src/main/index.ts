@@ -507,7 +507,7 @@ function registerHandlers(): void {
             ? {
                 title: 'Import text table',
                 properties: ['openFile'],
-                filters: [{ name: 'Tables', extensions: ['csv', 'tsv', 'txt'] }],
+                filters: [{ name: 'Tables', extensions: ['csv', 'tsv', 'txt', 'xlsx'] }],
               }
             : {
                 title: 'Import audio files',
