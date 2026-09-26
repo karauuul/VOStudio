@@ -317,11 +317,12 @@ describe('re-import without Replace', () => {
     expect(p.cues.map((c) => c.key)).toEqual(['A', 'B', 'C', 'D', 'E', 'F'])
   })
 
-  it('undo of a replaced text keeps a pending suggestion', async () => {
+  it('a replaced text drops the pending suggestion and undo brings both back', async () => {
     const p = imported()
     lineB(p).suggestedText = 'Pending'
     const { step } = importInto(p, edited, options(tableMapping(edited), { replaceTranslations: true }))
-    expect(lineB(p)).toMatchObject({ text: 'Beta two', suggestedText: 'Pending' })
+    expect(lineB(p).text).toBe('Beta two')
+    expect('suggestedText' in lineB(p)).toBe(false)
     await step('undo')
     expect(lineB(p)).toMatchObject({ text: 'Beta', suggestedText: 'Pending' })
   })

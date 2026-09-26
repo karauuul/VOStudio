@@ -263,6 +263,7 @@ export function applyTable(
       if (replaceTranslations || !cue.text.trim()) {
         Object.assign(cue, changeCueText(cue, translation))
         if (cue.status === 'empty') cue.status = 'translated'
+        delete cue.suggestedText
         touched = true
       } else if (translation !== cue.suggestedText) {
         cue.suggestedText = translation
