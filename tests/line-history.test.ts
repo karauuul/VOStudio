@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyProjectCommand, type ChangeSet, type ProjectCommand } from '../src/shared/project-commands'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 import { approvalState, isDone } from '../src/shared/approval'
-import { CREATE_LINES_MAX, LINE_TEXT_MAX, planScriptPaste } from '../src/shared/lines'
+import { CREATE_LINES_MAX, LINE_TEXT_MAX, PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste } from '../src/shared/lines'
 import { projectCommandSchema } from '../src/main/schemas'
 import {
   doneChange,
@@ -293,6 +293,46 @@ describe('script paste validation', () => {
     }
     expect(p).toEqual(before)
     expect(p.cues[0].text).toBe('keep me')
+  })
+
+  it('reports an over-long paragraph with the same status as a single-paragraph overflow', () => {
+    expect(planScriptPaste('a', ['ok', 'x'.repeat(LINE_TEXT_MAX + 1)], id)).toEqual({ problem: PARAGRAPH_TOO_LONG })
+    expect(PARAGRAPH_TOO_LONG).toBe('Paragraph over 5000 characters')
+  })
+})
+
+describe('single-paragraph paste limit', () => {
+  it('allows a paste that lands exactly on the limit and refuses one character more', () => {
+    expect(pasteOverflows('', 0, 0, 'x'.repeat(LINE_TEXT_MAX))).toBe(false)
+    expect(pasteOverflows('', 0, 0, 'x'.repeat(LINE_TEXT_MAX + 1))).toBe(true)
+    expect(pasteOverflows('', 0, 0, 'x'.repeat(5100))).toBe(true)
+  })
+
+  it('counts the existing text around the caret', () => {
+    const value = 'a'.repeat(4000)
+    expect(pasteOverflows(value, 4000, 4000, 'b'.repeat(1000))).toBe(false)
+    expect(pasteOverflows(value, 4000, 4000, 'b'.repeat(1001))).toBe(true)
+    expect(pasteOverflows(value, 2000, 2000, 'b'.repeat(1001))).toBe(true)
+  })
+
+  it('subtracts the selection the paste replaces', () => {
+    const value = 'a'.repeat(4500)
+    expect(pasteOverflows(value, 0, 4500, 'b'.repeat(LINE_TEXT_MAX))).toBe(false)
+    expect(pasteOverflows(value, 1000, 2000, 'b'.repeat(1500))).toBe(false)
+    expect(pasteOverflows(value, 1000, 1400, 'b'.repeat(1000))).toBe(true)
+  })
+
+  it('counts a CRLF or lone CR line break as one character, as the text field stores it', () => {
+    const lines = 'x'.repeat(LINE_TEXT_MAX - 2)
+    expect(pasteOverflows('', 0, 0, `${lines}\r\n.`)).toBe(false)
+    expect(pasteOverflows('', 0, 0, `${lines}\r.`)).toBe(false)
+    expect(pasteOverflows('', 0, 0, `${lines}\r\n..`)).toBe(true)
+  })
+
+  it('refuses any insertion into text already over the limit but allows a paste that shrinks it back under', () => {
+    const value = 'a'.repeat(LINE_TEXT_MAX + 10)
+    expect(pasteOverflows(value, 0, 0, 'b')).toBe(true)
+    expect(pasteOverflows(value, 0, 100, 'b')).toBe(false)
   })
 })
 

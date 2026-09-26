@@ -84,18 +84,16 @@ export const ImportRoom = memo(function ImportRoom({
   )
 
   const importPaths = useCallback(
-    (paths: string[]) => {
+    async (paths: string[]): Promise<void> => {
       const templates = paths.filter((p) => TEMPLATE_RE.test(p))
       const tablePaths = paths.filter((p) => TABLE_FILE.test(p))
       const audio = paths.filter((p) => !TEMPLATE_RE.test(p) && !TABLE_FILE.test(p))
       if (templates.length > 0) {
-        run(async () => {
-          const r = await api['import:template'](templates[0])
-          onStatus(
-            'ok',
-            `Re-import: ${r.added} added, ${r.updated} updated, ${r.untouched} untouched, ${r.orphaned} orphaned`
-          )
-        })
+        const r = await api['import:template'](templates[0])
+        onStatus(
+          'ok',
+          `Re-import: ${r.added} added, ${r.updated} updated, ${r.untouched} untouched, ${r.orphaned} orphaned`
+        )
         return
       }
       if (tablePaths.length > 0) {
@@ -103,19 +101,18 @@ export const ImportRoom = memo(function ImportRoom({
         return
       }
       if (audio.length === 0) return
-      run(async () => {
-        const r = await api['import:audio']({ paths: audio, rule: matchBy })
-        onStatus('ok', `${r.files} files · ${r.added} lines added, ${r.updated} updated`)
-      })
+      const r = await api['import:audio']({ paths: audio, rule: matchBy })
+      onStatus('ok', `${r.files} files · ${r.added} lines added, ${r.updated} updated`)
     },
-    [run, onTable, matchBy, onStatus]
+    [onTable, matchBy, onStatus]
   )
+
+  const drop = useCallback((paths: string[]) => run(() => importPaths(paths)), [run, importPaths])
 
   const pick = useCallback(
     (kind: 'files' | 'folder') =>
       run(async () => {
-        const paths = await api['import:pick'](kind)
-        if (paths.length > 0) importPaths(paths)
+        await importPaths(await api['import:pick'](kind))
       }),
     [run, importPaths]
   )
@@ -197,7 +194,7 @@ export const ImportRoom = memo(function ImportRoom({
 
   return (
     <div className="main import-grid" hidden={hidden}>
-      <SourcesPanel project={project} tables={tables} onPick={pick} onDrop={importPaths} busy={busy} />
+      <SourcesPanel project={project} tables={tables} onPick={pick} onDrop={drop} busy={busy} />
 
       <div className="gutter" />
 
