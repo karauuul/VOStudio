@@ -15,7 +15,7 @@ import type { CompClipPlan, CompPlan, ExportFormat } from './export-plan'
 import type { LoudnessTarget } from './export-settings'
 import type { ExportedLines } from './readiness'
 import type { UpdateStatus } from './updater'
-import type { CommandResult, ProjectCommand, ProjectSnapshot } from './project-commands'
+import type { CommandResult, ProjectCommand, SerializedSnapshot } from './project-commands'
 import type { ProjectSummary } from './project-summary'
 import type { PcmBitDepth } from './wav-header'
 import type { LatencySetting } from './punch'
@@ -141,6 +141,7 @@ export interface ExportJob {
   srcPath: string
   format: ExportFormat
   formatArgs: string[]
+  sampleRate?: number
   fastPath: boolean
   hasEdits: boolean
   edits: ClipEdits
@@ -190,7 +191,7 @@ export interface TemplatePreview {
 }
 
 export interface TemplateImportResult {
-  snapshot: ProjectSnapshot
+  snapshot: SerializedSnapshot
   warnings: TemplateIssue[]
 }
 
@@ -276,8 +277,8 @@ export interface TakeDurationUpdate {
 
 export interface IpcApi {
   'project:list': () => Promise<ProjectSummary[]>
-  'project:open': (dir: string) => Promise<ProjectSnapshot>
-  'project:create': (name?: string) => Promise<ProjectSnapshot>
+  'project:open': (dir: string) => Promise<SerializedSnapshot>
+  'project:create': (name?: string) => Promise<SerializedSnapshot>
   'project:delete': (dir: string) => Promise<void>
   'project:close': () => Promise<void>
   'project:pickTemplate': () => Promise<TemplatePreview | null>

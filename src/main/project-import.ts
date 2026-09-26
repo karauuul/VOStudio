@@ -1,5 +1,5 @@
 import type { Project } from '@shared/domain'
-import type { ProjectSnapshot } from '@shared/project-commands'
+import type { SerializedSnapshot } from '@shared/project-commands'
 import type { SerialProjectRepository } from './project-repository'
 
 interface ImportedProjectSetup<Staged> {
@@ -27,7 +27,7 @@ export async function setupImportedProject<Staged>({
   currentProject,
   resetRepository,
   finishImport,
-}: ImportedProjectSetup<Staged>): Promise<ProjectSnapshot> {
+}: ImportedProjectSetup<Staged>): Promise<SerializedSnapshot> {
   const staged = await stageImport()
   const previousProject = structuredClone(currentProject())
   await detachCurrent()
@@ -51,7 +51,7 @@ export async function setupOpenedProject({
   resetRepository,
   finishOpen,
   abandonProject,
-}: OpenedProjectSetup): Promise<ProjectSnapshot | null> {
+}: OpenedProjectSetup): Promise<SerializedSnapshot | null> {
   await detachCurrent()
   const project = await openProject()
   if (!project) return null

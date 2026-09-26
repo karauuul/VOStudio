@@ -1,6 +1,7 @@
 import { approvalState } from './approval'
 import { serializeCell, serializeCsv } from './csv'
 import type { Cue, Project } from './domain'
+import type { ExportedLines } from './readiness'
 
 export interface DeliverExported {
   cueId: string
@@ -10,6 +11,7 @@ export interface DeliverExported {
   sha256: string
   revision?: number
   version?: number
+  signature?: string
 }
 
 export interface DeliverFailed {
@@ -91,24 +93,37 @@ export function buildReport(
   }
 }
 
+const replacedBy = (current: DeliverExported[]): ((e: DeliverExported) => boolean) => {
+  const fresh = new Set(current.map((e) => e.file.toLowerCase()))
+  const cues = new Set(current.map((e) => e.cueId))
+  return (e) => fresh.has(e.file.toLowerCase()) || cues.has(e.cueId)
+}
+
 export function mergeExported(
   previous: DeliverExported[],
   current: DeliverExported[]
 ): DeliverExported[] {
-  const fresh = new Set(current.map((e) => e.file.toLowerCase()))
-  return [...previous.filter((e) => !fresh.has(e.file.toLowerCase())), ...current]
+  const replaced = replacedBy(current)
+  return [...previous.filter((e) => !replaced(e)), ...current]
 }
 
-export function exportedLines(report: Pick<DeliverReport, 'exported'>): Record<
-  string,
-  { revision: number; version?: number }
-> {
-  const out: Record<string, { revision: number; version?: number }> = {}
+export function supersededFiles(previous: DeliverExported[], current: DeliverExported[]): string[] {
+  const fresh = new Set(current.map((e) => e.file.toLowerCase()))
+  const replaced = replacedBy(current)
+  return previous
+    .filter((e) => replaced(e) && !fresh.has(e.file.toLowerCase()))
+    .map((e) => e.file)
+    .filter((file) => /^audio\/[^/\\]+$/.test(file) && !/^audio\/\.\.?$/.test(file))
+}
+
+export function exportedLines(report: Pick<DeliverReport, 'exported'>): ExportedLines {
+  const out: ExportedLines = {}
   for (const e of report.exported ?? []) {
     if (typeof e.cueId !== 'string' || !e.cueId) continue
     out[e.cueId] = {
       revision: typeof e.revision === 'number' ? e.revision : 0,
       ...(typeof e.version === 'number' ? { version: e.version } : {}),
+      ...(typeof e.signature === 'string' ? { signature: e.signature } : {}),
     }
   }
   return out

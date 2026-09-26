@@ -371,7 +371,7 @@ describe('redo aliases', () => {
 
 describe('labels in manual lines', () => {
   it('E focuses the translation in AI lines and the text in manual lines', () => {
-    expect(labelText(of('focusText'), true)).toBe('Focus translation')
+    expect(labelText(of('focusText'), true)).toBe('Focus text')
     expect(labelText(of('focusText'), false)).toBe('Focus text')
   })
 
