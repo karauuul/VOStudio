@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { appSettingsSchema } from '../src/main/schemas'
+import { DEFAULT_APP_SETTINGS } from '../src/shared/ipc'
+import { pcmBitDepth } from '../src/shared/wav-header'
 import { applySink, deviceIdForLabel } from '../src/renderer/audio/transport'
 
 afterEach(() => {
@@ -31,6 +33,26 @@ describe('app settings persistence', () => {
     expect(JSON.stringify(appSettingsSchema.parse(structuredClone(settings)))).toBe(
       JSON.stringify(settings)
     )
+  })
+
+  it('round trips the recording bit depth', () => {
+    const settings = { micDeviceLabel: 'USB Mic', recordBitDepth: 24, countIn: true, autoReference: false }
+    expect(appSettingsSchema.parse(structuredClone(settings))).toStrictEqual(settings)
+    expect(appSettingsSchema.parse({ ...settings, recordBitDepth: 16 }).recordBitDepth).toBe(16)
+  })
+
+  it('rejects an unknown bit depth', () => {
+    for (const recordBitDepth of [32, 8, '24', null]) {
+      expect(appSettingsSchema.safeParse({ countIn: true, autoReference: false, recordBitDepth }).success).toBe(false)
+    }
+  })
+
+  it('records 16-bit unless 24-bit was chosen', () => {
+    expect(DEFAULT_APP_SETTINGS).not.toHaveProperty('recordBitDepth')
+    expect(pcmBitDepth(DEFAULT_APP_SETTINGS.recordBitDepth)).toBe(16)
+    expect(pcmBitDepth(24)).toBe(24)
+    expect(pcmBitDepth(16)).toBe(16)
+    for (const junk of [32, '24', null, 24.5, {}]) expect(pcmBitDepth(junk)).toBe(16)
   })
 })
 

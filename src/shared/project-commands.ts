@@ -1,4 +1,4 @@
-import { approveCue, changeCompOutput, changeCueSourceText, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval, sanitizeRevision, setExcluded } from './approval'
+import { approveCue, changeCompOutput, changeCueSourceText, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval, sanitizeApproval, sanitizeCueOutput, setExcluded } from './approval'
 import { compProblem, normalizeComp } from './comp'
 import { sanitizeEffects } from './effects'
 import {
@@ -64,7 +64,7 @@ export type ProjectCommand =
       dropCharacters: Character[]
     }
   | { type: 'cue.useTakeAsOriginal'; cueId: string; takeId: string }
-  | ({ type: 'cue.restoreOriginal'; cueId: string; whenOutputRevision: number } & OriginalState)
+  | ({ type: 'cue.restoreOriginal'; cueId: string; whenState: OutputState } & OriginalState)
   | { type: 'character.setVoiceSettings'; characterId: string; settings: VoiceSettings }
   | { type: 'character.create'; id: string; name: string }
   | { type: 'character.rename'; characterId: string; name: string }
@@ -77,12 +77,15 @@ export type ProjectCommand =
   | { type: 'project.setProvider'; provider: ProviderSettings | null }
   | { type: 'project.setExportTemplate'; template: string }
 
-export interface OriginalState {
-  referenceAudio: AudioRef | null
-  referenceDuration: number | null
+export interface OutputState {
   status: Cue['status']
   output?: CueOutput | null
   approval?: CueApproval | null
+}
+
+export interface OriginalState extends OutputState {
+  referenceAudio: AudioRef | null
+  referenceDuration: number | null
 }
 
 export interface PlacedCue {
@@ -123,6 +126,9 @@ const cueById = (project: Project, id: string): Cue => {
   if (!cue) throw new Error('Cue not found')
   return cue
 }
+
+const outputStateKey = ({ status, output, approval }: OutputState): string =>
+  JSON.stringify({ status, output: sanitizeCueOutput(output), approval: sanitizeApproval(approval) })
 
 const characterById = (project: Project, id: string): Character => {
   const character = project.characters.find((item) => item.id === id)
@@ -513,7 +519,7 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
       else delete cue.referenceAudio
       if (command.referenceDuration !== null) cue.referenceDuration = command.referenceDuration
       else delete cue.referenceDuration
-      if (sanitizeRevision(cue.output?.revision) !== command.whenOutputRevision) {
+      if (outputStateKey(cue) !== outputStateKey(command.whenState)) {
         if (mixesOriginal(cue)) Object.assign(cue, invalidateVoicedOutput(cue, project))
         break
       }

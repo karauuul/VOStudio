@@ -77,14 +77,21 @@ export interface TableFile {
   rows: string[][]
 }
 
+export const TABLE_ROWS_MAX = 100_000
+
+function bounded(file: TableFile): TableFile {
+  if (file.rows.length > TABLE_ROWS_MAX) throw new Error(`Table has more than ${TABLE_ROWS_MAX} rows`)
+  return file
+}
+
 export function parseTableFile(fileName: string, raw: string): TableFile {
   const firstLine = raw.slice(0, raw.search(/\r?\n/) + 1 || undefined)
   if (/\.txt$/i.test(fileName) && !firstLine.includes('\t')) {
-    return { script: true, headers: [], rows: splitParagraphs(raw.replace(/^\uFEFF/, '')).map((part) => [part]) }
+    return bounded({ script: true, headers: [], rows: splitParagraphs(raw.replace(/^\uFEFF/, '')).map((part) => [part]) })
   }
   const csv = parseCsv(raw, tableDelimiter(fileName, firstLine))
   if (csv.headers.length === 0) throw new Error('Table has no header row')
-  return { script: false, headers: csv.headers, rows: csv.rows }
+  return bounded({ script: false, headers: csv.headers, rows: csv.rows })
 }
 
 export function tableMapping(

@@ -8,6 +8,7 @@ import {
   previewTable,
   tableMapping,
   type TableOptions,
+  TABLE_ROWS_MAX,
 } from '../src/shared/import-table'
 import { emptyEdits, type Character, type Cue, type Project, type Take } from '../src/shared/domain'
 import { newLineCue } from '../src/shared/lines'
@@ -400,5 +401,13 @@ describe('tableImportSchema', () => {
     expect(() => tableImportSchema.parse({ path: '/t.csv', rule: 'id', mapping: { id: -1 } })).toThrow()
     expect(() => tableImportSchema.parse({ path: '/t.csv', rule: 'id', mapping: { id: 1.5 } })).toThrow()
     expect(() => tableImportSchema.parse({ path: '/t.csv', rule: 'id', keepOriginal: 'yes' })).toThrow()
+  })
+})
+
+describe('table size bound', () => {
+  it('rejects tables whose undo would not fit the history command', () => {
+    const rows = Array.from({ length: TABLE_ROWS_MAX + 1 }, (_, i) => `line ${i}`).join('\n')
+    expect(() => parseTableFile('big.csv', `Text\n${rows}\n`)).toThrow(/more than/)
+    expect(parseTableFile('ok.csv', 'Text\nOne\n').rows).toHaveLength(1)
   })
 })

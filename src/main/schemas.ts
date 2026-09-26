@@ -2,6 +2,7 @@ import path from 'path'
 import { z } from 'zod'
 import { isProjectDirIn, isSafeId, isValidProjectName } from '@shared/project-summary'
 import { CREATE_LINES_MAX, LINE_TEXT_MAX } from '@shared/lines'
+import { TABLE_ROWS_MAX } from '@shared/import-table'
 import {
   DUCK_MAX_DB,
   DUCK_MIN_DB,
@@ -271,6 +272,12 @@ export const cueApprovalSchema = z.object({
   approvedAt: z.string().min(1),
 }).nullable()
 
+const outputStateSchema = z.object({
+  status: z.enum(['empty', 'translated', 'generated', 'approved', 'excluded']),
+  output: cueOutputSchema.optional(),
+  approval: cueApprovalSchema.optional(),
+})
+
 export const cueRevisionFieldsSchema = z.object({
   textRevision: revisionSchema.optional(),
   output: cueOutputSchema.optional(),
@@ -285,9 +292,12 @@ export const REC_CHUNK_MAX_BYTES = 4 * 1024 * 1024
 
 const recSession = z.string().uuid()
 
+export const pcmBitDepthSchema = z.union([z.literal(16), z.literal(24)])
+
 export const recBeginSchema = z.object({
   cueId: z.string().min(1).max(200),
   sampleRate: z.number().int().min(8000).max(384000),
+  bitDepth: pcmBitDepthSchema.optional(),
 })
 
 export const recChunkSchema = z.object({
@@ -296,7 +306,7 @@ export const recChunkSchema = z.object({
     .custom<ArrayBuffer | ArrayBufferView>((v) => v instanceof ArrayBuffer || ArrayBuffer.isView(v), {
       message: 'Expected PCM bytes',
     })
-    .refine((v) => v.byteLength > 0 && v.byteLength <= REC_CHUNK_MAX_BYTES && v.byteLength % 2 === 0, {
+    .refine((v) => v.byteLength > 0 && v.byteLength <= REC_CHUNK_MAX_BYTES, {
       message: 'Invalid PCM chunk size',
     }),
 })
@@ -436,23 +446,21 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('cue.restore'), cues: placedCues.min(1).max(100_000) }),
   z.object({
     type: z.literal('table.step'),
-    remove: z.array(z.string().min(1).max(200)).max(100_000),
-    restore: placedCues.max(100_000),
+    remove: z.array(z.string().min(1).max(200)).max(TABLE_ROWS_MAX),
+    restore: placedCues.max(TABLE_ROWS_MAX),
     fields: z
       .array(z.object({ cueId: z.string().min(1).max(200), from: lineFieldsSchema, to: lineFieldsSchema }))
-      .max(100_000),
-    addCharacters: z.array(characterSchema).max(10_000),
-    dropCharacters: z.array(characterSchema).max(10_000),
+      .max(TABLE_ROWS_MAX),
+    addCharacters: z.array(characterSchema).max(TABLE_ROWS_MAX),
+    dropCharacters: z.array(characterSchema).max(TABLE_ROWS_MAX),
   }),
   cueId.extend({ type: z.literal('cue.useTakeAsOriginal'), takeId: z.string().min(1).max(200) }),
   cueId.extend({
     type: z.literal('cue.restoreOriginal'),
     referenceAudio: audioRefSchema.nullable(),
     referenceDuration: finite.min(0).nullable(),
-    status: z.enum(['empty', 'translated', 'generated', 'approved', 'excluded']),
-    output: cueOutputSchema.optional(),
-    approval: cueApprovalSchema.optional(),
-    whenOutputRevision: revisionSchema,
+    ...outputStateSchema.shape,
+    whenState: outputStateSchema,
   }),
   characterId.extend({ type: z.literal('character.setVoiceSettings'), settings: voiceSettingsSchema }),
   z.object({ type: z.literal('character.create'), id: z.string().min(1).max(200), name: characterName }),
@@ -481,6 +489,7 @@ export const appSettingsSchema = z.object({
   micDeviceId: z.string().max(500).optional(),
   micDeviceLabel: z.string().max(500).optional(),
   outputDeviceLabel: z.string().max(500).optional(),
+  recordBitDepth: pcmBitDepthSchema.optional(),
   countIn: z.boolean(),
   autoReference: z.boolean(),
 })

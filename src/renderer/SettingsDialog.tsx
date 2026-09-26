@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { UsageInfo } from '@shared/domain'
 import type { AppSettings } from '@shared/ipc'
 import type { UpdateStatus } from '@shared/updater'
+import { pcmBitDepth } from '@shared/wav-header'
 import { api } from './api'
 import { Overlay } from './Overlay'
 
@@ -144,6 +145,18 @@ export function SettingsDialog({
                 {d.label || `Input ${i + 1}`}
               </option>
             ))}
+          </select>
+        </label>
+        <label className="set-row">
+          <span className="set-l">Bit depth</span>
+          <select
+            value={pcmBitDepth(settings.recordBitDepth)}
+            onChange={(e) =>
+              onSettings({ ...settings, recordBitDepth: e.target.value === '24' ? 24 : undefined })
+            }
+          >
+            <option value={16}>16-bit</option>
+            <option value={24}>24-bit</option>
           </select>
         </label>
         <label className="set-row">

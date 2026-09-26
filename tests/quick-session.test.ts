@@ -8,7 +8,7 @@ import { takeFileKind } from '../src/shared/take-import'
 import { pickHistory } from '../src/shared/undo-route'
 import { exportName, planBatch } from '../src/shared/export-plan'
 import { approvalState, hasValidVoicedOutput } from '../src/shared/approval'
-import { lineStepCommand, originalStateOf, outputRevisionIn, type LineEdit } from '../src/shared/line-history'
+import { lineStepCommand, originalStateOf, outputStateIn, type LineEdit } from '../src/shared/line-history'
 import { DECODE_BUDGET_BYTES, decodedBytes, importProblem, maxEditMinutes } from '../src/shared/take-import'
 
 const take = (id: string, over: Partial<Take> = {}): Take => ({
@@ -361,7 +361,7 @@ describe('undoing Use as original', () => {
   function useAsOriginal(p: Project, cueId: string, takeId: string): ProjectCommand {
     const before = originalStateOf(p.cues.find((c) => c.id === cueId)!)
     const changes = applyProjectCommand(p, { type: 'cue.useTakeAsOriginal', cueId, takeId })
-    const edit: LineEdit = { kind: 'original', cueId, takeId, before, whenOutputRevision: outputRevisionIn(changes, cueId), at: 1 }
+    const edit: LineEdit = { kind: 'original', cueId, takeId, before, after: outputStateIn(changes, cueId), at: 1 }
     return lineStepCommand(edit, 'undo')
   }
 
@@ -422,6 +422,60 @@ describe('undoing Use as original', () => {
     expect(p.cues[0].referenceAudio?.relPath).toBe('/p/r.wav')
     expect(approvalState(p.cues[0], p)).toBe('stale')
     expect(p.cues[0].status).not.toBe('approved')
+  })
+
+  const approvedPlain = (): Cue => ({ ...approvedMixing(), original: { exportMode: 'off', duckDb: -12 } })
+
+  it('keeps a line excluded after the action excluded when undone', () => {
+    for (const make of [approvedMixing, approvedPlain]) {
+      const p = project([make()])
+      const undo = useAsOriginal(p, 'a', 't')
+      run(p, { type: 'cue.setExcluded', cueId: 'a', excluded: true })
+      run(p, undo)
+      expect(p.cues[0].referenceAudio?.relPath).toBe('/p/r.wav')
+      expect(p.cues[0].referenceDuration).toBe(4)
+      expect(p.cues[0].status).toBe('excluded')
+      expect(planBatch(p)).toEqual([])
+    }
+  })
+
+  it('keeps an approval removed after the action when undone', () => {
+    const p = project([approvedMixing()])
+    const undo = useAsOriginal(p, 'a', 't')
+    run(p, { type: 'cue.approve', cueId: 'a', approved: false })
+    run(p, undo)
+    expect(p.cues[0].referenceAudio?.relPath).toBe('/p/r.wav')
+    expect(p.cues[0]).not.toHaveProperty('approval')
+    expect(p.cues[0].status).toBe('generated')
+  })
+
+  it('keeps an approval given after the action when undone', () => {
+    const p = project([approvedPlain()])
+    const undo = useAsOriginal(p, 'a', 't')
+    run(p, { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'later' })
+    run(p, undo)
+    expect(p.cues[0].referenceAudio?.relPath).toBe('/p/r.wav')
+    expect(p.cues[0].approval?.approvedAt).toBe('later')
+    expect(approvalState(p.cues[0], p)).toBe('approved')
+  })
+
+  it('matches the state produced by the action regardless of key order', () => {
+    const before: Cue = {
+      ...approvedMixing(),
+      output: { revision: 2, takeId: 'v', kind: 'take' },
+      approval: { approvedAt: 'then', outputRevision: 2, textRevision: 1 },
+    }
+    const p = project([structuredClone(before)])
+    run(p, useAsOriginal(p, 'a', 't'))
+    expect(p.cues[0]).toEqual(before)
+  })
+
+  it('carries the state to compare through the command schema and refuses a command without it', () => {
+    const p = project([approvedMixing()])
+    const undo = useAsOriginal(p, 'a', 't')
+    expect(projectCommandSchema.parse(undo)).toEqual(undo)
+    const { whenState: _dropped, ...legacy } = undo as Extract<ProjectCommand, { type: 'cue.restoreOriginal' }>
+    expect(projectCommandSchema.safeParse(legacy).success).toBe(false)
   })
 })
 

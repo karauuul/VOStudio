@@ -16,6 +16,7 @@ import type { ExportedLines } from './readiness'
 import type { UpdateStatus } from './updater'
 import type { CommandResult, ProjectCommand, ProjectSnapshot } from './project-commands'
 import type { ProjectSummary } from './project-summary'
+import type { PcmBitDepth } from './wav-header'
 
 export interface CsvPreview {
   headers: string[]
@@ -43,6 +44,7 @@ export interface AppSettings {
   micDeviceId?: string
   micDeviceLabel?: string
   outputDeviceLabel?: string
+  recordBitDepth?: PcmBitDepth
   countIn: boolean
   autoReference: boolean
 }
@@ -293,7 +295,7 @@ export interface IpcApi {
 
   'shell:reveal': (absPath: string) => Promise<void>
 
-  'rec:begin': (req: { cueId: string; sampleRate: number }) => Promise<string>
+  'rec:begin': (req: { cueId: string; sampleRate: number; bitDepth?: PcmBitDepth }) => Promise<string>
   'rec:chunk': (req: { session: string; pcm: ArrayBuffer }) => Promise<void>
   'rec:finish': (req: { session: string; fragment?: boolean }) => Promise<Take>
   'rec:abort': (req: { session: string }) => Promise<void>
