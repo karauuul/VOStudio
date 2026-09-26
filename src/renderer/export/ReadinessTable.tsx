@@ -113,20 +113,20 @@ export function ReadinessTable({
           style={{ height: '100%' }}
           fixedHeaderContent={() => (
             <tr>
-              <th style={{ width: 260 }}>Source</th>
-              <th>Output</th>
-              <th style={{ width: 80 }}>Original</th>
+              <th>Line</th>
+              <th>File</th>
+              <th style={{ width: 88 }}>Original</th>
               <th style={{ width: 80 }}>Output</th>
-              <th style={{ width: 190 }}>Status</th>
+              <th style={{ width: 140 }}>Status</th>
               <th style={{ width: 60 }}>Done</th>
-              <th style={{ width: 90 }}>Exported</th>
+              <th style={{ width: 92 }}>Exported</th>
             </tr>
           )}
           computeItemKey={(_, row) => row.cueId}
           itemContent={(_, row) => (
             <>
               <td className="exp-id" title={row.cueKey}>
-                {row.cueKey}
+                {row.label}
               </td>
               <td title={row.name}>{row.name || '—'}</td>
               <td className="mono">{secs(row.originalLength)}</td>
