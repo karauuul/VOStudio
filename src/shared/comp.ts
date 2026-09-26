@@ -11,7 +11,7 @@ import {
   type CueComp,
   type Take,
 } from './domain'
-import { effectOn, effectsTail, sanitizeEffects, usesWorklets } from './effects'
+import { effectsTail, sanitizeEffects, usesWorklets } from './effects'
 
 export const COMP_EPS = 1e-6
 
@@ -96,12 +96,6 @@ export function compEffectsTail(clips: readonly CompClip[], tracks?: readonly Co
     if (e > end) end = e
   }
   return Math.max(0, end - total)
-}
-
-export function compHasReverb(clips: readonly CompClip[], tracks?: readonly CompTrack[]): boolean {
-  return clips.some(
-    (c) => effectOn(c.edits.effects?.reverb) || effectOn(trackOf(tracks, c)?.effects?.reverb)
-  )
 }
 
 export function compUsesWorklets(

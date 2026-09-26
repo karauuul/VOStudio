@@ -149,12 +149,13 @@ export function CueText({
       arming={v2v.rec.phase === 'arming'}
       recordDisabled={v2v.converting}
       recMeter={
-        v2v.rec.phase === 'recording'
+        v2v.rec.phase === 'arming' || v2v.rec.phase === 'countin' || v2v.rec.phase === 'recording'
           ? {
               elapsed: v2v.rec.elapsed,
               level: v2v.rec.level,
               clipped: v2v.rec.clipped,
               limit: v2v.rec.limit,
+              countIn: v2v.rec.countIn,
               ...(v2v.loopPass > 0 ? { pass: v2v.loopPass } : {}),
             }
           : undefined

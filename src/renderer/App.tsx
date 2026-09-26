@@ -21,7 +21,7 @@ import {
 import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '@shared/ipc'
 import { pickHistory, redoStale, type UndoSide } from '@shared/undo-route'
 import { dropCompRedo, nextCompEdit, pruneCompHistory, recordCompEdit, type CompHistory } from '@shared/comp-history'
-import { planScriptPaste, showsAi } from '@shared/lines'
+import { PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
 import { TABLE_FILE } from '@shared/import-table'
 import { keyedQueue } from '@shared/keyed-queue'
 import type { UpdateStatus } from '@shared/updater'
@@ -1542,11 +1542,15 @@ export default function App() {
 
   const doneNext = useCallback(() => {
     const cue = activeCue
-    if (!cue || !hasValidVoicedOutput(cue, projectRef.current ?? undefined)) return
+    if (!cue) return
+    if (!hasValidVoicedOutput(cue, projectRef.current ?? undefined)) {
+      pushStatus('info', 'No audio')
+      return
+    }
     void setDone(cue.id, true).then((ok) => {
       if (ok) move(1)
     })
-  }, [activeCue, projectRef, setDone, move])
+  }, [activeCue, projectRef, setDone, move, pushStatus])
 
   const handlers: KeyboardHandlers = useMemo(
     () => ({
@@ -1727,7 +1731,11 @@ export default function App() {
   ]
 
   const spliceTranslation = (el: HTMLTextAreaElement, insert: string): void => {
-    onText(el.value.slice(0, el.selectionStart) + insert + el.value.slice(el.selectionEnd))
+    if (pasteOverflows(el.value, el.selectionStart, el.selectionEnd, insert)) {
+      pushStatus('err', PARAGRAPH_TOO_LONG)
+      return
+    }
+    onText(el.value.slice(0, el.selectionStart) + insert.replace(/\r\n?/g, '\n') + el.value.slice(el.selectionEnd))
   }
 
   const lineMenu = (cue: Cue): MenuEntry[] => [
@@ -1963,6 +1971,7 @@ export default function App() {
     onAcceptSuggestion,
     onRejectSuggestion,
     onPasteScript: pasteScript,
+    onPasteOverflow: () => pushStatus('err', PARAGRAPH_TOO_LONG),
     onHistoryKey: textHistoryKey,
     onCharacter: onCueCharacter,
     onVoiceChange,

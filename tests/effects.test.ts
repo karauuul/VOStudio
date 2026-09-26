@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   compEffectsTail,
-  compHasReverb,
   normalizeComp,
   setClipEdits,
   splitClipAt,
@@ -157,16 +156,6 @@ describe('tail', () => {
       clip({ id: 'c2', start: 2, srcIn: 0, srcOut: 2 }),
     ]
     expect(compEffectsTail(clips)).toBe(0)
-  })
-
-  it('knows when the render must be stereo', () => {
-    expect(compHasReverb([clip()])).toBe(false)
-    expect(compHasReverb([clip({ edits: { ...emptyEdits(), effects: { delay: DEFAULT_DELAY } } })])).toBe(
-      false
-    )
-    expect(
-      compHasReverb([clip({ edits: { ...emptyEdits(), effects: { reverb: DEFAULT_REVERB } } })])
-    ).toBe(true)
   })
 })
 

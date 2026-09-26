@@ -68,6 +68,11 @@ export function replacesWholeText(value: string, start: number, end: number): bo
 
 export const LINE_TEXT_MAX = 5000
 export const CREATE_LINES_MAX = 1000
+export const PARAGRAPH_TOO_LONG = `Paragraph over ${LINE_TEXT_MAX} characters`
+
+export function pasteOverflows(value: string, start: number, end: number, pasted: string): boolean {
+  return value.length - (end - start) + pasted.replace(/\r\n?/g, '\n').length > LINE_TEXT_MAX
+}
 
 export type ScriptPaste =
   | { problem: string }
@@ -79,7 +84,7 @@ export type ScriptPaste =
 export function planScriptPaste(cueId: string, parts: string[], newId: () => string): ScriptPaste {
   if (parts.length < 2) return { problem: 'Nothing to split' }
   if (parts.length - 1 > CREATE_LINES_MAX) return { problem: `Too many paragraphs (max ${CREATE_LINES_MAX + 1})` }
-  if (parts.some((part) => part.length > LINE_TEXT_MAX)) return { problem: `Paragraph over ${LINE_TEXT_MAX} characters` }
+  if (parts.some((part) => part.length > LINE_TEXT_MAX)) return { problem: PARAGRAPH_TOO_LONG }
   return {
     create: { type: 'cue.create', afterCueId: cueId, lines: parts.slice(1).map((text) => ({ id: newId(), text })) },
     text: { type: 'cue.saveText', cueId, text: parts[0] },

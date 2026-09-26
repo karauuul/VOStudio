@@ -32,7 +32,7 @@ import {
   type GenMode,
   type ProviderModel,
 } from '@shared/provider-models'
-import { LINE_TEXT_MAX, replacesWholeText, splitParagraphs } from '@shared/lines'
+import { LINE_TEXT_MAX, pasteOverflows, replacesWholeText, splitParagraphs } from '@shared/lines'
 import { withDraft } from '@shared/text-draft'
 import { DragNumber } from '../cue/DragNumber'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
@@ -47,6 +47,7 @@ export interface RecMeter {
   level: number
   clipped: boolean
   limit: number
+  countIn: number
   pass?: number
 }
 
@@ -65,6 +66,7 @@ export interface TextPanelProps {
   onAcceptSuggestion?: () => void
   onRejectSuggestion?: () => void
   onPasteScript?: (parts: string[]) => void
+  onPasteOverflow?: () => void
   onHistoryKey?: (dir: 'undo' | 'redo') => boolean
   onCharacter?: (characterId: string) => void
   onVoiceChange?: (patch: Partial<VoiceSettings>) => void
@@ -169,6 +171,7 @@ function Translation({
   onAcceptSuggestion,
   onRejectSuggestion,
   onPasteScript,
+  onPasteOverflow,
   onHistoryKey,
   menu,
   ai,
@@ -182,6 +185,7 @@ function Translation({
   | 'onAcceptSuggestion'
   | 'onRejectSuggestion'
   | 'onPasteScript'
+  | 'onPasteOverflow'
   | 'onHistoryKey'
 > & { menu?: (range: TextRange, el: HTMLTextAreaElement) => MenuEntry[]; ai: boolean }) {
   const mirrorRef = useRef<HTMLDivElement>(null)
@@ -216,11 +220,16 @@ function Translation({
               onChange={(e) => onText?.(e.target.value)}
               onPaste={(e) => {
                 const el = e.currentTarget
-                const parts = splitParagraphs(e.clipboardData.getData('text/plain'))
-                if (!onPasteScript || parts.length < 2) return
-                if (!replacesWholeText(el.value, el.selectionStart, el.selectionEnd)) return
+                const pasted = e.clipboardData.getData('text/plain')
+                const parts = splitParagraphs(pasted)
+                if (onPasteScript && parts.length > 1 && replacesWholeText(el.value, el.selectionStart, el.selectionEnd)) {
+                  e.preventDefault()
+                  onPasteScript(parts)
+                  return
+                }
+                if (!pasteOverflows(el.value, el.selectionStart, el.selectionEnd, pasted)) return
                 e.preventDefault()
-                onPasteScript(parts)
+                onPasteOverflow?.()
               }}
               onKeyDown={(e) => {
                 if (e.code !== 'KeyZ' || !(e.ctrlKey || e.metaKey) || e.altKey) return
@@ -362,6 +371,7 @@ export function TextPanel({
   onAcceptSuggestion,
   onRejectSuggestion,
   onPasteScript,
+  onPasteOverflow,
   onHistoryKey,
   onCharacter,
   onVoiceChange,
@@ -426,12 +436,16 @@ export function TextPanel({
       </span>
       {recMeter.clipped && <span className="rec-clip">CLIP</span>}
       {recMeter.pass !== undefined && <span className="rec-pass">Take {recMeter.pass}</span>}
-      <span className="n">
-        {clockOf(recMeter.elapsed)}
-        {recMeter.limit > 0 && recMeter.limit - recMeter.elapsed <= REMAINING_SHOWN_SECONDS
-          ? ` · ${clockOf(recMeter.limit - recMeter.elapsed)} left`
-          : ''}
-      </span>
+      {recMeter.countIn > 0 ? (
+        <span className="n rec-count">{recMeter.countIn}</span>
+      ) : (
+        <span className="n">
+          {clockOf(recMeter.elapsed)}
+          {recMeter.limit > 0 && recMeter.limit - recMeter.elapsed <= REMAINING_SHOWN_SECONDS
+            ? ` · ${clockOf(recMeter.limit - recMeter.elapsed)} left`
+            : ''}
+        </span>
+      )}
     </>
   )
 
@@ -447,6 +461,7 @@ export function TextPanel({
         onAcceptSuggestion={onAcceptSuggestion}
         onRejectSuggestion={onRejectSuggestion}
         onPasteScript={onPasteScript}
+        onPasteOverflow={onPasteOverflow}
         onHistoryKey={onHistoryKey}
         menu={translationMenu}
         ai={showAi}
@@ -507,7 +522,7 @@ export function TextPanel({
             </span>
           </div>
 
-          {mode === 'tts' ? (
+          {mode === 'tts' && !(ai && recording) ? (
             <div className="g w2">
               <span className="lh">
                 <span className="lab">Generate</span>

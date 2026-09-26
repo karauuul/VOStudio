@@ -64,7 +64,7 @@ import {
 import { copiedEffects, copyEffects } from '../src/renderer/effects-clipboard'
 import { BUTTERWORTH_Q_DB, connectEffects } from '../src/renderer/audio/effects-graph'
 import { ensureEffectWorklets } from '../src/renderer/audio/effect-worklets'
-import { scheduleComp, type CompSource } from '../src/renderer/audio/clip-graph'
+import { compChannels, scheduleComp, type CompSource } from '../src/renderer/audio/clip-graph'
 
 const NEW_KINDS = ['gate', 'highpass', 'eq', 'compressor'] as const
 
@@ -739,6 +739,67 @@ describe('scheduleComp routes the cleanup stack through clip and track alike', (
     expect(serial(bus, 2)).toEqual(['compressor', 'gain'])
     expect(bus.to[0].to[0].to[0]).toBe(destination)
     expect(made.filter((n) => n.kind === 'compressor')).toHaveLength(1)
+  })
+})
+
+describe('the sends keep the layout of what feeds them', () => {
+  const mono = { duration: 2, numberOfChannels: 1, sampleRate: 48000 } as unknown as AudioBuffer
+  const stereo = { duration: 2, numberOfChannels: 2, sampleRate: 48000 } as unknown as AudioBuffer
+  const reverb = { ...emptyEdits(), effects: { reverb: DEFAULT_REVERB } }
+  const convolvers = (made: FakeNode[]): FakeNode[] => made.filter((n) => n.kind === 'convolver')
+  const layout = (n: FakeNode): unknown[] => [
+    n.channelCount,
+    n.channelCountMode,
+    n.channelInterpretation,
+  ]
+
+  it('a mono input comes out of reverb and delay mono, through a mono impulse response', () => {
+    const { ctx, made } = fakeContext()
+    const fx = { reverb: DEFAULT_REVERB, delay: DEFAULT_DELAY }
+    const out = connectEffects(ctx, inputNode() as unknown as AudioNode, fx, 1) as unknown as FakeNode
+    expect(layout(out)).toEqual([1, 'explicit', 'speakers'])
+    expect((convolvers(made)[0].buffer as AudioBuffer).numberOfChannels).toBe(1)
+  })
+
+  it('a stereo input keeps the stereo impulse response and a stereo output', () => {
+    const { ctx, made } = fakeContext()
+    const out = connectEffects(ctx, inputNode() as unknown as AudioNode, { reverb: DEFAULT_REVERB }, 2)
+    expect(layout(out as unknown as FakeNode)).toEqual([2, 'explicit', 'speakers'])
+    expect((convolvers(made)[0].buffer as AudioBuffer).numberOfChannels).toBe(2)
+  })
+
+  it('the layout is the widest voice, never below mono', () => {
+    expect(compChannels([])).toBe(1)
+    expect(compChannels([{ buffer: mono }, { buffer: mono }])).toBe(1)
+    expect(compChannels([{ buffer: mono }, { buffer: stereo }])).toBe(2)
+  })
+
+  it('mono clips keep clip and track reverb mono whatever the destination or a stereo original', () => {
+    const { ctx, made } = fakeContext()
+    const destination = Object.assign(inputNode(), { channelCount: 2 })
+    scheduleComp(ctx, [{ clip: clip({ edits: reverb }), buffer: mono }], destination as unknown as AudioNode, {
+      tracks: [track('track-1', { effects: { reverb: DEFAULT_REVERB } })],
+      originals: [{ buffer: stereo, gainDb: 0 }],
+    })
+    const sums = made.filter((n) => n.channelCountMode === 'explicit')
+    expect(sums.map(layout)).toEqual([
+      [1, 'explicit', 'speakers'],
+      [1, 'explicit', 'speakers'],
+    ])
+    expect(convolvers(made).map((c) => (c.buffer as AudioBuffer).numberOfChannels)).toEqual([1, 1])
+  })
+
+  it('a mono clip beside a stereo one renders its reverb at the stereo layout of the mix', () => {
+    const { ctx, made } = fakeContext()
+    const sources: CompSource[] = [
+      { clip: clip({ edits: reverb }), buffer: mono },
+      { clip: clip({ id: 'c2', start: 2 }), buffer: stereo },
+    ]
+    scheduleComp(ctx, sources, inputNode() as unknown as AudioNode)
+    expect(made.filter((n) => n.channelCountMode === 'explicit').map(layout)).toEqual([
+      [2, 'explicit', 'speakers'],
+    ])
+    expect((convolvers(made)[0].buffer as AudioBuffer).numberOfChannels).toBe(2)
   })
 })
 
