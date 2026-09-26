@@ -45,6 +45,7 @@ export interface ExportFormatSpec {
   id: ExportFormatId
   label: string
   ext?: 'wav' | 'mp3' | 'ogg'
+  rate?: number
   bytesPerSecond: number
   args: string[]
 }
@@ -55,6 +56,7 @@ export const EXPORT_FORMATS: ExportFormatSpec[] = [
     id: 'wav-48-24',
     label: 'WAV · 48 kHz · 24-bit',
     ext: 'wav',
+    rate: 48000,
     bytesPerSecond: 48000 * 3,
     args: ['-ar', '48000', '-c:a', 'pcm_s24le'],
   },
@@ -62,6 +64,7 @@ export const EXPORT_FORMATS: ExportFormatSpec[] = [
     id: 'wav-44-16',
     label: 'WAV · 44.1 kHz · 16-bit',
     ext: 'wav',
+    rate: 44100,
     bytesPerSecond: 44100 * 2,
     args: ['-ar', '44100', '-c:a', 'pcm_s16le'],
   },
@@ -151,6 +154,20 @@ export function loudnessTarget(settings: ExportSettings | undefined): LoudnessTa
   if (mode === 'lufs') return { mode, db: lufsTarget(settings) }
   if (mode === 'peak') return { mode, db: peakTarget(settings) }
   return undefined
+}
+
+export function exportSignature(settings: ExportSettings | undefined, template: string): string {
+  const clean = sanitizeExportSettings(settings)
+  const target = loudnessTarget(clean)
+  const loudness = target ? `${target.mode}:${target.db}` : loudnessMode(clean)
+  return [formatSpec(clean?.format).id, loudness, lengthMode(clean), template].join('|')
+}
+
+const MP3_RATES = [48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000]
+
+export function mp3Rate(rate: number): number {
+  if (MP3_RATES.includes(rate)) return rate
+  return rate % 11025 === 0 ? 44100 : 48000
 }
 
 export function estimateBytes(seconds: number, id: ExportFormatId | undefined): number {

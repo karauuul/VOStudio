@@ -85,7 +85,7 @@ function buildPlan(project: Project, scan: Scan): AdoptPlan {
     const hits = byEvent.get(n.eventName) ?? []
     if (hits.length === 1) normal.push({ ...n, cueId: hits[0] })
     else if (hits.length > 1)
-      ambiguous.push({ ...n, note: `Ambiguous EventName: ${hits.length} cues` })
+      ambiguous.push({ ...n, note: `Ambiguous EventName: ${hits.length} lines` })
     else ambiguous.push({ ...n, note: 'EventName not found in the CSV' })
   }
 

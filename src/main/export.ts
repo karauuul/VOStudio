@@ -30,14 +30,17 @@ import {
   exportedLines,
   indexBound,
   mergeExported,
+  supersededFiles,
   type DeliverExported,
   type DeliverReport,
   type DeliverSummary,
 } from '@shared/deliver'
 import {
+  exportSignature,
   formatSpec,
   loudnessGainDb,
   loudnessMode,
+  mp3Rate,
   loudnessTarget,
   parseEbur128,
   parseSamplePeak,
@@ -99,6 +102,7 @@ function toJobs(items: PlannedTake[], outDir: string, project: Project): ExportJ
       srcPath: p.take.file.relPath,
       format,
       formatArgs: spec.args,
+      ...(spec.rate ? { sampleRate: spec.rate } : {}),
       fastPath: isFastPath(p.take, p.name, plan ? p.cue.comp : undefined, project.export, p.cue),
       hasEdits: hasEdits(p.take.edits),
       edits: p.take.edits,
@@ -193,23 +197,27 @@ function toBuffer(wav: unknown): Buffer {
   throw new Error('Expected an ArrayBuffer with rendered WAV data')
 }
 
-async function measureLoudness(file: string): Promise<LoudnessMeasure> {
+const WAV_RATE_OFFSET = 24
+
+async function measureLoudness(file: string, rate?: number): Promise<LoudnessMeasure> {
   try {
-    const stderr = await ffmpegStderr(['-i', file, '-af', 'ebur128=peak=sample', '-f', 'null', '-'])
+    const filter = `${rate ? `aresample=${rate},` : ''}ebur128=peak=sample`
+    const stderr = await ffmpegStderr(['-i', file, '-af', filter, '-f', 'null', '-'])
     return { lufs: parseEbur128(stderr), peak: parseSamplePeak(stderr) }
   } catch {
     return { lufs: null, peak: null }
   }
 }
 
-async function postGainDb(job: ExportJob, rendered: string): Promise<number> {
+async function postGainDb(job: ExportJob, rendered: string, rate: number): Promise<number> {
   if (job.loudnessTarget) {
-    return targetGainDb(job.loudnessTarget, await measureLoudness(rendered), job.format !== 'wav')
+    const measured = await measureLoudness(rendered, rate)
+    return targetGainDb(job.loudnessTarget, measured, job.format !== 'wav')
   }
   if (!job.matchLoudnessRef) return 0
   const [reference, actual] = await Promise.all([
     measureLoudness(job.matchLoudnessRef),
-    measureLoudness(rendered),
+    measureLoudness(rendered, rate),
   ])
   return loudnessGainDb(reference.lufs, actual.lufs)
 }
@@ -226,12 +234,15 @@ export async function encodeJob(outPath: string, wav: unknown): Promise<ExportRe
   const tmp = path.join(os.tmpdir(), `vostudio-export-${randomUUID()}.wav`)
   try {
     await fs.writeFile(tmp, bytes)
-    const gain = await postGainDb(job, tmp)
+    const renderedRate = bytes.readUInt32LE(WAV_RATE_OFFSET)
+    const rate = job.sampleRate ?? (job.format === 'mp3' ? mp3Rate(renderedRate) : renderedRate)
+    const gain = await postGainDb(job, tmp, rate)
     await runFfmpeg([
       '-i',
       tmp,
       ...(gain === 0 ? [] : ['-af', `volume=${gain}dB`]),
       ...job.formatArgs,
+      ...(job.sampleRate === undefined && rate !== renderedRate ? ['-ar', String(rate)] : []),
       outPath,
     ])
   } finally {
@@ -264,6 +275,7 @@ export async function finishExport(
     if (planned.has(outPath)) await fs.rm(outPath, { force: true })
   }
   const revisions = new Map(project.cues.map((c) => [c.key, sanitizeRevision(c.output?.revision)]))
+  const signature = exportSignature(project.export, project.exportTemplate)
   const exported: DeliverExported[] = summary.exported.map((e) => ({
     cueId: e.cueKey,
     exportName: path.parse(e.name).name,
@@ -272,6 +284,7 @@ export async function finishExport(
     sha256: e.sha256,
     revision: revisions.get(e.cueKey) ?? 0,
     ...(version === undefined ? {} : { version }),
+    signature,
   }))
   const previous = await readReport(outDir)
   const deliver: DeliverSummary = {
@@ -292,6 +305,9 @@ export async function finishExport(
   await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
   await copyTree(stagingDir, outDir)
   await fs.rm(stagingDir, { recursive: true, force: true })
+  for (const file of supersededFiles(previous?.exported ?? [], exported)) {
+    await fs.rm(path.join(outDir, file), { force: true })
+  }
   return {
     ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }),
     reportPath: path.join(outDir, 'report.json'),
