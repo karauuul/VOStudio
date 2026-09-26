@@ -201,7 +201,7 @@ const WAV_RATE_OFFSET = 24
 
 async function measureLoudness(file: string, rate?: number): Promise<LoudnessMeasure> {
   try {
-    const filter = `${rate ? `aresample=${rate},` : ''}ebur128=peak=sample`
+    const filter = `${rate ? `aresample=${rate},` : ''}ebur128=peak=sample,astats=measure_perchannel=none`
     const stderr = await ffmpegStderr(['-i', file, '-af', filter, '-f', 'null', '-'])
     return { lufs: parseEbur128(stderr), peak: parseSamplePeak(stderr) }
   } catch {

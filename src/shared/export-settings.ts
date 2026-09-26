@@ -198,14 +198,20 @@ export function parseEbur128(stderr: string): number | null {
 }
 
 const PEAK_RE = /Peak:\s*(-inf|-?\d+(?:\.\d+)?)\s*dBFS/g
+const PRECISE_PEAK_RE = /Peak level dB:\s*(-inf|-?\d+(?:\.\d+)?)/g
 
-export function parseSamplePeak(stderr: string): number | null {
-  let last: number | null = null
-  for (const m of stderr.matchAll(PEAK_RE)) {
+function lastPeak(stderr: string, pattern: RegExp): number | null | undefined {
+  let last: number | null | undefined
+  for (const m of stderr.matchAll(pattern)) {
     const v = Number(m[1])
     last = Number.isFinite(v) ? v : null
   }
   return last
+}
+
+export function parseSamplePeak(stderr: string): number | null {
+  const precise = lastPeak(stderr, PRECISE_PEAK_RE)
+  return precise !== undefined ? precise : (lastPeak(stderr, PEAK_RE) ?? null)
 }
 
 export const LOUDNESS_GAIN_LIMIT_DB = 24
@@ -230,7 +236,7 @@ export interface LoudnessMeasure {
 }
 
 const targetGain = (db: number): number =>
-  Math.round(clamp(db, -TARGET_GAIN_LIMIT_DB, TARGET_GAIN_LIMIT_DB) * 100) / 100
+  Math.floor(clamp(db, -TARGET_GAIN_LIMIT_DB, TARGET_GAIN_LIMIT_DB) * 100 + 1e-9) / 100
 
 export function targetGainDb(target: LoudnessTarget, { lufs, peak }: LoudnessMeasure, lossy = false): number {
   if (peak === null || !Number.isFinite(peak)) return 0
