@@ -1,6 +1,7 @@
 import { approvalState } from './approval'
 import { serializeCell, serializeCsv } from './csv'
 import type { Cue, Project } from './domain'
+import type { ExportedLines } from './readiness'
 
 export interface DeliverExported {
   cueId: string
@@ -10,6 +11,7 @@ export interface DeliverExported {
   sha256: string
   revision?: number
   version?: number
+  signature?: string
 }
 
 export interface DeliverFailed {
@@ -99,16 +101,14 @@ export function mergeExported(
   return [...previous.filter((e) => !fresh.has(e.file.toLowerCase())), ...current]
 }
 
-export function exportedLines(report: Pick<DeliverReport, 'exported'>): Record<
-  string,
-  { revision: number; version?: number }
-> {
-  const out: Record<string, { revision: number; version?: number }> = {}
+export function exportedLines(report: Pick<DeliverReport, 'exported'>): ExportedLines {
+  const out: ExportedLines = {}
   for (const e of report.exported ?? []) {
     if (typeof e.cueId !== 'string' || !e.cueId) continue
     out[e.cueId] = {
       revision: typeof e.revision === 'number' ? e.revision : 0,
       ...(typeof e.version === 'number' ? { version: e.version } : {}),
+      ...(typeof e.signature === 'string' ? { signature: e.signature } : {}),
     }
   }
   return out

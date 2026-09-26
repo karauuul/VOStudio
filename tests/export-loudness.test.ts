@@ -4,6 +4,7 @@ import path from 'path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 import {
+  EXPORT_FORMATS,
   LOUDNESS_MODES,
   loudnessMode,
   loudnessTarget,
@@ -276,6 +277,49 @@ describe('export applies the loudness target with ffmpeg', () => {
     expect(input.peak).toBeGreaterThan(-8)
     near(output.peak, -1, 0.2)
     expect(output.lufs).toBeLessThan(-25)
+  })
+
+  const HIGH_TONE_BETWEEN_SAMPLES = 'aevalsrc=0.25*sin(2*PI*12000*t+PI/4):s=48000:d=1'
+  const QUIET_TONE_WITH_HIGH_BURST =
+    'aevalsrc=0.02*sin(2*PI*440*t)+0.5*sin(2*PI*12000*t+PI/4)*between(t\\,1\\,1.01):s=48000:d=3'
+  const PRINTED_PEAK_ROUNDING_DB = 0.1
+
+  const resampledPeak = async (file: string, rate: number): Promise<number | null> =>
+    parseSamplePeak(
+      await ffmpegStderr(['-i', file, '-af', `aresample=${rate},ebur128=peak=sample`, '-f', 'null', '-'])
+    )
+
+  it('every resampling format carries the rate its ffmpeg args convert to', () => {
+    for (const f of EXPORT_FORMATS) {
+      const i = f.args.indexOf('-ar')
+      expect(i < 0 ? undefined : Number(f.args[i + 1])).toBe(f.rate)
+    }
+  })
+
+  const peaksBelowTargetAfterResampling = async (
+    signal: string,
+    settings: ExportSettings
+  ): Promise<void> => {
+    const { input, output } = await exportSignal(signal, settings)
+    const resampled = await resampledPeak(path.join(root, 'signal.wav'), 44100)
+    expect(resampled! - input.peak!).toBeGreaterThan(2)
+    expect(output.peak).toBeLessThanOrEqual(-1 + PRINTED_PEAK_ROUNDING_DB)
+    expect(output.peak).toBeGreaterThanOrEqual(-1 - 2 * PRINTED_PEAK_ROUNDING_DB)
+  }
+
+  it('Peak −1 holds after 48 → 44.1 kHz resampling moves the sample peak up', async () => {
+    await peaksBelowTargetAfterResampling(HIGH_TONE_BETWEEN_SAMPLES, {
+      format: 'wav-44-16',
+      loudness: 'peak',
+      peakTarget: -1,
+    })
+  })
+
+  it('the Target LUFS ceiling holds after 48 → 44.1 kHz resampling moves the sample peak up', async () => {
+    await peaksBelowTargetAfterResampling(QUIET_TONE_WITH_HIGH_BURST, {
+      format: 'wav-44-16',
+      loudness: 'lufs',
+    })
   })
 })
 

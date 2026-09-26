@@ -35,6 +35,7 @@ import {
   type DeliverSummary,
 } from '@shared/deliver'
 import {
+  exportSignature,
   formatSpec,
   loudnessGainDb,
   loudnessMode,
@@ -99,6 +100,7 @@ function toJobs(items: PlannedTake[], outDir: string, project: Project): ExportJ
       srcPath: p.take.file.relPath,
       format,
       formatArgs: spec.args,
+      ...(spec.rate ? { sampleRate: spec.rate } : {}),
       fastPath: isFastPath(p.take, p.name, plan ? p.cue.comp : undefined, project.export, p.cue),
       hasEdits: hasEdits(p.take.edits),
       edits: p.take.edits,
@@ -193,9 +195,10 @@ function toBuffer(wav: unknown): Buffer {
   throw new Error('Expected an ArrayBuffer with rendered WAV data')
 }
 
-async function measureLoudness(file: string): Promise<LoudnessMeasure> {
+async function measureLoudness(file: string, rate?: number): Promise<LoudnessMeasure> {
   try {
-    const stderr = await ffmpegStderr(['-i', file, '-af', 'ebur128=peak=sample', '-f', 'null', '-'])
+    const filter = `${rate ? `aresample=${rate},` : ''}ebur128=peak=sample`
+    const stderr = await ffmpegStderr(['-i', file, '-af', filter, '-f', 'null', '-'])
     return { lufs: parseEbur128(stderr), peak: parseSamplePeak(stderr) }
   } catch {
     return { lufs: null, peak: null }
@@ -204,12 +207,13 @@ async function measureLoudness(file: string): Promise<LoudnessMeasure> {
 
 async function postGainDb(job: ExportJob, rendered: string): Promise<number> {
   if (job.loudnessTarget) {
-    return targetGainDb(job.loudnessTarget, await measureLoudness(rendered), job.format !== 'wav')
+    const measured = await measureLoudness(rendered, job.sampleRate)
+    return targetGainDb(job.loudnessTarget, measured, job.format !== 'wav')
   }
   if (!job.matchLoudnessRef) return 0
   const [reference, actual] = await Promise.all([
     measureLoudness(job.matchLoudnessRef),
-    measureLoudness(rendered),
+    measureLoudness(rendered, job.sampleRate),
   ])
   return loudnessGainDb(reference.lufs, actual.lufs)
 }
@@ -264,6 +268,7 @@ export async function finishExport(
     if (planned.has(outPath)) await fs.rm(outPath, { force: true })
   }
   const revisions = new Map(project.cues.map((c) => [c.key, sanitizeRevision(c.output?.revision)]))
+  const signature = exportSignature(project.export, project.exportTemplate)
   const exported: DeliverExported[] = summary.exported.map((e) => ({
     cueId: e.cueKey,
     exportName: path.parse(e.name).name,
@@ -272,6 +277,7 @@ export async function finishExport(
     sha256: e.sha256,
     revision: revisions.get(e.cueKey) ?? 0,
     ...(version === undefined ? {} : { version }),
+    signature,
   }))
   const previous = await readReport(outDir)
   const deliver: DeliverSummary = {
