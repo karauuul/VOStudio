@@ -1215,12 +1215,13 @@ export default function App() {
     [flushText, flushVoice]
   )
 
+  const splittingRef = useRef(0)
   const restoreVersion = useCallback(
     (n: number) => {
       const block = restoreBlock({
         exporting: exportingRef.current,
         recording: recActiveRef.current?.() ?? false,
-        busy: busyCountNow() > 0,
+        busy: busyCountNow() > 0 || splittingRef.current > 0,
       })
       if (block) {
         pushStatus('info', block)
@@ -2152,8 +2153,13 @@ export default function App() {
       const ref = originalRef(activeCue, project.sources)
       if (!ref) throw new Error('This line has no original audio')
       pushStatus('info', 'Splitting the original into stems…')
-      const stems = await splitStems(activeCue.id, ref)
-      await dispatch({ type: 'cue.setStems', cueId: activeCue.id, stems })
+      splittingRef.current++
+      try {
+        const stems = await splitStems(activeCue.id, ref)
+        await dispatch({ type: 'cue.setStems', cueId: activeCue.id, stems })
+      } finally {
+        splittingRef.current--
+      }
       pushStatus('ok', 'Stems ready')
     },
     onStatus: pushStatus,
