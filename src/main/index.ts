@@ -8,7 +8,10 @@ import { typedHandle } from './typed-ipc'
 import {
   autoSelectsOutput,
   exportSummarySchema,
+  filePath,
+  matchRuleSchema,
   projectCommandSchema,
+  tableImportSchema,
   projectDirSchema,
   projectNameSchema,
   batchExportSchema,
@@ -55,7 +58,7 @@ import { GENERATED_DIR } from './migration'
 import { syncCsv } from './csv-sync'
 import { importAudio, probeTakeDurations } from './audio-import'
 import { applyTakeDurations, pendingTakeDurations, type TakeDurationEntry } from '@shared/library'
-import { importTable } from './table-import'
+import { importTableFile, previewTableFile, readTable } from './table-import'
 import {
   abortVideoExport,
   appendVideoChunk,
@@ -210,29 +213,9 @@ async function stampVersion(): Promise<number> {
   return versions[versions.length - 1].n
 }
 
-const filePath = z.string().min(1).max(4096).refine((p) => path.isAbsolute(p), {
-  message: 'Path must be absolute',
-})
-
-const matchRuleSchema = z.enum(['id', 'exportName', 'tableId'])
-
 const audioImportSchema = z.object({
   paths: z.array(filePath).min(1).max(200),
   rule: matchRuleSchema,
-})
-
-const tableImportSchema = z.object({
-  path: filePath,
-  rule: matchRuleSchema,
-  mapping: z
-    .object({
-      id: z.number().int().min(0).max(4096).optional(),
-      text: z.number().int().min(0).max(4096).optional(),
-      translation: z.number().int().min(0).max(4096).optional(),
-      character: z.number().int().min(0).max(4096).optional(),
-    })
-    .optional(),
-  replaceTranslations: z.boolean().optional(),
 })
 
 const takeImportSchema = z.object({
@@ -561,20 +544,20 @@ function registerHandlers(): void {
     })
   )
 
+  typedHandle('import:tablePreview', async (req) => {
+    const parsed = tableImportSchema.parse(req)
+    const table = await readTable(parsed.path)
+    return previewTableFile(requireRepository().projectForMain(), table, parsed)
+  })
+
   typedHandle('import:table', (req) =>
     serialLifecycle(async () => {
       const parsed = tableImportSchema.parse(req)
-      const repository = projectRepository
-      if (!repository) throw new Error('No project is open')
-      const { result, changes } = await importTable(
-        repository.projectForMain(),
-        parsed.path,
-        parsed.rule,
-        parsed.mapping,
-        parsed.replaceTranslations === true
-      )
-      emit('project:changed', await repository.commit(changes))
-      return result
+      const table = await readTable(parsed.path)
+      let imported: ReturnType<typeof importTableFile> | undefined
+      await publish(requireRepository(), (project) => (imported = importTableFile(project, table, parsed)).changes)
+      if (!imported) throw new Error('Table import did not run')
+      return imported.result
     })
   )
 

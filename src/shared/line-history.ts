@@ -1,5 +1,5 @@
-import type { Cue } from './domain'
-import type { ChangeSet, OriginalState, OutputState, PlacedCue, ProjectCommand } from './project-commands'
+import type { Character, Cue } from './domain'
+import type { ChangeSet, FieldStep, OriginalState, OutputState, PlacedCue, ProjectCommand } from './project-commands'
 
 export type LineChange =
   | {
@@ -9,6 +9,14 @@ export type LineChange =
       snapshots: PlacedCue[]
       focus: string
       text?: { cueId: string; before: string; after: string }
+    }
+  | {
+      kind: 'table'
+      ids: string[]
+      snapshots: PlacedCue[]
+      fields: FieldStep[]
+      characters: Character[]
+      focus: string
     }
   | { kind: 'original'; cueId: string; takeId: string; before: OriginalState; after: OutputState }
 
@@ -48,6 +56,7 @@ export function recordLineEdit(history: LineHistory, change: LineChange, at: num
 }
 
 export function removesLines(edit: LineEdit, dir: StepDir): boolean {
+  if (edit.kind === 'table') return dir === 'undo' && edit.ids.length > 0
   return edit.kind === 'cues' && (dir === 'undo') === edit.undoRemoves
 }
 
@@ -56,6 +65,17 @@ export function lineStepCommand(edit: LineEdit, dir: StepDir): ProjectCommand {
     return dir === 'undo'
       ? { type: 'cue.restoreOriginal', cueId: edit.cueId, whenState: edit.after, ...edit.before }
       : { type: 'cue.useTakeAsOriginal', cueId: edit.cueId, takeId: edit.takeId }
+  }
+  if (edit.kind === 'table') {
+    const undo = dir === 'undo'
+    return {
+      type: 'table.step',
+      remove: undo ? edit.ids : [],
+      restore: undo ? [] : edit.snapshots,
+      fields: undo ? edit.fields.map(({ cueId, from, to }) => ({ cueId, from: to, to: from })) : edit.fields,
+      addCharacters: undo ? [] : edit.characters,
+      dropCharacters: undo ? edit.characters : [],
+    }
   }
   return removesLines(edit, dir)
     ? { type: 'cue.delete', cueIds: edit.ids }

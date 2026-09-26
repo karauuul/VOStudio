@@ -115,7 +115,7 @@ Grid: Sources 340px | 8px | Lines | 8px | right column 380px.
 
 **Sources**: drop zone with `Files` and `Folder`, list of sources (folder of audio, video, text tables) with counts; footer with the language pair.
 
-**Lines**: header with counter and filter tabs (`All`, `No transcript`, `No translation`, `Unmatched`), toolbar with search, `Detect lines`, `Transcribe`, `Translate` (split buttons with a provider menu) and `Import text`. Table: `#`, `SOURCE` (id, mono), `LENGTH`, `ORIGINAL · EN`, `TRANSLATION · UK`, `CHARACTER`. Status dot per row. Footer with counts and `Open in Work`.
+**Lines**: header with counter and filter tabs (`All`, `No transcript`, `No translation`, `No audio`), toolbar with search, `Detect lines`, `Transcribe`, `Translate` (split buttons with a provider menu) and `Import text`. Table: `#`, `SOURCE` (id, mono), `LENGTH`, `ORIGINAL · EN`, `TRANSLATION · UK`, `CHARACTER`. Status dot per row. Footer with counts and `Open in Work`.
 
 **Project**: Languages, Match by, Output name. **Characters**: name, line count, voice picker; `no character` row; `+` in the header.
 
