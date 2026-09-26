@@ -390,7 +390,13 @@ export type ImportTab = 'all' | 'notranscript' | 'notranslation' | 'unmatched'
 export function hasSourceMaterial(project: Pick<Project, 'cues' | 'languages'>): boolean {
   return (
     project.languages !== undefined ||
-    project.cues.some((cue) => cue.sourceText.trim() !== '' || cue.referenceAudio !== undefined || cue.region !== undefined)
+    project.cues.some(
+      (cue) =>
+        cue.sourceText.trim() !== '' ||
+        cue.referenceAudio !== undefined ||
+        cue.region !== undefined ||
+        (cue.referenceDuration ?? 0) > 0
+    )
   )
 }
 

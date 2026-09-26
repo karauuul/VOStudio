@@ -523,6 +523,14 @@ describe('createProjectFromTemplate', () => {
     await expect(reimportTemplate(await validateTemplate(FIXTURE), project, dir)).resolves.toBeDefined()
   })
 
+  it('matches a template whose meta name has surrounding spaces', async () => {
+    const dir = await makeTemplate({ index: rows('1,ADA,S,,,X1,,,') })
+    const validation = await validateTemplate(dir)
+    const base = buildProjectBase(validation, '/refs')
+    const project = { ...base, id: 'p', schemaVersion: 1, createdAt: '', name: 'X 2', template: { name: validation.meta!.name.trim() } } as Project
+    await expect(reimportTemplate({ ...validation, meta: { ...validation.meta!, name: `  ${validation.meta!.name}  ` } }, project, dir)).resolves.toBeDefined()
+  })
+
   it('blocks a template other than the one the project came from', async () => {
     const dir = await makeTemplate({ index: rows('1,ADA,S,,,X1,,,') })
     const base = buildProjectBase(await validateTemplate(dir), '/refs')

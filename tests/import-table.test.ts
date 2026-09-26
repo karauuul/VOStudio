@@ -262,6 +262,8 @@ describe('import tabs and counts', () => {
     expect(hasSourceMaterial({ cues: [line({ sourceText: 'Hello' })] })).toBe(true)
     expect(hasSourceMaterial({ cues: [line({ referenceAudio: { fileId: 'r', relPath: '/p/r.wav', format: 'wav' } })] })).toBe(true)
     expect(hasSourceMaterial({ cues: [line({ region: { sourceId: 's', in: 0, out: 1 } })] })).toBe(true)
+    expect(hasSourceMaterial({ cues: [line({ referenceDuration: 2.5 })] })).toBe(true)
+    expect(hasSourceMaterial({ cues: [line({ referenceDuration: 0 })] })).toBe(false)
   })
 
   it('keeps the translation tabs', () => {

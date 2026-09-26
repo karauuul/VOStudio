@@ -438,7 +438,7 @@ export async function createProjectFromTemplate(validation: TemplateValidation):
   const project = await store.createProject(name, {
     ...buildProjectBase(validation, referenceRoot),
     name,
-    template: { name: validation.meta.name },
+    template: { name: validation.meta.name.trim() },
   })
   try {
     await copyReferenceAudio(validation, referenceRoot)
@@ -463,7 +463,7 @@ export function reimportBlockers(
 ): TemplateIssue[] {
   const issues = [...validation.fatalErrors]
   const meta = validation.meta
-  if (meta && meta.name !== (project.template?.name ?? project.name)) {
+  if (meta && meta.name.trim() !== (project.template?.name ?? project.name).trim()) {
     issues.push({
       row: null,
       reason: project.template
