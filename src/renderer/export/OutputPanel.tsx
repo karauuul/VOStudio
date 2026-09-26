@@ -20,6 +20,7 @@ interface Props {
   onSettings: (patch: Partial<ExportSettings>) => void
   onTemplate: (template: string) => void
   onPickDir: () => void
+  onReveal: () => void
 }
 
 function stamp(iso: string): string {
@@ -30,7 +31,7 @@ function stamp(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-export function OutputPanel({ project, outDir, last, onSettings, onTemplate, onPickDir }: Props) {
+export function OutputPanel({ project, outDir, last, onSettings, onTemplate, onPickDir, onReveal }: Props) {
   const [template, setTemplate] = useState(project.exportTemplate)
   const [video, setVideo] = useState(project.export?.videoName ?? DEFAULT_VIDEO_NAME)
 
@@ -121,45 +122,67 @@ export function OutputPanel({ project, outDir, last, onSettings, onTemplate, onP
         </select>
       </div>
 
-      <div className="exp-sec">Video</div>
+      {project.sources?.some((s) => s.kind === 'video') && (
+        <>
+          <div className="exp-sec">Video</div>
 
-      <div className="exp-kvp">
-        Container
-        <select
-          value={videoMode(project.export)}
-          onChange={(e) => onSettings({ video: e.target.value as ExportSettings['video'] })}
-        >
-          {VIDEO_MODES.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label}
-            </option>
-          ))}
-        </select>
-      </div>
+          <div className="exp-kvp">
+            Container
+            <select
+              value={videoMode(project.export)}
+              onChange={(e) => onSettings({ video: e.target.value as ExportSettings['video'] })}
+            >
+              {VIDEO_MODES.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
-      <div className="exp-kvp">
-        Name
-        <input
-          className="mono"
-          type="text"
-          value={video}
-          onChange={(e) => setVideo(e.target.value)}
-          onBlur={commitVideo}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur()
-            if (e.key === 'Escape') setVideo(project.export?.videoName ?? DEFAULT_VIDEO_NAME)
-          }}
-        />
-      </div>
+          <div className="exp-kvp">
+            Name
+            <input
+              className="mono"
+              type="text"
+              value={video}
+              onChange={(e) => setVideo(e.target.value)}
+              onBlur={commitVideo}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur()
+                if (e.key === 'Escape') setVideo(project.export?.videoName ?? DEFAULT_VIDEO_NAME)
+              }}
+            />
+          </div>
+        </>
+      )}
 
       <div className="sp" />
 
       <div className="exp-foot">
         {last ? (
-          <span>
-            Last export {last.version === undefined ? '—' : <b>v{last.version}</b>} ·{' '}
-            {stamp(last.createdAt)}
-          </span>
+          <>
+            <span>
+              Last export {last.version === undefined ? '—' : <b>v{last.version}</b>} ·{' '}
+              {stamp(last.createdAt)}
+            </span>
+            <button
+              className="ico sm"
+              data-hint="Show in folder"
+              aria-label="Show in folder"
+              onClick={onReveal}
+            >
+              <svg width="14" height="13" viewBox="0 0 14 13">
+                <path
+                  d="M1.5 2.5h4l1.2 1.5h5.8v7h-11z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          </>
         ) : (
           <span>No export yet</span>
         )}

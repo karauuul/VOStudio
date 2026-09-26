@@ -3,6 +3,7 @@ import { formatBytes } from '@shared/export-settings'
 
 interface Props {
   summary: ReadinessSummary
+  manual: boolean
   lastVersion?: number
   videos: { id: string; name: string; out: string; lines: number }[]
   busy: boolean
@@ -29,6 +30,7 @@ function Row({ label, value, total }: { label: string; value: number; total: num
 
 export function SummaryPanel({
   summary,
+  manual,
   lastVersion,
   videos,
   busy,
@@ -43,7 +45,7 @@ export function SummaryPanel({
       <div className="phd">Summary</div>
 
       <div className="exp-prog">
-        <Row label="Translated" value={summary.translated} total={summary.total} />
+        {!manual && <Row label="Translated" value={summary.translated} total={summary.total} />}
         <Row label="Voiced" value={summary.voiced} total={summary.total} />
         <Row label="Done" value={summary.done} total={summary.total} />
       </div>
