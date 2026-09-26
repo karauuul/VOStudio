@@ -1,8 +1,8 @@
 import { useMemo, useState, type DragEvent } from 'react'
 import { sourceLabel, type Project } from '@shared/domain'
 import { audioSources } from '@shared/import-table'
+import type { TableImportResult } from '@shared/ipc'
 import { api } from '../api'
-import type { TableSource } from './LinesTable'
 
 const FolderIcon = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
@@ -44,7 +44,7 @@ const nnn = (n: number): string => n.toLocaleString('en-US')
 
 interface Props {
   project: Project
-  tables: TableSource[]
+  tables: TableImportResult[]
   onPick: (kind: 'files' | 'folder') => void
   onDrop: (paths: string[]) => void
   busy: boolean
@@ -141,13 +141,9 @@ export function SourcesPanel({ project, tables, onPick, onDrop, busy }: Props) {
               </div>
             </div>
             <span className="m">
-              {nnn(table.matched)} matched
-              {table.unmatched > 0 && (
-                <>
-                  <br />
-                  <span className="t-err">{nnn(table.unmatched)} unmatched</span>
-                </>
-              )}
+              {nnn(table.summary.added)} new
+              <br />
+              {nnn(table.summary.updated)} updated
             </span>
           </div>
         ))}

@@ -1,6 +1,8 @@
+import path from 'path'
 import { z } from 'zod'
 import { isProjectDirIn, isSafeId, isValidProjectName } from '@shared/project-summary'
 import { CREATE_LINES_MAX, LINE_TEXT_MAX } from '@shared/lines'
+import { CHARACTER_ID_MAX, CUE_KEY_MAX, TABLE_COLUMNS_MAX, TABLE_ROWS_MAX } from '@shared/import-table'
 import { PUNCH_PREROLL_MAX, PUNCH_PREROLL_STEP, RECORD_LATENCY_MAX_MS } from '@shared/punch'
 import {
   DUCK_MAX_DB,
@@ -63,6 +65,29 @@ import {
 export const finite = z.number().finite()
 
 const safeId = z.string().min(1).max(200).refine(isSafeId, { message: 'Invalid id' })
+
+export const filePath = z.string().min(1).max(4096).refine((p) => path.isAbsolute(p), {
+  message: 'Path must be absolute',
+})
+
+export const matchRuleSchema = z.enum(['id', 'exportName', 'tableId'])
+
+const columnIndex = z.number().int().min(0).max(TABLE_COLUMNS_MAX - 1)
+
+export const tableImportSchema = z.object({
+  path: filePath,
+  rule: matchRuleSchema,
+  mapping: z
+    .object({
+      id: columnIndex.optional(),
+      text: columnIndex.optional(),
+      translation: columnIndex.optional(),
+      character: columnIndex.optional(),
+    })
+    .optional(),
+  replaceTranslations: z.boolean().optional(),
+  keepOriginal: z.boolean().optional(),
+})
 
 export const projectDirSchema = (root: string) =>
   z
@@ -417,8 +442,8 @@ const takeSchema = z
 export const cueSchema = z
   .object({
     id: safeId,
-    characterId: z.string().max(200),
-    key: z.string().max(4096),
+    characterId: z.string().max(CHARACTER_ID_MAX),
+    key: z.string().max(CUE_KEY_MAX),
     fields: z.record(z.string()),
     sourceText: z.string(),
     text: z.string(),
@@ -439,6 +464,22 @@ export const cueSchema = z
   .passthrough()
 
 const cueId = z.object({ cueId: z.string().min(1).max(200) })
+const placedCues = z.array(z.object({ cue: cueSchema, index: z.number().int().min(0).max(10_000_000) }))
+const lineFieldsSchema = z
+  .object({ sourceText: z.string().optional(), text: z.string().optional(), characterId: z.string().max(4096).optional() })
+  .strict()
+const characterSchema = z.object({
+  id: z.string().min(1).max(4096),
+  name: z.string().min(1).max(4096),
+  color: z.string().max(200),
+  provider: z.object({
+    providerId: z.literal('elevenlabs'),
+    voiceId: z.string().max(200),
+    ttsModel: z.string().max(120),
+    stsModel: z.string().max(120),
+  }),
+  voiceSettings: voiceSettingsSchema,
+})
 const characterId = z.object({ characterId: z.string().min(1).max(200) })
 const characterName = z.string().min(1).max(120)
 const modelId = z.string().min(1).max(120)
@@ -476,9 +517,16 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
       .max(CREATE_LINES_MAX),
   }),
   z.object({ type: z.literal('cue.delete'), cueIds: z.array(z.string().min(1).max(200)).min(1).max(100_000) }),
+  z.object({ type: z.literal('cue.restore'), cues: placedCues.min(1).max(100_000) }),
   z.object({
-    type: z.literal('cue.restore'),
-    cues: z.array(z.object({ cue: cueSchema, index: z.number().int().min(0).max(10_000_000) })).min(1).max(100_000),
+    type: z.literal('table.step'),
+    remove: z.array(z.string().min(1).max(200)).max(TABLE_ROWS_MAX),
+    restore: placedCues.max(TABLE_ROWS_MAX),
+    fields: z
+      .array(z.object({ cueId: z.string().min(1).max(200), from: lineFieldsSchema, to: lineFieldsSchema }))
+      .max(TABLE_ROWS_MAX),
+    addCharacters: z.array(characterSchema).max(TABLE_ROWS_MAX),
+    dropCharacters: z.array(characterSchema).max(TABLE_ROWS_MAX),
   }),
   cueId.extend({ type: z.literal('cue.useTakeAsOriginal'), takeId: z.string().min(1).max(200) }),
   cueId.extend({

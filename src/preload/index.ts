@@ -11,6 +11,7 @@ const channelMap: Record<IpcChannel, true> = {
   'project:importTemplate': true,
   'import:pick': true,
   'import:audio': true,
+  'import:tablePreview': true,
   'import:table': true,
   'import:template': true,
   'source:detect': true,
