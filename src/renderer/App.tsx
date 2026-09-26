@@ -1224,26 +1224,36 @@ export default function App() {
   )
 
   const mediaJobsRef = useRef(0)
+  const restoreActiveRef = useRef(false)
   const restoreVersion = useCallback(
     (n: number) => {
-      const block = restoreBlock({
-        exporting: exportingRef.current,
-        recording: recActiveRef.current?.() ?? false,
-        busy: busyCountNow() > 0 || mediaJobsRef.current > 0,
-      })
+      const refusal = (): string | null =>
+        restoreBlock({
+          exporting: exportingRef.current,
+          recording: recActiveRef.current?.() ?? false,
+          busy: busyCountNow() > 0 || mediaJobsRef.current > 0,
+        })
+      const block = restoreActiveRef.current ? 'Restoring version' : refusal()
       if (block) {
         pushStatus('info', block)
         return
       }
+      restoreActiveRef.current = true
       const run = async (): Promise<void> => {
-        if (!(await flushPending())) return
-        restoringRef.current = true
         let snapshot: ReturnType<typeof parseSnapshot>
         try {
+          if (!(await flushPending())) return
+          restoringRef.current = true
+          const late = refusal()
+          if (late) {
+            pushStatus('info', late)
+            return
+          }
           if (!(await flushText())) return
           snapshot = parseSnapshot(await api['project:restoreVersion']({ n }))
         } finally {
           restoringRef.current = false
+          restoreActiveRef.current = false
         }
         playback.stop()
         resetHistory()
@@ -1431,6 +1441,10 @@ export default function App() {
   const importFiles = useCallback(
     async (paths: string[], drop?: { trackId: string; at: number }): Promise<void> => {
       if (paths.length === 0 || refuseWhileExporting()) return
+      if (restoreActiveRef.current) {
+        pushStatus('info', 'Restoring version')
+        return
+      }
       let cueId = activeLineId()
       if (!cueId) {
         if ((projectRef.current?.cues.length ?? 0) > 0) {
@@ -2175,6 +2189,7 @@ export default function App() {
       )
     },
     onSplitStems: async () => {
+      if (restoreActiveRef.current) throw new Error('Restoring version')
       if (!activeCue) throw new Error('No line selected')
       const ref = originalRef(activeCue, project.sources)
       if (!ref) throw new Error('This line has no original audio')
