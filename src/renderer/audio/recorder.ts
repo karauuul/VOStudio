@@ -722,7 +722,7 @@ export function useRecorder(keepWarm: boolean): RecorderApi {
       const now = performance.now()
       const armed = t.startFrame > 0 && !!rigRef.current
       if (!armed || now < t.startAtMs) {
-        setCountIn(Math.max(1, Math.round((t.startAtMs - now) / (BEEP_GAP * 1000)) + 1))
+        setCountIn(t.beeps > 0 ? Math.max(1, Math.round((t.startAtMs - now) / (BEEP_GAP * 1000)) + 1) : 0)
         setElapsed(0)
       } else {
         if (p === 'countin') setPhase('recording')

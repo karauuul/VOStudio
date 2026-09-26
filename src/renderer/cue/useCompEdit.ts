@@ -1,23 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef } from 'react'
 import { compProblem, normalizeComp } from '@shared/comp'
+import { recordCompEdit, stepCompEdit, type CompHistory } from '@shared/comp-history'
 import type { CueComp } from '@shared/domain'
-
-const LIMIT = 100
-
-interface Entry {
-  value: CueComp | null
-  at: number
-}
+import type { StepDir } from '@shared/line-history'
 
 export interface CompEdit {
   commit: (next: CueComp | null) => void
   undo: () => void
   redo: () => void
-  lastAt: (dir: 'undo' | 'redo') => number | null
-  dropRedo: () => void
   pending: () => CueComp | null | undefined
-  canUndo: boolean
-  canRedo: boolean
 }
 
 export function sameComp(a: CueComp | null, b: CueComp | null): boolean {
@@ -29,15 +20,14 @@ export function sameComp(a: CueComp | null, b: CueComp | null): boolean {
 export function useCompEdit(
   cueId: string,
   comp: CueComp | undefined,
+  history: CompHistory,
   onComp: (cueId: string, comp: CueComp | null) => Promise<boolean>,
   onProblem: (message: string) => void
 ): CompEdit {
-  const undoRef = useRef<Entry[]>([])
-  const redoRef = useRef<Entry[]>([])
   const inflightRef = useRef(0)
   const pendingRef = useRef<CueComp | null | undefined>(undefined)
   const genRef = useRef(0)
-  const [depth, setDepth] = useState({ u: 0, r: 0 })
+  const [, repaint] = useReducer((n: number) => n + 1, 0)
 
   const propRef = useRef<CueComp | null>(null)
   propRef.current = comp && comp.clips.length > 0 ? comp : null
@@ -46,17 +36,10 @@ export function useCompEdit(
   cbRef.current = { onComp, onProblem }
 
   useEffect(() => {
-    undoRef.current = []
-    redoRef.current = []
     inflightRef.current = 0
     pendingRef.current = undefined
     genRef.current += 1
-    setDepth({ u: 0, r: 0 })
   }, [cueId])
-
-  const sync = useCallback(() => {
-    setDepth({ u: undoRef.current.length, r: redoRef.current.length })
-  }, [])
 
   const current = useCallback(
     (): CueComp | null => (pendingRef.current === undefined ? propRef.current : pendingRef.current),
@@ -90,46 +73,26 @@ export function useCompEdit(
           return
         }
       }
-      const prev = current()
-      undoRef.current.push({ value: prev, at: Date.now() })
-      if (undoRef.current.length > LIMIT) undoRef.current.shift()
-      redoRef.current = []
-      sync()
+      recordCompEdit(history, cueId, current(), Date.now())
+      repaint()
       submit(value)
     },
-    [current, submit, sync]
+    [history, cueId, current, submit]
   )
 
-  const undo = useCallback(() => {
-    const entry = undoRef.current.pop()
-    if (!entry) return
-    const cur = current()
-    redoRef.current.push({ value: cur, at: entry.at })
-    sync()
-    submit(entry.value)
-  }, [current, submit, sync])
+  const step = useCallback(
+    (dir: StepDir) => {
+      const entry = stepCompEdit(history, cueId, dir, current())
+      if (!entry) return
+      repaint()
+      submit(entry.value)
+    },
+    [history, cueId, current, submit]
+  )
 
-  const redo = useCallback(() => {
-    const entry = redoRef.current.pop()
-    if (!entry) return
-    const cur = current()
-    undoRef.current.push({ value: cur, at: entry.at })
-    sync()
-    submit(entry.value)
-  }, [current, submit, sync])
-
+  const undo = useCallback(() => step('undo'), [step])
+  const redo = useCallback(() => step('redo'), [step])
   const pending = useCallback(() => pendingRef.current, [])
 
-  const lastAt = useCallback((dir: 'undo' | 'redo'): number | null => {
-    const stack = dir === 'undo' ? undoRef.current : redoRef.current
-    return stack[stack.length - 1]?.at ?? null
-  }, [])
-
-  const dropRedo = useCallback(() => {
-    if (redoRef.current.length === 0) return
-    redoRef.current = []
-    sync()
-  }, [sync])
-
-  return { commit, undo, redo, lastAt, dropRedo, pending, canUndo: depth.u > 0, canRedo: depth.r > 0 }
+  return { commit, undo, redo, pending }
 }

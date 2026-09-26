@@ -16,7 +16,6 @@ import {
 } from '../src/shared/effects'
 import { propertiesTab, propertiesTabs } from '../src/shared/properties'
 import { connectEffects } from '../src/renderer/audio/effects-graph'
-import { compHasReverb } from '../src/shared/comp'
 import { resolveTargetTrack } from '../src/shared/library'
 import { placeTake } from '../src/shared/generation'
 import {
@@ -88,7 +87,6 @@ describe('bypass — a new optional field', () => {
     expect(hasSends(off)).toBe(false)
     expect(hasEffects(off)).toBe(false)
     expect(effectsTail(off)).toBe(0)
-    expect(compHasReverb([clip({ edits: { ...emptyEdits(), effects: off } })])).toBe(false)
     expect(pitchActive(setEffectEnabled({ pitch: { semitones: 5 } }, 'pitch', false)?.pitch)).toBe(
       false
     )

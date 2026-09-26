@@ -82,7 +82,7 @@ export function readinessRows(project: Project, exported: ExportedLines = {}): L
     if (collided.has(cue.key)) {
       return { ...base, name: p.name, outputLength, status: 'collision', changed }
     }
-    if (mode !== 'asis' && over > LONGER_TOLERANCE) {
+    if (mode !== 'asis' && over - LONGER_TOLERANCE > 1e-9) {
       return { ...base, name: p.name, outputLength, status: 'longer', changed, overBy: over }
     }
     return { ...base, name: p.name, outputLength, status: 'ready', changed }
