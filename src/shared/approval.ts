@@ -103,7 +103,7 @@ export function changeCompOutput(cue: Cue, comp: CueComp | null, project?: TakeL
   return { ...next, status: nonApprovedStatus(next, project) }
 }
 
-function materializeOutput(cue: Cue, project?: TakeLookup): Cue {
+export function materializeOutput(cue: Cue, project?: TakeLookup): Cue {
   if (cue.output !== undefined) return cue
   if (usableComp(cue, project)) return { ...cue, output: { kind: 'comp', revision: 1 } }
   const take = usableTake(cue, cue.finalTakeId)

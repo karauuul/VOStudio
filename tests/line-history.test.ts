@@ -227,6 +227,39 @@ describe('undoing Done', () => {
     expect(isDone(p.cues[0], p)).toBe(false)
   })
 
+  it('records no step when another edit landed between the snapshot and the toggle', () => {
+    const concurrent: ProjectCommand[] = [
+      { type: 'cue.setFinalTake', cueId: 'a', takeId: 'u' },
+      { type: 'cue.saveText', cueId: 'a', text: 'edited' },
+    ]
+    const p0 = project([voiced()])
+    const stale0 = structuredClone(p0.cues[0])
+    p0.cues[0].status = 'excluded'
+    expect(doneChange(stale0, { cues: [structuredClone(p0.cues[0])] })).toBeNull()
+    for (const [approved, command] of [true, false].flatMap((a) => concurrent.map((c) => [a, c] as const))) {
+      const p = project([voiced()])
+      if (!approved) applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'earlier' })
+      const stale = structuredClone(p.cues[0])
+      applyProjectCommand(p, command)
+      expect(doneChange(stale, applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved, approvedAt: 'then' }))).toBeNull()
+    }
+  })
+
+  it('records no step when a legacy line switched from its composition to the same take meanwhile', () => {
+    const p = project([{ ...voiced(), comp: { clips: [{ id: 'k', sourceTakeId: 'u', srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits() }] } }])
+    expect(p.cues[0].output).toBeUndefined()
+    const stale = structuredClone(p.cues[0])
+    applyProjectCommand(p, { type: 'cue.setFinalTake', cueId: 'a', takeId: 't' })
+    expect(p.cues[0].output).toMatchObject({ kind: 'take', takeId: 't' })
+    expect(doneChange(stale, applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'then' }), p)).toBeNull()
+  })
+
+  it('still records the first Done of a legacy line whose output approval materializes', () => {
+    const p = project([{ ...voiced(), comp: { clips: [{ id: 'k', sourceTakeId: 'u', srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits() }] } }])
+    const before = structuredClone(p.cues[0])
+    expect(doneChange(before, applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'then' }), p)).not.toBeNull()
+  })
+
   it('records nothing when the toggle changed nothing', () => {
     const p = project([voiced()])
     const before = structuredClone(p.cues[0])

@@ -10,6 +10,7 @@ import {
   DUCK_MAX_DB,
   DUCK_MIN_DB,
   ORIGINAL_START_MAX,
+  TEMPLATE_NAME_MAX,
   TRACK_GAIN_MAX_DB,
   TRACK_GAIN_MIN_DB,
 } from '@shared/domain'
@@ -128,6 +129,7 @@ export const projectFileSchema = z
     export: z.unknown().optional(),
     terms: z.array(z.unknown()).optional(),
     languages: z.object({ source: z.string(), target: z.string() }).optional(),
+    template: z.object({ name: z.string() }).optional(),
     provider: z.unknown().optional(),
     alienMigrated: z.literal(true).optional(),
   })
@@ -148,7 +150,7 @@ export const exportSettingsSchema = z
 
 export const templateMetaSchema = z.object({
   formatVersion: z.literal(1),
-  name: z.string().min(1).max(200),
+  name: z.string().min(1).max(TEMPLATE_NAME_MAX),
   sourceLang: z.string().min(1).max(20),
   targetLang: z.string().min(1).max(20),
 })

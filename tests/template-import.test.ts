@@ -2,8 +2,10 @@ import { mkdirSync, promises as fs } from 'fs'
 import path from 'path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { serializeCell } from '../src/shared/csv'
-import { sanitizeTerms, type Project } from '../src/shared/domain'
+import { sanitizeProjectTemplate, sanitizeTerms, type Project } from '../src/shared/domain'
 import { exportName } from '../src/shared/export-plan'
+import { applyProjectCommand } from '../src/shared/project-commands'
+import { projectFileSchema } from '../src/main/schemas'
 
 const H = vi.hoisted(() => ({
   root: `${process.env['TEMP'] ?? process.env['TMPDIR'] ?? '/tmp'}/vostudio-template-${Date.now()}`,
@@ -44,6 +46,19 @@ async function makeTemplate(parts: { meta?: string | null; index?: string | null
 }
 
 const rows = (...lines: string[]): string => [HEADER, ...lines, ''].join('\n')
+
+const legacyFile = (): Record<string, unknown> => ({
+  id: 'p',
+  schemaVersion: 1,
+  name: 'Demo 2',
+  createdAt: '',
+  media: { referenceDir: '', referencePattern: '' },
+  characters: [],
+  cues: [],
+  sessions: [],
+  pronunciationRules: '',
+  exportTemplate: '{exportName}.{ext}',
+})
 
 const fatalReasons = async (index: string, meta?: string): Promise<string[]> =>
   (await validateTemplate(await makeTemplate({ index, meta }))).fatalErrors.map((e) => e.reason)
@@ -414,6 +429,29 @@ describe('terms', () => {
   })
 })
 
+describe('Project.template', () => {
+  it('sanitizes the stored template identity', () => {
+    expect(sanitizeProjectTemplate({ name: ' Demo ' })).toEqual({ name: 'Demo' })
+    expect(sanitizeProjectTemplate({ name: '' })).toBeUndefined()
+    expect(sanitizeProjectTemplate({ name: 'x'.repeat(201) })).toBeUndefined()
+    expect(sanitizeProjectTemplate({ name: 5 })).toBeUndefined()
+    expect(sanitizeProjectTemplate('Demo')).toBeUndefined()
+    expect(sanitizeProjectTemplate(null)).toBeUndefined()
+  })
+
+  it('survives a project file roundtrip', () => {
+    const persisted = { ...legacyFile(), template: { name: 'Demo' } }
+    const reloaded = JSON.parse(JSON.stringify(persisted)) as Record<string, unknown>
+    expect(projectFileSchema.parse(reloaded)).toMatchObject({ template: { name: 'Demo' } })
+    expect(sanitizeProjectTemplate(reloaded['template'])).toEqual({ name: 'Demo' })
+  })
+
+  it('rejects a forged template value', () => {
+    expect(() => projectFileSchema.parse({ ...legacyFile(), template: { name: 5 } })).toThrow()
+    expect(() => projectFileSchema.parse({ ...legacyFile(), template: 'Demo' })).toThrow()
+  })
+})
+
 describe('createProjectFromTemplate', () => {
   it('creates a self-contained project and copies reference audio into it', async () => {
     const project = await createProjectFromTemplate(await validateTemplate(FIXTURE))
@@ -445,6 +483,7 @@ describe('createProjectFromTemplate', () => {
     const saved = JSON.parse(await fs.readFile(path.join(dir, 'project.json'), 'utf-8')) as Project
     expect(project.name).toBe('Sample Template 2')
     expect(saved.name).toBe('Sample Template 2')
+    expect(saved.template).toEqual({ name: 'Sample Template' })
     expect(saved.media.referenceDir).toBe(path.join(dir, 'audio', 'reference'))
     expect(await fs.readFile(first, 'utf-8')).toBe(before)
     expect((await createProjectFromTemplate(await validateTemplate(FIXTURE))).name).toBe('Sample Template 3')
@@ -467,6 +506,56 @@ describe('createProjectFromTemplate', () => {
     const reopened = await store.openProjectDir(dir)
     expect('terms' in reopened).toBe(false)
     expect(await fs.readFile(file, 'utf-8')).toBe(byteIdentical)
+  })
+
+  it('re-imports its template into a collision-named project, also after a rename', async () => {
+    const store = await import('../src/main/project-store')
+    const dir = path.join(H.root, 'VOStudio', 'Sample Template 2.vostudio')
+    const project = await store.openProjectDir(dir)
+    expect(project.template).toEqual({ name: 'Sample Template' })
+
+    const { result } = await reimportTemplate(await validateTemplate(FIXTURE), project, dir)
+    expect(result).toMatchObject({ added: 0, orphaned: 0 })
+
+    applyProjectCommand(project, { type: 'project.rename', name: 'Renamed' })
+    expect(project.name).toBe('Renamed')
+    expect(project.template).toEqual({ name: 'Sample Template' })
+    await expect(reimportTemplate(await validateTemplate(FIXTURE), project, dir)).resolves.toBeDefined()
+  })
+
+  it('matches a template whose meta name has surrounding spaces', async () => {
+    const dir = await makeTemplate({ index: rows('1,ADA,S,,,X1,,,') })
+    const validation = await validateTemplate(dir)
+    const base = buildProjectBase(validation, '/refs')
+    const project = { ...base, id: 'p', schemaVersion: 1, createdAt: '', name: 'X 2', template: { name: validation.meta!.name.trim() } } as Project
+    await expect(reimportTemplate({ ...validation, meta: { ...validation.meta!, name: `  ${validation.meta!.name}  ` } }, project, dir)).resolves.toBeDefined()
+  })
+
+  it('blocks a template other than the one the project came from', async () => {
+    const dir = await makeTemplate({ index: rows('1,ADA,S,,,X1,,,') })
+    const base = buildProjectBase(await validateTemplate(dir), '/refs')
+    const project = { ...base, id: 'p', schemaVersion: 1, createdAt: '', template: { name: 'Other' } } as Project
+    await expect(reimportTemplate(await validateTemplate(dir), project, dir)).rejects.toThrow(
+      'the open project comes from template "Other"'
+    )
+  })
+
+  it('keeps a project without a template identity byte-identical on open', async () => {
+    const store = await import('../src/main/project-store')
+    const dir = path.join(H.root, 'VOStudio', 'Sample Template 3.vostudio')
+    const file = path.join(dir, 'project.json')
+    const raw = JSON.parse(await fs.readFile(file, 'utf-8')) as Record<string, unknown>
+    raw['template'] = { name: '  ' }
+    await fs.writeFile(file, JSON.stringify(raw, null, 2))
+    expect('template' in (await store.openProjectDir(dir))).toBe(false)
+
+    delete raw['template']
+    const byteIdentical = JSON.stringify(raw, null, 2)
+    await fs.writeFile(file, byteIdentical)
+    const reopened = await store.openProjectDir(dir)
+    expect('template' in reopened).toBe(false)
+    expect(await fs.readFile(file, 'utf-8')).toBe(byteIdentical)
+    expect(projectFileSchema.parse(JSON.parse(byteIdentical))).toEqual(JSON.parse(byteIdentical))
   })
 
   it('reuses a character matched by name and creates only the genuinely new one', async () => {
