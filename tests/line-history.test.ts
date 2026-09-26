@@ -227,6 +227,20 @@ describe('undoing Done', () => {
     expect(isDone(p.cues[0], p)).toBe(false)
   })
 
+  it('keeps an output edit that landed between the snapshot and the toggle', async () => {
+    const p = project([voiced()])
+    applyProjectCommand(p, { type: 'cue.approve', cueId: 'a', approved: true, approvedAt: 'earlier' })
+    const stale = structuredClone(p.cues[0])
+    applyProjectCommand(p, { type: 'cue.setFinalTake', cueId: 'a', takeId: 'u' })
+    const edited = structuredClone(p.cues[0].output)
+    const s = session(p)
+    const change = doneChange(stale, s.edit({ type: 'cue.approve', cueId: 'a', approved: false }))
+    if (change) recordLineEdit(s.history, change, 1)
+    expect(change && change.kind === 'done' && change.before.output).toEqual(edited)
+    await s.step('undo')
+    expect(p.cues[0].output).toEqual(edited)
+  })
+
   it('records nothing when the toggle changed nothing', () => {
     const p = project([voiced()])
     const before = structuredClone(p.cues[0])

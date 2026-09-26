@@ -53,10 +53,14 @@ export function outputStateIn(changes: ChangeSet, cueId: string): OutputState {
 }
 
 export function doneChange(before: Cue, changes: ChangeSet): LineChange | null {
-  const from = outputStateOf(before)
-  const to = outputStateIn(changes, before.id)
+  const now = changes.cues?.find((cue) => cue.id === before.id)
+  if (!now) throw new Error('Cue not found')
+  const to = outputStateOf(now)
+  const prior = outputStateOf(before)
+  const { output: _stale, ...rest } = prior
+  const from: OutputState = prior.output === undefined || to.output === undefined ? prior : { ...rest, output: to.output }
   if (outputStateKey(from) === outputStateKey(to)) return null
-  return { kind: 'done', cueId: before.id, textRevision: sanitizeRevision(before.textRevision), before: from, after: to }
+  return { kind: 'done', cueId: before.id, textRevision: sanitizeRevision(now.textRevision), before: from, after: to }
 }
 
 export function recordLineEdit(history: LineHistory, change: LineChange, at: number): void {
