@@ -62,6 +62,18 @@ describe('reconciling a save whose change set arrived after a newer change', () 
     expect(cueOf(next, 'd')).toBe(cueOf(local, 'd'))
   })
 
+  it('moves the status the same way the save did', () => {
+    const inMain = project()
+    const local = project()
+    for (const p of [inMain, local]) Object.assign(cueOf(p, 'd'), { text: '', status: 'empty' })
+    applyProjectCommand(inMain, { type: 'cue.saveText', cueId: 'd', text: 'now translated' })
+
+    const next = withSavedText(local, cueOf(inMain, 'd'))!
+
+    expect(cueOf(next, 'd')).toEqual(cueOf(inMain, 'd'))
+    expect(cueOf(next, 'd').status).toBe('translated')
+  })
+
   it('leaves the project untouched when the save already landed', () => {
     const p = project()
     applyProjectCommand(p, { type: 'cue.saveText', cueId: 'c', text: 'saved' })

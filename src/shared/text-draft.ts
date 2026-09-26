@@ -1,4 +1,5 @@
 import type { Cue, Project } from './domain'
+import { savedText } from './project-commands'
 
 export interface TextDraft {
   cueId: string
@@ -17,6 +18,7 @@ export function settleDraft(current: TextDraft | null, saved: TextDraft): TextDr
 export function withSavedText(project: Project | null, saved: Cue): Project | null {
   const cue = project?.cues.find((c) => c.id === saved.id)
   if (!project || !cue || cue.text === saved.text) return project
-  const textRevision = saved.textRevision === undefined ? {} : { textRevision: saved.textRevision }
-  return { ...project, cues: project.cues.map((c) => (c === cue ? { ...c, text: saved.text, ...textRevision } : c)) }
+  const next = savedText(cue, saved.text, project)
+  const synced = saved.textRevision === undefined ? next : { ...next, textRevision: saved.textRevision }
+  return { ...project, cues: project.cues.map((c) => (c === cue ? synced : c)) }
 }
