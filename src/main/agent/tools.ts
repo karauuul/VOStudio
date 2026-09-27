@@ -766,6 +766,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       writes: (args) => args.apply === true,
       async run(_ctx, args) {
         const pinned = pin(deps)
+        if (args.apply === true) await deps.flushUi()
         const project = requireRepository(pinned).projectForMain()
         const asset = findAsset(project, args.asset)
         const table = await assetTable(deps, asset, { ...(args.jsonPath ? { jsonPath: args.jsonPath } : {}), ...(args.fields ? { fields: args.fields } : {}) })
@@ -787,14 +788,12 @@ export function agentTools(deps: AgentDeps): McpTool[] {
             : {}),
         }
         if (args.apply !== true) return structured(view)
-        await deps.flushUi()
-        const current = requireRepository(pinned).projectForMain()
-        const byId = new Map(current.cues.map((c) => [c.id, c]))
+        const byId = new Map(project.cues.map((c) => [c.id, c]))
         const chosen = report.links.filter((l) => {
           const origins = byId.get(l.cueId)?.origins ?? []
           return l.confidence >= TEXT_MATCH_MIN && !origins.some((o) => o.assetId === asset.id && o.row === l.row)
         })
-        const plan = linkPlan(current, chosen, table.rows, columns, asset)
+        const plan = linkPlan(project, chosen, table.rows, columns, asset)
         if (plan.fields.length > 0 || plan.addCharacters.length > 0) {
           await execute(pinned, { type: 'table.step', remove: [], restore: [], fields: plan.fields, addCharacters: plan.addCharacters, dropCharacters: [] })
         }
@@ -902,6 +901,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       writes: (args) => args.list === undefined,
       async run(_ctx, args) {
         const pinned = pin(deps)
+        if (args.list === undefined) await deps.flushUi()
         const project = requireRepository(pinned).projectForMain()
         if (args.list) {
           const entries = listProposals(project, args.list.kind, args.list.minConfidence)
@@ -913,7 +913,6 @@ export function agentTools(deps: AgentDeps): McpTool[] {
             ...(next < entries.length ? { nextCursor: String(next) } : {}),
           })
         }
-        await deps.flushUi()
         const accept = args.reject === undefined
         const items = args.acceptAll
           ? listProposals(project, args.acceptAll.kind, args.acceptAll.minConfidence).map((e) =>
@@ -939,7 +938,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           }
         }
         if (refs.length > 0) await execute(pinned, { type: accept ? 'proposal.accept' : 'proposal.reject', items: refs })
-        const terms = await settleTerms(deps, items.flatMap((item) => ('term' in item ? [item.term] : [])), accept)
+        const terms = await settleTerms(pinned, items.flatMap((item) => ('term' in item ? [item.term] : [])), accept)
         return structured({
           [accept ? 'accepted' : 'rejected']: refs.length + terms.length,
           lines: lines.slice(0, REPORT_LIST_MAX),

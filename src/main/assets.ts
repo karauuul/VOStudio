@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs'
 import path from 'path'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import type { Project, ProjectAsset } from '@shared/domain'
 import { DEFAULT_MATCH_RULE } from '@shared/import-table'
 import type { ChangeSet } from '@shared/project-commands'
@@ -37,6 +37,14 @@ const sameFile = (a: string, b: string): boolean => path.resolve(a).toLowerCase(
 const displayName = (rel: string): string => rel.replace(/\\/g, '/')
 
 const baseName = (name: string): string => name.slice(name.lastIndexOf('/') + 1).toLowerCase()
+
+async function contentHash(file: string): Promise<string | null> {
+  try {
+    return createHash('sha256').update(await fs.readFile(file)).digest('hex')
+  } catch {
+    return null
+  }
+}
 
 async function copyUnique(src: string, dir: string): Promise<string> {
   await fs.mkdir(dir, { recursive: true })
@@ -76,6 +84,17 @@ export async function addAssets(
   const known = [...existing]
   const added: ProjectAsset[] = []
   const skipped: AssetAddResult['skipped'] = []
+  const hashes = new Map<string, Promise<string | null>>()
+  const hashOf = (file: string): Promise<string | null> => {
+    const hit = hashes.get(file) ?? contentHash(file)
+    hashes.set(file, hit)
+    return hit
+  }
+  const sameContent = async (asset: ProjectAsset, src: string, size: number): Promise<boolean> => {
+    if (asset.size !== size) return false
+    const [a, b] = await Promise.all([hashOf(asset.file.relPath), hashOf(src)])
+    return a !== null && a === b
+  }
   for (const file of files) {
     const name = displayName(file.rel)
     const kind = assetKind(name)
@@ -84,9 +103,13 @@ export async function addAssets(
       skipped.push({ name, reason: 'not readable' })
       continue
     }
-    const duplicate = known.some((asset) =>
-      inPlaceKind(kind) ? sameFile(asset.file.relPath, file.src) : baseName(asset.name) === baseName(name) && asset.size === stat.size
-    )
+    let duplicate = false
+    for (const asset of known) {
+      duplicate = inPlaceKind(kind)
+        ? sameFile(asset.file.relPath, file.src)
+        : baseName(asset.name) === baseName(name) && (await sameContent(asset, file.src, stat.size))
+      if (duplicate) break
+    }
     if (duplicate) {
       skipped.push({ name, reason: 'already in the bin' })
       continue

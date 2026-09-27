@@ -80,6 +80,22 @@ describe('addAssets', () => {
     expect(renamed.added[0].file.relPath).toBe(path.join(PROJECT_DIR, 'assets', 'lines (2).csv'))
   })
 
+  it('tells same-named copies of equal size apart by content and still skips a true re-add', async () => {
+    const locales = path.join(H.root, 'locales')
+    const dir = path.join(H.root, 'VOStudio', 'locales.vostudio')
+    await fs.mkdir(path.join(locales, 'en'), { recursive: true })
+    await fs.mkdir(path.join(locales, 'fr'), { recursive: true })
+    await fs.writeFile(path.join(locales, 'en', 'strings.csv'), 'id,text\nA,Hello\n')
+    await fs.writeFile(path.join(locales, 'fr', 'strings.csv'), 'id,text\nA,Salut\n')
+    const first = await addAssets([], dir, [locales])
+    expect(first.added.map((a) => [a.name, a.file.fileId])).toEqual([
+      ['locales/en/strings.csv', 'strings.csv'],
+      ['locales/fr/strings.csv', 'strings (2).csv'],
+    ])
+    const again = await addAssets(first.added, dir, [path.join(locales, 'en', 'strings.csv')])
+    expect(again).toEqual({ added: [], skipped: [{ name: 'strings.csv', reason: 'already in the bin' }] })
+  })
+
   it('leaves audio and video of a dropped folder to the line import when asked to skip media', async () => {
     const { added } = await addAssets([], path.join(H.root, 'skip.vostudio'), [DROP], true)
     expect(added.map((a) => a.name).sort()).toEqual(['drop/dump.json', 'drop/lines.csv', 'drop/strings.locres', 'drop/subs.srt'])

@@ -167,6 +167,7 @@ export function linkRows(
   const report: LinkReport = { links: [], ambiguous: [], unmatched: [], needsTranscribe: [] }
   let pendingRows = rows.map((_, row) => row)
   let pendingCues = cues
+  const keyAmbiguous = new Map<number, LinkReport['ambiguous'][number]>()
   if (useKey) {
     const byKey = linkByKey(cues, rows.map((cells) => cells[columns.key as number] ?? ''))
     report.links.push(...byKey.links)
@@ -176,8 +177,8 @@ export function linkRows(
       return report
     }
     const linked = new Set(byKey.links.map((link) => link.cueId))
-    const done = new Set([...byKey.links.map((link) => link.row), ...byKey.ambiguous.map((a) => a.row)])
-    report.ambiguous.push(...byKey.ambiguous)
+    const done = new Set(byKey.links.map((link) => link.row))
+    for (const entry of byKey.ambiguous) keyAmbiguous.set(entry.row, entry)
     pendingRows = pendingRows.filter((row) => !done.has(row))
     pendingCues = cues.filter((cue) => !linked.has(cue.id))
   }
@@ -187,7 +188,11 @@ export function linkRows(
     report.links.push({ row: pendingRows[m.index], cueId: m.cueId, key: m.key, confidence: m.score, reason: `text similarity ${m.score}` })
   }
   report.ambiguous.push(...byText.ambiguous.map((a) => ({ row: pendingRows[a.index], candidates: a.candidates })))
-  report.unmatched.push(...byText.unmatched.map((i) => pendingRows[i]))
+  for (const row of byText.unmatched.map((i) => pendingRows[i])) {
+    const ambiguous = keyAmbiguous.get(row)
+    if (ambiguous) report.ambiguous.push(ambiguous)
+    else report.unmatched.push(row)
+  }
   const textLinked = new Set(byText.matched.map((m) => m.cueId))
   report.needsTranscribe = pendingCues.filter((cue) => !textLinked.has(cue.id) && !normalizeText(cue.sourceText)).map((cue) => cue.key)
   report.links.sort((a, b) => a.row - b.row)

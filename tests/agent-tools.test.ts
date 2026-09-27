@@ -640,6 +640,29 @@ describe('bin tools', () => {
     expect((await call('link', { asset: 'srt', strategy: 'key' })).error).toBe('Linking by key needs a key column; pass mapping.key.')
   })
 
+  it('applies links against the project as it stands after pending edits are saved', async () => {
+    const { call, repo, deps } = withBin()
+    deps.flushUi = vi.fn(async () => {
+      repo!.projectForMain().cues[5].key = 'Renamed'
+    })
+    const applied = await call('link', { asset: 'csv', apply: true })
+    expect(applied.data).toMatchObject({ linked: 1, applied: 1, links: [{ row: 0, line: 'L1' }], unmatched: { count: 2, rows: [1, 2] } })
+    expect(repo!.projectForMain().cues[5]).not.toHaveProperty('proposals')
+  })
+
+  it('settles terms in the project the call started in even if another opens meanwhile', async () => {
+    const { call, repo, deps } = withBin()
+    const other = new SerialProjectRepository(project(), vi.fn(), 60_000)
+    await call('glossary', { upsert: [{ term: 'node', translation: 'вузол', proposed: true }] })
+    other.projectForMain().terms = [{ term: 'node', translation: 'нода', proposed: true }]
+    deps.flushUi = vi.fn(async () => {
+      deps.repository = () => other
+    })
+    expect((await call('proposals', { accept: [{ kind: 'term', term: 'node' }] })).data).toEqual({ accepted: 1, lines: [], terms: ['node'] })
+    expect(repo!.projectForMain().terms).toEqual([{ term: 'node', translation: 'вузол' }])
+    expect(other.projectForMain().terms).toEqual([{ term: 'node', translation: 'нода', proposed: true }])
+  })
+
   it('assigns characters as proposals by default, sets them on request and creates missing ones', async () => {
     const { call, repo } = withBin()
     const proposed = await call('characters_assign', {

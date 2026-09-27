@@ -100,6 +100,25 @@ describe('linkRows', () => {
     expect(report.needsTranscribe).toEqual(['ada_009'])
   })
 
+  it('sends rows whose key fits several lines on to the text pass and keeps them ambiguous only when text cannot decide', () => {
+    const cues = [
+      cue('c1', 'k', 'welcome back pioneer', { EventName: 'Twin' }),
+      cue('c2', 'k2', 'resource node located', { EventName: 'twin' }),
+    ]
+    const twins = [
+      ['TWIN', 'Resource node located.'],
+      ['TWIN', 'Something nobody said.'],
+    ]
+    const report = linkRows(cues, twins, { key: 0, text: 1 }, 'auto')
+    expect(report.links.map((l) => [l.row, l.key, l.confidence])).toEqual([[0, 'k2', 1]])
+    expect(report.ambiguous).toEqual([{ row: 1, candidates: ['k', 'k2'] }])
+    expect(report.unmatched).toEqual([])
+    expect(linkRows(cues, twins, { key: 0, text: 1 }, 'key').ambiguous).toEqual([
+      { row: 0, candidates: ['k', 'k2'] },
+      { row: 1, candidates: ['k', 'k2'] },
+    ])
+  })
+
   it('needs the column its strategy uses', () => {
     expect(() => linkRows([], rows, { text: 1 }, 'key')).toThrow('Linking by key needs a key column; pass mapping.key')
     expect(() => linkRows([], rows, { key: 0 }, 'text')).toThrow('Linking by text needs a text column; pass mapping.text')
