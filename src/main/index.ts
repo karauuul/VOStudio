@@ -701,12 +701,13 @@ function queueGeneration(
   })
 }
 
-async function measureTake(cueId: string, take: Take, expected: SerialProjectRepository): Promise<number> {
+async function measureTake(cueId: string, take: Take, expected: SerialProjectRepository, admit?: () => void): Promise<number> {
   const duration = await decodedDuration(take.file.relPath)
   if (!duration) throw new Error('The new take could not be measured.')
   const entry = { cueId, takeId: take.id, duration }
   let applied: TakeDurationEntry[] = []
   await publish(liveRepository(expected), (project) => {
+    admit?.()
     const result = applyTakeDurations(project, [entry])
     applied = result.applied
     return result.cues.length > 0 ? { cues: result.cues } : null

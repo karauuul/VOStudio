@@ -92,7 +92,7 @@ export interface AgentDeps {
   provider: () => VoiceProvider
   generation: GenerationQueue
   queueGeneration: (req: GenJob, expected: SerialProjectRepository, after: (take: Take) => Promise<void>) => QueuedGeneration
-  measureTake: (cueId: string, take: Take, expected: SerialProjectRepository) => Promise<number>
+  measureTake: (cueId: string, take: Take, expected: SerialProjectRepository, admit?: () => void) => Promise<number>
   settings: () => Promise<AppSettings>
   diagnostics: () => DiagnosticEntry[]
   screenshot: () => Promise<Buffer | null>
@@ -351,12 +351,14 @@ async function placeAgentTake(
   cueId: string,
   take: Take,
   placement: AgentPlacement,
-  replaceClipId?: string
+  replaceClipId?: string,
+  admit?: () => void
 ): Promise<void> {
   if (placement === 'library') return
   const repository = requireRepository(deps)
   const owner = resolveTake(repository.projectForMain(), findLine(repository.projectForMain(), cueId), take.id)?.cue.id ?? cueId
-  const duration = take.duration > 0 ? take.duration : await deps.measureTake(owner, take, repository)
+  const duration = take.duration > 0 ? take.duration : await deps.measureTake(owner, take, repository, admit)
+  admit?.()
   const project = repository.projectForMain()
   const cue = project.cues.find((c) => c.id === cueId)
   if (!cue) throw new Error('The line was deleted before its take could be placed.')
@@ -1368,9 +1370,12 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         const cue = findLine(project, args.line)
         const found = resolveTake(project, cue, args.take)
         if (!found || found.take.deletedAt) throw new Error(`Line ${cue.key} has no take "${args.take}"; call line to list its takes.`)
-        const refusal = generationRefusal(deps.generation.check(cue.id))
-        if (refusal) throw new Error(`Line ${cue.key}: ${refusal}; wait until it finishes, then retry.`)
-        await placeAgentTake(pinned, cue.id, found.take, args.placement ?? 'replace')
+        const admit = (): void => {
+          const refusal = generationRefusal(deps.generation.check(cue.id))
+          if (refusal) throw new Error(`Line ${cue.key}: ${refusal}; wait until it finishes, then retry.`)
+        }
+        admit()
+        await placeAgentTake(pinned, cue.id, found.take, args.placement ?? 'replace', undefined, admit)
         const after = requireRepository(pinned).projectForMain()
         return structured(lineDetail(after, findLine(after, cue.id)))
       },

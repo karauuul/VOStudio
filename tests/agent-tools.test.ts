@@ -885,6 +885,24 @@ describe('generation tools', () => {
     expect(comp(repo, 'L3')?.clips).toEqual(before)
   })
 
+  it('take_use re-checks the guard after measuring an unmeasured take and refuses if an export started meanwhile', async () => {
+    const { call, repo, guard, deps } = setup()
+    repo!.projectForMain().cues.find((c) => c.key === 'L3')!.takes[0].duration = 0
+    const before = comp(repo, 'L3')?.clips
+    let measuredAdmit: (() => void) | undefined
+    deps.measureTake = async (_cueId, _take, _expected, admit) => {
+      guard.exporting = measuredAdmit === undefined
+      measuredAdmit = admit
+      return 2
+    }
+    expect((await call('take_use', { line: 'L3', take: 't1' })).error).toBe('Line L3: Export in progress; wait until it finishes, then retry.')
+    expect(comp(repo, 'L3')?.clips).toEqual(before)
+    expect(() => measuredAdmit?.()).toThrow('Line L3: Export in progress; wait until it finishes, then retry.')
+    guard.exporting = false
+    expect((await call('take_use', { line: 'L3', take: 't1' })).error).toBeUndefined()
+    expect(comp(repo, 'L3')?.clips.map((c) => [c.sourceTakeId, c.srcOut])).toEqual([['t1', 2]])
+  })
+
   it('tells the agent about cost, dry runs, the budget and waiting', () => {
     expect(AGENT_INSTRUCTIONS).toMatch(/costs money/)
     expect(AGENT_INSTRUCTIONS).toMatch(/dryRun true first/)
