@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ASSET_EXTENSIONS,
   assetKind,
+  binOnlyPath,
   jsonRecords,
   markdownTable,
   parseJsonPath,
@@ -110,5 +112,16 @@ describe('resolveColumn', () => {
     expect(resolveColumn(columns, 'source_text')).toBe(1)
     expect(() => resolveColumn(columns, 'nope')).toThrow('No column "nope"; columns are "Cue ID", "Source Text"')
     expect(() => resolveColumn(columns, 5)).toThrow(/does not exist/)
+  })
+})
+
+describe('bin routing', () => {
+  it('sends files that no line import reads to the bin and keeps folders, media and tables on their flows', () => {
+    expect(['C:/in/subs.srt', '/in/notes.md', '/in/lines.json', '/in/game.locres', '/in/a.vtt'].map(binOnlyPath)).toEqual([true, true, true, true, true])
+    expect(['/in/voice', '/in/a.wav', '/in/b.MP3', '/in/c.mp4', '/in/t.csv', '/in/t.xlsx'].map(binOnlyPath)).toEqual([false, false, false, false, false, false])
+  })
+
+  it('offers every known extension in the file picker', () => {
+    expect(ASSET_EXTENSIONS).toEqual(expect.arrayContaining(['wav', 'mp3', 'ogg', 'm4a', 'mp4', 'mov', 'mkv', 'srt', 'vtt', 'md', 'txt', 'json', 'csv', 'xlsx']))
   })
 })

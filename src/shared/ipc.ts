@@ -226,6 +226,13 @@ export interface AssetAddResult {
   skipped: { name: string; reason: string }[]
 }
 
+export interface AssetPage {
+  format: string
+  total: number
+  columns: string[]
+  rows: string[][]
+}
+
 export interface TableRequest {
   path: string
   rule: MatchRule
@@ -312,6 +319,7 @@ export interface IpcApi {
   'import:table': (req: TableRequest) => Promise<TableImportResult>
   'import:template': (dir: string) => Promise<ReimportResult>
   'assets:add': (req: { paths: string[] }) => Promise<AssetAddResult>
+  'assets:read': (req: { id: string; from?: number; count?: number }) => Promise<AssetPage>
   'source:detect': (req: { sourceId: string; mode: 'silence' | 'transcribe' }) => Promise<DetectResult>
   'project:command': (command: ProjectCommand) => Promise<CommandResult>
   'project:saveVersion': (req: { name?: string }) => Promise<ProjectVersion[]>

@@ -16,7 +16,7 @@ import {
   type AssetTable,
   type AssetText,
 } from '@shared/asset-readers'
-import type { AssetAddResult, AudioImportResult } from '@shared/ipc'
+import type { AssetAddResult, AssetPage, AudioImportResult } from '@shared/ipc'
 import { collectFiles, importPickedAudio, pickedAudio, probeDuration, type PickedAudio } from './audio-import'
 import { readTable } from './table-import'
 
@@ -146,6 +146,19 @@ export async function loadAsset(asset: ProjectAsset, options: AssetReadOptions):
   }
   if (options.jsonPath !== undefined) return jsonRecords(parsed, options.jsonPath, options.fields)
   return { format: 'json', lines: JSON.stringify(parsed, null, 2).split('\n') }
+}
+
+const PAGE_CELL_MAX = 1000
+
+export function assetPage(content: AssetContent, from: number, count: number): AssetPage {
+  if ('duration' in content) return { format: content.format, total: 0, columns: [], rows: [] }
+  const rows = isTable(content) ? content.rows : content.lines.map((line) => [line])
+  return {
+    format: content.format,
+    total: rows.length,
+    columns: isTable(content) ? content.columns : [],
+    rows: rows.slice(from, from + count).map((cells) => cells.map((cell) => cell.slice(0, PAGE_CELL_MAX))),
+  }
 }
 
 export interface AudioLinesResult extends AudioImportResult {

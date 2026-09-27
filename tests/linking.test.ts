@@ -3,6 +3,11 @@ import type { Cue, Project } from '../src/shared/domain'
 import {
   assetLinks,
   buildRowLines,
+  isUnlinked,
+  linkLabel,
+  looseAudioCues,
+  proposalRefs,
+  unlinkedAssets,
   KEY_AFFIX,
   KEY_EXACT,
   KEY_NORMALIZED,
@@ -193,5 +198,54 @@ describe('derived links and the proposal list', () => {
     expect(listProposals(p).map((e) => e.kind)).toEqual(['character', 'link', 'text', 'term'])
     expect(listProposals(p, undefined, 0.8).map((e) => e.kind)).toEqual(['character'])
     expect(listProposals(p, 'term').map((e) => e.term?.term)).toEqual(['node'])
+  })
+})
+
+describe('bin state', () => {
+  it('labels an asset by linked lines and pending link proposals', () => {
+    expect(linkLabel(undefined)).toBe('Unlinked')
+    expect(linkLabel({ lines: 0, proposed: 0 })).toBe('Unlinked')
+    expect(linkLabel({ lines: 1, proposed: 0 })).toBe('1 line')
+    expect(linkLabel({ lines: 1200, proposed: 0 })).toBe('1,200 lines')
+    expect(linkLabel({ lines: 0, proposed: 2 })).toBe('2 proposed')
+    expect(linkLabel({ lines: 3, proposed: 1 })).toBe('3 lines · 1 proposed')
+  })
+
+  it('treats an asset with only proposals as unlinked', () => {
+    expect(isUnlinked(undefined)).toBe(true)
+    expect(isUnlinked({ lines: 0, proposed: 4 })).toBe(true)
+    expect(isUnlinked({ lines: 1, proposed: 0 })).toBe(false)
+    const links = assetLinks([
+      { ...cue('c1', 'a'), origins: [{ assetId: 'x' }] },
+      { ...cue('c2', 'b'), proposals: { link: { assetId: 'y', row: 0, confidence: 0.8, reason: '' } } },
+    ])
+    expect(unlinkedAssets([{ id: 'x' }, { id: 'y' }, { id: 'z' }], links).map((a) => a.id)).toEqual(['y', 'z'])
+  })
+
+  it('keeps only lines not built from an audio or video asset for the folder rows', () => {
+    const assets = [
+      { id: 'wav', kind: 'audio' as const },
+      { id: 'srt', kind: 'subtitles' as const },
+    ]
+    const cues = [
+      { ...cue('c1', 'a'), origins: [{ assetId: 'wav' }] },
+      { ...cue('c2', 'b'), origins: [{ assetId: 'srt', row: 0 }] },
+      cue('c3', 'c'),
+    ]
+    expect(looseAudioCues(cues, assets).map((c) => c.id)).toEqual(['c2', 'c3'])
+    expect(looseAudioCues(cues)).toBe(cues)
+  })
+
+  it('collects pending character and link proposals as refs, never text suggestions', () => {
+    const cues = [
+      { ...cue('c1', 'a'), suggestedText: 'S', proposals: { character: { characterId: 'ada', confidence: 0.9, reason: '' } } },
+      { ...cue('c2', 'b'), proposals: { character: { characterId: 'ada', confidence: 0.9, reason: '' }, link: { assetId: 'x', row: 1, confidence: 1, reason: '' } } },
+      { ...cue('c3', 'c'), suggestedText: 'T' },
+    ]
+    expect(proposalRefs(cues)).toEqual([
+      { cueId: 'c1', kind: 'character' },
+      { cueId: 'c2', kind: 'character' },
+      { cueId: 'c2', kind: 'link' },
+    ])
   })
 })

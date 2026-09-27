@@ -12,8 +12,8 @@ import {
 } from './domain'
 import { PATH_FIELD } from './export-plan'
 import { detectMapping, commitTable, type TableMapping } from './import-table'
-import { resolveColumn, SUBTITLE_COLUMNS } from './asset-readers'
-import type { ChangeSet, FieldStep, ProposalItem } from './project-commands'
+import { inPlaceKind, resolveColumn, SUBTITLE_COLUMNS } from './asset-readers'
+import type { ChangeSet, FieldStep, ProposalItem, ProposalRef } from './project-commands'
 
 export const KEY_EXACT = 1
 export const KEY_NORMALIZED = 0.95
@@ -366,6 +366,34 @@ export function assetLinks(cues: Pick<Cue, 'origins' | 'proposals'>[]): Map<stri
     if (cue.proposals?.link) bump(cue.proposals.link.assetId, 'proposed')
   }
   return counts
+}
+
+export const isUnlinked = (links: AssetLinkCount | undefined): boolean => (links?.lines ?? 0) === 0
+
+const plural = (n: number, word: string): string => `${n.toLocaleString('en-US')} ${n === 1 ? word : `${word}s`}`
+
+export function linkLabel(links: AssetLinkCount | undefined): string {
+  const parts = [
+    ...(links && links.lines > 0 ? [plural(links.lines, 'line')] : []),
+    ...(links && links.proposed > 0 ? [`${links.proposed.toLocaleString('en-US')} proposed`] : []),
+  ]
+  return parts.length > 0 ? parts.join(' · ') : 'Unlinked'
+}
+
+export function unlinkedAssets<T extends Pick<ProjectAsset, 'id'>>(assets: T[], links: Map<string, AssetLinkCount>): T[] {
+  return assets.filter((asset) => isUnlinked(links.get(asset.id)))
+}
+
+export function looseAudioCues<T extends Pick<Cue, 'origins'>>(cues: T[], assets: Pick<ProjectAsset, 'id' | 'kind'>[] = []): T[] {
+  const media = new Set(assets.filter((asset) => inPlaceKind(asset.kind)).map((asset) => asset.id))
+  if (media.size === 0) return cues
+  return cues.filter((cue) => !cue.origins?.some((origin) => media.has(origin.assetId)))
+}
+
+export const LINE_PROPOSAL_KINDS = ['character', 'link'] as const
+
+export function proposalRefs(cues: Pick<Cue, 'id' | 'proposals'>[]): ProposalRef[] {
+  return cues.flatMap((cue) => LINE_PROPOSAL_KINDS.filter((kind) => cue.proposals?.[kind]).map((kind) => ({ cueId: cue.id, kind })))
 }
 
 export type ProposalListKind = ProposalKind | 'term'

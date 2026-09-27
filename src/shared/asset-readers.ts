@@ -28,6 +28,12 @@ export const assetKind = (fileName: string): AssetKind => KIND_BY_EXTENSION[exte
 
 export const inPlaceKind = (kind: AssetKind): boolean => kind === 'audio' || kind === 'video'
 
+export const ASSET_EXTENSIONS = Object.keys(KIND_BY_EXTENSION)
+
+const LINE_IMPORT_KINDS: AssetKind[] = ['audio', 'video', 'table']
+
+export const binOnlyPath = (path: string): boolean => extensionOf(path) !== '' && !LINE_IMPORT_KINDS.includes(assetKind(path))
+
 export interface AssetTable {
   format: string
   columns: string[]

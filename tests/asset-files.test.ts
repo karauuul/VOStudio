@@ -13,7 +13,7 @@ vi.mock('electron', () => ({ app: { getPath: () => H.root } }))
 
 mkdirSync(H.root, { recursive: true })
 
-const { addAssets, assetAudioLines, loadAsset } = await import('../src/main/assets')
+const { addAssets, assetAudioLines, assetPage, loadAsset } = await import('../src/main/assets')
 const store = await import('../src/main/project-store')
 const ffmpegStatic = (await import('ffmpeg-static')).default as unknown as string
 
@@ -135,5 +135,12 @@ describe('project.json keeps the new fields across a reopen', () => {
     expect(reopened.cues[1]).not.toHaveProperty('proposals')
     expect(reopened.cues[1]).not.toHaveProperty('origins')
     expect(reopened.terms).toEqual([{ term: 'node', translation: 'вузол', proposed: true }])
+  })
+
+  it('pages an asset for the preview: table rows, text lines as one column, media as empty', () => {
+    const table = { format: 'csv', columns: ['id', 'text'], rows: [['1', 'a'], ['2', 'b'], ['3', 'x'.repeat(1500)]] }
+    expect(assetPage(table, 1, 5)).toEqual({ format: 'csv', total: 3, columns: ['id', 'text'], rows: [['2', 'b'], ['3', 'x'.repeat(1000)]] })
+    expect(assetPage({ format: 'xml', lines: ['<a>', '</a>'] }, 0, 1)).toEqual({ format: 'xml', total: 2, columns: [], rows: [['<a>']] })
+    expect(assetPage({ format: 'audio', duration: 2 }, 0, 10)).toEqual({ format: 'audio', total: 0, columns: [], rows: [] })
   })
 })

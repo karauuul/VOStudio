@@ -39,7 +39,9 @@ import { parseCsv } from '@shared/csv'
 import { applyRules } from '@shared/pronunciation'
 import { NO_LANGUAGE_CODE_MODEL } from '@shared/provider-models'
 import { DEFAULT_EXPORT_TEMPLATE } from '@shared/export-plan'
+import { ASSET_EXTENSIONS, inPlaceKind } from '@shared/asset-readers'
 import {
+  ASSET_ROW_MAX,
   emptyEdits,
   singleFlight,
   MAX_STS_SECONDS,
@@ -56,6 +58,7 @@ import type {
   ReimportResult,
   TableImportResult,
   AssetAddResult,
+  AssetPage,
   TablePreview,
   TableRequest,
 } from '@shared/ipc'
@@ -86,7 +89,7 @@ import {
   exportInfo,
 } from './export'
 import { detectLines, importSources, splitMediaPaths } from './sources'
-import { addAssets, assetAudioLines, loadAsset, type AudioLinesResult } from './assets'
+import { addAssets, assetAudioLines, assetPage, loadAsset, type AudioLinesResult } from './assets'
 import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
@@ -110,7 +113,7 @@ import { sanitizeAgentAccess } from '@shared/ipc'
 import type { McpServer, McpSession } from '@shared/mcp'
 import { needsGuardVersion } from '@shared/versions'
 import { startAgentServer, type AgentServerHandle } from './agent/server'
-import { AGENT_INSTRUCTIONS, agentTools } from './agent/tools'
+import { AGENT_INSTRUCTIONS, agentTools, ASSET_READ_MAX } from './agent/tools'
 import { diagnostics, watchDiagnostics } from './agent/diagnostics'
 import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
 
@@ -140,6 +143,9 @@ function isAllowedPath(abs: string): boolean {
   const project = store.getProject()
   if (!project) return false
   if (project.sources?.some((s) => s.media !== undefined && path.resolve(s.media).toLowerCase() === norm)) {
+    return true
+  }
+  if (project.assets?.some((a) => inPlaceKind(a.kind) && path.resolve(a.file.relPath).toLowerCase() === norm)) {
     return true
   }
   return project.cues.some(
@@ -249,6 +255,12 @@ const audioImportSchema = z.object({
 })
 
 const assetAddSchema = z.object({ paths: z.array(filePath).min(1).max(200) })
+
+const assetReadSchema = z.object({
+  id: z.string().min(1).max(200),
+  from: z.number().int().min(0).max(ASSET_ROW_MAX).optional(),
+  count: z.number().int().min(1).max(ASSET_READ_MAX).optional(),
+})
 
 const takeImportSchema = z.object({
   cueId: z.string().min(1).max(200),
@@ -594,6 +606,13 @@ function buildAudioLines(assetIds: string[]): Promise<AudioLinesResult> {
   })
 }
 
+async function readAssetPage(req: { id: string; from?: number; count?: number }): Promise<AssetPage> {
+  const parsed = assetReadSchema.parse(req)
+  const asset = requireRepository().projectForMain().assets?.find((a) => a.id === parsed.id)
+  if (!asset) throw new Error('Asset not found')
+  return assetPage(await loadAsset(asset, {}), parsed.from ?? 0, parsed.count ?? ASSET_READ_MAX)
+}
+
 async function previewTableImport(req: TableRequest): Promise<TablePreview> {
   const parsed = tableImportSchema.parse(req)
   const table = await readTable(parsed.path)
@@ -691,10 +710,11 @@ function registerHandlers(): void {
                 filters: [{ name: 'Tables', extensions: ['csv', 'tsv', 'txt', 'xlsx'] }],
               }
             : {
-                title: 'Import audio files',
+                title: 'Import files',
                 properties: ['openFile', 'multiSelections'],
                 filters: [
-                  { name: 'Media', extensions: ['wav', 'mp3', 'ogg', 'm4a', 'mp4', 'mov', 'mkv'] },
+                  { name: 'Files', extensions: ASSET_EXTENSIONS },
+                  { name: 'All files', extensions: ['*'] },
                 ],
               }
     const win = BrowserWindow.getFocusedWindow()
@@ -726,6 +746,8 @@ function registerHandlers(): void {
   typedHandle('import:template', reimportTemplateDir)
 
   typedHandle('assets:add', addAssetPaths)
+
+  typedHandle('assets:read', readAssetPage)
 
   typedHandle('project:command', (command) => {
     if (!projectRepository) throw new Error('No project is open')
