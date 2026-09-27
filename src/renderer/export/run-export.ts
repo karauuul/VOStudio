@@ -54,7 +54,7 @@ function resolveJobComp(job: ExportJob, plan: CompPlan): ResolvedComp {
             url: audioUrl(o.srcPath),
             gainDb: o.gainDb,
             offset: o.offset,
-            duration: o.duration,
+            ...(o.duration === undefined ? {} : { duration: o.duration }),
             ...(o.duckDb === undefined ? {} : { duckDb: o.duckDb }),
             ...(o.start === undefined ? {} : { start: o.start }),
           })),

@@ -17,6 +17,8 @@ import {
   renderFileName,
   requireRevision,
   revisionStale,
+  TRANSCRIPT_TOO_LONG,
+  TRANSCRIPT_WORDS_MAX,
   transcriptMatch,
 } from '../src/shared/agent-render'
 import { edgeSilence, loudnessFilter, METRICS_FILTER, parseMetrics, silenceFilter } from '../src/shared/audio-metrics'
@@ -63,6 +65,16 @@ describe('transcript match', () => {
     expect(transcriptMatch('Привіт, світе', 'привіт')).toEqual({ similarity: 0.667, missing: ['світе'], extra: [] })
     expect(transcriptMatch('', '')).toEqual({ similarity: 1, missing: [], extra: [] })
     expect(transcriptMatch('word', '')).toEqual({ similarity: 0, missing: ['word'], extra: [] })
+  })
+
+  it('skips the word diff above the word ceiling and reports shared-word similarity with a note', () => {
+    const words = (n: number, tag = 'w'): string => Array.from({ length: n }, (_, i) => `${tag}${i}`).join(' ,  ')
+    const atCeiling = transcriptMatch(words(TRANSCRIPT_WORDS_MAX), words(TRANSCRIPT_WORDS_MAX - 1))
+    expect(atCeiling).toEqual({ similarity: 0.999, missing: [`w${TRANSCRIPT_WORDS_MAX - 1}`], extra: [] })
+    const long = transcriptMatch(words(TRANSCRIPT_WORDS_MAX + 1), `${words(TRANSCRIPT_WORDS_MAX - 1)} extra`)
+    expect(long).toEqual({ similarity: 0.998, missing: [], extra: [], note: TRANSCRIPT_TOO_LONG })
+    expect(TRANSCRIPT_TOO_LONG).toMatch(/too long to verify word by word/)
+    expect(transcriptMatch('a a b', `${'a '.repeat(TRANSCRIPT_WORDS_MAX + 1)}`)).toMatchObject({ similarity: Math.round((2 * 2 * 1000) / (3 + TRANSCRIPT_WORDS_MAX + 1)) / 1000, note: TRANSCRIPT_TOO_LONG })
   })
 })
 
@@ -175,6 +187,14 @@ describe('single line planning', () => {
     const region = { ...cue('r'), region: { sourceId: 's', in: 2, out: 3.5 } }
     const sources = [{ id: 's', name: 'v.mp4', kind: 'video' as const, file: { fileId: 's', relPath: '/a/s.wav', format: 'wav' as const }, duration: 10 }]
     expect(originalOnlyPlan(region, sources)?.originals).toEqual([{ srcPath: '/a/s.wav', offset: 2, duration: 1.5, gainDb: 0 }])
+  })
+
+  it('an original of unknown length leaves the duration to the decoded audio, like live playback', () => {
+    const ref = { fileId: 'r', relPath: '/a/ref.wav', format: 'wav' as const }
+    for (const referenceDuration of [undefined, 0, -1]) {
+      const c = { ...cue('o'), referenceAudio: ref, ...(referenceDuration === undefined ? {} : { referenceDuration }) }
+      expect(originalOnlyPlan(c, undefined)).toEqual({ clips: [], originals: [{ srcPath: '/a/ref.wav', offset: 0, gainDb: 0 }] })
+    }
   })
 })
 

@@ -29,7 +29,7 @@ import type {
 import type { MatchRule } from '@shared/domain'
 import { DEFAULT_MATCH_RULE, TABLE_COLUMNS_MAX } from '@shared/import-table'
 import { ALL_CHARACTERS, filterCues } from '@shared/cue-filter'
-import { requireRevision, transcriptMatch } from '@shared/agent-render'
+import { requireRevision, TRANSCRIPT_WORDS_MAX, transcriptMatch } from '@shared/agent-render'
 import type { AudioMetrics } from '@shared/audio-metrics'
 import { findCollisions, originalLength, planBatch } from '@shared/export-plan'
 import { readinessRows, statusWords, summarize } from '@shared/readiness'
@@ -1225,7 +1225,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       name: 'verify',
       title: 'Verify line',
       description:
-        'Render one line like render does, transcribe the render with the voice provider and compare it word by word with the line text (the original text when the original was rendered): similarity 0 to 1, missing and extra words, plus the render metrics. Speech-to-text may cost money.',
+        `Render one line like render does, transcribe the render with the voice provider and compare it word by word with the line text (the original text when the original was rendered): similarity 0 to 1, missing and extra words, plus the render metrics. Lines over ${TRANSCRIPT_WORDS_MAX} words get a note and a shared-word similarity without missing and extra words. Speech-to-text may cost money.`,
       input: z.object({ line: lineRef }),
       annotations: { ...WRITE, idempotentHint: true, openWorldHint: true },
       writes: () => false,

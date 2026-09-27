@@ -284,6 +284,14 @@ describe('stems through the command and the export plan', () => {
     expect(plan.originals).toEqual(originalRefs(c, undefined))
   })
 
+  it('leaves the stem length to the decoded audio when the original length is unknown', () => {
+    const c = cue({ stems, original: { exportMode: 'off' } })
+    delete c.referenceDuration
+    expect(originalRefs(c, undefined)).toEqual([
+      { srcPath: 'E:/p/audio/stems/c1/rest.wav', gainDb: 0, offset: 0, duckDb: -12 },
+    ])
+  })
+
   it('mixes nothing when every stem is off', () => {
     const c = cue({ stems: [stem(), stem({ id: 's-rest', exportMode: 'off' })] })
     expect(mixesOriginal(c)).toBe(false)

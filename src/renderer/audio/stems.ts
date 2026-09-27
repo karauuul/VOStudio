@@ -22,7 +22,7 @@ export async function splitStems(
 ): Promise<Stem[]> {
   const buffer = await getBuffer(audioUrl(ref.srcPath))
   const offset = Math.max(0, ref.offset)
-  const duration = ref.duration > 0 ? ref.duration : buffer.duration - offset
+  const duration = ref.duration !== undefined && ref.duration > 0 ? ref.duration : buffer.duration - offset
   if (!(duration > 0)) throw new Error('The original region is empty')
 
   const region = await renderBufferOffline(buffer, {
