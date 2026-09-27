@@ -48,6 +48,8 @@ export interface StsRequest {
 
 export type GenRequest = ({ kind: 'tts' } & TtsRequest) | ({ kind: 'sts' } & StsRequest)
 
+export type GenJob = GenRequest & { providerText?: string }
+
 export interface AppSettings {
   micDeviceId?: string
   micDeviceLabel?: string

@@ -107,6 +107,8 @@ import {
   clipTargetText,
   deriveGenTarget,
   placeTake,
+  hasClip,
+  TARGET_CLIP_GONE,
   targetText,
   toPercent,
   type GenTarget,
@@ -819,10 +821,7 @@ export default function App() {
       const recent = lastPlacedRef.current.get(cueId)
       const stored = recent && recent.base === cue.comp ? recent.comp : cue.comp
       let comp = isActiveCue(cueId) && compRef.current ? compRef.current.current() : stored
-      const replace =
-        replaceClipId && comp?.clips.some((c) => c.id === replaceClipId)
-          ? replaceClipId
-          : undefined
+      if (replaceClipId && !hasClip(comp, replaceClipId)) throw new Error(TARGET_CLIP_GONE)
       let trackId = drop?.trackId ?? targetTrackRef.current[cueId]
       let playhead =
         drop?.at ??
@@ -857,7 +856,7 @@ export default function App() {
             duration: durations[i],
             targetTrackId: trackId,
             playhead,
-            ...(replace ? { replaceClipId: replace } : {}),
+            ...(replaceClipId ? { replaceClipId } : {}),
           })
           comp = placed.comp
           trackId = placed.trackId

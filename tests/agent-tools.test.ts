@@ -12,7 +12,8 @@ import { createGenerationQueue } from '../src/main/gen-queue'
 import type { McpSession } from '../src/shared/mcp'
 import type { AppSettings } from '../src/shared/ipc'
 import type { Take } from '../src/shared/domain'
-import { applyRules } from '../src/shared/pronunciation'
+import { jobChars, ttsPlan } from '../src/shared/provider-models'
+import { TARGET_CLIP_GONE } from '../src/shared/generation'
 
 const voice = { stability: 0.5, similarity: 0.5, style: 0, speed: 1, boost: true }
 
@@ -73,7 +74,7 @@ function setup(open = true) {
   const guard = { exporting: false, restoring: false, recording: false }
   const generation = createGenerationQueue({ guard: () => guard, changed: () => undefined })
   const settings: AppSettings = { countIn: true, autoReference: false }
-  const gen = { hold: null as Promise<void> | null, sent: [] as unknown[], taken: 0 }
+  const gen = { hold: null as Promise<void> | null, sent: [] as unknown[], spoken: [] as string[], taken: 0 }
   const deps: AgentDeps = {
     version: '1.2.3',
     repository: () => repo,
@@ -124,11 +125,15 @@ function setup(open = true) {
         kind: req.kind,
         cueId: req.cueId,
         origin: 'agent',
-        chars: req.kind === 'tts' ? applyRules(req.text, expected.projectForMain().pronunciationRules).length : 0,
+        chars: jobChars(req, expected.projectForMain().pronunciationRules),
         owner: expected,
         run: async () => {
           gen.sent.push(req)
           await gen.hold
+          if (req.kind === 'tts') {
+            const live = expected.projectForMain()
+            gen.spoken.push(ttsPlan(live, live.cues.find((c) => c.id === req.cueId)!, req.text, req.model, req.providerText).text)
+          }
           const id = `gen${++gen.taken}`
           const take: Take = { id, kind: req.kind, createdAt: 'now', file: { fileId: id, relPath: `/root/Demo.vostudio/${id}.mp3`, format: 'mp3' }, duration: 0, meta: {}, edits: emptyEdits() }
           await expected.mutate((p) => {
@@ -651,9 +656,28 @@ describe('generation tools', () => {
     const dry = await call('generate', { lines: ['L1'], dryRun: true })
     expect((dry.data.lines as { text: string; chars: number }[])[0]).toMatchObject({ text: 'Heello theeree', chars: 14 })
     const { data } = await call('generate', { lines: ['L1'], wait: 5 })
-    expect(gen.sent).toEqual([expect.objectContaining({ kind: 'tts', text: 'Hello there' })])
+    expect(gen.sent).toEqual([expect.objectContaining({ kind: 'tts', text: 'Hello there', providerText: 'Heello theeree' })])
+    expect(gen.spoken).toEqual(['Heello theeree'])
     expect(generation.list()[0].chars).toBe(14)
     expect(data.budget).toEqual({ limit: 100, used: 14, remaining: 86 })
+  })
+
+  it('sends the text budgeted at planning even when the rules change before the job runs', async () => {
+    const { call, gen, generation, settings } = setup()
+    await voiced(call)
+    await call('rules', { set: 'e → ee' })
+    settings.agentCharacterBudget = 100
+    let release!: () => void
+    gen.hold = new Promise((resolve) => (release = resolve))
+    const session = createSession()
+    const { data } = await call('generate', { lines: ['L3', 'L1'] }, session)
+    expect(data.budget).toEqual({ limit: 100, used: 27, remaining: 73 })
+    await call('rules', { set: 'Hello → Greetings to you' })
+    release()
+    await generation.settle((data.jobs as { id: string }[]).map((j) => j.id), 5000, new AbortController().signal, () => undefined)
+    expect(gen.spoken).toEqual(['Voiceed linee', 'Heello theeree'])
+    expect(generation.list().map((j) => [j.state, j.chars])).toEqual([['done', 13], ['done', 14]])
+    expect(gen.spoken.reduce((n, t) => n + t.length, 0)).toBe(27)
   })
 
   it('refuses a batch over the remaining budget and queues nothing', async () => {
@@ -734,6 +758,25 @@ describe('generation tools', () => {
     expect((data.jobs as { state: string }[])[0].state).toBe('done')
     expect(comp(repo, 'L3')).toEqual(before)
     expect(repo?.projectForMain().cues.find((c) => c.key === 'L3')?.takes.map((t) => t.id)).toEqual(['t1', 'gen1', 'gen2'])
+  })
+
+  it('keeps the take in the library and reports a conflict when the targeted clip disappears during generation', async () => {
+    const { call, repo, gen } = setup()
+    const clips = [
+      { id: 'k1', sourceTakeId: 't1', srcIn: 0, srcOut: 2, start: 0, edits: emptyEdits() },
+      { id: 'k2', sourceTakeId: 't1', srcIn: 0, srcOut: 1, start: 3, edits: emptyEdits() },
+    ]
+    await call('command', { command: { type: 'cue.setComp', cueId: 'c3', comp: { clips } } })
+    let release!: () => void
+    gen.hold = new Promise((resolve) => (release = resolve))
+    const first = await call('generate', { lines: ['L3'], target: { clipId: 'k2' } })
+    const [job] = first.data.jobs as { id: string }[]
+    await call('command', { command: { type: 'cue.setComp', cueId: 'c3', comp: { clips: [clips[0]] } } })
+    release()
+    const { data } = await call('jobs', { ids: [job.id], wait: 5 })
+    expect(data.jobs).toEqual([{ id: job.id, line: 'L3', kind: 'tts', state: 'error', error: `${TARGET_CLIP_GONE} as take gen1; place it with take_use.` }])
+    expect(comp(repo, 'L3')?.clips).toEqual([clips[0]])
+    expect(repo?.projectForMain().cues.find((c) => c.key === 'L3')?.takes.map((t) => t.id)).toEqual(['t1', 'gen1'])
   })
 
   it('returns running jobs when the wait runs out and finishes them later through jobs', async () => {

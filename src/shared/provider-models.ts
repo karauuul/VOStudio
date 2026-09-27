@@ -8,6 +8,7 @@ import {
 } from './domain'
 import { targetText, type GenTarget } from './generation'
 import { applyRules } from './pronunciation'
+import type { GenJob } from './ipc'
 
 export interface ProviderModel {
   id: string
@@ -123,7 +124,7 @@ export interface TtsPlan {
   language?: string
 }
 
-export function ttsPlan(project: Project, cue: Cue, text: string, model?: string): TtsPlan {
+export function ttsPlan(project: Project, cue: Cue, text: string, model?: string, providerText?: string): TtsPlan {
   const character = project.characters.find((c) => c.id === cue.characterId)
   if (!character) throw new Error('Line has no character')
   if (!character.provider.voiceId) {
@@ -135,11 +136,14 @@ export function ttsPlan(project: Project, cue: Cue, text: string, model?: string
   return {
     character,
     voiceId: character.provider.voiceId,
-    text: applyRules(text, project.pronunciationRules),
+    text: providerText ?? applyRules(text, project.pronunciationRules),
     model: chosen,
     ...(mode?.language && chosen === projectModel && chosen !== NO_LANGUAGE_CODE_MODEL ? { language: mode.language } : {}),
   }
 }
+
+export const jobChars = (req: GenJob, rules: string): number =>
+  req.kind === 'tts' ? (req.providerText ?? applyRules(req.text, rules)).length : 0
 
 export const AUDIO_TAGS = [
   'whispers',

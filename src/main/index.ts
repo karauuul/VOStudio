@@ -36,7 +36,6 @@ import { voiceProvider } from './providers/voice-provider'
 import { setApiKey } from './secrets'
 import { decodedDuration, runFfmpeg } from './ffmpeg'
 import { parseCsv } from '@shared/csv'
-import { applyRules } from '@shared/pronunciation'
 import { DEFAULT_EXPORT_TEMPLATE } from '@shared/export-plan'
 import { ASSET_EXTENSIONS, inPlaceKind } from '@shared/asset-readers'
 import {
@@ -52,7 +51,7 @@ import type { Project } from '@shared/domain'
 import type {
   AppSettings,
   AudioImportResult,
-  GenRequest,
+  GenJob,
   ReimportResult,
   TableImportResult,
   AssetAddResult,
@@ -120,6 +119,7 @@ import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
 import { createGenerationQueue, type QueuedGeneration } from './gen-queue'
 import { createStsTake, createTtsTake } from './generate'
 import { exportRefusal, recordingRefusal, type JobOrigin } from '@shared/jobs'
+import { jobChars } from '@shared/provider-models'
 
 const primaryInstance = app.requestSingleInstanceLock()
 if (!primaryInstance) app.quit()
@@ -670,14 +670,14 @@ function reimportTemplateDir(dir: string, expected?: SerialProjectRepository): P
 }
 
 function queueGeneration(
-  req: GenRequest,
+  req: GenJob,
   origin: JobOrigin,
   expected?: SerialProjectRepository,
   after?: (take: Take) => Promise<void>
 ): QueuedGeneration {
   const repository = liveRepository(expected)
   const session = requireSession()
-  const chars = req.kind === 'tts' ? applyRules(req.text, repository.projectForMain().pronunciationRules).length : 0
+  const chars = jobChars(req, repository.projectForMain().pronunciationRules)
   return generations.submit({
     kind: req.kind,
     cueId: req.cueId,

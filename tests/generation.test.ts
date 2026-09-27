@@ -6,8 +6,10 @@ import {
   deriveGenTarget,
   findWholeWord,
   fromPercent,
+  hasClip,
   placeOnTrack,
   placeTake,
+  TARGET_CLIP_GONE,
   targetRange,
   targetText,
   toPercent,
@@ -306,5 +308,21 @@ describe('placeOnTrack — agent placement through placeTake', () => {
     const placed = placeOnTrack(twoTracks, { placement: 'replace', takeId: 'new', duration: 0.5, replaceClipId: 'b' })
     expect(placed.clips.find((c) => c.id === 'b')).toMatchObject({ sourceTakeId: 'new', start: 3, srcOut: 0.5 })
     expect(placed.clips).toHaveLength(3)
+  })
+
+  it('a clip target that disappeared is a conflict and never falls back to replacing the track', () => {
+    for (const placement of ['replace', 'append'] as const) {
+      expect(() => placeOnTrack(twoTracks, { placement, takeId: 'new', duration: 1, targetTrackId: 'track-1', replaceClipId: 'gone' })).toThrow(
+        `${TARGET_CLIP_GONE} as take new; place it with take_use.`
+      )
+    }
+    expect(() => placeOnTrack(undefined, { placement: 'replace', takeId: 'new', duration: 1, replaceClipId: 'b' })).toThrow(TARGET_CLIP_GONE)
+    expect(twoTracks.clips.map((c) => c.id)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('hasClip reports whether a comp still holds a clip', () => {
+    expect(hasClip(twoTracks, 'b')).toBe(true)
+    expect(hasClip(twoTracks, 'gone')).toBe(false)
+    expect(hasClip(undefined, 'b')).toBe(false)
   })
 })

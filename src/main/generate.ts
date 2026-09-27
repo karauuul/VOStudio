@@ -11,11 +11,11 @@ import type { VoiceProvider } from './providers/voice-provider'
 
 type Publish = (result: CommandResult) => void
 
-export async function createTtsTake(session: TakeSession, req: TtsRequest, provider: VoiceProvider, publish: Publish): Promise<Take> {
+export async function createTtsTake(session: TakeSession, req: TtsRequest & { providerText?: string }, provider: VoiceProvider, publish: Publish): Promise<Take> {
   const project = session.repository.projectForMain()
   const cue = project.cues.find((c) => c.id === req.cueId)
   if (!cue) throw new Error('Cue not found')
-  const plan = ttsPlan(project, cue, req.text, req.model)
+  const plan = ttsPlan(project, cue, req.text, req.model, req.providerText)
   const { audio, words } = await provider.ttsWithTimestamps({
     text: plan.text,
     voiceId: plan.voiceId,

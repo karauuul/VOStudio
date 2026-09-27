@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { autoSelectsOutput, stsSchema, ttsSchema } from '../src/main/schemas'
+import { autoSelectsOutput, genRunSchema, stsSchema, ttsSchema } from '../src/main/schemas'
 import { DEFAULT_VOICE_SETTINGS } from '../src/shared/domain'
 import type { StsRequest, TtsRequest } from '../src/shared/ipc'
 
@@ -19,7 +19,11 @@ describe('provider request schemas', () => {
     expect(stsSchema.parse({ ...sts, selectOutput: true }).selectOutput).toBe(true)
   })
 
-  it('rejects a non-boolean flag', () => {
+  it('drops a provider text from the app so the rules always apply to its requests', () => {
+    expect(genRunSchema.parse({ kind: 'tts', ...tts, providerText: 'raw bypass' })).not.toHaveProperty('providerText')
+  })
+
+    it('rejects a non-boolean flag', () => {
     expect(() => ttsSchema.parse({ ...tts, selectOutput: 'no' })).toThrow()
     expect(() => stsSchema.parse({ ...sts, selectOutput: 1 })).toThrow()
   })

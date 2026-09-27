@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { planLine } from '../src/shared/agent-generate'
-import { ttsPlan } from '../src/shared/provider-models'
+import { jobChars, ttsPlan } from '../src/shared/provider-models'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 
 const voice = { stability: 0.5, similarity: 0.5, style: 0.2, speed: 1, boost: true }
@@ -33,6 +33,17 @@ describe('planLine', () => {
     const sent = ttsPlan(p, p.cues[0], plan.rawText).text
     expect(sent).toBe(plan.text)
     expect(sent.length).toBe(plan.chars)
+  })
+
+  it('freezes the provider text at planning so later rule changes neither alter it nor its character count', () => {
+    const p = { ...project({ text: 'A cat' }), pronunciationRules: 'A → AA' }
+    const plan = planLine(p, p.cues[0], { mode: 'tts' })
+    const job = { kind: 'tts' as const, cueId: 'c', text: plan.rawText, providerText: plan.text, voiceSettings: voice }
+    const changed = { ...p, pronunciationRules: 'cat → kitty kitty' }
+    expect(ttsPlan(changed, changed.cues[0], plan.rawText, undefined, plan.text).text).toBe('AA cat')
+    expect(jobChars(job, changed.pronunciationRules)).toBe(plan.chars)
+    expect(jobChars({ ...job, providerText: undefined }, changed.pronunciationRules)).toBe('A kitty kitty'.length)
+    expect(jobChars({ kind: 'sts', cueId: 'c', sourceTakeId: 'r', voiceSettings: voice }, changed.pronunciationRules)).toBe(0)
   })
 
   it('converts the newest live recording in sts mode and skips a line without one', () => {

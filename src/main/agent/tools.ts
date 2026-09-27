@@ -20,7 +20,7 @@ import type {
   AppSettings,
   AssetAddResult,
   AudioImportResult,
-  GenRequest,
+  GenJob,
   ReimportResult,
   TableImportResult,
   TablePreview,
@@ -91,7 +91,7 @@ export interface AgentDeps {
   buildAudioLines: (assetIds: string[], expected?: SerialProjectRepository) => Promise<AudioLinesResult>
   provider: () => VoiceProvider
   generation: GenerationQueue
-  queueGeneration: (req: GenRequest, expected: SerialProjectRepository, after: (take: Take) => Promise<void>) => QueuedGeneration
+  queueGeneration: (req: GenJob, expected: SerialProjectRepository, after: (take: Take) => Promise<void>) => QueuedGeneration
   measureTake: (cueId: string, take: Take, expected: SerialProjectRepository) => Promise<number>
   settings: () => Promise<AppSettings>
   diagnostics: () => DiagnosticEntry[]
@@ -405,10 +405,10 @@ async function waitForJobs(deps: AgentDeps, ctx: { signal: AbortSignal; progress
   await deps.generation.settle(open, seconds * 1000, ctx.signal, (done, total) => ctx.progress(done, total, `${done} of ${total} jobs finished`))
 }
 
-function request(plan: LinePlan): GenRequest {
+function request(plan: LinePlan): GenJob {
   const common = { cueId: plan.cue.id, voiceSettings: plan.voiceSettings, selectOutput: false, ...(plan.fragment ? { fragment: true } : {}) }
   if (plan.mode === 'sts') return { kind: 'sts', ...common, sourceTakeId: plan.sourceTakeId ?? '' }
-  return { kind: 'tts', ...common, text: plan.rawText, ...(plan.model ? { model: plan.model } : {}) }
+  return { kind: 'tts', ...common, text: plan.rawText, providerText: plan.text, ...(plan.model ? { model: plan.model } : {}) }
 }
 
 export function agentTools(deps: AgentDeps): McpTool[] {

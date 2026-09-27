@@ -1,5 +1,5 @@
 import { MAX_STS_SECONDS, resolveVoiceSettings, type Cue, type Project, type VoiceSettings } from './domain'
-import { clampVoiceSettings, clipTargetText, targetText, type GenTarget } from './generation'
+import { clampVoiceSettings, clipTargetText, hasClip, targetText, type GenTarget } from './generation'
 import { ttsPlan } from './provider-models'
 
 export const TTS_TEXT_MAX = 5000
@@ -32,7 +32,7 @@ export interface LinePlan {
 function genTarget(project: Project, cue: Cue, target: AgentTarget | undefined): GenTarget {
   if (!target) return { kind: 'all' }
   if ('start' in target) return { kind: 'range', start: target.start, end: target.end }
-  if (!cue.comp?.clips.some((c) => c.id === target.clipId)) {
+  if (!hasClip(cue.comp, target.clipId)) {
     throw new Error(`Line ${cue.key} has no clip "${target.clipId}"; call line to list its clips.`)
   }
   return { kind: 'clip', clipId: target.clipId, text: clipTargetText(project, cue, target.clipId) }
