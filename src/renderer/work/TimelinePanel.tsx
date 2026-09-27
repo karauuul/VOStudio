@@ -73,7 +73,6 @@ import {
   TRACK_GAIN_MAX_DB,
   TRACK_GAIN_MIN_DB,
   type ClipEdits,
-  type ClipEffects,
   type CompClip,
   type CompRegion,
   type CompTrack,
@@ -258,7 +257,6 @@ interface Props {
   onRegenerateClip: (clipId: string) => void
   onPinSource: (takeId: string, pinned: boolean) => void
   onShowInLibrary: (takeId: string) => void
-  onTakeEffects: (takeId: string, effects: ClipEffects | undefined) => void
   onMonitor: (tab: 'program' | 'source') => void
   ai: boolean
 }
@@ -286,7 +284,6 @@ export function TimelinePanel({
   onRegenerateClip,
   onPinSource,
   onShowInLibrary,
-  onTakeEffects,
   onMonitor,
   ai,
 }: Props) {
@@ -1543,14 +1540,14 @@ export function TimelinePanel({
         {
           label: 'Copy effects',
           hotkey: hotkeyText('copyEffects'),
-          disabled: !take,
-          onClick: () => take && copyEffects(take.edits.effects),
+          onClick: () => copyEffects(c.edits.effects),
         },
         {
           label: 'Paste effects',
           hotkey: hotkeyText('pasteEffects'),
-          disabled: !take || !hasCopiedEffects(),
-          onClick: () => take && onTakeEffects(take.id, pickEffects(copiedEffects(), EFFECT_KINDS)),
+          disabled: !hasCopiedEffects(),
+          onClick: () =>
+            commit(setClipEdits(comp, c.id, { effects: pickEffects(copiedEffects(), EFFECT_KINDS) })),
         },
         { sep: true },
         {
@@ -1578,7 +1575,6 @@ export function TimelinePanel({
       onRegenerateClip,
       onPinSource,
       onShowInLibrary,
-      onTakeEffects,
       switchVersion,
       splitClip,
       commit,
