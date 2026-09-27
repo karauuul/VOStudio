@@ -152,10 +152,12 @@ export async function importPickedAudio(
   const probed = await mapLimited(kept, async (file) => {
     const abs = path.join(referenceRoot, referenceRel(file))
     if (takeFileKind(file.src) === 'transcode') {
+      const part = path.join(path.dirname(abs), `.part-${randomUUID()}-${path.basename(abs)}`)
       try {
-        await transcodeToWav(file.src, abs)
+        await transcodeToWav(file.src, part)
+        await fs.rename(part, abs)
       } catch {
-        await fs.rm(abs, { force: true }).catch(() => undefined)
+        await fs.rm(part, { force: true }).catch(() => undefined)
         failed.push({ name: file.rel, reason: 'could not be converted to wav' })
         return null
       }

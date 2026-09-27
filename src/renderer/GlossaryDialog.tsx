@@ -1,24 +1,10 @@
 import { useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from 'react'
 import type { Term } from '@shared/domain'
+import { acceptedTerm, fieldsTerm, filledFields, termFields, type TermFields } from '@shared/glossary'
 import { Overlay } from './Overlay'
 
-type Fields = Pick<Term, 'term' | 'translation'> & { note: string }
-
-const fieldsOf = (term?: Term): Fields => ({
-  term: term?.term ?? '',
-  translation: term?.translation ?? '',
-  note: term?.note ?? '',
-})
-
-const sameFields = (a: Fields, b: Fields): boolean =>
+const sameFields = (a: TermFields, b: TermFields): boolean =>
   a.term.trim() === b.term.trim() && a.translation.trim() === b.translation.trim() && a.note.trim() === b.note.trim()
-
-const toTerm = (fields: Fields, proposed: boolean): Term => ({
-  term: fields.term.trim(),
-  translation: fields.translation.trim(),
-  ...(fields.note.trim() ? { note: fields.note.trim() } : {}),
-  ...(proposed ? { proposed: true as const } : {}),
-})
 
 const TrashIcon = () => (
   <svg width="12" height="13" viewBox="0 0 12 13" aria-hidden="true">
@@ -34,22 +20,22 @@ function TermRow({
 }: {
   term?: Term
   onCommit: (term: Term | null) => void
-  onAccept?: () => void
+  onAccept?: (draft: TermFields) => void
   onRemove?: () => void
 }) {
-  const stored = fieldsOf(term)
-  const [draft, setDraft] = useState<Fields>(stored)
+  const stored = termFields(term)
+  const [draft, setDraft] = useState<TermFields>(stored)
 
   const leave = (e: FocusEvent<HTMLDivElement>): void => {
     if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
-    const filled = draft.term.trim() !== '' && draft.translation.trim() !== ''
+    const filled = filledFields(draft)
     if (!term) {
-      if (filled) onCommit(toTerm(draft, false))
+      if (filled) onCommit(fieldsTerm(draft, false))
       else if (!draft.term.trim() && !draft.translation.trim() && !draft.note.trim()) onCommit(null)
       return
     }
     if (!filled) setDraft(stored)
-    else if (!sameFields(draft, stored)) onCommit(toTerm(draft, term.proposed === true))
+    else if (!sameFields(draft, stored)) onCommit(fieldsTerm(draft, term.proposed === true))
   }
 
   const key = (e: KeyboardEvent<HTMLInputElement>): void => {
@@ -58,7 +44,7 @@ function TermRow({
     e.currentTarget.blur()
   }
 
-  const input = (field: keyof Fields, autoFocus = false) => (
+  const input = (field: keyof TermFields, autoFocus = false) => (
     <input
       className="gls-in"
       value={draft[field]}
@@ -79,7 +65,7 @@ function TermRow({
         {term?.proposed ? (
           <>
             <span className="gls-st">Proposed</span>
-            <button className="btn ghost" onClick={onAccept}>
+            <button className="btn ghost" onClick={() => onAccept?.(draft)}>
               Accept
             </button>
             <button className="btn ghost" onClick={onRemove}>
@@ -135,7 +121,7 @@ export function GlossaryDialog({ terms, onCommit, onClose }: Props) {
             key={`${i}:${term.term}:${term.translation}:${term.note ?? ''}:${term.proposed ? 1 : 0}`}
             term={term}
             onCommit={(next) => replace(term, next)}
-            onAccept={() => replace(term, toTerm(fieldsOf(term), false))}
+            onAccept={(draft) => replace(term, acceptedTerm(term, draft))}
             onRemove={() => replace(term, null)}
           />
         ))}

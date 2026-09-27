@@ -148,6 +148,25 @@ describe('importAudio of formats a line cannot keep', () => {
     expect(p.cues.find((c) => c.key === 'M4A_LINE')?.referenceDuration).toBeCloseTo(2, 1)
     expect((await fs.readdir(path.join(target, 'audio', 'reference', 'convert'))).sort()).toEqual(['FLAC_LINE.wav', 'M4A_LINE.wav'])
   })
+
+  it('leaves an existing reference untouched when a file converting onto it fails', async () => {
+    const target = path.join(H.root, 'keep-ref.vostudio')
+    const scene = path.join(H.root, 'keep-src', 'scene')
+    await fs.mkdir(scene, { recursive: true })
+    await fs.copyFile(path.join(SRC, 'LINE_A.wav'), path.join(scene, 'a.wav'))
+    await fs.writeFile(path.join(scene, 'a.flac'), 'not audio')
+    const p = project()
+    await importPickedAudio(p, target, [{ src: path.join(scene, 'a.wav'), rel: 'scene/a.wav', dir: 'scene', name: 'a', format: 'wav' }], 'id')
+    const dest = path.join(target, 'audio', 'reference', 'scene', 'a.wav')
+    const before = await fs.readFile(dest)
+    const cue = structuredClone(p.cues[0])
+    const { result } = await importPickedAudio(p, target, [{ src: path.join(scene, 'a.flac'), rel: 'scene/a.flac', dir: 'scene', name: 'a', format: 'wav' }], 'id')
+    expect(result).toEqual({ added: 0, updated: 0, files: 1, failed: [{ name: 'scene/a.flac', reason: 'could not be converted to wav' }] })
+    expect(p.cues).toEqual([cue])
+    expect(cue.referenceAudio?.relPath).toBe(dest)
+    expect(await fs.readFile(dest)).toEqual(before)
+    expect(await fs.readdir(path.dirname(dest))).toEqual(['a.wav'])
+  })
 })
 
 describe('importPickedAudio keeps every copy inside the reference folder', () => {
