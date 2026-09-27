@@ -22,7 +22,7 @@ import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '
 import { externalChanges, pickHistory, redoStale, takeKey, type UndoSide } from '@shared/undo-route'
 import { dropCompRedo, nextCompEdit, pruneCompHistory, recordCompEdit, type CompHistory } from '@shared/comp-history'
 import { PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
-import { hasSourceMaterial, TABLE_FILE } from '@shared/import-table'
+import { hasSourceMaterial } from '@shared/import-table'
 import { keyedQueue } from '@shared/keyed-queue'
 import type { UpdateStatus } from '@shared/updater'
 import { api, audioUrl } from './api'
@@ -39,7 +39,9 @@ import {
   useJobFailed,
   useJobsStore,
 } from './jobs/store'
-import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues, groupLines } from '@shared/cue-filter'
+import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues, groupLines, REVIEW_FILTER } from '@shared/cue-filter'
+import { proposalRefs } from '@shared/linking'
+import { assetKind, binAddedText, inPlaceKind, routeDrop } from '@shared/asset-readers'
 import { LinesPanel } from './work/LinesPanel'
 import type { TextPanelProps } from './work/TextPanel'
 import { ImportRoom } from './rooms/ImportRoom'
@@ -56,6 +58,7 @@ import { CueText } from './work/CueText'
 import type { RecordPlacement } from './cue/useVoiceToVoice'
 import { TimelinePanel } from './work/TimelinePanel'
 import { RulesDialog } from './RulesPanel'
+import { GlossaryDialog } from './GlossaryDialog'
 import { ProjectHome } from './ProjectHome'
 import { TopBar, type MenuItem, type Route } from './shell/TopBar'
 import { HotkeyHint } from './shell/HotkeyHint'
@@ -158,6 +161,7 @@ export default function App() {
   const mode: GenMode = genMode ?? 'tts'
   const [providerModels, setProviderModels] = useState<ProviderModel[]>([])
   const [showRules, setShowRules] = useState(false)
+  const [showGlossary, setShowGlossary] = useState(false)
   const [tableFile, setTableFile] = useState<string | null>(null)
   const [tables, setTables] = useState<TableImportResult[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
@@ -419,6 +423,26 @@ export default function App() {
   }, [project, reviewIds, filter, search, liveCharacterFilter])
 
   const visible = grouped.cues
+
+  const reviewCount = useMemo(
+    () => (project ? filterCues(project.cues, REVIEW_FILTER, search, liveCharacterFilter).length : 0),
+    [project, search, liveCharacterFilter]
+  )
+
+  const pickFilter = useCallback((id: string) => {
+    setFilter(id)
+    setReviewIds(null)
+  }, [])
+
+  const settleProposals = useCallback(
+    (cue: Cue, accept: boolean, kinds = proposalRefs([cue])) => {
+      if (kinds.length === 0) return
+      void dispatch({ type: accept ? 'proposal.accept' : 'proposal.reject', items: kinds }).catch((e: unknown) =>
+        pushStatus('err', String(e))
+      )
+    },
+    [dispatch, pushStatus]
+  )
 
   const storedCue = useMemo(
     () => project?.cues.find((c) => c.id === activeCueId),
@@ -1586,15 +1610,16 @@ export default function App() {
 
   const dropFiles = useCallback(
     (files: File[], drop?: { trackId: string; at: number }) => {
-      const paths = api.pathsFor(files)
-      const table = paths.find((path) => TABLE_FILE.test(path))
-      if (table) {
-        openTable(table)
-        return
+      const route = routeDrop(api.pathsFor(files))
+      if (route.bin.length > 0) {
+        void api['assets:add']({ paths: route.bin, skipMedia: true }).then(
+          (r) => pushStatus(r.added.length > 0 ? 'ok' : 'info', binAddedText(r)),
+          (e: unknown) => pushStatus('err', String(e))
+        )
       }
-      void importFiles(paths, drop).catch((e: unknown) => pushStatus('err', String(e)))
+      void importFiles(route.lines.filter((path) => inPlaceKind(assetKind(path))), drop).catch((e: unknown) => pushStatus('err', String(e)))
     },
-    [openTable, importFiles, pushStatus]
+    [importFiles, pushStatus]
   )
 
   const pickAudio = useCallback(() => {
@@ -1818,7 +1843,7 @@ export default function App() {
     ]
   )
 
-  const blocked = showRules || showSettings || showShortcuts || showJobs || menuOpen
+  const blocked = showRules || showGlossary || showSettings || showShortcuts || showJobs || menuOpen
 
   useKeyboard(handlers, !blocked, {
     home: !project,
@@ -1878,6 +1903,7 @@ export default function App() {
       ? [{ label: 'Sync CSV', disabled: bulk || exporting, onClick: () => void syncCsv() }]
       : []),
     { label: 'Rules…', onClick: () => setShowRules(true) },
+    { label: 'Glossary…', onClick: () => setShowGlossary(true) },
     { label: 'Settings', onClick: () => setShowSettings(true) },
     { label: 'Shortcuts', onClick: () => setShowShortcuts(true) },
   ]
@@ -1917,6 +1943,9 @@ export default function App() {
     { label: 'Copy original', onClick: () => onCopy('source', cue) },
     { label: 'Copy translation', onClick: () => onCopy('translation', cue) },
     { label: 'Copy as prompt', onClick: () => onCopy('prompt', cue) },
+    { sep: true },
+    { label: 'Accept proposals', disabled: proposalRefs([cue]).length === 0, onClick: () => settleProposals(cue, true) },
+    { label: 'Reject proposals', disabled: proposalRefs([cue]).length === 0, onClick: () => settleProposals(cue, false) },
     { sep: true },
     {
       label: cue.status === 'excluded' ? 'Include in export' : 'Exclude from export',
@@ -2102,6 +2131,9 @@ export default function App() {
       ? { label: `Selection · ${visible.length}`, onExit: () => setReviewIds(null) }
       : undefined,
     menu: lineMenu,
+    filter: reviewIds ? '' : filter,
+    review: reviewCount,
+    onFilter: pickFilter,
   }
 
   const modelId =
@@ -2343,6 +2375,10 @@ export default function App() {
       if (row) onDeleteTake(row.cueId, takeId)
     },
     onOpenLine: openCue,
+    assets: project.assets ?? [],
+    onProposal: (kind, accept) => {
+      if (activeCue) settleProposals(activeCue, accept, [{ cueId: activeCue.id, kind }])
+    },
     onDone: (done) => {
       if (activeCueId) void setDone(activeCueId, done)
     },
@@ -2382,7 +2418,6 @@ export default function App() {
         onGenerate={generateSelected}
         onAssignCharacter={(ids, characterId) => void assignCharacter(ids, characterId)}
         tables={tables}
-        onTable={openTable}
         onPickTable={pickTable}
         dispatch={dispatch}
         onVoiceSettings={onCharacterVoice}
@@ -2446,6 +2481,14 @@ export default function App() {
           ai={hasSourceMaterial(project)}
           onImport={importTable}
           onClose={() => setTableFile(null)}
+        />
+      )}
+
+      {showGlossary && (
+        <GlossaryDialog
+          terms={project.terms ?? []}
+          onCommit={(terms) => runCommand({ type: 'terms.set', terms })}
+          onClose={() => setShowGlossary(false)}
         />
       )}
 

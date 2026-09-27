@@ -14,6 +14,8 @@ const channelMap: Record<IpcChannel, true> = {
   'import:tablePreview': true,
   'import:table': true,
   'import:template': true,
+  'assets:add': true,
+  'assets:read': true,
   'source:detect': true,
   'project:command': true,
   'project:saveVersion': true,

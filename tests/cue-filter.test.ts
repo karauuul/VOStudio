@@ -19,7 +19,9 @@ import {
   FILTERS,
   filterCounts,
   filterCues,
+  hasPendingProposal,
   matchesFilter,
+  REVIEW_FILTER,
   reviewGeneration,
   reviewLabel,
   deltaLabel,
@@ -84,6 +86,24 @@ describe('review filter', () => {
     ['excluded with output', needsReview('excluded'), false],
   ])('%s', (_name, c, expected) => {
     expect(matchesFilter(c, 'review')).toBe(expected)
+  })
+})
+
+describe('review of proposals', () => {
+  it('matches a text suggestion, a character proposal or a link proposal', () => {
+    const character = { characterId: 'bob', confidence: 0.9, reason: 'speaker' }
+    const link = { assetId: 'a1', row: 0, confidence: 1, reason: 'key' }
+    expect(matchesFilter(cue({ suggestedText: 'New' }), REVIEW_FILTER)).toBe(true)
+    expect(matchesFilter(cue({ proposals: { character } }), REVIEW_FILTER)).toBe(true)
+    expect(matchesFilter(cue({ proposals: { link } }), REVIEW_FILTER)).toBe(true)
+    expect(matchesFilter(cue(), REVIEW_FILTER)).toBe(false)
+    expect(hasPendingProposal(cue({ proposals: {} }))).toBe(false)
+  })
+
+  it('leaves a project without proposals filtering exactly as before', () => {
+    const rows = [cue({ id: 'a' }), cue({ id: 'b', suggestedText: 'S' }), unvoiced('excluded')]
+    expect(filterCues(rows, REVIEW_FILTER, '').map((c) => c.id)).toEqual(['b'])
+    expect(filterCounts(rows, '')[REVIEW_FILTER]).toBe(1)
   })
 })
 

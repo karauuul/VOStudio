@@ -19,6 +19,7 @@ import {
   type CompTrack,
   type Cue,
   type OriginalLane,
+  type ProjectAsset,
   type TakeKind,
 } from '@shared/domain'
 import {
@@ -115,6 +116,8 @@ export interface PropertiesPanelProps {
   onPinSource: (takeId: string, pinned: boolean) => void
   onDeleteSource: (takeId: string) => void
   onOpenLine: (cueId: string) => void
+  assets: ProjectAsset[]
+  onProposal: (kind: 'character' | 'link', accept: boolean) => void
   onDone: (done: boolean) => void
 }
 
@@ -164,6 +167,8 @@ export function PropertiesPanel({
   onPinSource,
   onDeleteSource,
   onOpenLine,
+  assets,
+  onProposal,
   onDone,
 }: PropertiesPanelProps) {
   const project = useMemo(() => ({ cues }), [cues])
@@ -291,6 +296,8 @@ export function PropertiesPanel({
             compRef={compRef}
             onCharacter={onCharacter}
             onOriginal={onOriginal}
+            assets={assets}
+            onProposal={onProposal}
             onDone={onDone}
           />
         )}
@@ -379,6 +386,8 @@ function CharacterField({
     </div>
   )
 }
+
+const baseName = (name: string): string => name.slice(name.lastIndexOf('/') + 1)
 
 function characterName(characters: Character[], id: string | undefined): string {
   return characters.find((c) => c.id === id)?.name ?? 'No character'
@@ -853,6 +862,8 @@ function LineTab({
   compRef,
   onCharacter,
   onOriginal,
+  assets,
+  onProposal,
   onDone,
 }: {
   cue: Cue
@@ -864,9 +875,12 @@ function LineTab({
   compRef: MutableRefObject<CompApi | null>
   onCharacter: (characterId: string) => void
   onOriginal: (patch: Partial<OriginalLane>) => void
+  assets: ProjectAsset[]
+  onProposal: (kind: 'character' | 'link', accept: boolean) => void
   onDone: (done: boolean) => void
 }) {
   const id = lineLabel(cue)
+  const { character: proposedCharacter, link: proposedLink } = cue.proposals ?? {}
   const duration = Math.max(cue.referenceDuration ?? 0, region.out)
   const split = (cue.stems?.length ?? 0) > 0
   const referenced = hasReference(cue)
@@ -905,6 +919,30 @@ function LineTab({
           </span>
         </div>
       </Row2>
+
+      {(proposedCharacter || proposedLink) && (
+        <>
+          <Sec>Proposals</Sec>
+          {proposedCharacter && (
+            <Proposal
+              kind="Character"
+              value={characterName(characters, proposedCharacter.characterId)}
+              confidence={proposedCharacter.confidence}
+              reason={proposedCharacter.reason}
+              onSettle={(accept) => onProposal('character', accept)}
+            />
+          )}
+          {proposedLink && (
+            <Proposal
+              kind="Link"
+              value={`${baseName(assets.find((a) => a.id === proposedLink.assetId)?.name ?? '')} · row ${proposedLink.row + 1}`}
+              confidence={proposedLink.confidence}
+              reason={proposedLink.reason}
+              onSettle={(accept) => onProposal('link', accept)}
+            />
+          )}
+        </>
+      )}
 
       {referenced && (
         <>
@@ -994,6 +1032,37 @@ function LineTab({
         <Ro label="Name" value={exportName} />
       </Row2>
     </>
+  )
+}
+
+function Proposal({
+  kind,
+  value,
+  confidence,
+  reason,
+  onSettle,
+}: {
+  kind: string
+  value: string
+  confidence: number
+  reason: string
+  onSettle: (accept: boolean) => void
+}) {
+  return (
+    <div className="props-prop">
+      <span className="cp-k">{kind}</span>
+      <span className="v">{value}</span>
+      <span className="p">{toPercent(confidence)}%</span>
+      {reason && <span className="r">{reason}</span>}
+      <span className="acts">
+        <button className="btn ghost" onClick={() => onSettle(true)}>
+          Accept
+        </button>
+        <button className="btn ghost" onClick={() => onSettle(false)}>
+          Reject
+        </button>
+      </span>
+    </div>
   )
 }
 

@@ -4,10 +4,10 @@ import { randomUUID } from 'crypto'
 import { changeTakeOutput } from '@shared/approval'
 import { cueVoiceUnchanged, emptyEdits, type AudioRef, type Cue, type Take } from '@shared/domain'
 import type { CommandResult } from '@shared/project-commands'
-import { DECODE_BUDGET_BYTES, importProblem, takeFileKind } from '@shared/take-import'
+import { importProblem, takeFileKind } from '@shared/take-import'
 import type { SerialProjectRepository } from './project-repository'
 import { writeTakeFile, type AudioWriter } from './project-store'
-import { probeMedia, runFfmpeg } from './ffmpeg'
+import { probeMedia, transcodeToWav } from './ffmpeg'
 
 const stamp = (): string => new Date().toISOString().replace(/[:.]/g, '-')
 export const takeBase = (): string => `t_${stamp()}_${randomUUID().slice(0, 8)}`
@@ -50,11 +50,6 @@ export async function appendTake(
   return added
 }
 
-async function transcode(src: string, abs: string): Promise<void> {
-  await runFfmpeg(['-i', src, '-vn', '-c:a', 'pcm_s16le', '-fs', String(DECODE_BUDGET_BYTES), abs])
-  if ((await fs.stat(abs)).size >= DECODE_BUDGET_BYTES) throw new Error('Converted audio is too large')
-}
-
 export async function importTakeFile(
   session: TakeSession,
   cueId: string,
@@ -73,7 +68,7 @@ export async function importTakeFile(
   const duration = probe.duration
   const format: AudioRef['format'] = kind === 'keep' ? (path.extname(src).slice(1).toLowerCase() as AudioRef['format']) : 'wav'
   const fileName = `${baseName}.${format}`
-  const write = kind === 'keep' ? (abs: string) => fs.copyFile(src, abs, constants.COPYFILE_EXCL) : (abs: string) => transcode(src, abs)
+  const write = kind === 'keep' ? (abs: string) => fs.copyFile(src, abs, constants.COPYFILE_EXCL) : (abs: string) => transcodeToWav(src, abs)
   return appendTake(session, cueId, fileName, write, publish, (cue, abs) => ({
     take: {
       id: randomUUID(),
