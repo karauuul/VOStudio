@@ -437,8 +437,8 @@ function announceProject(from?: WebContents): void {
 
 function announcedLifecycle<T>(from: WebContents | undefined, fn: () => Promise<T>): Promise<T> {
   return serialLifecycle(async () => {
-    await requestUi({ kind: 'leave' }, from)
     await requestUi({ kind: 'flush' }, from)
+    await requestUi({ kind: 'leave' }, from)
     const before = projectRepository
     try {
       return await fn()

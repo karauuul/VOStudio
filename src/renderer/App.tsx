@@ -94,6 +94,7 @@ import {
   afterTextStep,
   type LineChange,
   type LineEdit,
+  dropLineEdits,
   type LineHistory,
   type StepDir,
 } from '@shared/line-history'
@@ -266,6 +267,7 @@ export default function App() {
     const kept = (entry: TakeEffectsEdit): boolean => !external.effects.has(takeKey(entry.cueId, entry.takeId))
     fxUndoRef.current = fxUndoRef.current.filter(kept)
     fxRedoRef.current = fxRedoRef.current.filter(kept)
+    dropLineEdits(linesRef.current, external.lines)
   }, [])
 
   const session = useProjectSession({ onStatus: pushStatus, onBootstrap, onEdit, onExternal })

@@ -87,8 +87,14 @@ export async function startAgentServer(userData: string, server: McpServer): Pro
       resolve()
     })
   })
-  await fs.rm(tokenFile, { force: true })
-  await fs.writeFile(tokenFile, `${token}\n`, { mode: 0o600 })
+  try {
+    await fs.rm(tokenFile, { force: true })
+    await fs.writeFile(tokenFile, `${token}\n`, { mode: 0o600 })
+  } catch (error) {
+    for (const socket of sockets) socket.destroy()
+    await new Promise<void>((resolve) => listener.close(() => resolve()))
+    throw error
+  }
   return {
     stop: () => {
       for (const socket of sockets) socket.destroy()

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { dropLineEdits, type LineHistory } from '../src/shared/line-history'
 import { emptyEdits, type Cue, type CueComp } from '../src/shared/domain'
 import { externalChanges, pickHistory, redoStale, takeKey } from '../src/shared/undo-route'
 
@@ -79,5 +80,30 @@ describe('external changes that invalidate local undo', () => {
   it('ignores change sets without cues', () => {
     const none = externalChanges(null, { name: 'x' })
     expect(none.comps.size + none.effects.size).toBe(0)
+  })
+})
+
+describe('dropLineEdits', () => {
+  it('drops line history entries that touch externally changed lines', () => {
+    const history: LineHistory = {
+      undo: [
+        { kind: 'done', cueId: 'a', textRevision: 1, before: { status: 'generated' }, after: { status: 'approved' }, at: 1 },
+        { kind: 'done', cueId: 'b', textRevision: 1, before: { status: 'generated' }, after: { status: 'approved' }, at: 2 },
+      ],
+      redo: [{ kind: 'original', cueId: 'a', takeId: 't', before: { status: 'empty', referenceAudio: null, referenceDuration: null }, after: { status: 'empty' }, at: 3 }],
+    }
+    dropLineEdits(history, new Set(['a']))
+    expect(history.undo.map((e) => (e.kind === 'done' ? e.cueId : ''))).toEqual(['b'])
+    expect(history.redo).toEqual([])
+  })
+})
+
+describe('externalChanges lines', () => {
+  it('flags lines whose restorable fields changed or were removed, not take-only changes', () => {
+    const cue = { id: 'a', key: 'a', characterId: 'c', fields: {}, sourceText: 'x', text: 'y', status: 'translated', notes: '', takes: [] } as unknown as Cue
+    const withTake = { ...cue, takes: [{ id: 't', edits: emptyEdits() }] } as unknown as Cue
+    expect([...externalChanges({ cues: [cue] }, { cues: [withTake] }).lines]).toEqual([])
+    expect([...externalChanges({ cues: [cue] }, { cues: [{ ...cue, text: 'z' }] }).lines]).toEqual(['a'])
+    expect([...externalChanges({ cues: [cue] }, { removedCueIds: ['a'] }).lines]).toEqual(['a'])
   })
 })

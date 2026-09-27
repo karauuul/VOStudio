@@ -33,6 +33,19 @@ export interface LineHistory {
 
 export type StepDir = 'undo' | 'redo'
 
+function editCueIds(edit: LineChange): string[] {
+  if (edit.kind === 'original' || edit.kind === 'done') return [edit.cueId]
+  const ids = [...edit.ids, ...edit.snapshots.map((placed) => placed.cue.id)]
+  return edit.kind === 'table' ? [...ids, ...edit.fields.map((field) => field.cueId)] : ids
+}
+
+export function dropLineEdits(history: LineHistory, cueIds: ReadonlySet<string>): void {
+  if (cueIds.size === 0) return
+  const kept = (edit: LineEdit): boolean => !editCueIds(edit).some((id) => cueIds.has(id))
+  history.undo = history.undo.filter(kept)
+  history.redo = history.redo.filter(kept)
+}
+
 export const LINE_HISTORY_LIMIT = 100
 
 const outputStateOf = (cue: Cue): OutputState => ({
