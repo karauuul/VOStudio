@@ -425,6 +425,24 @@ describe('transcribe', () => {
   })
 })
 
+describe('transcribe cursor', () => {
+  it('resumes by project order when transcribing removes lines from the filter', async () => {
+    const { call, repo, deps } = setup()
+    const cues = repo!.projectForMain().cues
+    for (let i = 0; i < 504; i++) {
+      cues.push({ ...cues[0], id: `x${i}`, key: `X${i}`, sourceText: '', referenceAudio: { fileId: `x${i}`, relPath: `/p/x${i}.wav`, format: 'wav' } })
+    }
+    deps.transcribe = async (req) => {
+      for (const cue of repo!.projectForMain().cues) if (req.cueIds.includes(cue.id)) cue.status = 'excluded'
+      return { updated: req.cueIds.length, skipped: 0 }
+    }
+    const first = await call('transcribe', { filter: 'work', overwrite: true })
+    expect((first.data.updated as string[]).length).toBe(500)
+    const second = await call('transcribe', { filter: 'work', overwrite: true, cursor: first.data.nextCursor as string })
+    expect(second.data.updated).toEqual(['X500', 'X501', 'X502', 'X503'])
+  })
+})
+
 describe('translation tools', () => {
   it('builds translation context with neighbours, budget, terms and memory', async () => {
     const { call, repo } = setup()

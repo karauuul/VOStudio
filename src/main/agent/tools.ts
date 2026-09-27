@@ -539,7 +539,11 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         const updated: string[] = []
         const skipped: { line: string; reason: string }[] = []
         const failed: { line: string; reason: string }[] = []
-        let at = cursorOffset(args.cursor, selected.length)
+        const positions = new Map(repository.projectForMain().cues.map((cue, i) => [cue.id, i]))
+        const place = (cue: Cue, i: number): number => (explicit ? i : (positions.get(cue.id) ?? i))
+        const resume = cursorOffset(args.cursor, explicit ? selected.length : positions.size)
+        let at = selected.findIndex((cue, i) => place(cue, i) >= resume)
+        if (at < 0) at = selected.length
         let work = 0
         for (; at < selected.length && work < TRANSCRIBE_PAGE_MAX; at++) {
           if (ctx.signal.aborted) break
@@ -561,7 +565,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           }
           ctx.progress(work, undefined, cue.key)
         }
-        return structured({ updated, skipped, failed, ...(at < selected.length ? { nextCursor: String(at) } : {}) })
+        return structured({ updated, skipped, failed, ...(at < selected.length ? { nextCursor: String(place(selected[at], at)) } : {}) })
       },
     }),
     defineTool({
@@ -601,7 +605,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         const project = requireRepository(pinned).projectForMain()
         const outcomes: { line: string; outcome: string; reason?: string }[] = []
         const steps: FieldStep[] = []
-        const texts: { cue: Cue; text: string; was: string; outcome: { outcome: string; reason?: string } }[] = []
+        const texts: { cue: Cue; text: string; was: string; pending: string | null; outcome: { outcome: string; reason?: string } }[] = []
         const seen = new Set<string>()
         for (const item of args.items) {
           let cue: Cue
@@ -619,8 +623,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           const pending = cue.suggestedText ?? null
           if (args.apply === true && !cue.text.trim()) {
             const outcome = { line: cue.key, outcome: 'applied' }
-            texts.push({ cue, text: item.text, was: cue.text, outcome })
-            if (pending !== null) steps.push({ cueId: cue.id, from: { suggestedText: pending }, to: { suggestedText: null } })
+            texts.push({ cue, text: item.text, was: cue.text, pending, outcome })
             outcomes.push(outcome)
           } else if (item.text === cue.text || item.text === pending) {
             outcomes.push({ line: cue.key, outcome: 'unchanged' })
@@ -632,11 +635,15 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         if (steps.length > 0) {
           await execute(pinned, { type: 'table.step', remove: [], restore: [], fields: steps, addCharacters: [], dropCharacters: [] })
         }
-        for (const { cue, text, was, outcome } of texts) {
+        const cleared: FieldStep[] = []
+        for (const { cue, text, was, pending, outcome } of texts) {
           const result = await execute(pinned, { type: 'cue.saveText', cueId: cue.id, text, ifText: was })
           if (result.changes.cues?.find((c) => c.id === cue.id)?.text !== text) {
             Object.assign(outcome, { outcome: 'error', reason: 'the line text changed meanwhile; read it again and retry' })
-          }
+          } else if (pending !== null) cleared.push({ cueId: cue.id, from: { suggestedText: pending }, to: { suggestedText: null } })
+        }
+        if (cleared.length > 0) {
+          await execute(pinned, { type: 'table.step', remove: [], restore: [], fields: cleared, addCharacters: [], dropCharacters: [] })
         }
         return structured({ outcomes })
       },
