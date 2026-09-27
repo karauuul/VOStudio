@@ -1064,9 +1064,8 @@ function syncAgentServer(): Promise<void> {
     const wanted = agentForced || sanitizeAgentAccess((await store.getSettings()).agentAccess) === true
     if (wanted && !agentServer) agentServer = await startAgentServer(app.getPath('userData'), agentServerSpec())
     else if (!wanted && agentServer) {
-      const running = agentServer
+      await agentServer.stop()
       agentServer = null
-      await running.stop()
     }
   }).catch((e: unknown) => console.error('agent server:', e))
   return agentSync

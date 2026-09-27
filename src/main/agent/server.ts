@@ -91,9 +91,14 @@ export async function startAgentServer(userData: string, server: McpServer): Pro
   await fs.writeFile(tokenFile, `${token}\n`, { mode: 0o600 })
   return {
     stop: () => {
-      rmSync(tokenFile, { force: true })
       for (const socket of sockets) socket.destroy()
-      return new Promise((resolve) => listener.close(() => resolve()))
+      const closed = new Promise<void>((resolve) => listener.close(() => resolve()))
+      try {
+        rmSync(tokenFile, { force: true })
+      } catch (error) {
+        console.error('agent token cleanup:', error)
+      }
+      return closed
     },
   }
 }

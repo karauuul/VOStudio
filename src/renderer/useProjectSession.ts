@@ -18,6 +18,8 @@ import { durationQueue } from './audio/duration-backfill'
 import { playback } from './playback'
 import { useTextDraft } from './text-draft-store'
 
+const FLUSH_PASSES = 5
+
 export type StatusKind = 'ok' | 'err' | 'info'
 
 function applyDurations(project: Project, items: TakeDurationUpdate[]): Project {
@@ -291,9 +293,12 @@ export function useProjectSession(o: {
   }, [])
 
   const flushAll = useCallback(async (): Promise<boolean> => {
-    const saved = await flushText()
-    const voiced = await flushVoice()
-    if (!saved || !voiced) return false
+    for (let pass = 0; pendingText.current || pendingVoice.current || pass === 0; pass++) {
+      if (pass === FLUSH_PASSES) return false
+      const saved = await flushText()
+      const voiced = await flushVoice()
+      if (!saved || !voiced) return false
+    }
     await flushUi()
     await durationQueue.flushNow()
     return true
