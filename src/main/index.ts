@@ -1143,7 +1143,7 @@ function agentServerSpec(): McpServer {
       restoreVersion: (n) => restoreVersion({ n }),
       flushUi: () => requestUi({ kind: 'flush' }),
       checkRemovable: (cueIds) => requestUi({ kind: 'removable', cueIds }),
-      emit: emitChange,
+      emit: (result) => emitChange({ ...result, origin: 'agent' }),
       audioRoots: trustedAudioRoots,
       importAudio: importAudioPaths,
       previewTable: previewTableImport,

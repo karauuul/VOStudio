@@ -81,7 +81,7 @@ import {
 import { hasValidVoicedOutput, isDone } from '@shared/approval'
 import { compDuration, isEmptyComp } from '@shared/comp'
 import { libraryRow, lineLabel, locateText, punchClip, recordClip, resolveTake, type LibraryRow } from '@shared/library'
-import { parseSnapshot, type ChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
+import { parseSnapshot, type ChangeOrigin, type ChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
 import {
   doneChange,
   lineStepCommand,
@@ -273,9 +273,20 @@ export default function App() {
     dropCompRedo(compHistRef.current)
   }, [])
 
-  const onExternal = useCallback((before: Project | null, changes: ChangeSet) => {
-    const external = externalChanges(before, changes)
+  const onExternal = useCallback((before: Project | null, changes: ChangeSet, origin?: ChangeOrigin) => {
+    const external = externalChanges(before, changes, origin)
     for (const cueId of external.comps) compHistRef.current.delete(cueId)
+    const at = Date.now()
+    for (const edit of external.compEdits) recordCompEdit(compHistRef.current, edit.cueId, edit.prev, at)
+    for (const edit of external.effectEdits) {
+      if (edit.cueId !== activeCueIdRef.current) {
+        external.effects.add(takeKey(edit.cueId, edit.takeId))
+        continue
+      }
+      fxUndoRef.current.push({ ...edit, at })
+      if (fxUndoRef.current.length > FX_HISTORY_LIMIT) fxUndoRef.current.shift()
+      fxRedoRef.current = []
+    }
     const kept = (entry: TakeEffectsEdit): boolean => !external.effects.has(takeKey(entry.cueId, entry.takeId))
     fxUndoRef.current = fxUndoRef.current.filter(kept)
     fxRedoRef.current = fxRedoRef.current.filter(kept)

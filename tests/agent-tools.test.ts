@@ -1169,6 +1169,18 @@ describe('timeline, edit, effects and align', () => {
     expect((await call('align', { line: 'L3' })).data).toMatchObject({ applied: false })
   })
 
+  it('refuses to align a line whose voice runs through delay or reverb', async () => {
+    const { repo, deps, call } = await placed()
+    const live = repo!.projectForMain().cues[2]
+    const clip = live.comp!.clips[0]
+    clip.edits = { ...clip.edits, effects: { delay: { time: 0.2, feedback: 0.3, mix: 0.3 } } }
+    const refusal = 'Line L3: align needs dry audio; bypass delay/reverb on this line or edit manually.'
+    expect((await call('align', { line: 'L3', apply: true })).error).toBe(refusal)
+    expect(deps.renderLine).not.toHaveBeenCalled()
+    clip.edits = { ...clip.edits, effects: { delay: { time: 0.2, feedback: 0.3, mix: 0.3, enabled: false } } }
+    expect((await call('align', { line: 'L3' })).data).toMatchObject({ applied: false })
+  })
+
   it('refuses to apply an alignment planned against a timeline that changed meanwhile', async () => {
     const { repo, deps, call } = await placed()
     const analyze = deps.analyzeAudio

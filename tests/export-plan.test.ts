@@ -11,8 +11,9 @@ import {
   hasOriginals,
   isFastPath,
   planBatch,
+  timelineEchoes,
 } from '../src/shared/export-plan'
-import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
+import { emptyEdits, type ClipEffects, type CompClip, type CompTrack, type Cue, type CueComp, type Project, type Take } from '../src/shared/domain'
 import { newLineCue } from '../src/shared/lines'
 
 function take(id: string, format: 'mp3' | 'wav' = 'mp3', edits = emptyEdits()): Take {
@@ -305,5 +306,27 @@ describe('{Path} export token', () => {
     const c = cue('11', { takes: [], finalTakeId: undefined, output: null, fields: { EventName: 'NAME', path: 'v1.2' } })
     const p = { ...project([c], '{Path}{EventName}'), export: { format: 'wav-48-24' as const } }
     expect(exportNamePreview(p, c)).toBe('v1.2/NAME.wav')
+  })
+})
+
+describe('timelineEchoes', () => {
+  const reverb: ClipEffects = { reverb: { mix: 0.3, size: 0.5, decay: 1 } }
+  const delay: ClipEffects = { delay: { time: 0.2, feedback: 0.3, mix: 0.3 } }
+  const clip = (effects?: ClipEffects): CompClip => ({ id: 'k', sourceTakeId: 't', srcIn: 0, srcOut: 1, start: 0, edits: { ...emptyEdits(), ...(effects ? { effects } : {}) } })
+  const track = (extra: Partial<CompTrack> = {}): CompTrack => ({ id: 'track-1', name: 'Track 1', gainDb: 0, muted: false, solo: false, ...extra })
+  const line = (effects?: ClipEffects): Cue => cue('A', { takes: [take('t', 'mp3', { ...emptyEdits(), ...(effects ? { effects } : {}) })] })
+  const check = (c: Cue, comp: CueComp): boolean => timelineEchoes(project([c]), c, comp)
+
+  it('flags delay or reverb on a clip, its take or its audible track', () => {
+    expect(check(line(), { clips: [clip()] })).toBe(false)
+    expect(check(line(), { clips: [clip(reverb)] })).toBe(true)
+    expect(check(line(delay), { clips: [clip()] })).toBe(true)
+    expect(check(line(), { clips: [clip()], tracks: [track({ effects: delay })] })).toBe(true)
+  })
+
+  it('ignores bypassed effects, other kinds and muted tracks', () => {
+    expect(check(line(reverb), { clips: [clip({ reverb: { mix: 0.3, size: 0.5, decay: 1, enabled: false } })] })).toBe(false)
+    expect(check(line({ eq: { lowFreq: 100, lowGain: 3, midFreq: 1000, midGain: 0, midQ: 1, highFreq: 8000, highGain: 0 } }), { clips: [clip()] })).toBe(false)
+    expect(check(line(), { clips: [clip(reverb)], tracks: [track({ muted: true })] })).toBe(false)
   })
 })

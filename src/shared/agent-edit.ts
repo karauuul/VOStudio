@@ -3,6 +3,7 @@ import {
   clipTimelineDuration,
   clipTrackId,
   compProblem,
+  compRenderPlan,
   cutCandidate,
   maxCrossfade,
   MIN_CLIP_SRC,
@@ -60,13 +61,21 @@ const fmt = (t: number): string => t.toFixed(3)
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error)).replace(/\.$/, '')
 
 export function timelineWords(comp: CueComp, takeOf: TakeOf): TimelineWord[] {
-  return normalizeComp(comp)
-    .clips.flatMap((clip) => {
+  const clips = normalizeComp(comp).clips
+  const held = (track: string, takeId: string, mid: number): boolean =>
+    clips.some((c) => clipTrackId(c) === track && c.sourceTakeId === takeId && c.srcIn <= mid && mid < c.srcOut)
+  return compRenderPlan(clips)
+    .flatMap(({ clip }, i) => {
+      const own = clips[i]
+      const track = clipTrackId(clip)
       const speed = clipSpeed(clip.edits)
       const at = (src: number): number => clip.start + (Math.min(Math.max(src, clip.srcIn), clip.srcOut) - clip.srcIn) / speed
       return (takeOf(clip.sourceTakeId)?.words ?? [])
-        .filter((w) => (w.start + w.end) / 2 >= clip.srcIn && (w.start + w.end) / 2 < clip.srcOut)
-        .map((w) => ({ text: w.text, clip: clip.id, track: clipTrackId(clip), start: at(w.start), end: at(w.end) }))
+        .filter((w) => {
+          const mid = (w.start + w.end) / 2
+          return mid >= clip.srcIn && mid < clip.srcOut && (mid >= own.srcIn || !held(track, clip.sourceTakeId, mid))
+        })
+        .map((w) => ({ text: w.text, clip: clip.id, track, start: at(w.start), end: at(w.end) }))
     })
     .sort((a, b) => a.start - b.start || a.end - b.end)
 }

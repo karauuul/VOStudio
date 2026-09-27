@@ -12,7 +12,7 @@ import {
   type Take,
   type WordTiming,
 } from './domain'
-import { effectsTail, hasEffects } from './effects'
+import { effectsTail, hasEffects, hasSends } from './effects'
 import { hasValidVoicedOutput, usesCompOutput } from './approval'
 import { clipWords, compTracks, lineLabel, resolveTake, type TakeLookup } from './library'
 import { formatSpec, lengthMode, loudnessMode, type ExportSettings } from './export-settings'
@@ -380,6 +380,16 @@ export function renderedWords(project: Project, cue: Cue): WordTiming[] {
     )
     .filter((w) => w.end > 0 && w.start < until && w.end > w.start)
     .sort((a, b) => a.start - b.start)
+}
+
+export function timelineEchoes(project: TakeLookup, cue: Cue, comp: CueComp): boolean {
+  const tracks = compTracks(comp)
+  return comp.clips.some((clip) => {
+    const track = clipTrackId(clip)
+    const found = resolveTake(project, cue, clip.sourceTakeId)
+    const effects = (found ? withSourceEffects(clip, found.take) : clip).edits.effects
+    return trackAudible(tracks, track) && (hasSends(effects) || hasSends(tracks.find((t) => t.id === track)?.effects))
+  })
 }
 
 export function videoLines(project: Project, sourceId: string): VideoLineComp[] {

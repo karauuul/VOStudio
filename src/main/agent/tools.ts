@@ -34,7 +34,7 @@ import { DEFAULT_MATCH_RULE, TABLE_COLUMNS_MAX } from '@shared/import-table'
 import { ALL_CHARACTERS, filterCues } from '@shared/cue-filter'
 import { requireRevision, TRANSCRIPT_WORDS_MAX, transcriptMatch } from '@shared/agent-render'
 import type { AudioMetrics } from '@shared/audio-metrics'
-import { findCollisions, mixesOriginal, originalLength, planBatch, planLine as planExportLine, renderedWords, renderWindow } from '@shared/export-plan'
+import { findCollisions, mixesOriginal, originalLength, planBatch, planLine as planExportLine, renderedWords, renderWindow, timelineEchoes } from '@shared/export-plan'
 import {
   ANALYSIS_MAX_SECONDS,
   ANALYSIS_RATE,
@@ -1932,8 +1932,10 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         await deps.flushUi()
         const pinned = pin(deps)
         const repository = requireRepository(pinned)
-        const cue = findLine(repository.projectForMain(), args.line)
+        const opened = repository.projectForMain()
+        const cue = findLine(opened, args.line)
         if (mixesOriginal(cue)) throw new Error(`Line ${cue.key} mixes the original into its output; align needs a voice-only output, so turn off Export on the original lane or stems, or edit manually.`)
+        if (cue.comp && timelineEchoes(opened, cue, cue.comp)) throw new Error(`Line ${cue.key}: align needs dry audio; bypass delay/reverb on this line or edit manually.`)
         const compared = await compareCue(pinned, cue)
         const project = repository.projectForMain()
         const live = findLine(project, cue.id)

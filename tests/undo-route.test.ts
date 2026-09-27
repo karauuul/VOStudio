@@ -77,6 +77,33 @@ describe('external changes that invalidate local undo', () => {
     expect(externalChanges(before, { cues: [line('a')] }).effects.size).toBe(0)
   })
 
+  it('records agent composition edits as undo steps instead of dropping them', () => {
+    const before = { cues: [line('a', { comp: comp(0) }), line('b')] }
+    const changes = { cues: [line('a', { comp: comp(2) }), line('b', { comp: comp(1) })] }
+    const agent = externalChanges(before, changes, 'agent')
+    expect([...agent.comps]).toEqual([])
+    expect(agent.compEdits).toEqual([{ cueId: 'a', prev: comp(0) }, { cueId: 'b', prev: null }])
+    const other = externalChanges(before, changes)
+    expect([...other.comps]).toEqual(['a', 'b'])
+    expect(other.compEdits).toEqual([])
+  })
+
+  it('records agent take effect edits, but drops agent take deletions', () => {
+    const before = { cues: [line('a')] }
+    const changed = line('a')
+    const effects = { delay: { time: 0.2, feedback: 0.3, mix: 0.4 } }
+    changed.takes[0].edits = { ...emptyEdits(), effects }
+    const agent = externalChanges(before, { cues: [changed] }, 'agent')
+    expect(agent.effectEdits).toEqual([{ cueId: 'a', takeId: 't', prev: undefined, next: effects }])
+    expect(agent.effects.size).toBe(0)
+    expect(externalChanges(before, { cues: [changed] }).effectEdits).toEqual([])
+    const deleted = line('a')
+    deleted.takes[0].deletedAt = '2026-01-01T00:00:00.000Z'
+    const removal = externalChanges(before, { cues: [deleted] }, 'agent')
+    expect([...removal.effects]).toEqual([takeKey('a', 't')])
+    expect(removal.effectEdits).toEqual([])
+  })
+
   it('ignores change sets without cues', () => {
     const none = externalChanges(null, { name: 'x' })
     expect(none.comps.size + none.effects.size).toBe(0)

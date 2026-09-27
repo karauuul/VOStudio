@@ -145,7 +145,8 @@ export interface ChangeSet {
   linesFromTable?: true
 }
 
-export interface CommandResult { revision: number; changes: ChangeSet }
+export type ChangeOrigin = 'agent'
+export interface CommandResult { revision: number; changes: ChangeSet; origin?: ChangeOrigin }
 export interface ProjectSnapshot { revision: number; project: Project }
 export interface SerializedSnapshot { revision: number; json: string }
 

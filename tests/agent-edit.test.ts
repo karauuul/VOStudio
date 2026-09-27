@@ -58,6 +58,14 @@ describe('timeline words', () => {
     const moved: CueComp = { clips: [clip('a', 0, 0, 1.3), clip('b', 2, 1.5, 3.2, { edits: { ...emptyEdits(), timeStretch: 2 } })] }
     expect(words(moved)).toEqual([['one', 0.2], ['two', 0.8], ['three', 2], ['four,', 2.45]])
   })
+
+  it('lists words heard in a crossfade handle once, under the incoming clip', () => {
+    const faded: CueComp = { clips: [clip('a', 0, 0, 0.7, { crossfade: 0.3 }), clip('b', 0.7, 1.9, 3.2)] }
+    expect(words(faded)).toEqual([['one', 0.2], ['three', 0.4], ['four,', 1.2]])
+    expect(timelineWords(faded, takeOf).find((w) => w.text === 'three')?.clip).toBe('b')
+    const contiguous: CueComp = { clips: [clip('a', 0, 0, 1.9, { crossfade: 0.3 }), clip('b', 1.9, 1.9, 3.2)] }
+    expect(words(contiguous)).toEqual([['one', 0.2], ['two', 0.8], ['three', 1.5], ['four,', 2.4]])
+  })
 })
 
 describe('edit ops', () => {
