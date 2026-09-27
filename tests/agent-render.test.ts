@@ -24,7 +24,7 @@ import { originalOnlyPlan, planBatch, planLine } from '../src/shared/export-plan
 vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }))
 
 const store = await import('../src/main/project-store')
-const { encodeAnalysis, exportBusy, finishExport, lineJob, measureAudio, planBatchExport, releaseExports } = await import('../src/main/export')
+const { agentRenderDir, encodeAnalysis, exportBusy, finishExport, lineJob, measureAudio, planBatchExport, releaseExports } = await import('../src/main/export')
 const { ffmpegInfo, runFfmpeg } = await import('../src/main/ffmpeg')
 
 function take(id: string, relPath: string): Take {
@@ -265,6 +265,40 @@ describe('analysis renders and export state in main', () => {
     expect(m.lufs).toBeLessThan(-3)
     expect(m.clipped).toBe(false)
     expect(lineJob(p, p.cues[0], out, 'original')).toBeNull()
+  })
+
+  it('creates the render folder inside the project and refuses linked folders', async () => {
+    const real = await fs.realpath(root)
+    const proj = path.join(root, 'Dir.vostudio')
+    await fs.mkdir(proj)
+    expect(await agentRenderDir(proj)).toBe(path.join(real, 'Dir.vostudio', 'agent', 'renders'))
+    const outside = path.join(root, 'outside-dir')
+    await fs.mkdir(outside)
+    await fs.rm(path.join(proj, 'agent', 'renders'), { recursive: true })
+    await fs.symlink(outside, path.join(proj, 'agent', 'renders'))
+    await expect(agentRenderDir(proj)).rejects.toThrow('has a link or file at')
+    await fs.rm(path.join(proj, 'agent'), { recursive: true })
+    await fs.symlink(outside, path.join(proj, 'agent'))
+    await expect(agentRenderDir(proj)).rejects.toThrow('has a link or file at')
+    expect(await fs.readdir(outside)).toEqual([])
+  })
+
+  it('replaces a linked render file instead of writing through it', async () => {
+    const proj = path.join(root, 'Link.vostudio')
+    await fs.mkdir(proj)
+    const rendered = path.join(root, 'link-src.wav')
+    await runFfmpeg(['-f', 'lavfi', '-i', 'sine=f=440:d=0.5:sample_rate=48000', '-c:a', 'pcm_f32le', rendered])
+    const victim = path.join(root, 'victim.wav')
+    await fs.writeFile(victim, 'keep')
+    const out = path.join(await agentRenderDir(proj), 'a.wav')
+    await fs.symlink(victim, out)
+    const p = project([cue('a', rendered)])
+    const result = await encodeAnalysis(lineJob(p, p.cues[0], out, 'output')!, await fs.readFile(rendered))
+    expect(result.outPath).toBe(out)
+    expect(await fs.readFile(victim, 'utf8')).toBe('keep')
+    expect((await fs.lstat(out)).isSymbolicLink()).toBe(false)
+    expect(await ffmpegInfo(out)).toMatch(/pcm_f32le/)
+    expect(await fs.readdir(path.dirname(out))).toEqual(['a.wav'])
   })
 
   it('a batch running for one window refuses plans from another until it finishes or is released', async () => {

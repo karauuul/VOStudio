@@ -1215,6 +1215,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       annotations: { ...WRITE, idempotentHint: true },
       writes: () => false,
       async run(_ctx, args) {
+        await deps.flushUi()
         const pinned = pin(deps)
         const cue = findLine(requireRepository(pinned).projectForMain(), args.line)
         return structured((await renderCue(pinned, cue, args.withOriginal === true)).view)
@@ -1229,6 +1230,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       annotations: { ...WRITE, idempotentHint: true, openWorldHint: true },
       writes: () => false,
       async run(_ctx, args) {
+        await deps.flushUi()
         const pinned = pin(deps)
         const repository = requireRepository(pinned)
         const cue = findLine(repository.projectForMain(), args.line)
@@ -1266,6 +1268,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       annotations: WRITE,
       writes: (args) => args.dryRun !== true,
       async run(_ctx, args) {
+        if (args.dryRun) await deps.flushUi()
         const pinned = pin(deps)
         const repository = requireRepository(pinned)
         const info = await deps.exportInfo()

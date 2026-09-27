@@ -90,6 +90,7 @@ import {
   exportDir,
   exportInfo,
   exportBusy,
+  agentRenderDir,
   encodeAnalysis,
   lineJob,
   measureAudio,
@@ -1112,12 +1113,11 @@ async function renderForAgent(cueId: string, source: 'output' | 'original', expe
   const cue = project.cues.find((c) => c.id === cueId)
   if (!cue) throw new Error('The line was removed meanwhile; call lines, then retry.')
   const revision = repository.currentRevision()
-  const outPath = path.join(dir, 'agent', 'renders', renderFileName(cue.key, cue.id, sha256Hex, source === 'original' ? '.original' : ''))
+  const outPath = path.join(await agentRenderDir(dir), renderFileName(cue.key, cue.id, sha256Hex, source === 'original' ? '.original' : ''))
   const job = lineJob(project, cue, outPath, source)
   if (!job) return null
   const wav = await renderLineWav(job)
   requireRevision(revision, liveRepository(expected).currentRevision())
-  await fs.mkdir(path.dirname(outPath), { recursive: true })
   await encodeAnalysis(job, wav)
   const metrics = await measureAudio(outPath)
   requireRevision(revision, liveRepository(expected).currentRevision())

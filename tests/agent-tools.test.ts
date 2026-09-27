@@ -613,6 +613,8 @@ describe('render, verify and export', () => {
       original: { path: '/root/Demo.vostudio/agent/renders/c3.original.wav', metrics: { ...metrics, duration: 1.5 } },
     })
     expect(deps.renderLine).toHaveBeenCalledWith('c3', 'output', repo)
+    expect(deps.flushUi).toHaveBeenCalledTimes(1)
+    expect(deps.saveVersion).not.toHaveBeenCalled()
     expect(beforeWrite).not.toHaveBeenCalled()
   })
 
@@ -659,6 +661,8 @@ describe('render, verify and export', () => {
     const { data } = await call('verify', { line: 'L3' })
     expect(data).toMatchObject({ line: 'L3', source: 'output', expected: 'Voiced line', heard: 'Voiced, line extra!', similarity: 0.8, missing: [], extra: ['extra'] })
     expect(deps.transcribeFile).toHaveBeenCalledWith('/root/Demo.vostudio/agent/renders/c3.wav')
+    expect(deps.flushUi).toHaveBeenCalledTimes(1)
+    expect(deps.saveVersion).not.toHaveBeenCalled()
     expect(beforeWrite).not.toHaveBeenCalled()
   })
 
@@ -686,6 +690,8 @@ describe('render, verify and export', () => {
     })
     expect((data.summary as { ready: number; noAudio: number }).ready).toBe(1)
     expect((data.skipped as { line: string; reason: string }[])[0]).toEqual({ line: 'L1', reason: 'No audio' })
+    expect(deps.flushUi).toHaveBeenCalledTimes(1)
+    expect(deps.saveVersion).not.toHaveBeenCalled()
     expect(beforeWrite).not.toHaveBeenCalled()
     expect(deps.exportLines).not.toHaveBeenCalled()
   })

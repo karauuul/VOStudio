@@ -283,8 +283,34 @@ export function encodeJob(outPath: string, wav: unknown): Promise<ExportResult> 
   return encodeTo(job, wav, job.formatArgs)
 }
 
-export const encodeAnalysis = (job: ExportJob, wav: unknown): Promise<ExportResult> =>
-  encodeTo(job, wav, [...(job.sampleRate === undefined ? [] : ['-ar', String(job.sampleRate)]), '-c:a', 'pcm_f32le'])
+export async function agentRenderDir(projectDir: string): Promise<string> {
+  const root = await fs.realpath(projectDir)
+  let dir = root
+  for (const part of ['agent', 'renders']) {
+    dir = path.join(dir, part)
+    await fs.mkdir(dir).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EEXIST') throw error
+    })
+    if (!(await fs.lstat(dir)).isDirectory()) throw new Error(`The project has a link or file at ${dir}; remove it and render again`)
+  }
+  if (!isInsideDir(await fs.realpath(dir), root)) throw new Error(`${dir} is outside the project; remove it and render again`)
+  return dir
+}
+
+export async function encodeAnalysis(job: ExportJob, wav: unknown): Promise<ExportResult> {
+  const tmp = path.join(path.dirname(job.outPath), `.${randomUUID()}.wav`)
+  try {
+    const result = await encodeTo({ ...job, outPath: tmp }, wav, [
+      ...(job.sampleRate === undefined ? [] : ['-ar', String(job.sampleRate)]),
+      '-c:a',
+      'pcm_f32le',
+    ])
+    await fs.rename(tmp, job.outPath)
+    return { ...result, outPath: job.outPath }
+  } finally {
+    await fs.rm(tmp, { force: true }).catch(() => undefined)
+  }
+}
 
 async function encodeTo(job: ExportJob, wav: unknown, codecArgs: string[]): Promise<ExportResult> {
   const outPath = job.outPath
