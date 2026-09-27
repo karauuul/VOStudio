@@ -293,14 +293,16 @@ const heardSummary = (heard: HeardLine): Record<string, unknown> => ({
   ...(heard.source === 'output' && heard.prosody.words.length === 0 ? { wordTimings: false } : {}),
 })
 
-async function figureOutput(deps: AgentDeps, view: Record<string, unknown>, title: string, panels: ProsodyPanel[]): Promise<ToolOutput> {
-  let image: ToolImage
+async function figureOutput(deps: AgentDeps, revision: number, view: Record<string, unknown>, title: string, panels: ProsodyPanel[]): Promise<ToolOutput> {
+  let output: ToolOutput
   try {
-    image = { data: (await deps.drawFigure({ title, panels })).toString('base64'), mimeType: 'image/png' }
+    const image: ToolImage = { data: (await deps.drawFigure({ title, panels })).toString('base64'), mimeType: 'image/png' }
+    output = { structured: view, image }
   } catch (error) {
-    return structured({ ...view, imageError: reason(error) })
+    output = structured({ ...view, imageError: reason(error) })
   }
-  return { structured: view, image }
+  requireRevision(revision, requireRepository(deps).currentRevision())
+  return output
 }
 
 const clip = (text: string, max = CELL_MAX): string => (text.length > max ? `${text.slice(0, max)}… [${text.length} chars]` : text)
@@ -1424,7 +1426,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         requireRevision(revision, repository.currentRevision())
         const view = { line: cue.key, source: heard.source, ...heardSummary(heard), ...prosodyView(heard.prosody) }
         if (args.image !== true) return structured(view)
-        return figureOutput(pinned, view, cue.key, [prosodyPanel(heard.source === 'output' ? 'dub' : 'original', heard.prosody)])
+        return figureOutput(pinned, revision, view, cue.key, [prosodyPanel(heard.source === 'output' ? 'dub' : 'original', heard.prosody)])
       },
     }),
     defineTool({
@@ -1462,7 +1464,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           ...comparisonView(compareProsody(dub.prosody, original.prosody, speed, { dub: dubRender.metrics.duration, original: originalRender.metrics.duration })),
         }
         if (args.image !== true) return structured(view)
-        return figureOutput(pinned, view, cue.key, [prosodyPanel('original', original.prosody), prosodyPanel('dub', dub.prosody)])
+        return figureOutput(pinned, revision, view, cue.key, [prosodyPanel('original', original.prosody), prosodyPanel('dub', dub.prosody)])
       },
     }),
     defineTool({

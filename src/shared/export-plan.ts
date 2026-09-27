@@ -1,4 +1,4 @@
-import { clipTrackId, compDuration, compEffectsTail, compOriginalStart, isEmptyComp, trackAudible, withSourceEffects } from './comp'
+import { clipTrackId, compDuration, compEffectsTail, compOriginalStart, compRenderPlan, isEmptyComp, trackAudible, withSourceEffects } from './comp'
 import {
   clipSpeed,
   DEFAULT_DUCK_DB,
@@ -365,7 +365,7 @@ export function renderedWords(project: Project, cue: Cue): WordTiming[] {
   const known = take.duration > 0 ? take.duration : (originalLength(cue) ?? 0)
   const tracks = comp ? compTracks(comp) : []
   const pieces = comp
-    ? comp.clips.flatMap((clip) => {
+    ? compRenderPlan(comp.clips).flatMap(({ clip }) => {
         const found = resolveTake(project, cue, clip.sourceTakeId)
         return found && trackAudible(tracks, clipTrackId(clip)) ? [{ take: found.take, srcIn: clip.srcIn, srcOut: clip.srcOut, start: clip.start, speed: clipSpeed(clip.edits) }] : []
       })

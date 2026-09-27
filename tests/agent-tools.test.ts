@@ -935,6 +935,17 @@ describe('analyze and compare', () => {
     expect((await call('compare', { line: 'L3' })).error).toBe(LINE_CHANGED)
     deps.renderLine = render
     expect((await call('compare', { line: 'L3' })).data).toMatchObject({ line: 'L3' })
+    deps.drawFigure = vi.fn(async () => {
+      await repo!.execute({ type: 'cue.saveText', cueId: 'c3', text: `Edited line ${++edits}` })
+      return Buffer.from('png')
+    })
+    expect((await call('analyze', { line: 'L3', image: true })).error).toBe(LINE_CHANGED)
+    expect((await call('compare', { line: 'L3', image: true })).error).toBe(LINE_CHANGED)
+    deps.drawFigure = vi.fn(async () => {
+      await repo!.execute({ type: 'cue.saveText', cueId: 'c3', text: `Edited line ${++edits}` })
+      throw new Error('The render window crashed')
+    })
+    expect((await call('analyze', { line: 'L3', image: true })).error).toBe(LINE_CHANGED)
   })
 
   it('explains what is missing for a comparison', async () => {

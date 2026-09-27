@@ -484,6 +484,26 @@ describe('word timings of the rendered output', () => {
     expect(renderedWords(project([cue('b')]), cue('b'))).toEqual([])
   })
 
+  it('places words of a crossfaded clip where the scheduler plays its handle', () => {
+    const c = cue('a', '/a/a.wav')
+    c.takes[0].words = words
+    c.takes[0].duration = 2
+    c.takes.push(take('t2', '/a/b.wav'))
+    c.output = { kind: 'comp', revision: 1 }
+    c.comp = {
+      clips: [
+        { id: 'k1', sourceTakeId: 't2', srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits(), crossfade: 0.4 },
+        { id: 'k2', sourceTakeId: c.takes[0].id, srcIn: 0.8, srcOut: 1.6, start: 1, edits: emptyEdits() },
+      ],
+    }
+    const got = renderedWords(project([c]), c)
+    expect(got.map((w) => [w.text, Math.round(w.start * 100) / 100, Math.round(w.end * 100) / 100])).toEqual([
+      ['Welcome', 0.6, 0.7],
+      ['back', 0.8, 1.1],
+      ['pioneer', 1.2, 1.8],
+    ])
+  })
+
   it('a track is audible unless muted or another track is soloed', () => {
     const t = (id: string, muted = false, solo = false) => ({ id, name: id, gainDb: 0, muted, solo })
     expect(trackAudible([t('a'), t('b', true)], 'a')).toBe(true)
