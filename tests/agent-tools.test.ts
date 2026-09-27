@@ -198,7 +198,7 @@ function setup(open = true) {
     ],
     screenshot: async () => null,
     decodeAudio: vi.fn(async (file: string) => (file.endsWith('.original.wav') ? tones([[0.1, 0], [0.9, 150], [0.2, 0]]) : tones([[0.1, 0], [0.5, 170], [0.3, 0], [0.6, 170], [0.2, 0]]))),
-    analyzeAudio: vi.fn(async (pcm: Float32Array, rate: number, words: WordTiming[]) => prosody.analyzeProsody(pcm, rate, words)),
+    analyzeAudio: vi.fn(async (pcm: Float32Array, rate: number, words: WordTiming[], duration: number) => prosody.analyzeProsody(pcm, rate, words, duration)),
     drawFigure: vi.fn(async () => Buffer.from('png')),
   }
   const spec: McpServer = { info: { name: 'vo-studio', version: '1.2.3' }, instructions: AGENT_INSTRUCTIONS, tools: agentTools(deps) }
@@ -887,7 +887,7 @@ describe('analyze and compare', () => {
     vi.mocked(analyzeProsody).mockClear()
     expect((await call('analyze', { line: 'L3' })).data).toMatchObject({ source: 'output' })
     expect(deps.analyzeAudio).toHaveBeenCalledTimes(1)
-    expect(deps.analyzeAudio).toHaveBeenCalledWith(expect.any(Float32Array), prosody.ANALYSIS_RATE, repo!.projectForMain().cues[2].takes[0].words)
+    expect(deps.analyzeAudio).toHaveBeenCalledWith(expect.any(Float32Array), prosody.ANALYSIS_RATE, repo!.projectForMain().cues[2].takes[0].words, 2.25)
     expect((await call('compare', { line: 'L3' })).data).toMatchObject({ line: 'L3' })
     expect(deps.analyzeAudio).toHaveBeenCalledTimes(3)
     expect(vi.mocked(deps.analyzeAudio).mock.calls[2][2]).toEqual([])
@@ -913,6 +913,28 @@ describe('analyze and compare', () => {
     expect(renderReplySchema.parse({ id, ok: true, prosody: { ...heard, truncated: true } }).prosody).toEqual({ ...heard, truncated: true })
     const tooLong = { ...heard, track: { ...heard.track, db: new Float32Array(prosody.ANALYSIS_FRAMES_MAX + 1) } }
     expect(renderReplySchema.safeParse({ id, ok: true, prosody: tooLong }).success).toBe(false)
+  })
+
+  it('refuses an analysis or comparison when the project changes while it runs', async () => {
+    const { call, repo, deps } = setup()
+    const analyze = deps.analyzeAudio
+    let edits = 0
+    deps.analyzeAudio = vi.fn(async (pcm: Float32Array, rate: number, words: WordTiming[], duration: number) => {
+      await repo!.execute({ type: 'cue.saveText', cueId: 'c3', text: `Edited line ${++edits}` })
+      return analyze(pcm, rate, words, duration)
+    })
+    expect((await call('analyze', { line: 'L3' })).error).toBe(LINE_CHANGED)
+    expect((await call('analyze', { line: 'L3', source: 'original' })).error).toBe(LINE_CHANGED)
+    expect((await call('compare', { line: 'L3' })).error).toBe(LINE_CHANGED)
+    const render = deps.renderLine
+    deps.analyzeAudio = analyze
+    deps.renderLine = vi.fn(async (cueId: string, source: 'output' | 'original') => {
+      if (source === 'original') await repo!.execute({ type: 'cue.saveText', cueId: 'c3', text: `Edited line ${++edits}` })
+      return render(cueId, source)
+    })
+    expect((await call('compare', { line: 'L3' })).error).toBe(LINE_CHANGED)
+    deps.renderLine = render
+    expect((await call('compare', { line: 'L3' })).data).toMatchObject({ line: 'L3' })
   })
 
   it('explains what is missing for a comparison', async () => {

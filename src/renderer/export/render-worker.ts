@@ -18,9 +18,9 @@ export function startRenderWorker(): void {
       (e: unknown) => api['render:reply']({ id, ok: false, error: reason(e) })
     )
   })
-  api.on('render:prosody', ({ id, pcm, rate, words }) => {
+  api.on('render:prosody', ({ id, pcm, rate, words, duration }) => {
     void Promise.resolve()
-      .then(() => analyzeProsody(pcm, rate, words))
+      .then(() => analyzeProsody(pcm, rate, words, duration))
       .then(
         (prosody) => api['render:reply']({ id, ok: true, prosody }),
         (e: unknown) => api['render:reply']({ id, ok: false, error: reason(e) })

@@ -115,7 +115,7 @@ export interface AgentDeps {
   exportLines: (cueIds: string[], expected?: SerialProjectRepository) => Promise<BatchExportResult>
   transcribeFile: (file: string) => Promise<string>
   decodeAudio: (file: string) => Promise<Float32Array>
-  analyzeAudio: (pcm: Float32Array, rate: number, words: WordTiming[]) => Promise<Prosody>
+  analyzeAudio: (pcm: Float32Array, rate: number, words: WordTiming[], duration: number) => Promise<Prosody>
   drawFigure: (figure: ProsodyFigure) => Promise<Buffer>
   addAssets: (paths: string[], expected?: SerialProjectRepository) => Promise<AssetAddResult>
   loadAsset: (asset: ProjectAsset, options: AssetReadOptions) => Promise<AssetContent>
@@ -282,7 +282,7 @@ interface HeardLine {
 
 async function hear(deps: AgentDeps, source: RenderSource, render: LineRender, words: ReturnType<typeof renderedWords>): Promise<HeardLine> {
   const repository = requireRepository(deps)
-  const prosody = await liveCall(repository, async () => deps.analyzeAudio(await deps.decodeAudio(render.path), ANALYSIS_RATE, source === 'output' ? words : []))
+  const prosody = await liveCall(repository, async () => deps.analyzeAudio(await deps.decodeAudio(render.path), ANALYSIS_RATE, source === 'output' ? words : [], render.metrics.duration))
   return { source, render, prosody }
 }
 
@@ -1401,6 +1401,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         await deps.flushUi()
         const pinned = pin(deps)
         const repository = requireRepository(pinned)
+        const revision = repository.currentRevision()
         const project = repository.projectForMain()
         const cue = findLine(project, args.line)
         const words = renderedWords(project, cue)
@@ -1420,6 +1421,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           }
           heard = await hear(pinned, source, render, words)
         }
+        requireRevision(revision, repository.currentRevision())
         const view = { line: cue.key, source: heard.source, ...heardSummary(heard), ...prosodyView(heard.prosody) }
         if (args.image !== true) return structured(view)
         return figureOutput(pinned, view, cue.key, [prosodyPanel(heard.source === 'output' ? 'dub' : 'original', heard.prosody)])
@@ -1437,6 +1439,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         await deps.flushUi()
         const pinned = pin(deps)
         const repository = requireRepository(pinned)
+        const revision = repository.currentRevision()
         const project = repository.projectForMain()
         const cue = findLine(project, args.line)
         const words = renderedWords(project, cue)
@@ -1447,6 +1450,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         if (!originalRender) throw new Error(`Line ${cue.key} has no original audio to compare with; analyze describes the dub alone.`)
         const dub = await hear(pinned, 'output', dubRender, words)
         const original = await hear(pinned, 'original', originalRender, words)
+        requireRevision(revision, repository.currentRevision())
         const side = (heard: HeardLine): Record<string, unknown> => {
           const { transcript, phrases, phrasesTotal } = prosodyView(heard.prosody)
           return { ...heardSummary(heard), transcript, phrases, ...(phrasesTotal === undefined ? {} : { phrasesTotal }) }

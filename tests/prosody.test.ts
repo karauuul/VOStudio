@@ -180,16 +180,31 @@ describe('word prosody', () => {
   })
 
   it('flags audio cut at the analysis limit in the result, the view and the transcript', () => {
-    const p = analyzeProsody(signal([gap(ANALYSIS_MAX_SECONDS - 0.6), tone(0.5, 150), gap(0.1)]), RATE, [
-      { text: 'last', start: ANALYSIS_MAX_SECONDS - 0.6, end: ANALYSIS_MAX_SECONDS - 0.1 },
-      { text: 'cut', start: ANALYSIS_MAX_SECONDS - 0.05, end: ANALYSIS_MAX_SECONDS + 0.4 },
-      { text: 'unheard', start: ANALYSIS_MAX_SECONDS + 1, end: ANALYSIS_MAX_SECONDS + 1.5 },
-    ])
+    const p = analyzeProsody(
+      signal([gap(ANALYSIS_MAX_SECONDS - 0.6), tone(0.5, 150), gap(0.1)]),
+      RATE,
+      [
+        { text: 'last', start: ANALYSIS_MAX_SECONDS - 0.6, end: ANALYSIS_MAX_SECONDS - 0.1 },
+        { text: 'cut', start: ANALYSIS_MAX_SECONDS - 0.05, end: ANALYSIS_MAX_SECONDS + 0.4 },
+        { text: 'unheard', start: ANALYSIS_MAX_SECONDS + 1, end: ANALYSIS_MAX_SECONDS + 1.5 },
+      ],
+      ANALYSIS_MAX_SECONDS + 1.5
+    )
     expect(p.truncated).toBe(true)
     expect(p.words.map((w) => w.text)).toEqual(['last', 'cut'])
     expect(p.words[1].end).toBe(ANALYSIS_MAX_SECONDS)
     expect(prosodyView(p)).toMatchObject({ truncated: true })
     expect(prosodyTranscript(p).endsWith(`[analysis stops at ${ANALYSIS_MAX_SECONDS.toFixed(2)}s]`)).toBe(true)
+  })
+
+  it('does not flag audio exactly as long as the analysis limit', () => {
+    const pcm = signal([gap(ANALYSIS_MAX_SECONDS - 0.6), tone(0.5, 150), gap(0.1)])
+    expect(pcm.length).toBe(ANALYSIS_MAX_SECONDS * RATE)
+    for (const p of [analyzeProsody(pcm, RATE, [], ANALYSIS_MAX_SECONDS), analyzeProsody(pcm, RATE)]) {
+      expect(p.truncated).toBeUndefined()
+      expect(prosodyTranscript(p)).not.toContain('analysis stops')
+      expect(prosodyView(p)).not.toHaveProperty('truncated')
+    }
   })
 })
 

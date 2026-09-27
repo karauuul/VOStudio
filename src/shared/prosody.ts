@@ -322,12 +322,12 @@ const nearestPhrase = (spans: { start: number; end: number }[], t: number): numb
   return best
 }
 
-export function analyzeProsody(pcm: Float32Array, rate: number, timings?: WordTiming[]): Prosody {
+export function analyzeProsody(pcm: Float32Array, rate: number, timings: WordTiming[] = [], duration = pcm.length / rate): Prosody {
   const track = analyzeFrames(pcm, rate)
   const silenceDb = silenceThreshold(track.db)
   const spans = findPhrases(track, silenceDb)
   const heard = pcm.length / rate
-  const sorted = (timings ?? [])
+  const sorted = timings
     .flatMap((w) => {
       const end = Math.min(w.end, heard)
       return end > w.start ? [{ ...w, end }] : []
@@ -355,7 +355,7 @@ export function analyzeProsody(pcm: Float32Array, rate: number, timings?: WordTi
       peakAt: peakPosition(track, span.start, span.end + track.hop),
     }
   })
-  return { duration: heard, silenceDb, track, words, phrases, ...(pcm.length >= ANALYSIS_MAX_SECONDS * rate ? { truncated: true } : {}) }
+  return { duration: heard, silenceDb, track, words, phrases, ...(duration > ANALYSIS_MAX_SECONDS ? { truncated: true } : {}) }
 }
 
 export function voicedContour(track: FrameTrack, start: number, end: number): { times: number[]; st: number[] } {

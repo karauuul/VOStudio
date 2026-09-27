@@ -133,8 +133,8 @@ export async function renderProsodyImage(figure: ProsodyFigure): Promise<Buffer>
   return Buffer.from(reply.png instanceof Uint8Array ? reply.png : new Uint8Array(reply.png))
 }
 
-export async function analyzeInWorker(pcm: Float32Array, rate: number, words: WordTiming[]): Promise<Prosody> {
-  const reply = await request((win, id) => win.webContents.send('render:prosody', { id, pcm, rate, words } satisfies RenderProsodyRequest), ANALYSIS_TIMEOUT_MS)
+export async function analyzeInWorker(pcm: Float32Array, rate: number, words: WordTiming[], duration: number): Promise<Prosody> {
+  const reply = await request((win, id) => win.webContents.send('render:prosody', { id, pcm, rate, words, duration } satisfies RenderProsodyRequest), ANALYSIS_TIMEOUT_MS)
   if (!reply.ok || !reply.prosody) throw failed('Analysis', reply, 'no analysis came back')
   return reply.prosody
 }

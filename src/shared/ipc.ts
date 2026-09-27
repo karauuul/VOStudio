@@ -353,6 +353,7 @@ export interface RenderProsodyRequest {
   pcm: Float32Array
   rate: number
   words: WordTiming[]
+  duration: number
 }
 
 export interface RenderPlanRequest {
