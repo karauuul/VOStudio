@@ -16,6 +16,8 @@ import type { Take } from '../src/shared/domain'
 import { jobChars, jobTtsPlan, stsPlan, VOICE_CHANGED } from '../src/shared/provider-models'
 import { TARGET_CLIP_GONE } from '../src/shared/generation'
 import { analyzeProsody } from '../src/shared/prosody'
+import { EFFECT_PRESETS } from '../src/shared/agent-edit'
+import { sanitizeEffects } from '../src/shared/effects'
 
 const prosody = await vi.importActual<typeof import('../src/shared/prosody')>('../src/shared/prosody')
 
@@ -223,7 +225,7 @@ describe('agent tool registry', () => {
     const tools = (sent[0].result as { tools: { name: string; inputSchema: { type: string }; annotations: Record<string, unknown> }[] }).tools
     expect(tools.map((t) => t.name)).toEqual([
       'status', 'projects', 'project_open', 'project_close', 'lines', 'line', 'lines_edit', 'characters', 'character_set', 'voices', 'versions', 'command',
-      'import', 'asset_add', 'assets', 'asset_read', 'lines_build', 'link', 'characters_assign', 'proposals', 'transcribe', 'translate_context', 'translations_suggest', 'glossary', 'glossary_check', 'rules', 'render', 'verify', 'analyze', 'compare', 'export', 'generate', 'jobs', 'take_use',
+      'import', 'asset_add', 'assets', 'asset_read', 'lines_build', 'link', 'characters_assign', 'proposals', 'transcribe', 'translate_context', 'translations_suggest', 'glossary', 'glossary_check', 'rules', 'render', 'verify', 'analyze', 'compare', 'export', 'generate', 'jobs', 'take_use', 'timeline', 'edit', 'effects', 'align',
       'diagnostics', 'screenshot',
     ])
     for (const tool of tools) {
@@ -958,6 +960,134 @@ describe('analyze and compare', () => {
   it('explains what is missing for a comparison', async () => {
     const { call } = setup()
     expect((await call('compare', { line: 'L1' })).error).toBe('Line L1 has no voiced output to compare; generate a take first, or analyze the original with source "original".')
+  })
+})
+
+describe('timeline, edit, effects and align', () => {
+  const placed = async () => {
+    const env = setup()
+    const repo = env.repo!
+    repo.projectForMain().cues[2].takes[0].words = [
+      { text: 'Voiced', start: 0.1, end: 0.6 },
+      { text: 'line', start: 0.9, end: 1.5 },
+    ]
+    await repo.execute({ type: 'cue.setComp', cueId: 'c3', comp: { clips: [{ id: 'k1', sourceTakeId: 't1', srcIn: 0, srcOut: 2, start: 0, edits: emptyEdits() }] } })
+    return env
+  }
+  const guarded = async (spec: McpServer, name: string, args: Record<string, unknown>) => {
+    const beforeWrite = vi.fn(async () => undefined)
+    const sent: RpcMessage[] = []
+    await handleMessage({ ...spec, beforeWrite }, createSession(), { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, (m) => sent.push(m))
+    return { beforeWrite, result: sent[0].result as { structuredContent?: Record<string, unknown>; isError?: boolean } }
+  }
+
+  it('shows tracks, clips and numbered words in timeline seconds', async () => {
+    const { call } = await placed()
+    const { data } = await call('timeline', { line: 'L3' })
+    expect(data).toMatchObject({
+      line: 'L3',
+      output: 'timeline',
+      duration: 2,
+      tracks: [{ id: 'track-1', gainDb: 0 }],
+      clips: [{ id: 'k1', track: 'track-1', take: 't1', start: 0, end: 2, srcIn: 0, srcOut: 2, speed: 1, gainDb: 0 }],
+      words: [
+        { i: 0, text: 'Voiced', clip: 'k1', start: 0.1, end: 0.6 },
+        { i: 1, text: 'line', clip: 'k1', start: 0.9, end: 1.5 },
+      ],
+      original: null,
+      region: null,
+    })
+    expect((await call('timeline', { line: 'L1' })).data).toMatchObject({ output: 'none', clips: [], words: [] })
+  })
+
+  it('applies a batch of ops as one change and never touches takes', async () => {
+    const { call, repo, emitted } = await placed()
+    const takes = structuredClone(repo!.projectForMain().cues[2].takes)
+    const revision = repo!.currentRevision()
+    const { data } = await call('edit', {
+      line: 'L3',
+      ops: [
+        { op: 'cut', word: 'Voiced' },
+        { op: 'gap', beforeWord: 0, seconds: 0.2 },
+        { op: 'speed', at: 0.5, value: 1.1 },
+      ],
+    })
+    expect(data.applied).toEqual([
+      { op: 'cut', word: 'Voiced', start: 0.1, end: 0.9, removed: 0.8, ripple: true },
+      { op: 'gap', at: 0.1, seconds: 0.2 },
+      { op: 'speed', clip: expect.any(String), speed: 1.1, duration: 1 },
+    ])
+    expect(data.words).toEqual([{ i: 0, text: 'line', clip: expect.any(String), start: 0.3, end: 0.845 }])
+    expect(repo!.currentRevision()).toBe(revision + 1)
+    expect(emitted.at(-1)?.changes.cues?.[0].comp?.clips).toHaveLength(2)
+    expect(repo!.projectForMain().cues[2].takes).toEqual(takes)
+  })
+
+  it('refuses the whole batch when one op fails', async () => {
+    const { call, repo } = await placed()
+    const comp = structuredClone(repo!.projectForMain().cues[2].comp)
+    const revision = repo!.currentRevision()
+    const { error } = await call('edit', { line: 'L3', ops: [{ op: 'speed', clip: 'k1', value: 1.1 }, { op: 'move', clip: 'zzz', to: 1 }] })
+    expect(error).toBe('Op 2 (move) failed: no clip "zzz"; call timeline for clip ids; nothing was changed.')
+    expect(repo!.projectForMain().cues[2].comp).toEqual(comp)
+    expect(repo!.currentRevision()).toBe(revision)
+    expect((await call('edit', { line: 'L1', ops: [{ op: 'gain', clip: 'k1', db: 1 }] })).error).toBe(
+      'Line L1 has no clips on its timeline; generate a take or place one with take_use first.'
+    )
+    expect((await call('edit', { line: 'L3', ops: [{ op: 'speed', clip: 'k1', value: 2 }] })).error).toMatch(/^Invalid arguments/)
+  })
+
+  it('sets clip, track and take effects the way the Properties panel stores them', async () => {
+    const { call, repo, spec } = await placed()
+    expect((await call('effects', { line: 'L3', target: { clip: 'k1' }, preset: 'radio' })).data).toMatchObject({ clip: 'k1', effects: EFFECT_PRESETS.radio })
+    expect(repo!.projectForMain().cues[2].comp?.clips[0].edits.effects).toEqual(sanitizeEffects(EFFECT_PRESETS.radio))
+    await call('effects', { line: 'L3', target: { track: 'track-1' }, chain: [{ kind: 'reverb', params: { mix: 3 } }], bypass: true })
+    expect(repo!.projectForMain().cues[2].comp?.tracks?.[0].effects).toEqual({ reverb: { mix: 1, size: 0.5, decay: 1.2, enabled: false } })
+    expect((await call('effects', { line: 'L3', target: { track: 'track-1' }, chain: [{ kind: 'pitch' }] })).error).toBe('Tracks take no pitch effect; put pitch on a clip or a take.')
+    await call('effects', { line: 'L3', target: { take: 't1' }, preset: 'cave' })
+    expect(repo!.projectForMain().cues[2].takes[0].edits.effects).toEqual(EFFECT_PRESETS.cave)
+    await call('effects', { line: 'L3', target: { clip: 'k1' }, preset: 'clean' })
+    expect(repo!.projectForMain().cues[2].comp?.clips[0].edits.effects).toBeUndefined()
+    const listed = await guarded(spec, 'effects', { line: 'L3', list: true })
+    expect(listed.beforeWrite).not.toHaveBeenCalled()
+    expect(listed.result.structuredContent).toMatchObject({ takes: [{ id: 't1', effects: EFFECT_PRESETS.cave }], presets: { phone: EFFECT_PRESETS.phone } })
+    expect((await call('effects', { line: 'L3', target: { clip: 'nope' }, preset: 'phone' })).error).toBe('Line L3 has no clip "nope"; call timeline for clip ids.')
+    expect((await call('effects', { line: 'L3', target: { clip: 'k1' } })).error).toMatch(/pass chain, preset or bypass/)
+  })
+
+  it('plans alignment without changing anything, then applies it through the edit path', async () => {
+    const { repo, spec, call } = await placed()
+    const takes = structuredClone(repo!.projectForMain().cues[2].takes)
+    const comp = structuredClone(repo!.projectForMain().cues[2].comp)
+    const dry = await guarded(spec, 'align', { line: 'L3' })
+    expect(dry.beforeWrite).not.toHaveBeenCalled()
+    const plan = dry.result.structuredContent as { ops: { op: string; value?: number }[]; phrases: { speed?: number[] }[]; applied: boolean }
+    expect(plan.applied).toBe(false)
+    expect(plan.ops.map((o) => o.op)).toEqual(['split', 'split', 'speed'])
+    expect(plan.phrases[0].speed).toEqual([1.2])
+    expect(repo!.projectForMain().cues[2].comp).toEqual(comp)
+    const { data } = await call('align', { line: 'L3', apply: true })
+    expect(data).toMatchObject({ applied: true, after: { rhythm: expect.any(Number) } })
+    const clips = repo!.projectForMain().cues[2].comp?.clips ?? []
+    expect(clips.map((c) => c.edits.timeStretch ?? 1)).toEqual([1, 1.2, 1])
+    expect(repo!.projectForMain().cues[2].takes).toEqual(takes)
+  })
+
+  it('refuses to apply an alignment planned against a timeline that changed meanwhile', async () => {
+    const { repo, deps, call } = await placed()
+    const analyze = deps.analyzeAudio
+    deps.analyzeAudio = vi.fn(async (pcm: Float32Array, rate: number, words: WordTiming[], duration: number) => {
+      if (words.length === 0 && vi.mocked(deps.analyzeAudio).mock.calls.length === 2) {
+        let release = (): void => undefined
+        void repo!.exclusive(() => new Promise<void>((resolve) => (release = resolve)))
+        void repo!.execute({ type: 'cue.saveText', cueId: 'c3', text: 'Changed meanwhile' })
+        setTimeout(() => release(), 0)
+      }
+      return analyze(pcm, rate, words, duration)
+    })
+    const comp = structuredClone(repo!.projectForMain().cues[2].comp)
+    expect((await call('align', { line: 'L3', apply: true })).error).toBe(LINE_CHANGED)
+    expect(repo!.projectForMain().cues[2].comp).toEqual(comp)
   })
 })
 

@@ -384,7 +384,7 @@ export function fitToLength(
 
 const WORD_RE = /\S+/g
 
-const normalizeWord = (s: string): string =>
+export const normalizeWord = (s: string): string =>
   s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
 
 export interface TextHit {
