@@ -382,12 +382,13 @@ export async function finishExport(
   token: string,
   summary: ExportSummary,
   stamp: () => Promise<ExportStamp | undefined>,
-  revision: () => number | undefined = () => undefined
+  revision: () => number | undefined = () => undefined,
+  hold: (publish: () => Promise<void>) => Promise<void> = (publish) => publish()
 ): Promise<DeliverPaths> {
   if (!batchPlan || token !== batchPlan.token) throw new Error('This batch export plan is no longer current')
   const current = batchPlan
   try {
-    return await publishExport(current, summary, stamp, revision)
+    return await publishExport(current, summary, stamp, revision, hold)
   } finally {
     current.running = false
   }
@@ -403,7 +404,8 @@ async function publishExport(
   current: BatchPlan,
   summary: ExportSummary,
   stamp: () => Promise<ExportStamp | undefined>,
-  revision: () => number | undefined
+  revision: () => number | undefined,
+  hold: (publish: () => Promise<void>) => Promise<void>
 ): Promise<DeliverPaths> {
   if (!current.live) throw new Error(PROJECT_CHANGED)
   if (ctx().project.id !== current.project.id) throw new Error('The exported project is no longer open')
@@ -444,9 +446,12 @@ async function publishExport(
   if (index !== null) await fs.writeFile(path.join(stagingDir, 'index.updated.csv'), index)
   const report = buildReport(project.name, deliver, version)
   await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
-  await refuseStale(current, revision(), stamped?.changes)
-  await removeSuperseded(outDir, supersededFiles(previous?.exported ?? [], exported))
-  await copyTree(stagingDir, outDir)
+  const publish = async (): Promise<void> => {
+    await refuseStale(current, revision(), stamped?.changes)
+    await removeSuperseded(outDir, supersededFiles(previous?.exported ?? [], exported))
+    await copyTree(stagingDir, outDir)
+  }
+  await (current.revision === undefined ? publish() : hold(publish))
   await fs.rm(stagingDir, { recursive: true, force: true })
   return {
     ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }),

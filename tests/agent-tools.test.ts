@@ -696,6 +696,20 @@ describe('render, verify and export', () => {
     expect(deps.exportLines).not.toHaveBeenCalled()
   })
 
+  it('dry run reports only the name collisions that involve the selected lines', async () => {
+    const { call, repo } = setup()
+    const [first, , voiced] = repo!.projectForMain().cues
+    first.takes = voiced.takes.map((t) => ({ ...t, id: 't0', file: { ...t.file, fileId: 't0', relPath: '/p/t0.mp3' } }))
+    first.finalTakeId = 't0'
+    first.status = 'generated'
+    expect((await call('export', { dryRun: true, lines: ['L2'] })).data).toMatchObject({ ready: 0, collisions: [] })
+    expect((await call('export', { dryRun: true, lines: ['L3'] })).data).toMatchObject({
+      ready: 0,
+      skipped: [{ line: 'L3', reason: 'Name collision' }],
+      collisions: [{ name: '{key}.mp3', lines: ['L1', 'L3'] }],
+    })
+  })
+
   it('exports only ready lines of the selection through the shared export and refuses an empty one', async () => {
     const { spec, deps, repo } = setup()
     const { call, beforeWrite } = guarded(spec)

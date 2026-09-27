@@ -1,8 +1,9 @@
 import { createHash } from 'crypto'
-import { mkdtempSync, promises as fs } from 'fs'
+import { mkdtempSync, promises as fs, readFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
+import { SerialProjectRepository } from '../src/main/project-repository'
 import { emptyEdits, serialQueue, type Cue, type Project, type Take } from '../src/shared/domain'
 import {
   EXPORT_STALE,
@@ -380,5 +381,38 @@ describe('analysis renders and export state in main', () => {
     expect(await fs.readFile(audio, 'utf8')).toBe('old')
     expect(await fs.readFile(report, 'utf8')).toBe(published)
     await expect(fs.stat(path.join(dir, 'export.staging'))).rejects.toThrow()
+  })
+
+  it('an agent export holds project edits until it has published and refuses one edited before publishing', async () => {
+    const dir = path.join(root, 'H.vostudio')
+    const p = project([cue('a', '/tmp/a.wav')])
+    store.adoptProject(p, dir)
+    const repo = new SerialProjectRepository(p, vi.fn(), 60_000)
+    const staged = async (audio: string) => {
+      const plan = await planBatchExport({ cueIds: ['c-a'] }, 3, repo.currentRevision())
+      await fs.mkdir(path.dirname(plan.jobs[0].outPath), { recursive: true })
+      await fs.writeFile(plan.jobs[0].outPath, audio)
+      return plan
+    }
+    const summary = (name: string) => ({ exported: [{ cueKey: 'a', name, bytes: 3, sha256: 'x' }], failed: [] })
+    const stamp = async () => ({ version: 1, changes: 0 })
+    const revision = () => repo.currentRevision()
+    const edit = () => repo.commit({ cues: [repo.projectForMain().cues[0]] })
+    const first = await staged('first')
+    const audio = path.join(first.outDir, 'audio', first.jobs[0].name)
+    let held: Promise<string> | undefined
+    await finishExport(first.token, summary(first.jobs[0].name), stamp, revision, (publish) => {
+      const run = repo.exclusive(publish)
+      held = edit().then(() => readFileSync(audio, 'utf8'))
+      return run
+    })
+    expect(await held).toBe('first')
+    expect(repo.currentRevision()).toBe(1)
+    const raced = await staged('raced')
+    const finishing = finishExport(raced.token, summary(raced.jobs[0].name), stamp, revision, (publish) => repo.exclusive(publish))
+    await edit()
+    await expect(finishing).rejects.toThrow(EXPORT_STALE)
+    expect(await fs.readFile(audio, 'utf8')).toBe('first')
+    expect(exportBusy()).toBe(false)
   })
 })

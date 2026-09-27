@@ -1072,7 +1072,8 @@ function registerHandlers(): void {
         planToken,
         parsed,
         () => (parsed.exported.length > 0 ? stampVersion() : Promise.resolve(undefined)),
-        () => projectRepository?.currentRevision()
+        () => projectRepository?.currentRevision(),
+        (publish) => (projectRepository ? projectRepository.exclusive(publish) : publish())
       )
     )
   })

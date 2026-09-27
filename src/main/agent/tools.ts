@@ -1284,6 +1284,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         }
         if (args.dryRun) {
           const byId = new Map(project.cues.map((c) => [c.id, c]))
+          const scoped = new Set(scope.map((r) => r.cueKey))
           const { page, nextCursor } = stablePage(ready, (r) => byId.get(r.cueId) as Cue, project.cues, args.cursor, args.limit ?? 100)
           return structured({
             dryRun: true,
@@ -1292,7 +1293,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
             ready: ready.length,
             files: page.map((r) => ({ line: r.cueKey, name: r.name, changed: r.changed, duration: r.outputLength ?? null })),
             ...skipped,
-            collisions: findCollisions(planBatch(project)).slice(0, REPORT_LIST_MAX).map((c) => ({ name: c.name, lines: c.cueKeys })),
+            collisions: findCollisions(planBatch(project)).filter((c) => c.cueKeys.some((k) => scoped.has(k))).slice(0, REPORT_LIST_MAX).map((c) => ({ name: c.name, lines: c.cueKeys })),
             ...(nextCursor === undefined ? {} : { nextCursor }),
           })
         }
