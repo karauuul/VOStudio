@@ -1,11 +1,12 @@
-import { BrowserWindow, type WebContents } from 'electron'
+import type { BrowserWindow, WebContents } from 'electron'
 import { randomUUID } from 'crypto'
 import type { BridgeAsk, BridgeReply, BridgeRequest } from '@shared/ipc'
+import { uiWindows } from '../windows'
 
 const REPLY_TIMEOUT_MS = 3000
 const pending = new Map<string, (reply: BridgeReply) => void>()
 
-export const uiWindow = (): BrowserWindow | undefined => BrowserWindow.getAllWindows().find((win) => !win.isDestroyed())
+export const uiWindow = (): BrowserWindow | undefined => uiWindows()[0]
 
 const failure = (ask: BridgeAsk, reason: string): Error =>
   new Error(
@@ -33,7 +34,7 @@ function requestWindow(win: BrowserWindow, ask: BridgeAsk): Promise<void> {
 }
 
 export async function requestUi(ask: BridgeAsk, except?: WebContents): Promise<void> {
-  const windows = BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed() && win.webContents.id !== except?.id)
+  const windows = uiWindows().filter((win) => win.webContents.id !== except?.id)
   await Promise.all(windows.map((win) => requestWindow(win, ask)))
 }
 

@@ -102,7 +102,7 @@ export interface OriginalRef {
   srcPath: string
   gainDb: number
   offset: number
-  duration: number
+  duration?: number
   duckDb?: number
   start?: number
 }
@@ -118,7 +118,8 @@ export function originalRef(
     return { srcPath: source.file.relPath, offset: region.in, duration: region.out - region.in }
   }
   if (!cue.referenceAudio) return undefined
-  return { srcPath: cue.referenceAudio.relPath, offset: 0, duration: cue.referenceDuration ?? 0 }
+  const duration = originalLength(cue)
+  return { srcPath: cue.referenceAudio.relPath, offset: 0, ...(duration === undefined ? {} : { duration }) }
 }
 
 export function originalRefs(cue: Cue, sources: ProjectSource[] | undefined): OriginalRef[] {
@@ -127,14 +128,14 @@ export function originalRefs(cue: Cue, sources: ProjectSource[] | undefined): Or
   const shift = start > 0 ? { start } : {}
   const stems = cue.stems
   if (stems && stems.length > 0) {
-    const duration = originalLength(cue) ?? 0
+    const duration = originalLength(cue)
     return stems
       .filter((s) => s.exportMode === 'on')
       .map((s) => ({
         srcPath: s.file.relPath,
         gainDb: 0,
         offset: 0,
-        duration,
+        ...(duration === undefined ? {} : { duration }),
         ...(s.duckDb === undefined ? {} : { duckDb: s.duckDb }),
         ...shift,
       }))
@@ -183,16 +184,19 @@ export function outputTakeOf(cue: Cue, project?: TakeLookup): Take | undefined {
   return cue.takes.find((t) => t.id === cue.finalTakeId)
 }
 
+export function planLine(project: Project, cue: Cue): PlannedTake | undefined {
+  if (cue.status === 'excluded' || !hasValidVoicedOutput(cue, project)) return undefined
+  const take = outputTakeOf(cue, project)
+  return take ? { cue, take, name: exportName(project, cue, take) } : undefined
+}
+
 export function planBatch(project: Project): PlannedTake[] {
-  const out: PlannedTake[] = []
-  for (const cue of project.cues) {
-    if (cue.status === 'excluded') continue
-    if (!hasValidVoicedOutput(cue, project)) continue
-    const take = outputTakeOf(cue, project)
-    if (!take) continue
-    out.push({ cue, take, name: exportName(project, cue, take) })
-  }
-  return out
+  return project.cues.map((cue) => planLine(project, cue)).filter((p): p is PlannedTake => p !== undefined)
+}
+
+export function originalOnlyPlan(cue: Cue, sources: ProjectSource[] | undefined): CompPlan | undefined {
+  const ref = originalRef(cue, sources)
+  return ref ? { clips: [], originals: [{ ...ref, gainDb: 0 }] } : undefined
 }
 
 const nameKey = (name: string): string => name.toLowerCase()

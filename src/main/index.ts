@@ -29,6 +29,7 @@ import {
   recFinishSchema,
   recFinishPassesSchema,
   bridgeReplySchema,
+  renderReplySchema,
 } from './schemas'
 import { emit } from './emit'
 import * as store from './project-store'
@@ -41,6 +42,7 @@ import { ASSET_EXTENSIONS, inPlaceKind } from '@shared/asset-readers'
 import {
   ASSET_ROW_MAX,
   singleFlight,
+  serialQueue,
   type Cue,
   type ProjectVersion,
   type Stem,
@@ -83,9 +85,15 @@ import {
   finishVideoExport,
   planBatchExport,
   planVideoExport,
-  exportActive,
   exportDir,
   exportInfo,
+  exportBusy,
+  agentRenderDir,
+  encodeAnalysis,
+  lineJob,
+  measureAudio,
+  releaseExports,
+  type ExportStamp,
 } from './export'
 import { detectLines, importSources, splitMediaPaths } from './sources'
 import { addAssets, assetAudioLines, assetPage, clearAssetCache, readAssetCached, type AudioLinesResult } from './assets'
@@ -112,10 +120,14 @@ import { AGENT_FLAG } from '@shared/agent-endpoint'
 import { sanitizeAgentAccess } from '@shared/ipc'
 import type { McpServer, McpSession } from '@shared/mcp'
 import { needsGuardVersion } from '@shared/versions'
-import { startAgentServer, type AgentServerHandle } from './agent/server'
+import { sha256Hex, startAgentServer, type AgentServerHandle } from './agent/server'
 import { AGENT_INSTRUCTIONS, agentTools, ASSET_READ_MAX } from './agent/tools'
 import { diagnostics, watchDiagnostics } from './agent/diagnostics'
 import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
+import { closeRenderWorker, renderExportPlan, renderLineWav, renderWorker, settleRender } from './agent/render-worker'
+import { hardenedWindow, loadRenderer, uiWindows } from './windows'
+import { renderFileName, requireRevision } from '@shared/agent-render'
+import type { BatchExportResult } from '@shared/ipc'
 import { createGenerationQueue, type QueuedGeneration } from './gen-queue'
 import { createStsTake, createTtsTake } from './generate'
 import { exportRefusal, recordingRefusal, type JobOrigin } from '@shared/jobs'
@@ -167,24 +179,17 @@ function isInsideExportDir(abs: string): boolean {
 }
 
 function createWindow(): void {
-  const win = new BrowserWindow({
+  const win = hardenedWindow({
     width: 1400,
     height: 900,
     minWidth: 1280,
     minHeight: 720,
     title: 'VO Studio',
     backgroundColor: '#191b1e',
-    webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
-      sandbox: true,
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
   })
 
   watchDiagnostics(win.webContents)
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  win.webContents.on('will-navigate', (e) => e.preventDefault())
+  win.on('closed', () => closeRenderWorker())
 
   if (!app.isPackaged) {
     win.webContents.on('before-input-event', (_e, input) => {
@@ -192,11 +197,7 @@ function createWindow(): void {
     })
   }
 
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    void win.loadFile(path.join(__dirname, '../renderer/index.html'))
-  }
+  void loadRenderer(win)
 }
 
 const TEST_VOICE_TEXT = 'Voice test, one two three.'
@@ -248,9 +249,13 @@ async function recordVersions(
   return versions
 }
 
-async function stampVersion(): Promise<number> {
-  const versions = await recordVersions(store.ensureVersion)
-  return versions[versions.length - 1].n
+async function stampVersion(): Promise<ExportStamp> {
+  let previous: ProjectVersion[] = []
+  const versions = await recordVersions((current) => {
+    previous = current
+    return store.ensureVersion(current)
+  })
+  return { version: versions[versions.length - 1].n, changes: versions === previous ? 0 : 1 }
 }
 
 const audioImportSchema = z.object({
@@ -280,7 +285,7 @@ let projectRepository: SerialProjectRepository | null = null
 let restoringVersion = false
 
 const generations = createGenerationQueue({
-  guard: (cueId) => ({ exporting: exportActive(), restoring: restoringVersion, recording: recordingActive(cueId) }),
+  guard: (cueId) => ({ exporting: exportBusy(), restoring: restoringVersion, recording: recordingActive(cueId) }),
   changed: (snapshot) => emit('jobs:changed', snapshot),
 })
 
@@ -299,6 +304,7 @@ function resetRepository(project: Project, revision = 0): SerialProjectRepositor
 
 async function detachCurrentRepository(): Promise<void> {
   cancelExports()
+  closeRenderWorker()
   generations.retire(null)
   const repository = projectRepository
   await repository?.detach()
@@ -309,6 +315,7 @@ async function detachCurrentRepository(): Promise<void> {
 
 function abandonProject(): void {
   cancelExports()
+  closeRenderWorker()
   generations.retire(null)
   if (projectRepository) void closeRecordings(projectRepository)
   projectRepository = null
@@ -335,15 +342,7 @@ function pickedTemplateDir(dir: string): string {
   return target
 }
 
-let lifecycle: Promise<unknown> = Promise.resolve()
-function serialLifecycle<T>(fn: () => Promise<T>): Promise<T> {
-  const run = lifecycle.then(fn, fn)
-  lifecycle = run.then(
-    () => undefined,
-    () => undefined
-  )
-  return run
-}
+const serialLifecycle = serialQueue()
 
 function requireRepository(): SerialProjectRepository {
   if (!projectRepository) throw new Error('No project is open')
@@ -846,6 +845,8 @@ function registerHandlers(): void {
 
   typedHandle('bridge:reply', async (reply) => settleUi(bridgeReplySchema.parse(reply)))
 
+  typedHandleFrom('render:reply', async (sender, reply) => settleRender(sender.id, renderReplySchema.parse(reply)))
+
   typedHandle('suggestions:load', async () => {
     const r = await consumeSuggestionsFile(true, requireRepository())
     if (!r) {
@@ -999,10 +1000,10 @@ function registerHandlers(): void {
 
   typedHandle('csv:sync', () => syncCsv())
 
-  typedHandle('export:planBatch', async (req) => {
+  typedHandleFrom('export:planBatch', async (sender, req) => {
     const parsed = batchExportSchema.parse(req)
     refuseExportWhileGenerating()
-    return planBatchExport(parsed)
+    return planBatchExport(parsed, sender.id)
   })
   typedHandle('export:info', () => exportInfo())
   typedHandle('export:pickDir', async () => {
@@ -1021,7 +1022,13 @@ function registerHandlers(): void {
     const parsed = exportSummarySchema.parse(summary)
     const planToken = z.string().uuid().parse(token)
     return serialLifecycle(() =>
-      finishExport(planToken, parsed, () => (parsed.exported.length > 0 ? stampVersion() : Promise.resolve(undefined)))
+      finishExport(
+        planToken,
+        parsed,
+        () => (parsed.exported.length > 0 ? stampVersion() : Promise.resolve(undefined)),
+        () => projectRepository?.currentRevision(),
+        (publish) => (projectRepository ? projectRepository.exclusive(publish) : publish())
+      )
     )
   })
 
@@ -1053,6 +1060,53 @@ function registerHandlers(): void {
   typedHandle('updater:getStatus', async () => getUpdateStatus())
   typedHandle('updater:check', () => checkForUpdates())
   typedHandle('updater:restart', async () => restartToUpdate())
+}
+
+async function renderForAgent(cueId: string, source: 'output' | 'original', expected?: SerialProjectRepository) {
+  const repository = liveRepository(expected)
+  const dir = store.getProjectDir()
+  if (!dir) throw new Error('No project is open')
+  const project = repository.projectForMain()
+  const cue = project.cues.find((c) => c.id === cueId)
+  if (!cue) throw new Error('The line was removed meanwhile; call lines, then retry.')
+  const revision = repository.currentRevision()
+  const outPath = path.join(await agentRenderDir(dir), renderFileName(cue.key, cue.id, sha256Hex, source === 'original' ? '.original' : ''))
+  const job = lineJob(project, cue, outPath, source)
+  if (!job) return null
+  const wav = await renderLineWav(job)
+  requireRevision(revision, liveRepository(expected).currentRevision())
+  await encodeAnalysis(job, wav)
+  const metrics = await measureAudio(outPath)
+  requireRevision(revision, liveRepository(expected).currentRevision())
+  return { path: outPath, name: job.name, metrics }
+}
+
+const serialAgentExport = serialQueue()
+
+function requireExportIdle(expected?: SerialProjectRepository): void {
+  liveRepository(expected)
+  if (exportBusy()) throw new Error('The app is exporting; wait for that export to finish, then retry.')
+  refuseExportWhileGenerating()
+}
+
+function exportForAgent(cueIds: string[], expected?: SerialProjectRepository): Promise<BatchExportResult> {
+  return serialAgentExport(async () => {
+    requireExportIdle(expected)
+    const owner = await renderWorker()
+    requireExportIdle(expected)
+    const plan = await planBatchExport(batchExportSchema.parse({ cueIds }), owner, liveRepository(expected).currentRevision())
+    try {
+      return await renderExportPlan(plan)
+    } finally {
+      releaseExports(owner, plan.token)
+    }
+  })
+}
+
+async function transcribeFile(file: string): Promise<string> {
+  const text = await voiceProvider().stt({ audio: await fs.readFile(file), filename: path.basename(file) })
+  pushUsage()
+  return text
 }
 
 const guardedSessions = new WeakMap<McpSession, string>()
@@ -1096,6 +1150,10 @@ function agentServerSpec(): McpServer {
       loadAsset: readAssetCached,
       buildAudioLines,
       transcribe,
+      renderLine: renderForAgent,
+      exportInfo,
+      exportLines: exportForAgent,
+      transcribeFile,
       provider: voiceProvider,
       generation: generations,
       queueGeneration: (req, expected, after) => queueGeneration(req, 'agent', expected, after),
@@ -1210,7 +1268,7 @@ if (primaryInstance) void app.whenReady().then(() => {
   void syncAgentServer()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (uiWindows().length === 0) createWindow()
   })
 
   app.on('second-instance', (_event, argv) => {
@@ -1218,11 +1276,17 @@ if (primaryInstance) void app.whenReady().then(() => {
       agentForced = true
       void syncAgentServer()
     }
-    const win = BrowserWindow.getAllWindows()[0]
+    const win = uiWindows()[0]
     if (!win) return createWindow()
     if (win.isMinimized()) win.restore()
     win.focus()
   })
+})
+
+app.on('web-contents-created', (_event, contents) => {
+  const id = contents.id
+  contents.on('render-process-gone', () => releaseExports(id))
+  contents.once('destroyed', () => releaseExports(id))
 })
 
 app.on('will-quit', () => {

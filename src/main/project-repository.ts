@@ -42,7 +42,11 @@ export class SerialProjectRepository {
     return this.enqueue(() => this.publish(structuredClone(changes)))
   }
 
-  private enqueue<T>(apply: () => T): Promise<T> {
+  exclusive<T>(run: () => Promise<T>): Promise<T> {
+    return this.enqueue(run)
+  }
+
+  private enqueue<T>(apply: () => T | Promise<T>): Promise<T> {
     if (!this.accepting) return Promise.reject(new Error('Project repository is detached'))
     const run = this.queue.then(() => {
       this.assertAttached()

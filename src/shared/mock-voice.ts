@@ -42,10 +42,14 @@ export function layoutWords(text: string, duration: number): WordTiming[] {
   })
 }
 
-export function mockPitch(voiceId: string): number {
+export function fnv1a(text: string): number {
   let hash = 0x811c9dc5
-  for (let i = 0; i < voiceId.length; i++) hash = Math.imul(hash ^ voiceId.charCodeAt(i), 0x01000193) >>> 0
-  return 95 + (hash % 1000) * 0.16
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193) >>> 0
+  return hash
+}
+
+export function mockPitch(voiceId: string): number {
+  return 95 + (fnv1a(voiceId) % 1000) * 0.16
 }
 
 export function synthesizeMock(words: WordTiming[], duration: number, voiceId: string): Float32Array {

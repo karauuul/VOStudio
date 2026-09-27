@@ -15,6 +15,7 @@ import {
   renderClipToWav,
   renderCompOffline,
   renderCompToWav,
+  type RenderedClip,
 } from '../audio/offline-render'
 import { loadCompSources, release } from '../audio/transport'
 import { interleave } from '../audio/wav'
@@ -53,7 +54,7 @@ function resolveJobComp(job: ExportJob, plan: CompPlan): ResolvedComp {
             url: audioUrl(o.srcPath),
             gainDb: o.gainDb,
             offset: o.offset,
-            duration: o.duration,
+            ...(o.duration === undefined ? {} : { duration: o.duration }),
             ...(o.duckDb === undefined ? {} : { duckDb: o.duckDb }),
             ...(o.start === undefined ? {} : { start: o.start }),
           })),
@@ -62,14 +63,16 @@ function resolveJobComp(job: ExportJob, plan: CompPlan): ResolvedComp {
   }
 }
 
-export async function runJob(job: ExportJob): Promise<ExportResult> {
+export function renderJob(job: ExportJob): Promise<RenderedClip> {
   const plan = job.compPlan
-  if (plan && plan.clips.length > 0) {
-    const { wav } = await renderCompToWav(resolveJobComp(job, plan))
-    return api['export:encode'](job.outPath, wav)
-  }
-  if (job.fastPath) return api['export:copy'](job.outPath)
-  const { wav } = await renderClipToWav(audioUrl(job.srcPath), job.edits)
+  return plan && (plan.clips.length > 0 || (plan.originals?.length ?? 0) > 0)
+    ? renderCompToWav(resolveJobComp(job, plan))
+    : renderClipToWav(audioUrl(job.srcPath), job.edits)
+}
+
+export async function runJob(job: ExportJob): Promise<ExportResult> {
+  if (job.fastPath && !job.compPlan?.clips.length) return api['export:copy'](job.outPath)
+  const { wav } = await renderJob(job)
   return api['export:encode'](job.outPath, wav)
 }
 

@@ -117,4 +117,22 @@ describe('repository mutations', () => {
     await repo.detach()
     await expect(repo.mutate(() => ({}))).rejects.toThrow('detached')
   })
+
+  it('holds commands issued during an exclusive section until it finishes', async () => {
+    const repo = new SerialProjectRepository(project(), vi.fn(), 1)
+    const pending = deferred()
+    const order: string[] = []
+    const section = repo.exclusive(async () => {
+      order.push(`section ${await pending.promise}`)
+      return repo.currentRevision()
+    })
+    const edit = repo.commit({ cues: [repo.projectForMain().cues[0]] }).then((r) => order.push(`edit ${r.revision}`))
+    await tick()
+    expect(order).toEqual([])
+    expect(repo.currentRevision()).toBe(0)
+    pending.resolve('done')
+    expect(await section).toBe(0)
+    await edit
+    expect(order).toEqual(['section done', 'edit 1'])
+  })
 })
