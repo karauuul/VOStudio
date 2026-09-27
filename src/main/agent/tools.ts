@@ -59,7 +59,7 @@ import {
   type EffectPreset,
   type TakeOf,
 } from '@shared/agent-edit'
-import { clipEnd, clipTrackId, compDuration, compOriginalStart, GAIN_MAX_DB, GAIN_MIN_DB, isEmptyComp, normalizeComp, setClipEdits } from '@shared/comp'
+import { clipEnd, clipTrackId, committedComp, compDuration, compOriginalStart, GAIN_MAX_DB, GAIN_MIN_DB, isEmptyComp, normalizeComp, setClipEdits } from '@shared/comp'
 import { EFFECT_KINDS, pickEffects, sanitizeEffects, TRACK_EFFECT_KINDS, type EffectKind } from '@shared/effects'
 import { SPEED_MAX, SPEED_MIN } from '@shared/generation'
 import { usesCompOutput } from '@shared/approval'
@@ -375,7 +375,9 @@ async function commitComp(deps: AgentDeps, cueId: string, build: (project: Proje
     .mutate((project) => {
       const cue = project.cues.find((c) => c.id === cueId)
       if (!cue) throw new Error('The line was deleted meanwhile; call lines, then retry.')
-      return applyProjectCommand(project, { type: 'cue.setComp', cueId, comp: structuredClone(build(project, cue)) })
+      const next = committedComp(structuredClone(build(project, cue)))
+      if (JSON.stringify(next) === JSON.stringify(committedComp(cue.comp ?? null))) return null
+      return applyProjectCommand(project, { type: 'cue.setComp', cueId, comp: next })
     })
     .catch((error: unknown) => {
       throw repository.isLive() ? error : new Error(PROJECT_SWITCHED)

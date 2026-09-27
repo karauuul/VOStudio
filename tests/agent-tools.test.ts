@@ -1106,6 +1106,9 @@ describe('timeline, edit, effects and align', () => {
       'Line L1 has no clips on its timeline; generate a take or place one with take_use first.'
     )
     expect((await call('edit', { line: 'L3', ops: [{ op: 'speed', clip: 'k1', value: 2 }] })).error).toMatch(/^Invalid arguments/)
+    const start = repo!.projectForMain().cues[2].comp!.clips.find((c) => c.id === 'k1')!.start
+    expect((await call('edit', { line: 'L3', ops: [{ op: 'move', clip: 'k1', to: start }] })).error).toBeUndefined()
+    expect(repo!.currentRevision()).toBe(revision)
   })
 
   it('sets clip, track and take effects the way the Properties panel stores them', async () => {
