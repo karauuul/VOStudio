@@ -54,7 +54,7 @@ export interface AgentDeps {
   previewTable: (req: TableRequest) => Promise<TablePreview>
   importTable: (req: TableRequest) => Promise<TableImportResult>
   reimportTemplate: (dir: string) => Promise<ReimportResult>
-  transcribe: (req: { cueIds: string[]; overwrite?: boolean }) => Promise<{ updated: number; skipped: number }>
+  transcribe: (req: { cueIds: string[]; overwrite?: boolean }, expected?: SerialProjectRepository) => Promise<{ updated: number; skipped: number }>
   provider: () => VoiceProvider
   diagnostics: () => DiagnosticEntry[]
   screenshot: () => Promise<Buffer | null>
@@ -100,13 +100,15 @@ export const TRANSCRIBE_PAGE_MAX = 500
 export const CONTEXT_PAGE_MAX = 50
 export const REPORT_LIST_MAX = 100
 
+const PROJECT_SWITCHED = 'The project was closed or switched during this call; call status, then retry.'
+
 const exactlyOne = (values: unknown[]): boolean => values.filter((v) => v !== undefined).length === 1
 
 const structured = (value: Record<string, unknown>): ToolOutput => ({ structured: value })
 
 function selectLines(deps: AgentDeps, args: { lines?: string[]; filter?: string }): Cue[] {
   const project = requireRepository(deps).projectForMain()
-  if (args.lines) return args.lines.map((ref) => findLine(project, ref))
+  if (args.lines) return [...new Map(args.lines.map((ref) => findLine(project, ref)).map((cue) => [cue.id, cue])).values()]
   return filterCues(project.cues, args.filter ?? 'all', '', ALL_CHARACTERS)
 }
 
@@ -145,7 +147,7 @@ async function execute(deps: AgentDeps, command: ProjectCommand): Promise<Comman
   const removed = removedCueIds(command)
   if (removed.length > 0) await deps.checkRemovable(removed)
   const result = await repository.execute(command).catch((error: unknown) => {
-    throw repository.isLive() ? error : new Error('The project was closed or switched during this call; call status, then retry')
+    throw repository.isLive() ? error : new Error(PROJECT_SWITCHED)
   })
   deps.emit(result)
   return result
@@ -470,6 +472,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           table: z
             .object({
               path: absolutePath,
+              rule: z.enum(['id', 'exportName', 'tableId']).optional(),
               mapping: z
                 .object({ id: columnIndex, text: columnIndex, translation: columnIndex, character: columnIndex })
                 .partial()
@@ -498,7 +501,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         if (!table) throw new Error('pass exactly one of audio, table or templateReimport.')
         const req: TableRequest = {
           path: table.path,
-          rule: DEFAULT_MATCH_RULE,
+          rule: table.rule ?? DEFAULT_MATCH_RULE,
           ...(table.mapping ? { mapping: table.mapping } : {}),
           ...(table.matchBy ? { matchBy: table.matchBy } : {}),
           ...(table.replaceTranslations === undefined ? {} : { replaceTranslations: table.replaceTranslations }),
@@ -529,6 +532,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         .refine(oneSelection, oneSelectionMessage),
       annotations: { ...DESTRUCTIVE, openWorldHint: true },
       async run(ctx, args) {
+        const repository = requireRepository(deps)
         const selected = selectLines(deps, args)
         const overwrite = args.overwrite === true
         const explicit = args.lines !== undefined
@@ -539,6 +543,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         let work = 0
         for (; at < selected.length && work < TRANSCRIBE_PAGE_MAX; at++) {
           if (ctx.signal.aborted) break
+          if (!repository.isLive()) throw new Error(PROJECT_SWITCHED)
           const cue = selected[at]
           const why = !cue.referenceAudio ? 'no original audio' : !overwrite && cue.sourceText.trim() ? 'already has original text; pass overwrite' : null
           if (why) {
@@ -547,10 +552,11 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           }
           work++
           try {
-            const done = await deps.transcribe({ cueIds: [cue.id], overwrite })
+            const done = await deps.transcribe({ cueIds: [cue.id], overwrite }, repository)
             if (done.updated > 0) updated.push(cue.key)
             else skipped.push({ line: cue.key, reason: 'the transcript came back empty' })
           } catch (error) {
+            if (!repository.isLive()) throw new Error(PROJECT_SWITCHED)
             failed.push({ line: cue.key, reason: reason(error) })
           }
           ctx.progress(work, undefined, cue.key)

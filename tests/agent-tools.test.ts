@@ -392,6 +392,23 @@ describe('transcribe', () => {
     expect(again.data).toMatchObject({ updated: ['DUP'] })
   })
 
+  it('sends each explicitly listed line once and stops when the project switches mid-batch', async () => {
+    const { call, repo, deps } = setup()
+    withAudio(repo!, 'c1', '/p/a.wav')
+    withAudio(repo!, 'c3', '/p/c.wav')
+    const seen: string[] = []
+    const real = deps.transcribe
+    deps.transcribe = async (req, expected) => {
+      seen.push(...req.cueIds)
+      const result = await real(req, expected)
+      await repo!.detach()
+      return result
+    }
+    const { error } = await call('transcribe', { lines: ['L1', 'c1', 'L3'], overwrite: true })
+    expect(seen).toEqual(['c1'])
+    expect(error).toBe('The project was closed or switched during this call; call status, then retry.')
+  })
+
   it('selects by filter, only works on lines with audio and continues with a stable cursor', async () => {
     const { call, repo } = setup()
     for (const id of ['c1', 'c2', 'c3', 'c4', 'c5', 'c6']) withAudio(repo!, id, `/p/${id}.wav`)

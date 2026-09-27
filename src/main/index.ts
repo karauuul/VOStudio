@@ -593,11 +593,16 @@ function reimportTemplateDir(dir: string): Promise<ReimportResult> {
   })
 }
 
-function transcribe(req: { cueIds: string[]; overwrite?: boolean }): Promise<{ updated: number; skipped: number }> {
+function transcribe(
+  req: { cueIds: string[]; overwrite?: boolean },
+  expected?: SerialProjectRepository
+): Promise<{ updated: number; skipped: number }> {
   return serialLifecycle(async () => {
     const parsed = transcribeSchema.parse(req)
+    const repository = requireRepository()
+    if (expected && expected !== repository) throw new Error('The project was closed or switched during this call; call status, then retry')
     const result = await transcribeCues(
-      requireRepository(),
+      repository,
       parsed.cueIds,
       parsed.overwrite === true,
       async (ref) => voiceProvider().stt({ audio: await fs.readFile(ref.relPath), filename: path.basename(ref.relPath) }),
@@ -935,7 +940,7 @@ function registerHandlers(): void {
     return take
   })
 
-  typedHandle('provider:transcribe', transcribe)
+  typedHandle('provider:transcribe', (req) => transcribe(req))
 
   typedHandle('provider:voices', () => voiceProvider().voices())
   typedHandle('provider:models', () => voiceProvider().models())
