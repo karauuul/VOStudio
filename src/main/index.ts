@@ -1004,7 +1004,12 @@ function registerHandlers(): void {
     const parsed = exportSummarySchema.parse(summary)
     const planToken = z.string().uuid().parse(token)
     return serialLifecycle(() =>
-      finishExport(planToken, parsed, () => (parsed.exported.length > 0 ? stampVersion() : Promise.resolve(undefined)))
+      finishExport(
+        planToken,
+        parsed,
+        () => (parsed.exported.length > 0 ? stampVersion() : Promise.resolve(undefined)),
+        projectRepository?.currentRevision()
+      )
     )
   })
 
@@ -1065,7 +1070,7 @@ function exportForAgent(cueIds: string[], expected?: SerialProjectRepository): P
     requireExportIdle(expected)
     const owner = await renderWorker()
     requireExportIdle(expected)
-    const plan = await planBatchExport(batchExportSchema.parse({ cueIds }), owner)
+    const plan = await planBatchExport(batchExportSchema.parse({ cueIds }), owner, liveRepository(expected).currentRevision())
     try {
       return await renderExportPlan(plan)
     } finally {

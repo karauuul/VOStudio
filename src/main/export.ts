@@ -53,6 +53,7 @@ import {
 } from '@shared/export-settings'
 import { renderChunks, videoTimelinePlan } from '@shared/sources'
 import { sanitizeRevision } from '@shared/approval'
+import { EXPORT_STALE, exportStale } from '@shared/agent-render'
 import { isInsideDir } from '@shared/project-summary'
 import { emptyEdits, type Cue, type Project } from '@shared/domain'
 import { loudnessFilter, METRICS_FILTER, parseMetrics, type AudioMetrics } from '@shared/audio-metrics'
@@ -86,6 +87,7 @@ interface BatchPlan {
   live: boolean
   running: boolean
   owner: number
+  revision?: number
 }
 
 let batchPlan: BatchPlan | null = null
@@ -183,7 +185,7 @@ export function lineJob(project: Project, cue: Cue, outPath: string, source: 'ou
   }
 }
 
-export async function planBatchExport(req: BatchExportRequest, owner = 0): Promise<ExportPlan> {
+export async function planBatchExport(req: BatchExportRequest, owner = 0, revision?: number): Promise<ExportPlan> {
   if (batchRunning() && batchPlan?.owner !== owner) throw new Error('Another export is running; wait for it to finish')
   const { project, dir } = ctx()
   const outDir = exportDir(project, dir)
@@ -197,7 +199,16 @@ export async function planBatchExport(req: BatchExportRequest, owner = 0): Promi
   const token = randomUUID()
   const stagingDir = path.join(dir, STAGING_DIR)
   const jobs = toJobs(items, path.join(stagingDir, 'audio'), project)
-  batchPlan = { token, project: structuredClone(project), outDir, stagingDir, live: true, running: jobs.length > 0, owner }
+  batchPlan = {
+    token,
+    project: structuredClone(project),
+    outDir,
+    stagingDir,
+    live: true,
+    running: jobs.length > 0,
+    owner,
+    ...(revision === undefined ? {} : { revision }),
+  }
   planned = new Map(jobs.map((j) => [j.outPath, j]))
   await fs.rm(stagingDir, { recursive: true, force: true })
   return { token, jobs, outDir }
@@ -339,12 +350,13 @@ export async function removeSuperseded(outDir: string, files: string[]): Promise
 export async function finishExport(
   token: string,
   summary: ExportSummary,
-  stamp: () => Promise<number | undefined>
+  stamp: () => Promise<number | undefined>,
+  revision?: number
 ): Promise<DeliverPaths> {
   if (!batchPlan || token !== batchPlan.token) throw new Error('This batch export plan is no longer current')
   const current = batchPlan
   try {
-    return await publishExport(current, summary, stamp)
+    return await publishExport(current, summary, stamp, revision)
   } finally {
     current.running = false
   }
@@ -353,10 +365,15 @@ export async function finishExport(
 async function publishExport(
   current: BatchPlan,
   summary: ExportSummary,
-  stamp: () => Promise<number | undefined>
+  stamp: () => Promise<number | undefined>,
+  revision: number | undefined
 ): Promise<DeliverPaths> {
   if (!current.live) throw new Error(PROJECT_CHANGED)
   if (ctx().project.id !== current.project.id) throw new Error('The exported project is no longer open')
+  if (exportStale(current.revision, revision)) {
+    await fs.rm(current.stagingDir, { recursive: true, force: true })
+    throw new Error(EXPORT_STALE)
+  }
   const version = await stamp()
   const { project, outDir, stagingDir } = current
   for (const f of summary.failed) {
