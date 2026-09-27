@@ -2223,7 +2223,6 @@ export default function App() {
       if (row) void pinTake(row.cueId, takeId, pinned).catch(() => {})
     },
     onShowInLibrary: setSourceTakeId,
-    onTakeEffects,
     onMonitor: (tab) => programRef.current?.showTab(tab),
     ai: lineAi,
   }
@@ -2259,6 +2258,7 @@ export default function App() {
       }).catch((e: unknown) => pushStatus('err', String(e)))
     },
     onTakeEffects,
+    onShowInLibrary: setSourceTakeId,
     onPinSource: (takeId, pinned) => {
       const row = activeCue ? libraryRow(activeCue, project, takeId) : undefined
       if (row) void pinTake(row.cueId, takeId, pinned).catch(() => {})
