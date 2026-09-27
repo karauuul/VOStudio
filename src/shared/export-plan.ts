@@ -34,7 +34,7 @@ export function hasEdits(e: ClipEdits): boolean {
 
 export function extOf(name: string): string {
   const i = name.lastIndexOf('.')
-  if (i <= 0) return ''
+  if (i <= name.lastIndexOf('/') + 1) return ''
   return name.slice(i).toLowerCase()
 }
 
@@ -54,6 +54,17 @@ function withExt(name: string, ext: string): string {
 }
 
 export const DEFAULT_EXPORT_TEMPLATE = '{Name}.{ext}'
+export const PATH_FIELD = 'path'
+
+export function exportPath(value: string | undefined): string {
+  const parts = (value ?? '')
+    .replace(/\\/g, '/')
+    .replace(/^[A-Za-z]:/, '')
+    .split('/')
+    .map((part) => part.replace(/[<>:"|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '').trim())
+    .filter(Boolean)
+  return parts.length > 0 ? `${parts.join('/')}/` : ''
+}
 
 function nameFrom(template: string, project: Project, cue: Cue, ext: string): string {
   const named = template
@@ -62,6 +73,7 @@ function nameFrom(template: string, project: Project, cue: Cue, ext: string): st
     .replace(/\{exportName\}/g, cue.fields['exportName'] || cue.key)
     .replace(/\{WemId\}/g, cue.key)
     .replace(/\{Key\}/g, cue.key)
+    .replace(/\{Path\}/g, () => exportPath(cue.fields[PATH_FIELD]))
     .replace(/\{ext\}/g, ext)
   const target = formatSpec(project.export?.format).ext
   return target ? withExt(named, target) : named

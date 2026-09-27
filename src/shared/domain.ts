@@ -529,6 +529,9 @@ export interface Term {
   note?: string
 }
 
+export const TERMS_MAX = 10_000
+export const TERM_TEXT_MAX = 1000
+
 export function sanitizeTerms(rows: unknown): Term[] | undefined {
   if (!Array.isArray(rows)) return undefined
   const out: Term[] = []

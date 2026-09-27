@@ -226,6 +226,14 @@ describe('matchAudioFiles', () => {
     expect(r.update.map((u) => u.cue.key)).toEqual(['A'])
     expect(r.create.map((f) => f.name)).toEqual(['C'])
   })
+
+  it('keeps the first of files sharing a name and reports the rest as duplicates', () => {
+    const files = [{ name: 'A', rel: 'vo/x/A.wav' }, { name: 'C', rel: 'vo/x/C.wav' }, { name: 'A', rel: 'vo/y/A.wav' }, { name: 'C', rel: 'vo/y/C.wav' }]
+    const r = matchAudioFiles([cue({ key: 'A' })], files, 'id')
+    expect(r.update.map((u) => u.file.rel)).toEqual(['vo/x/A.wav'])
+    expect(r.create.map((f) => f.rel)).toEqual(['vo/x/C.wav'])
+    expect(r.duplicates.map((f) => f.rel)).toEqual(['vo/y/A.wav', 'vo/y/C.wav'])
+  })
 })
 
 describe('attachesOnly', () => {
@@ -261,6 +269,7 @@ describe('attachesOnly', () => {
 
   it('keeps creating lines in audio-first, empty and manual projects', () => {
     expect(attachesOnly(owner({ cues: [audioLine('LINE_A'), audioLine('LINE_B')] }))).toBe(false)
+    expect(attachesOnly(owner({ cues: [cue({ key: 'hit', fields: { EventName: 'hit', path: 'sfx' }, referenceAudio: ref('hit') })] }))).toBe(false)
     expect(attachesOnly(owner())).toBe(false)
     expect(attachesOnly(owner({ cues: [newLineCue('c1', 1, 'Hello'), newLineCue('c2', 2)] }))).toBe(false)
   })
@@ -367,5 +376,54 @@ describe('Project.languages', () => {
     const changes = applyProjectCommand(p, { type: 'project.setLanguages', languages: null })
     expect('languages' in p).toBe(false)
     expect('languages' in applyChangeSet({ ...p, languages: { source: 'en', target: 'uk' } }, changes)).toBe(false)
+  })
+})
+
+describe('table rows matched by text', () => {
+  const lines = (): Cue[] => [
+    cue({ key: 'hit_01', sourceText: 'Welcome back pioneer', text: '' }),
+    cue({ key: 'hit_02', sourceText: 'Warning hostile fauna detected nearby', text: 'Увага' }),
+    cue({ key: 'hit_03', sourceText: 'Play for us' }),
+    cue({ key: 'hit_04', sourceText: 'Play for us!' }),
+  ]
+  const table = [
+    ['99', 'Welcome back, pioneer.', 'З поверненням, піонере.'],
+    ['98', 'Warning, hostile fauna detected nearby.', 'Увага, ворожа фауна поруч.'],
+    ['97', 'Play for us.', 'Грайте для нас.'],
+    ['96', 'Something else entirely', 'Щось інше'],
+  ]
+  const options = { mapping: { id: 0, text: 1, translation: 2 }, rule: 'id' as const, replaceTranslations: false, keepOriginal: true, matchBy: 'text' as const }
+
+  it('fills matched lines, ignores the key column and never creates lines', () => {
+    const p = { ...project(lines()), linesFromTable: undefined }
+    const committed = commitTable(p, table, options)
+    expect(p.cues).toHaveLength(4)
+    expect(p.linesFromTable).toBeUndefined()
+    expect(p.cues[0]).toMatchObject({ sourceText: 'Welcome back pioneer', text: 'З поверненням, піонере.', status: 'translated' })
+    expect(p.cues[1]).toMatchObject({ text: 'Увага', suggestedText: 'Увага, ворожа фауна поруч.' })
+    expect(p.cues[2].text).toBe('')
+    expect(committed.summary).toEqual({ added: 0, updated: 1, suggested: 1, unchanged: 0, skipped: 2 })
+    expect(committed.undo.ids).toEqual([])
+    expect(committed.textMatch?.matched.map((m) => m.key)).toEqual(['hit_01', 'hit_02'])
+    expect(committed.textMatch?.ambiguous).toEqual([{ index: 2, candidates: ['hit_03', 'hit_04'] }])
+    expect(committed.textMatch?.unmatched).toEqual([3])
+  })
+
+  it('replaces the transcript with the table text unless keepOriginal', () => {
+    const p = project(lines())
+    applyTable(p, table, options.mapping, 'id', false, false, 'text')
+    expect(p.cues[0].sourceText).toBe('Welcome back, pioneer.')
+  })
+
+  it('needs a mapped original text column', () => {
+    expect(() => applyTable(project(lines()), table, { translation: 2 }, 'id', false, false, 'text')).toThrow(
+      'Matching by text needs a mapped original text column'
+    )
+  })
+
+  it('matches by key exactly as before when matchBy is absent', () => {
+    const p = project(lines())
+    const summary = applyTable(p, [['hit_03', 'Play for us.', 'Грайте']], options.mapping, 'id', false).summary
+    expect(summary).toEqual({ added: 0, updated: 1, suggested: 0, unchanged: 0, skipped: 0 })
   })
 })

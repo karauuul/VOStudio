@@ -45,7 +45,7 @@ export interface LineQuery {
   detail?: 'concise' | 'full'
 }
 
-function cursorOffset(cursor: string | undefined, total: number): number {
+export function cursorOffset(cursor: string | undefined, total: number): number {
   if (cursor === undefined) return 0
   const offset = /^\d+$/.test(cursor) ? Number(cursor) : NaN
   if (!Number.isSafeInteger(offset) || offset > total) {

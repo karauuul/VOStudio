@@ -6,6 +6,7 @@ import { projectDirSchema, projectNameSchema } from '../src/main/schemas'
 import { emptyEdits, type Cue, type Project } from '../src/shared/domain'
 import { createSession, handleMessage, type McpServer, type RpcMessage } from '../src/shared/mcp'
 import type { CommandResult } from '../src/shared/project-commands'
+import { transcribeCues } from '../src/main/transcribe'
 
 const voice = { stability: 0.5, similarity: 0.5, style: 0, speed: 1, boost: true }
 
@@ -54,6 +55,22 @@ function setup(open = true) {
     flushUi: vi.fn(async () => undefined),
     emit: (result) => emitted.push(result),
     audioRoots: () => ['/root/Demo.vostudio'],
+    importAudio: vi.fn(async () => ({ added: 2, updated: 0, files: 3, duplicates: ['vo/b/hit.wav'] })),
+    previewTable: vi.fn(async (req) => ({
+      path: req.path, name: 'subs.csv', script: false, headers: ['text', 'translation'], rows: [['Hello', 'Привіт']], total: 1,
+      mapping: { text: 0, translation: 1 }, summary: { added: 0, updated: 1, suggested: 0, unchanged: 0, skipped: 0 },
+      textMatch: { matched: [{ index: 0, cueId: 'c1', key: 'L1', score: 0.9 }], ambiguous: [{ index: 1, candidates: ['DUP'] }], unmatched: [2] },
+    })),
+    importTable: vi.fn(async (req) => ({
+      path: req.path, name: 'subs.csv', mapping: { text: 0 }, rows: 3, summary: { added: 0, updated: 1, suggested: 0, unchanged: 0, skipped: 2 },
+      undo: { ids: [], fields: [], characters: [] },
+    })),
+    reimportTemplate: vi.fn(async () => ({ added: 0, updated: 5, untouched: 0, orphaned: 0, warnings: [] })),
+    transcribe: (req) =>
+      transcribeCues(repo!, req.cueIds, req.overwrite === true, async (ref) => {
+        if (ref.relPath.includes('broken')) throw new Error('Provider refused the audio.')
+        return ref.relPath.includes('silent') ? '' : `heard ${ref.fileId}`
+      }, (result) => emitted.push(result)),
     provider: () => provider,
     diagnostics: () => [
       { at: '2026-01-01T00:00:00.000Z', source: 'renderer', message: 'old' },
@@ -78,7 +95,8 @@ describe('agent tool registry', () => {
     await handleMessage(spec, createSession(), { jsonrpc: '2.0', id: 1, method: 'tools/list' }, (m) => sent.push(m))
     const tools = (sent[0].result as { tools: { name: string; inputSchema: { type: string }; annotations: Record<string, unknown> }[] }).tools
     expect(tools.map((t) => t.name)).toEqual([
-      'status', 'projects', 'project_open', 'project_close', 'lines', 'line', 'lines_edit', 'characters', 'character_set', 'voices', 'versions', 'command', 'diagnostics', 'screenshot',
+      'status', 'projects', 'project_open', 'project_close', 'lines', 'line', 'lines_edit', 'characters', 'character_set', 'voices', 'versions', 'command',
+      'import', 'transcribe', 'translate_context', 'translations_suggest', 'glossary', 'glossary_check', 'rules', 'diagnostics', 'screenshot',
     ])
     for (const tool of tools) {
       expect(tool.inputSchema.type).toBe('object')
@@ -273,5 +291,166 @@ describe('project lifecycle tools', () => {
     await call('versions', { action: 'restore', n: 2 })
     expect(deps.restoreVersion).toHaveBeenCalledWith(2)
     expect(deps.flushUi).toHaveBeenCalledTimes(2)
+  })
+})
+
+const withAudio = (repo: SerialProjectRepository, cueId: string, relPath: string, sourceText = ''): void => {
+  const target = repo.projectForMain().cues.find((c) => c.id === cueId)!
+  target.referenceAudio = { fileId: cueId, relPath, format: 'wav' }
+  target.sourceText = sourceText
+}
+
+describe('import', () => {
+  it('imports audio with the default rule and reports duplicates', async () => {
+    const { call, deps } = setup()
+    const { data } = await call('import', { audio: { paths: ['/data/vo'] } })
+    expect(deps.importAudio).toHaveBeenCalledWith({ paths: ['/data/vo'], rule: 'id' })
+    expect(data).toEqual({ added: 2, updated: 0, files: 3, duplicates: ['vo/b/hit.wav'] })
+    expect(deps.flushUi).toHaveBeenCalled()
+  })
+
+  it('previews a table by default and applies only with preview false', async () => {
+    const { call, deps } = setup()
+    const { data } = await call('import', { table: { path: '/data/subs.csv', matchBy: 'text' } })
+    expect(deps.previewTable).toHaveBeenCalledWith({ path: '/data/subs.csv', rule: 'id', matchBy: 'text' })
+    expect(deps.importTable).not.toHaveBeenCalled()
+    expect(data).toMatchObject({
+      preview: true,
+      total: 1,
+      textMatch: { matched: 1, ambiguous: 1, unmatched: 1, pairs: [{ row: 1, line: 'L1', score: 0.9 }], ambiguousRows: [{ row: 2, candidates: ['DUP'] }], unmatchedRows: [3] },
+    })
+    const applied = await call('import', { table: { path: '/data/subs.csv', preview: false, keepOriginal: true, mapping: { text: 0 } } })
+    expect(deps.importTable).toHaveBeenCalledWith({ path: '/data/subs.csv', rule: 'id', mapping: { text: 0 }, keepOriginal: true })
+    expect(applied.data).toEqual({ applied: true, rows: 3, mapping: { text: 0 }, summary: { added: 0, updated: 1, suggested: 0, unchanged: 0, skipped: 2 } })
+  })
+
+  it('reimports a template and needs exactly one absolute source', async () => {
+    const { call, deps } = setup()
+    expect((await call('import', { templateReimport: '/data/demo.vostudio-src' })).data).toMatchObject({ updated: 5 })
+    expect(deps.reimportTemplate).toHaveBeenCalledWith('/data/demo.vostudio-src')
+    expect((await call('import', {})).error).toBe('Invalid arguments: pass exactly one of audio, table or templateReimport.')
+    expect((await call('import', { audio: { paths: ['rel/x.wav'] } })).error).toBe('Invalid arguments at "audio.paths.0": must be an absolute path.')
+    expect((await setup(false).call('import', { templateReimport: '/x' })).error).toBe('No project is open; call project_open first.')
+  })
+})
+
+describe('transcribe', () => {
+  it('transcribes line by line and reports skipped and failed lines with reasons', async () => {
+    const { call, repo, emitted } = setup()
+    withAudio(repo!, 'c1', '/p/a.wav')
+    withAudio(repo!, 'c2', '/p/broken.wav')
+    withAudio(repo!, 'c3', '/p/silent.wav')
+    withAudio(repo!, 'c4', '/p/d.wav', 'kept')
+    const { data } = await call('transcribe', { lines: ['L1', 'L2', 'L3', 'c4', 'L6'] })
+    expect(data).toEqual({
+      updated: ['L1'],
+      skipped: [
+        { line: 'L3', reason: 'the transcript came back empty' },
+        { line: 'DUP', reason: 'already has original text; pass overwrite' },
+        { line: 'L6', reason: 'no original audio' },
+      ],
+      failed: [{ line: 'L2', reason: 'Provider refused the audio' }],
+    })
+    expect(repo!.projectForMain().cues[0].sourceText).toBe('heard c1')
+    expect(emitted).toHaveLength(1)
+    const again = await call('transcribe', { lines: ['c4'], overwrite: true })
+    expect(again.data).toMatchObject({ updated: ['DUP'] })
+  })
+
+  it('selects by filter, only works on lines with audio and continues with a stable cursor', async () => {
+    const { call, repo } = setup()
+    for (const id of ['c1', 'c2', 'c3', 'c4', 'c5', 'c6']) withAudio(repo!, id, `/p/${id}.wav`)
+    for (let i = 0; i < 500; i++) {
+      repo!.projectForMain().cues.push({ ...repo!.projectForMain().cues[0], id: `x${i}`, key: `X${i}`, referenceAudio: { fileId: `x${i}`, relPath: `/p/x${i}.wav`, format: 'wav' } })
+    }
+    const first = await call('transcribe', { filter: 'all' })
+    expect((first.data.updated as string[]).length).toBe(500)
+    expect(first.data.nextCursor).toBe('500')
+    const second = await call('transcribe', { filter: 'all', cursor: '500' })
+    expect(second.data.updated).toEqual(['X494', 'X495', 'X496', 'X497', 'X498', 'X499'])
+    expect(second.data.nextCursor).toBeUndefined()
+    expect((await call('transcribe', { lines: ['L1'], filter: 'all' })).error).toBe('Invalid arguments: pass lines or filter, not both.')
+  })
+})
+
+describe('translation tools', () => {
+  it('builds translation context with neighbours, budget, terms and memory', async () => {
+    const { call, repo } = setup()
+    const p = repo!.projectForMain()
+    p.cues[0].sourceText = 'Welcome back, pioneer.'
+    p.cues[5].sourceText = 'Welcome back pioneer!'
+    p.cues[5].referenceDuration = 2
+    p.terms = [{ term: 'pioneer', translation: 'піонер' }]
+    p.languages = { source: 'en', target: 'uk' }
+    const { data } = await call('translate_context', { lines: ['L6'] })
+    expect(data).toMatchObject({ total: 1, languages: { source: 'en', target: 'uk' }, pronunciationRules: '' })
+    const [line] = data.lines as Record<string, unknown>[]
+    expect(line).toMatchObject({
+      key: 'L6', character: 'Ada', duration: 2, charsPerSecond: 14, budget: 28,
+      terms: [{ term: 'pioneer', translation: 'піонер' }],
+      memory: [{ key: 'L1', sourceText: 'Welcome back, pioneer.', text: 'Hello there', score: 1 }],
+    })
+    expect((line.neighbours as { key: string }[]).map((n) => n.key)).toEqual(['DUP', 'DUP'])
+    const paged = await call('translate_context', { filter: 'all', limit: 4 })
+    expect((paged.data.lines as unknown[]).length).toBe(4)
+    expect(paged.data.nextCursor).toBe('4')
+  })
+
+  it('stores suggestions in one step and applies text only to empty lines', async () => {
+    const { call, repo, emitted } = setup()
+    const { data } = await call('translations_suggest', {
+      items: [{ line: 'L1', text: 'Hi' }, { line: 'L6', text: 'Fresh' }, { line: 'L1', text: 'Again' }, { line: 'nope', text: 'x' }, { line: 'L3', text: 'Voiced line' }],
+      apply: true,
+    })
+    expect(data.outcomes).toEqual([
+      { line: 'L1', outcome: 'suggested' },
+      { line: 'L6', outcome: 'applied' },
+      { line: 'L1', outcome: 'error', reason: 'this line appears twice in items' },
+      { line: 'nope', outcome: 'error', reason: 'No line has key or id "nope"; call lines to list them' },
+      { line: 'L3', outcome: 'unchanged' },
+    ])
+    const cues = repo!.projectForMain().cues
+    expect(cues[0]).toMatchObject({ text: 'Hello there', suggestedText: 'Hi' })
+    expect(cues[5]).toMatchObject({ text: 'Fresh', status: 'translated' })
+    expect(cues[5].suggestedText).toBeUndefined()
+    expect(emitted).toHaveLength(2)
+    await call('translations_suggest', { items: [{ line: 'L6', text: 'Other' }], apply: true })
+    expect(repo!.projectForMain().cues[5]).toMatchObject({ text: 'Fresh', suggestedText: 'Other' })
+  })
+})
+
+describe('glossary and rules', () => {
+  it('upserts, lists and removes terms through terms.set', async () => {
+    const { call, repo, emitted } = setup()
+    await call('glossary', { upsert: [{ term: 'Pioneer', translation: 'піонер' }, { term: 'node', translation: 'вузол' }] })
+    const { data } = await call('glossary', { upsert: [{ term: ' pioneer ', translation: 'першопрохідець', note: 'rank' }] })
+    expect(data.terms).toEqual([{ term: 'pioneer', translation: 'першопрохідець', note: 'rank' }, { term: 'node', translation: 'вузол' }])
+    expect(emitted[1].changes.terms).toEqual(data.terms)
+    expect((await call('glossary', { list: true })).data.terms).toEqual(data.terms)
+    await call('glossary', { remove: ['PIONEER', 'node'] })
+    expect(repo!.projectForMain().terms).toBeUndefined()
+    expect((await call('glossary', { list: true, remove: ['x'] })).error).toBe('Invalid arguments: pass exactly one of list, upsert or remove.')
+  })
+
+  it('checks translated lines for missing glossary translations', async () => {
+    const { call, repo } = setup()
+    const cues = repo!.projectForMain().cues
+    cues[0].sourceText = 'The pioneers arrive'
+    cues[1].sourceText = 'A pioneer'
+    cues[1].text = 'Піонер тут'
+    cues[5].sourceText = 'pioneer'
+    repo!.projectForMain().terms = [{ term: 'pioneer', translation: 'піонер' }]
+    const { data } = await call('glossary_check', {})
+    expect(data).toEqual({
+      total: 1,
+      issues: [{ line: 'L1', sourceText: 'The pioneers arrive', text: 'Hello there', missing: [{ term: 'pioneer', translation: 'піонер' }] }],
+    })
+  })
+
+  it('reads and replaces pronunciation rules', async () => {
+    const { call, repo } = setup()
+    expect((await call('rules', { get: true })).data).toEqual({ rules: '' })
+    expect((await call('rules', { set: 'GIF = jif' })).data).toEqual({ rules: 'GIF = jif' })
+    expect(repo!.projectForMain().pronunciationRules).toBe('GIF = jif')
   })
 })

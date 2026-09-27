@@ -1,15 +1,27 @@
 import { randomUUID } from 'crypto'
 import path from 'path'
 import { z } from 'zod/v4'
-import type { ProjectVersion } from '@shared/domain'
-import { resolveVoiceSettings } from '@shared/domain'
+import type { Cue, ProjectVersion } from '@shared/domain'
+import { resolveVoiceSettings, TERM_TEXT_MAX, TERMS_MAX } from '@shared/domain'
 import { clampVoiceSettings } from '@shared/generation'
 import { LINE_TEXT_MAX } from '@shared/lines'
-import { defineTool, issueText, type McpTool, type ToolAnnotations, type ToolOutput } from '@shared/mcp'
-import { audioWithinRoots, type CommandResult, type ProjectCommand } from '@shared/project-commands'
+import { defineTool, errorText, issueText, type McpTool, type ToolAnnotations, type ToolOutput } from '@shared/mcp'
+import { audioWithinRoots, type CommandResult, type FieldStep, type ProjectCommand } from '@shared/project-commands'
 import type { ProjectSummary } from '@shared/project-summary'
-import type { TemplateIssue } from '@shared/ipc'
+import type {
+  AudioImportResult,
+  ReimportResult,
+  TableImportResult,
+  TablePreview,
+  TableRequest,
+  TemplateIssue,
+} from '@shared/ipc'
+import type { MatchRule } from '@shared/domain'
+import { DEFAULT_MATCH_RULE, TABLE_COLUMNS_MAX } from '@shared/import-table'
+import { ALL_CHARACTERS, filterCues } from '@shared/cue-filter'
+import { glossaryIssues, removeTerms, translationContext, upsertTerms, type TextMatchReport } from '@shared/agent-text'
 import {
+  cursorOffset,
   findCharacter,
   findLine,
   LINE_FILTERS,
@@ -37,6 +49,11 @@ export interface AgentDeps {
   flushUi: () => Promise<void>
   emit: (result: CommandResult) => void
   audioRoots: () => string[]
+  importAudio: (req: { paths: string[]; rule: MatchRule }) => Promise<AudioImportResult>
+  previewTable: (req: TableRequest) => Promise<TablePreview>
+  importTable: (req: TableRequest) => Promise<TableImportResult>
+  reimportTemplate: (dir: string) => Promise<ReimportResult>
+  transcribe: (req: { cueIds: string[]; overwrite?: boolean }) => Promise<{ updated: number; skipped: number }>
   provider: () => VoiceProvider
   diagnostics: () => DiagnosticEntry[]
   screenshot: () => Promise<Buffer | null>
@@ -47,6 +64,7 @@ export const AGENT_INSTRUCTIONS = [
   'Call status first to see the open project and the line the user is on.',
   'Address lines by key, or by id when a key is ambiguous; lines paginates, so follow nextCursor.',
   'Nothing here deletes audio: takes stay on disk and a version named "Before agent" is saved before your first change to a project.',
+  'Text pipeline order: import (audio folder, subtitle table, template), then transcribe or a subtitle table matched by text, then translate_context, translations_suggest and glossary_check.',
   'Voice generation costs money and is not available through these tools yet.',
   'Use screenshot and diagnostics to check what the user sees.',
 ].join(' ')
@@ -62,7 +80,50 @@ const characterName = z.string().min(1).max(120)
 const modelId = z.string().min(1).max(120)
 const unit = z.number().min(0).max(1)
 
+const absolutePath = z.string().min(1).max(4096).refine((p) => path.isAbsolute(p), { message: 'must be an absolute path' })
+const columnIndex = z.number().int().min(0).max(TABLE_COLUMNS_MAX - 1)
+const pageCursor = z.string().max(20)
+const lineSelection = {
+  lines: z.array(lineRef).min(1).max(500).optional(),
+  filter: z.enum(LINE_FILTERS).optional(),
+}
+const oneSelection = (a: { lines?: unknown; filter?: unknown }): boolean => a.lines === undefined || a.filter === undefined
+const oneSelectionMessage = { message: 'pass lines or filter, not both' }
+const termRow = z.object({
+  term: z.string().min(1).max(TERM_TEXT_MAX),
+  translation: z.string().min(1).max(TERM_TEXT_MAX),
+  note: z.string().max(TERM_TEXT_MAX).optional(),
+})
+
+export const TRANSCRIBE_PAGE_MAX = 500
+export const CONTEXT_PAGE_MAX = 50
+export const REPORT_LIST_MAX = 100
+
+const exactlyOne = (values: unknown[]): boolean => values.filter((v) => v !== undefined).length === 1
+
 const structured = (value: Record<string, unknown>): ToolOutput => ({ structured: value })
+
+function selectLines(deps: AgentDeps, args: { lines?: string[]; filter?: string }): Cue[] {
+  const project = requireRepository(deps).projectForMain()
+  if (args.lines) return args.lines.map((ref) => findLine(project, ref))
+  return filterCues(project.cues, args.filter ?? 'all', '', ALL_CHARACTERS)
+}
+
+function textMatchView(report: TextMatchReport | undefined): Record<string, unknown> {
+  if (!report) return {}
+  return {
+    textMatch: {
+      matched: report.matched.length,
+      ambiguous: report.ambiguous.length,
+      unmatched: report.unmatched.length,
+      pairs: report.matched.slice(0, REPORT_LIST_MAX).map((m) => ({ row: m.index + 1, line: m.key, score: m.score })),
+      ambiguousRows: report.ambiguous.slice(0, REPORT_LIST_MAX).map((a) => ({ row: a.index + 1, candidates: a.candidates })),
+      unmatchedRows: report.unmatched.slice(0, REPORT_LIST_MAX).map((i) => i + 1),
+    },
+  }
+}
+
+const reason = (error: unknown): string => errorText(error).replace(/\.$/, '')
 
 function requireRepository(deps: AgentDeps): SerialProjectRepository {
   const repository = deps.repository()
@@ -382,6 +443,241 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           changed: (result.changes.cues ?? []).map((c) => c.key),
           ...(result.changes.removedCueIds ? { removed: result.changes.removedCueIds } : {}),
         })
+      },
+    }),
+    defineTool({
+      name: 'import',
+      title: 'Import',
+      description:
+        'Pass exactly one key. audio: files or folders (nested folders keep their relative folder in the line field "path", used by the {Path} export name token). table: CSV/TSV/XLSX; preview (default true) shows headers, detected mapping and the outcome without changes; matchBy "text" matches rows to existing lines by similarity of the mapped original text column instead of the key and never creates lines. templateReimport: a template folder.',
+      input: z
+        .object({
+          audio: z.object({ paths: z.array(absolutePath).min(1).max(200), rule: z.enum(['id', 'exportName', 'tableId']).optional() }).optional(),
+          table: z
+            .object({
+              path: absolutePath,
+              mapping: z
+                .object({ id: columnIndex, text: columnIndex, translation: columnIndex, character: columnIndex })
+                .partial()
+                .optional(),
+              matchBy: z.enum(['key', 'text']).optional(),
+              replaceTranslations: z.boolean().optional(),
+              keepOriginal: z.boolean().optional(),
+              preview: z.boolean().optional(),
+            })
+            .optional(),
+          templateReimport: absolutePath.optional(),
+        })
+        .refine((a) => exactlyOne([a.audio, a.table, a.templateReimport]), {
+          message: 'pass exactly one of audio, table or templateReimport',
+        }),
+      annotations: DESTRUCTIVE,
+      async run(_ctx, args) {
+        requireRepository(deps)
+        await deps.flushUi()
+        if (args.audio) {
+          return structured({ ...(await deps.importAudio({ paths: args.audio.paths, rule: args.audio.rule ?? DEFAULT_MATCH_RULE })) })
+        }
+        if (args.templateReimport !== undefined) return structured({ ...(await deps.reimportTemplate(args.templateReimport)) })
+        const table = args.table
+        if (!table) throw new Error('pass exactly one of audio, table or templateReimport.')
+        const req: TableRequest = {
+          path: table.path,
+          rule: DEFAULT_MATCH_RULE,
+          ...(table.mapping ? { mapping: table.mapping } : {}),
+          ...(table.matchBy ? { matchBy: table.matchBy } : {}),
+          ...(table.replaceTranslations === undefined ? {} : { replaceTranslations: table.replaceTranslations }),
+          ...(table.keepOriginal === undefined ? {} : { keepOriginal: table.keepOriginal }),
+        }
+        if (table.preview === false) {
+          const done = await deps.importTable(req)
+          return structured({ applied: true, rows: done.rows, mapping: done.mapping, summary: done.summary, ...textMatchView(done.textMatch) })
+        }
+        const preview = await deps.previewTable(req)
+        return structured({
+          preview: true,
+          total: preview.total,
+          headers: preview.headers,
+          mapping: preview.mapping,
+          firstRows: preview.rows.slice(0, 5),
+          summary: preview.summary,
+          ...textMatchView(preview.textMatch),
+        })
+      },
+    }),
+    defineTool({
+      name: 'transcribe',
+      title: 'Transcribe',
+      description: `Speech-to-text of each line's original audio into its original text, one line at a time, at most ${TRANSCRIBE_PAGE_MAX} per call; follow nextCursor. Lines that already have original text are left alone unless overwrite. Uses the voice provider and may cost money.`,
+      input: z
+        .object({ ...lineSelection, overwrite: z.boolean().optional(), cursor: pageCursor.optional() })
+        .refine(oneSelection, oneSelectionMessage),
+      annotations: { ...DESTRUCTIVE, openWorldHint: true },
+      async run(ctx, args) {
+        const selected = selectLines(deps, args)
+        const overwrite = args.overwrite === true
+        const explicit = args.lines !== undefined
+        const updated: string[] = []
+        const skipped: { line: string; reason: string }[] = []
+        const failed: { line: string; reason: string }[] = []
+        let at = cursorOffset(args.cursor, selected.length)
+        let work = 0
+        for (; at < selected.length && work < TRANSCRIBE_PAGE_MAX; at++) {
+          if (ctx.signal.aborted) break
+          const cue = selected[at]
+          const why = !cue.referenceAudio ? 'no original audio' : !overwrite && cue.sourceText.trim() ? 'already has original text; pass overwrite' : null
+          if (why) {
+            if (explicit) skipped.push({ line: cue.key, reason: why })
+            continue
+          }
+          work++
+          try {
+            const done = await deps.transcribe({ cueIds: [cue.id], overwrite })
+            if (done.updated > 0) updated.push(cue.key)
+            else skipped.push({ line: cue.key, reason: 'the transcript came back empty' })
+          } catch (error) {
+            failed.push({ line: cue.key, reason: reason(error) })
+          }
+          ctx.progress(work, undefined, cue.key)
+        }
+        return structured({ updated, skipped, failed, ...(at < selected.length ? { nextCursor: String(at) } : {}) })
+      },
+    }),
+    defineTool({
+      name: 'translate_context',
+      title: 'Translation context',
+      description: `Everything needed to translate lines, at most ${CONTEXT_PAGE_MAX} per page: character, original and current text, pending suggestion, two neighbours each side, original duration, speaking rate and length budget in characters, matching glossary terms and the most similar already translated lines. Also project languages and pronunciation rules.`,
+      input: z
+        .object({ ...lineSelection, cursor: pageCursor.optional(), limit: z.number().int().min(1).max(CONTEXT_PAGE_MAX).optional() })
+        .refine(oneSelection, oneSelectionMessage),
+      annotations: READ,
+      async run(_ctx, args) {
+        const project = requireRepository(deps).projectForMain()
+        const selected = selectLines(deps, args)
+        const start = cursorOffset(args.cursor, selected.length)
+        const next = start + (args.limit ?? 20)
+        return structured({
+          total: selected.length,
+          languages: project.languages ?? null,
+          pronunciationRules: project.pronunciationRules,
+          lines: translationContext(project, selected.slice(start, next)),
+          ...(next < selected.length ? { nextCursor: String(next) } : {}),
+        })
+      },
+    }),
+    defineTool({
+      name: 'translations_suggest',
+      title: 'Suggest translations',
+      description:
+        'Store translations as pending suggestions the user accepts or rejects in the app. With apply, lines whose text is empty get the translation as their text directly; lines with text always get a suggestion.',
+      input: z.object({
+        items: z.array(z.object({ line: lineRef, text: lineText.min(1) })).min(1).max(500),
+        apply: z.boolean().optional(),
+      }),
+      annotations: WRITE,
+      async run(_ctx, args) {
+        const project = requireRepository(deps).projectForMain()
+        const outcomes: { line: string; outcome: string; reason?: string }[] = []
+        const steps: FieldStep[] = []
+        const texts: { cue: Cue; text: string; was: string; outcome: { outcome: string; reason?: string } }[] = []
+        const seen = new Set<string>()
+        for (const item of args.items) {
+          let cue: Cue
+          try {
+            cue = findLine(project, item.line)
+          } catch (error) {
+            outcomes.push({ line: item.line, outcome: 'error', reason: reason(error) })
+            continue
+          }
+          if (seen.has(cue.id)) {
+            outcomes.push({ line: cue.key, outcome: 'error', reason: 'this line appears twice in items' })
+            continue
+          }
+          seen.add(cue.id)
+          const pending = cue.suggestedText ?? null
+          if (args.apply === true && !cue.text.trim()) {
+            const outcome = { line: cue.key, outcome: 'applied' }
+            texts.push({ cue, text: item.text, was: cue.text, outcome })
+            if (pending !== null) steps.push({ cueId: cue.id, from: { suggestedText: pending }, to: { suggestedText: null } })
+            outcomes.push(outcome)
+          } else if (item.text === cue.text || item.text === pending) {
+            outcomes.push({ line: cue.key, outcome: 'unchanged' })
+          } else {
+            steps.push({ cueId: cue.id, from: { suggestedText: pending }, to: { suggestedText: item.text } })
+            outcomes.push({ line: cue.key, outcome: 'suggested' })
+          }
+        }
+        if (steps.length > 0) {
+          await execute(deps, { type: 'table.step', remove: [], restore: [], fields: steps, addCharacters: [], dropCharacters: [] })
+        }
+        for (const { cue, text, was, outcome } of texts) {
+          const result = await execute(deps, { type: 'cue.saveText', cueId: cue.id, text, ifText: was })
+          if (result.changes.cues?.find((c) => c.id === cue.id)?.text !== text) {
+            Object.assign(outcome, { outcome: 'error', reason: 'the line text changed meanwhile; read it again and retry' })
+          }
+        }
+        return structured({ outcomes })
+      },
+    }),
+    defineTool({
+      name: 'glossary',
+      title: 'Glossary',
+      description: 'List, add or replace (matched by term, case-insensitive), or remove project glossary terms. Pass exactly one key.',
+      input: z
+        .object({
+          list: z.literal(true).optional(),
+          upsert: z.array(termRow).min(1).max(TERMS_MAX).optional(),
+          remove: z.array(z.string().min(1).max(TERM_TEXT_MAX)).min(1).max(TERMS_MAX).optional(),
+        })
+        .refine((a) => exactlyOne([a.list, a.upsert, a.remove]), { message: 'pass exactly one of list, upsert or remove' }),
+      annotations: DESTRUCTIVE,
+      async run(_ctx, args) {
+        const current = requireRepository(deps).projectForMain().terms ?? []
+        if (args.list) return structured({ terms: current })
+        const terms = args.upsert ? upsertTerms(current, args.upsert) : removeTerms(current, args.remove ?? [])
+        if (terms.length > TERMS_MAX) throw new Error(`The glossary would exceed ${TERMS_MAX} terms; remove some first.`)
+        await execute(deps, { type: 'terms.set', terms })
+        return structured({ terms: requireRepository(deps).projectForMain().terms ?? [] })
+      },
+    }),
+    defineTool({
+      name: 'glossary_check',
+      title: 'Glossary check',
+      description: 'Translated lines whose original text contains a glossary term while the text lacks its translation. Lines with empty text are not checked.',
+      input: z.object({
+        filter: z.enum(LINE_FILTERS).optional(),
+        cursor: pageCursor.optional(),
+        limit: z.number().int().min(1).max(LINES_PAGE_MAX).optional(),
+      }),
+      annotations: READ,
+      async run(_ctx, args) {
+        const project = requireRepository(deps).projectForMain()
+        const issues = glossaryIssues(project.terms ?? [], filterCues(project.cues, args.filter ?? 'all', '', ALL_CHARACTERS))
+        const start = cursorOffset(args.cursor, issues.length)
+        const next = start + (args.limit ?? 50)
+        return structured({
+          total: issues.length,
+          issues: issues.slice(start, next).map(({ cue, missing }) => ({
+            line: cue.key,
+            sourceText: cue.sourceText,
+            text: cue.text,
+            missing: missing.map((t) => ({ term: t.term, translation: t.translation })),
+          })),
+          ...(next < issues.length ? { nextCursor: String(next) } : {}),
+        })
+      },
+    }),
+    defineTool({
+      name: 'rules',
+      title: 'Pronunciation rules',
+      description: 'Read or replace the project pronunciation rules text applied before voice generation. Pass exactly one key.',
+      input: z
+        .object({ get: z.literal(true).optional(), set: z.string().max(100_000).optional() })
+        .refine((a) => exactlyOne([a.get, a.set]), { message: 'pass exactly one of get or set' }),
+      annotations: { ...DESTRUCTIVE, idempotentHint: true },
+      async run(_ctx, args) {
+        if (args.set !== undefined) await execute(deps, { type: 'rules.set', text: args.set })
+        return structured({ rules: requireRepository(deps).projectForMain().pronunciationRules })
       },
     }),
     defineTool({

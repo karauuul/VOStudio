@@ -10,7 +10,8 @@ import type {
   UiSessionState,
 } from './domain'
 import type { ProviderModel } from './provider-models'
-import type { TableMapping, TableSummary, TableUndo } from './import-table'
+import type { TableMapping, TableMatchBy, TableSummary, TableUndo } from './import-table'
+import type { TextMatchReport } from './agent-text'
 import type { CompClipPlan, CompPlan, ExportFormat } from './export-plan'
 import type { LoudnessTarget } from './export-settings'
 import type { ExportedLines } from './readiness'
@@ -216,6 +217,7 @@ export interface AudioImportResult {
   updated: number
   files: number
   unmatched?: number
+  duplicates?: string[]
 }
 
 export interface TableRequest {
@@ -224,6 +226,7 @@ export interface TableRequest {
   mapping?: TableMapping
   replaceTranslations?: boolean
   keepOriginal?: boolean
+  matchBy?: TableMatchBy
 }
 
 export interface TablePreview {
@@ -235,6 +238,7 @@ export interface TablePreview {
   total: number
   mapping: TableMapping
   summary: TableSummary
+  textMatch?: TextMatchReport
 }
 
 export interface TableImportResult {
@@ -244,6 +248,7 @@ export interface TableImportResult {
   rows: number
   summary: TableSummary
   undo: TableUndo
+  textMatch?: TextMatchReport
 }
 
 export interface DetectResult {
