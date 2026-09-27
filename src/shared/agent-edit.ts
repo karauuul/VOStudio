@@ -393,15 +393,19 @@ export interface AlignPlan {
   comp: CueComp
 }
 
+type Side = 'start' | 'end'
+
 interface Anchor {
   clip: string
   src: number
+  side: Side
 }
 
-function anchorIn(clips: readonly CompClip[], t: number): Anchor | null {
-  const clip = clips.find((c) => c.start - EDGE <= t && t <= clipEnd(c) + EDGE)
+function anchorIn(clips: readonly CompClip[], t: number, side: Side): Anchor | null {
+  const hits = clips.filter((c) => c.start - EDGE <= t && t <= clipEnd(c) + EDGE)
+  const clip = hits.find((c) => (side === 'start' ? t < clipEnd(c) - EDGE : t > c.start + EDGE)) ?? hits[0]
   if (!clip) return null
-  return { clip: clip.id, src: clip.srcIn + (Math.min(Math.max(t, clip.start), clipEnd(clip)) - clip.start) * clipSpeed(clip.edits) }
+  return { clip: clip.id, src: clip.srcIn + (Math.min(Math.max(t, clip.start), clipEnd(clip)) - clip.start) * clipSpeed(clip.edits), side }
 }
 
 export const ALIGN_ONE_VOICE = 'align needs one audible voice track; mute the others or edit manually'
@@ -452,8 +456,10 @@ export function planAlignment(input: AlignInput): AlignPlan {
     if (prev?.sourceTakeId === c.sourceTakeId && Math.abs(prev.srcOut - c.srcIn) < 1e-6) origin.set(c.id, root(prev.id))
   })
   const locate = (at: CueComp, anchor: Anchor | null): { t: number; clip: CompClip } | null => {
-    const clip = anchor && track !== undefined ? trackClips(at, track).find((c) => root(c.id) === root(anchor.clip) && c.srcIn - 1e-6 <= anchor.src && anchor.src <= c.srcOut + 1e-6) : undefined
-    return anchor && clip ? { t: clip.start + (anchor.src - clip.srcIn) / clipSpeed(clip.edits), clip } : null
+    if (!anchor || track === undefined) return null
+    const hits = trackClips(at, track).filter((c) => root(c.id) === root(anchor.clip) && c.srcIn - 1e-6 <= anchor.src && anchor.src <= c.srcOut + 1e-6)
+    const clip = hits.find((c) => (anchor.side === 'start' ? anchor.src < c.srcOut - 1e-6 : anchor.src > c.srcIn + 1e-6)) ?? hits[0]
+    return clip ? { t: clip.start + (anchor.src - clip.srcIn) / clipSpeed(clip.edits), clip } : null
   }
   const run = (op: EditOp): void => {
     const cutAt = op.op === 'cut' ? op.range?.end : op.op === 'split' || op.op === 'gap' ? op.at : undefined
@@ -470,13 +476,13 @@ export function planAlignment(input: AlignInput): AlignPlan {
     const target = { start: r3(o.start), duration: r3(o.end - o.start) }
     const entry: AlignPhrase = { dub: [a + 1, b + 1], original: [pair.original[0] + 1, pair.original[1] + 1], target, before: { start: r3(d.start), duration: r3(d.end - d.start) } }
     phrases.push(entry)
-    const startAnchor = anchorIn(voice, d.start + from)
-    const endAnchor = anchorIn(voice, d.end + from)
+    const startAnchor = anchorIn(voice, d.start + from, 'start')
+    const endAnchor = anchorIn(voice, d.end + from, 'end')
     const leftAt = a > 0 ? (dub[a - 1].end + d.start) / 2 : Math.max(0, d.start - ALIGN_PAD)
     const rightAt = b + 1 < dub.length ? (d.end + dub[b + 1].start) / 2 : d.end + ALIGN_PAD
-    const left = anchorIn(voice, leftAt + from)
-    const right = anchorIn(voice, rightAt + from)
-    const prevEnd = a > 0 ? anchorIn(voice, dub[a - 1].end + from) : null
+    const left = anchorIn(voice, leftAt + from, 'end')
+    const right = anchorIn(voice, rightAt + from, 'end')
+    const prevEnd = a > 0 ? anchorIn(voice, dub[a - 1].end + from, 'end') : null
     const first = locate(comp, startAnchor)
     if (!first || !locate(comp, endAnchor) || track === undefined) {
       entry.note = 'this phrase is not on a timeline clip'

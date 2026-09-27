@@ -1137,6 +1137,21 @@ describe('timeline, edit, effects and align', () => {
     expect(repo!.projectForMain().cues[2].takes).toEqual(takes)
   })
 
+  it('reports an applied alignment as applied when the fresh compare fails', async () => {
+    const { repo, deps, call } = await placed()
+    const render = deps.renderLine
+    deps.renderLine = vi.fn(async (...args: Parameters<typeof render>) => {
+      if (vi.mocked(deps.renderLine).mock.calls.length > 2) throw new Error('Render failed')
+      return render(...args)
+    })
+    const revision = repo!.currentRevision()
+    const { data, error } = await call('align', { line: 'L3', apply: true })
+    expect(error).toBeUndefined()
+    expect(data).toMatchObject({ applied: true, after: { error: 'Render failed' } })
+    expect(repo!.currentRevision()).toBe(revision + 1)
+    expect((repo!.projectForMain().cues[2].comp?.clips ?? []).map((c) => c.edits.timeStretch ?? 1)).toEqual([1.2, 1])
+  })
+
   it('refuses to apply an alignment planned against a timeline that changed meanwhile', async () => {
     const { repo, deps, call } = await placed()
     const analyze = deps.analyzeAudio

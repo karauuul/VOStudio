@@ -1858,7 +1858,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
     defineTool({
       name: 'effects',
       title: 'Effects',
-      description: `Set the effect stack of a clip, a track or a take (source effects apply to every clip of that take and mark the line's voiced output as changed), exactly like the Properties panel. chain replaces the stack: one entry per kind (${EFFECT_KINDS.join(', ')}; tracks take no pitch) with params merged over the defaults and clamped to their ranges; the processing order is fixed. preset replaces it with ${EFFECT_PRESET_NAMES.join(', ')} (clean removes every effect). bypass true or false switches the resulting stack off or on without removing it. list returns the stacks of the line and the preset catalogue.`,
+      description: `Set the effect stack of a clip, a track or a take (source effects apply to every clip of that take and mark the voiced output of every line using it as changed), exactly like the Properties panel. chain replaces the stack: one entry per kind (${EFFECT_KINDS.join(', ')}; tracks take no pitch) with params merged over the defaults and clamped to their ranges; the processing order is fixed. preset replaces it with ${EFFECT_PRESET_NAMES.join(', ')} (clean removes every effect). bypass true or false switches the resulting stack off or on without removing it. list returns the stacks of the line and the preset catalogue.`,
       input: z
         .object({
           line: lineRef,
@@ -1958,8 +1958,11 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           requireRevision(compared.revision, repository.currentRevision())
           return applyEditOps(requireComp(current, currentCue), plan.ops, takeLookup(current, currentCue)).comp
         })
-        const after = await compareCue(pinned, findLine(repository.projectForMain(), cue.id))
-        return structured({ ...view, applied: true, after: scores(after.comparison) })
+        const after = await compareCue(pinned, findLine(repository.projectForMain(), cue.id)).then(
+          (fresh) => scores(fresh.comparison),
+          (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) })
+        )
+        return structured({ ...view, applied: true, after })
       },
     }),
     defineTool({

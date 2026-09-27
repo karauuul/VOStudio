@@ -305,6 +305,14 @@ describe('align planning', () => {
     expect(layout(applyEditOps(twice, plan.ops, takeOf).comp)).toEqual(layout(plan.comp))
   })
 
+  it('anchors a phrase starting exactly at a seam to the clip that begins there', () => {
+    const seam = (): CueComp => ({ clips: [clip('a', 0, 0, 0.75), clip('b', 0.75, 0.8, 2)] })
+    const plan = planAlignment({ comp: seam(), takeOf, from: 0, dub: [{ start: 0.75, end: 1.15 }], original: [{ start: 0.65, end: 1.05 }], pairs: [pairs[0]] })
+    expect(layout(plan.comp)).toEqual([[0, 0, 0.62, 0.62], [0.65, 0.8, 2, 1.85]])
+    expect(plan.phrases[0].after).toEqual({ start: 0.65, duration: 0.4 })
+    expect(layout(applyEditOps(seam(), plan.ops, takeOf).comp)).toEqual(layout(plan.comp))
+  })
+
   it('fits a phrase spanning two clips without scaling the pause between them', () => {
     const plan = planAlignment({ comp: split(), takeOf, from: 0, dub: [{ start: 0.8, end: 2.0 }], original: [{ start: 0.8, end: 2.3 }], pairs: [pairs[0]] })
     expect(plan.phrases[0].speed).toEqual([0.77, 0.77])

@@ -38,7 +38,7 @@ import {
   type Term,
   type VoiceSettings,
 } from './domain'
-import { referencedByOtherComp, resolveTake, type TakeLookup } from './library'
+import { compsUsingTake, referencedByOtherComp, resolveTake, type TakeLookup } from './library'
 import { sanitizeExportSettings, type ExportSettings } from './export-settings'
 import { mixesOriginal } from './export-plan'
 import { newLineCue, nextLineNumber } from './lines'
@@ -585,7 +585,15 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
         take.edits = edits
       }
       Object.assign(cue, invalidateVoicedOutput(cue, project))
-      break
+      const others: Cue[] = []
+      for (const other of compsUsingTake(project, take.id)) {
+        if (other.id === cue.id) continue
+        const next = invalidateVoicedOutput(other, project)
+        if (next === other) continue
+        Object.assign(other, next)
+        others.push(structuredClone(other))
+      }
+      return { cues: [structuredClone(cue), ...others] }
     }
     case 'cue.setRegion': {
       if (command.region === null) {
