@@ -22,7 +22,7 @@ import {
   type DetectedRegion,
 } from '@shared/sources'
 import { ffmpegStderr, probeMedia, runFfmpeg } from './ffmpeg'
-import { sttWords } from './providers/elevenlabs'
+import { voiceProvider } from './providers/voice-provider'
 
 const VIDEO_EXT = new Set(['.mp4', '.mov', '.mkv'])
 const MEDIA_EXT = new Set([...VIDEO_EXT, '.m4a'])
@@ -114,7 +114,7 @@ async function silenceRegions(source: ProjectSource): Promise<DetectedRegion[]> 
 
 async function speechRegions(source: ProjectSource): Promise<DetectedRegion[]> {
   const audio = await fs.readFile(source.file.relPath)
-  return transcriptRegions(await sttWords({ audio, filename: `${source.id}.wav` }))
+  return transcriptRegions(await voiceProvider().sttWords({ audio, filename: `${source.id}.wav` }))
 }
 
 function speakerCharacters(project: Project, regions: DetectedRegion[]): Character[] {

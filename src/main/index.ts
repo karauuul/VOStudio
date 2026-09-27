@@ -31,8 +31,8 @@ import {
 } from './schemas'
 import { emit } from './emit'
 import * as store from './project-store'
-import * as eleven from './providers/elevenlabs'
-import { setApiKey, hasApiKey } from './secrets'
+import { voiceProvider } from './providers/voice-provider'
+import { setApiKey } from './secrets'
 import { runFfmpeg } from './ffmpeg'
 import { parseCsv } from '@shared/csv'
 import { applyRules } from '@shared/pronunciation'
@@ -308,7 +308,7 @@ async function publish(
 }
 
 function pushUsage(): void {
-  void eleven
+  void voiceProvider()
     .usage()
     .then((u) => emit('usage:updated', u))
     .catch(() => undefined)
@@ -748,7 +748,7 @@ function registerHandlers(): void {
     const project = requireProject()
     const cue = project.cues.find((c) => c.id === id)
     if (!cue) throw new Error('Cue not found')
-    const isolated = await eleven.audioIsolation({ audio: bytes, filename: `${id}.wav` })
+    const isolated = await voiceProvider().audioIsolation({ audio: bytes, filename: `${id}.wav` })
     pushUsage()
     return isolated.buffer.slice(
       isolated.byteOffset,
@@ -782,7 +782,8 @@ function registerHandlers(): void {
     const mode = project.provider?.tts
     const projectModel = mode?.model ?? character.provider.ttsModel
     const model = parsed.model ?? projectModel
-    const { audio, words } = await eleven.ttsWithTimestamps({
+    const provider = voiceProvider()
+    const { audio, words } = await provider.ttsWithTimestamps({
       text: processed,
       voiceId,
       model,
@@ -805,7 +806,7 @@ function registerHandlers(): void {
           createdAt: new Date().toISOString(),
           file: { fileId: `${target.id}/${fileName}`, relPath: abs, format: 'mp3' },
           duration: 0,
-          meta: { text: processed, voiceSettings: parsed.voiceSettings, provider: 'elevenlabs', model },
+          meta: { text: processed, voiceSettings: parsed.voiceSettings, provider: provider.id, model },
           edits: emptyEdits(),
           ...(words ? { words } : {}),
           ...(parsed.fragment ? { fragment: true as const } : {}),
@@ -844,7 +845,8 @@ function registerHandlers(): void {
     const audio = await fs.readFile(source.file.relPath)
     const model = project.provider?.sts?.model ?? character.provider.stsModel
     const voiceId = character.provider.voiceId
-    const mp3 = await eleven.sts({
+    const provider = voiceProvider()
+    const mp3 = await provider.sts({
       audio,
       filename: path.basename(source.file.relPath),
       voiceId,
@@ -870,7 +872,7 @@ function registerHandlers(): void {
             text: target.text,
             voiceSettings: parsed.voiceSettings,
             sourceTakeId: source.id,
-            provider: 'elevenlabs',
+            provider: provider.id,
             model,
           },
           edits: emptyEdits(),
@@ -891,7 +893,7 @@ function registerHandlers(): void {
         requireRepository(),
         parsed.cueIds,
         parsed.overwrite === true,
-        async (ref) => eleven.stt({ audio: await fs.readFile(ref.relPath), filename: path.basename(ref.relPath) }),
+        async (ref) => voiceProvider().stt({ audio: await fs.readFile(ref.relPath), filename: path.basename(ref.relPath) }),
         emitChange
       )
       pushUsage()
@@ -899,8 +901,8 @@ function registerHandlers(): void {
     })
   )
 
-  typedHandle('provider:voices', () => eleven.voices())
-  typedHandle('provider:models', () => eleven.models())
+  typedHandle('provider:voices', () => voiceProvider().voices())
+  typedHandle('provider:models', () => voiceProvider().models())
 
   typedHandle('provider:testVoice', async (characterId: string) => {
     const id = z.string().min(1).max(200).parse(characterId)
@@ -911,7 +913,7 @@ function registerHandlers(): void {
       throw new Error(`No voice configured for character "${character.name}"`)
     }
     return singleFlight(testVoiceInFlight, id, `Voice test already running for "${character.name}"`, async () => {
-      const audio = await eleven.tts({
+      const audio = await voiceProvider().tts({
         text: TEST_VOICE_TEXT,
         voiceId: character.provider.voiceId,
         model: character.provider.ttsModel,
@@ -922,9 +924,9 @@ function registerHandlers(): void {
     })
   })
 
-  typedHandle('provider:usage', () => eleven.usage())
+  typedHandle('provider:usage', () => voiceProvider().usage())
   typedHandle('provider:setApiKey', (k: string) => setApiKey(k))
-  typedHandle('provider:hasApiKey', () => hasApiKey())
+  typedHandle('provider:hasApiKey', () => voiceProvider().hasApiKey())
 
   typedHandle('migration:dryRun', () => migration.dryRun())
   typedHandle('migration:apply', async () => {
