@@ -38,6 +38,7 @@ export interface McpTool<I extends z.ZodType = z.ZodType> {
   description: string
   input: I
   annotations: ToolAnnotations
+  writes?: (args: z.output<I>) => boolean
   run(ctx: ToolContext, args: z.output<I>): Promise<ToolOutput>
 }
 
@@ -142,7 +143,8 @@ async function callTool(server: McpServer, session: McpSession, id: RpcId, param
     })
   }
   try {
-    if (!tool.annotations.readOnlyHint) await server.beforeWrite?.(session)
+    if (tool.writes ? tool.writes(parsed.data) : !tool.annotations.readOnlyHint) await server.beforeWrite?.(session)
+    if (controller.signal.aborted) return null
     const output = await tool.run({ session, signal: controller.signal, progress }, parsed.data)
     return controller.signal.aborted ? null : toolResult(output)
   } catch (error) {

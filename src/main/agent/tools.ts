@@ -356,6 +356,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         })
         .refine((a) => a.action !== 'restore' || a.n !== undefined, { message: 'restore needs n, a version number from list' }),
       annotations: DESTRUCTIVE,
+      writes: (args) => args.action !== 'list',
       async run(_ctx, args) {
         const repository = requireRepository(deps)
         if (args.action === 'save') {

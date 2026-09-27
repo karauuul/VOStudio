@@ -279,7 +279,7 @@ export interface TakeDurationUpdate {
   duration: number
 }
 
-export type BridgeAsk = { kind: 'flush' } | { kind: 'removable'; cueIds: string[] }
+export type BridgeAsk = { kind: 'flush' } | { kind: 'leave' } | { kind: 'removable'; cueIds: string[] }
 
 export type BridgeRequest = BridgeAsk & { id: string }
 
