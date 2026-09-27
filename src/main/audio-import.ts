@@ -135,9 +135,13 @@ export async function importPickedAudio(
   rule: MatchRule
 ): Promise<{ result: AudioImportResult; changes: ChangeSet }> {
   const referenceRoot = path.join(projectDir, 'audio', 'reference')
-  const unsafe = files.find((file) => safeRelPath(file.rel) !== file.rel || !isInsideDir(path.resolve(referenceRoot, referenceRel(file)), referenceRoot))
-  if (unsafe) throw new Error(`Audio path leaves the project: ${unsafe.rel}`)
-  const { update, create, duplicates } = matchAudioFiles(project.cues, files, rule)
+  const failed: NonNullable<AudioImportResult['failed']> = []
+  const contained = files.filter((file) => {
+    const inside = safeRelPath(file.rel) === file.rel && isInsideDir(path.resolve(referenceRoot, referenceRel(file)), referenceRoot)
+    if (!inside) failed.push({ name: file.rel, reason: 'unsafe file name' })
+    return inside
+  })
+  const { update, create, duplicates } = matchAudioFiles(project.cues, contained, rule)
   const attach = attachesOnly(project)
   const kept = [...update.map(({ file }) => file), ...(attach ? [] : create)]
 
@@ -145,7 +149,6 @@ export async function importPickedAudio(
     await fs.mkdir(dir, { recursive: true })
   }
 
-  const failed: string[] = []
   const probed = await mapLimited(kept, async (file) => {
     const abs = path.join(referenceRoot, referenceRel(file))
     if (takeFileKind(file.src) === 'transcode') {
@@ -153,7 +156,7 @@ export async function importPickedAudio(
         await transcodeToWav(file.src, abs)
       } catch {
         await fs.rm(abs, { force: true }).catch(() => undefined)
-        failed.push(file.rel)
+        failed.push({ name: file.rel, reason: 'could not be converted to wav' })
         return null
       }
     } else if (path.resolve(abs).toLowerCase() !== path.resolve(file.src).toLowerCase()) {

@@ -151,7 +151,7 @@ describe('audio assets of every audio format become lines', () => {
     expect(bark.origins).toEqual([{ assetId: added.find((a) => a.name === 'flacs/bark_001.flac')!.id }])
   })
 
-  it('refuses an asset whose name climbs out of the project and writes nothing', async () => {
+  it('skips and reports an asset whose name climbs out of the project and writes nothing', async () => {
     const target = path.join(H.root, 'VOStudio', 'crafted.vostudio')
     await fs.mkdir(target, { recursive: true })
     const src = path.join(DROP, 'vo', 'hit.wav')
@@ -159,7 +159,8 @@ describe('audio assets of every audio format become lines', () => {
       ...base(), id: 'p', schemaVersion: 1, createdAt: '',
       assets: [{ id: 'evil', name: '../../../../victim.wav', kind: 'audio', file: { fileId: 'hit.wav', relPath: src }, size: 1, addedAt: 'now' }],
     } as Project
-    await expect(assetAudioLines(project, target, ['evil'])).rejects.toThrow(/leaves the project/)
+    const { result } = await assetAudioLines(project, target, ['evil'])
+    expect(result).toEqual({ added: 0, updated: 0, files: 1, skipped: [{ asset: '../../../../victim.wav', reason: 'unsafe file name' }] })
     expect(project.cues).toEqual([])
     expect(await fs.readdir(target)).toEqual([])
     await expect(fs.stat(path.join(H.root, 'victim.wav'))).rejects.toThrow()

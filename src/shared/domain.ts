@@ -378,7 +378,7 @@ export interface ProjectAsset {
   rows?: number
 }
 
-const unsafeSegment = (part: string): boolean => /^[. ]*$/.test(part) || part.includes(':') || [...part].some((ch) => ch < ' ')
+const unsafeSegment = (part: string): boolean => /^[. ]*$/.test(part) || /^[a-z]:$/i.test(part) || [...part].some((ch) => ch < ' ')
 
 export const safeRelPath = (rel: string): string => rel.split(/[\\/]/).filter((part) => !unsafeSegment(part)).join('/')
 

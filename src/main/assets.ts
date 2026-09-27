@@ -212,5 +212,5 @@ export async function assetAudioLines(
   }
   const { result, changes } = await importPickedAudio(project, projectDir, files, DEFAULT_MATCH_RULE)
   const { failed = [], ...imported } = result
-  return { result: { ...imported, skipped: [...skipped, ...failed.map((name) => ({ asset: name, reason: 'could not be converted to wav' }))] }, changes }
+  return { result: { ...imported, skipped: [...skipped, ...failed.map(({ name, reason }) => ({ asset: name, reason }))] }, changes }
 }

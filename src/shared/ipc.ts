@@ -219,7 +219,7 @@ export interface AudioImportResult {
   files: number
   unmatched?: number
   duplicates?: string[]
-  failed?: string[]
+  failed?: { name: string; reason: string }[]
 }
 
 export interface AssetAddResult {

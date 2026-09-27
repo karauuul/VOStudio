@@ -107,7 +107,7 @@ export const ImportRoom = memo(function ImportRoom({
             (r.unmatched === undefined
               ? `${r.files} files · ${r.added} lines added, ${r.updated} updated`
               : `${r.files} files · ${r.updated} updated${r.unmatched > 0 ? ` · ${r.unmatched} unmatched` : ''}`) +
-              (r.failed ? ` · ${r.failed.length} unreadable` : '')
+              (r.failed ? ` · ${r.failed.length} skipped` : '')
           )
         }
       }

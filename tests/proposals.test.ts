@@ -187,6 +187,7 @@ describe('rule 2: the new fields', () => {
     expect(safeRelPath('C:\\a\\...\\x.wav')).toBe('a/x.wav')
     expect(safeRelPath('a/.. /b\u0001c/x.wav')).toBe('a/x.wav')
     expect(safeRelPath('..')).toBe('')
+    expect(safeRelPath('scene:1/take:2.wav')).toBe('scene:1/take:2.wav')
   })
 
   it('origins stay within the cap on write, keeping the newest and evicting the oldest', () => {

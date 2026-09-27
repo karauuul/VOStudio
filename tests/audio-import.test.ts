@@ -141,7 +141,7 @@ describe('importAudio of formats a line cannot keep', () => {
     const target = path.join(H.root, 'convert.vostudio')
     const p = project()
     const { result } = await importAudio(p, target, [dir], 'id')
-    expect(result).toEqual({ added: 2, updated: 0, files: 3, failed: ['convert/BROKEN.opus'] })
+    expect(result).toEqual({ added: 2, updated: 0, files: 3, failed: [{ name: 'convert/BROKEN.opus', reason: 'could not be converted to wav' }] })
     const flac = p.cues.find((c) => c.key === 'FLAC_LINE')!
     expect(flac.referenceAudio).toMatchObject({ format: 'wav', relPath: path.join(target, 'audio', 'reference', 'convert', 'FLAC_LINE.wav') })
     expect(flac.referenceDuration).toBeCloseTo(1, 1)
@@ -151,15 +151,38 @@ describe('importAudio of formats a line cannot keep', () => {
 })
 
 describe('importPickedAudio keeps every copy inside the reference folder', () => {
-  it.each(['../../escaped.wav', '/abs/escaped.wav', 'C:/escaped.wav', 'a\\..\\..\\escaped.wav', 'a/./escaped.wav'])('refuses %s before writing anything', async (rel) => {
+  it.each(['../../escaped.wav', '/abs/escaped.wav', 'C:/escaped.wav', 'a\\..\\..\\escaped.wav', 'a/./escaped.wav'])('skips and reports %s while the rest imports', async (rel) => {
     const target = path.join(H.root, 'jail', 'proj.vostudio')
+    await fs.rm(target, { recursive: true, force: true })
     await fs.mkdir(target, { recursive: true })
     const src = path.join(SRC, 'LINE_A.wav')
     const p = project()
-    await expect(importPickedAudio(p, target, [{ src, rel, dir: '', name: 'escaped', format: 'wav' }], 'id')).rejects.toThrow(/leaves the project/)
-    expect(p.cues).toEqual([])
+    const { result } = await importPickedAudio(
+      p,
+      target,
+      [
+        { src, rel, dir: '', name: 'escaped', format: 'wav' },
+        { src, rel: 'ok/LINE_A.wav', dir: '', name: 'LINE_A', format: 'wav' },
+      ],
+      'id'
+    )
+    expect(result).toEqual({ added: 1, updated: 0, files: 2, failed: [{ name: rel, reason: 'unsafe file name' }] })
+    expect(p.cues.map((c) => c.key)).toEqual(['LINE_A'])
     expect(await fs.readdir(path.join(H.root, 'jail'))).toEqual(['proj.vostudio'])
-    expect(await fs.readdir(target)).toEqual([])
+    expect(await fs.readdir(target)).toEqual(['audio'])
+    expect(await fs.readdir(path.join(target, 'audio', 'reference'))).toEqual(['ok'])
+  })
+
+  it('imports a file whose name holds a colon', async () => {
+    const dir = path.join(H.root, 'colon')
+    await fs.mkdir(dir, { recursive: true })
+    await fs.copyFile(path.join(SRC, 'LINE_A.wav'), path.join(dir, 'SCENE:1.wav'))
+    await fs.copyFile(path.join(SRC, 'LINE_B.wav'), path.join(dir, 'SCENE_2.wav'))
+    const target = path.join(H.root, 'colon.vostudio')
+    const p = project()
+    const { result } = await importAudio(p, target, [dir], 'id')
+    expect(result).toEqual({ added: 2, updated: 0, files: 2 })
+    expect(p.cues.find((c) => c.key === 'SCENE:1')?.referenceAudio?.relPath).toBe(path.join(target, 'audio', 'reference', 'colon', 'SCENE:1.wav'))
   })
 })
 
