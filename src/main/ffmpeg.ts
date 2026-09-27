@@ -1,5 +1,7 @@
 import { spawn } from 'child_process'
+import { promises as fs } from 'fs'
 import ffmpegStatic from 'ffmpeg-static'
+import { DECODE_BUDGET_BYTES } from '@shared/take-import'
 
 export function ffmpegPath(): string {
   const p = ffmpegStatic as unknown as string
@@ -40,6 +42,11 @@ export function ffmpegPcm(file: string, rate: number, seconds: number): Promise<
 
 export async function runFfmpeg(args: string[]): Promise<void> {
   await ffmpegStderr(args)
+}
+
+export async function transcodeToWav(src: string, abs: string): Promise<void> {
+  await runFfmpeg(['-i', src, '-vn', '-c:a', 'pcm_s16le', '-fs', String(DECODE_BUDGET_BYTES), abs])
+  if ((await fs.stat(abs)).size >= DECODE_BUDGET_BYTES) throw new Error('Converted audio is too large')
 }
 
 export function ffmpegInfo(file: string): Promise<string> {
@@ -126,6 +133,19 @@ export function parseProbe(stderr: string): MediaProbe {
     }
   }
   return out
+}
+
+const DECODED_TIME_RE = /time=(\d+):(\d+):(\d+(?:\.\d+)?)/g
+
+export function decodedSeconds(stderr: string): number | undefined {
+  const last = [...stderr.matchAll(DECODED_TIME_RE)].at(-1)
+  if (!last) return undefined
+  const seconds = Number(last[1]) * 3600 + Number(last[2]) * 60 + Number(last[3])
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined
+}
+
+export async function decodedDuration(file: string): Promise<number | undefined> {
+  return decodedSeconds(await ffmpegStderr(['-hide_banner', '-i', file, '-f', 'null', '-']))
 }
 
 export async function probeMedia(file: string): Promise<MediaProbe> {

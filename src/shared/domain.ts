@@ -12,6 +12,11 @@ const finiteOr = (v: unknown, fallback: number): number =>
 const nonEmptyString = (v: unknown): string | undefined =>
   typeof v === 'string' && v.trim() ? v : undefined
 
+export const ASSET_ROW_MAX = 10_000_000
+
+const rowOf = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= ASSET_ROW_MAX ? value : undefined
+
 export interface AudioRef {
   fileId: string
   relPath: string
@@ -353,6 +358,60 @@ export function sourceLabel(source: ProjectSource): string {
   return parts.join(' · ')
 }
 
+export type AssetKind = 'audio' | 'video' | 'table' | 'subtitles' | 'text' | 'data' | 'other'
+
+export const ASSET_KINDS: AssetKind[] = ['audio', 'video', 'table', 'subtitles', 'text', 'data', 'other']
+
+export interface AssetFile {
+  fileId: string
+  relPath: string
+}
+
+export interface ProjectAsset {
+  id: string
+  name: string
+  kind: AssetKind
+  file: AssetFile
+  size: number
+  addedAt: string
+  duration?: number
+  rows?: number
+}
+
+const unsafeSegment = (part: string): boolean => /^[. ]*$/.test(part) || /^[a-z]:$/i.test(part) || [...part].some((ch) => ch < ' ')
+
+export const safeRelPath = (rel: string): string => rel.split(/[\\/]/).filter((part) => !unsafeSegment(part)).join('/')
+
+export function sanitizeAssets(rows: unknown): ProjectAsset[] | undefined {
+  if (!Array.isArray(rows)) return undefined
+  const out: ProjectAsset[] = []
+  const seen = new Set<string>()
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as Partial<ProjectAsset>
+    const id = nonEmptyString(row.id)
+    const file = row.file && typeof row.file === 'object' ? row.file : undefined
+    const fileId = nonEmptyString(file?.fileId)
+    const relPath = nonEmptyString(file?.relPath)
+    const addedAt = nonEmptyString(row.addedAt)
+    if (!id || !fileId || !relPath || !addedAt || seen.has(id)) continue
+    seen.add(id)
+    const duration = finiteOr(row.duration, 0)
+    const count = rowOf(row.rows)
+    out.push({
+      id,
+      name: safeRelPath(nonEmptyString(row.name) ?? '') || id,
+      kind: ASSET_KINDS.includes(row.kind as AssetKind) ? (row.kind as AssetKind) : 'other',
+      file: { fileId, relPath },
+      size: Math.max(0, Math.round(finiteOr(row.size, 0))),
+      addedAt,
+      ...(duration > 0 ? { duration } : {}),
+      ...(count === undefined ? {} : { rows: count }),
+    })
+  }
+  return out.length > 0 ? out : undefined
+}
+
 export interface ProjectVersion {
   n: number
   name?: string
@@ -389,6 +448,84 @@ export interface CueApproval {
   approvedAt: string
 }
 
+export interface CharacterProposal {
+  characterId: string
+  confidence: number
+  reason: string
+}
+
+export interface LinkProposal {
+  assetId: string
+  row: number
+  confidence: number
+  reason: string
+}
+
+export interface CueProposals {
+  character?: CharacterProposal
+  link?: LinkProposal
+}
+
+export type ProposalKind = 'character' | 'link' | 'text'
+
+export interface CueOrigin {
+  assetId: string
+  row?: number
+}
+
+export const PROPOSAL_REASON_MAX = 500
+
+const confidenceOf = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? clampTo(value, 0, 1) : undefined
+
+const reasonOf = (value: unknown): string => (typeof value === 'string' ? value.trim().slice(0, PROPOSAL_REASON_MAX) : '')
+
+export function sanitizeCharacterProposal(value: unknown): CharacterProposal | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const row = value as Partial<CharacterProposal>
+  const characterId = nonEmptyString(row.characterId)
+  const confidence = confidenceOf(row.confidence)
+  if (!characterId || confidence === undefined) return undefined
+  return { characterId, confidence, reason: reasonOf(row.reason) }
+}
+
+export function sanitizeLinkProposal(value: unknown): LinkProposal | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Partial<LinkProposal>
+  const assetId = nonEmptyString(raw.assetId)
+  const row = rowOf(raw.row)
+  const confidence = confidenceOf(raw.confidence)
+  if (!assetId || row === undefined || confidence === undefined) return undefined
+  return { assetId, row, confidence, reason: reasonOf(raw.reason) }
+}
+
+export function sanitizeProposals(value: unknown): CueProposals | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Partial<CueProposals>
+  const character = sanitizeCharacterProposal(raw.character)
+  const link = sanitizeLinkProposal(raw.link)
+  if (!character && !link) return undefined
+  return { ...(character ? { character } : {}), ...(link ? { link } : {}) }
+}
+
+export const ORIGINS_MAX = 100
+
+export const withOrigin = (origins: CueOrigin[] | undefined, origin: CueOrigin): CueOrigin[] =>
+  [...(origins ?? []).filter((o) => o.assetId !== origin.assetId), origin].slice(-ORIGINS_MAX)
+
+export function sanitizeOrigins(rows: unknown): CueOrigin[] | undefined {
+  if (!Array.isArray(rows)) return undefined
+  let out: CueOrigin[] = []
+  for (const raw of rows.slice(-ORIGINS_MAX)) {
+    if (!raw || typeof raw !== 'object') continue
+    const assetId = nonEmptyString((raw as Partial<CueOrigin>).assetId)
+    if (!assetId) continue
+    const row = rowOf((raw as Partial<CueOrigin>).row)
+    out = withOrigin(out, row === undefined ? { assetId } : { assetId, row })
+  }
+  return out.length > 0 ? out : undefined
+}
+
 export interface Cue {
   id: string
   characterId: string
@@ -411,6 +548,8 @@ export interface Cue {
   textRevision?: number
   approval?: CueApproval | null
   voiceSettingsOverride?: Partial<VoiceSettings>
+  proposals?: CueProposals
+  origins?: CueOrigin[]
 }
 
 export interface Marker {
@@ -527,6 +666,7 @@ export interface Term {
   term: string
   translation: string
   note?: string
+  proposed?: true
 }
 
 export const TERMS_MAX = 10_000
@@ -542,7 +682,7 @@ export function sanitizeTerms(rows: unknown): Term[] | undefined {
     const translation = typeof row.translation === 'string' ? row.translation.trim() : ''
     if (!term || !translation) continue
     const note = typeof row.note === 'string' ? row.note.trim() : ''
-    out.push(note ? { term, translation, note } : { term, translation })
+    out.push({ term, translation, ...(note ? { note } : {}), ...(row.proposed === true ? { proposed: true as const } : {}) })
   }
   return out.length > 0 ? out : undefined
 }
@@ -614,6 +754,7 @@ export interface Project {
   cues: Cue[]
   sessions: Session[]
   sources?: ProjectSource[]
+  assets?: ProjectAsset[]
   versions?: ProjectVersion[]
   pronunciationRules: string
   csvBinding?: CsvBinding
@@ -707,6 +848,25 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   style: 0,
   speed: 1,
   boost: true,
+}
+
+export const blankCharacter = (id: string, name: string, index: number): Character => ({
+  id,
+  name,
+  color: characterColor(index),
+  provider: { providerId: 'elevenlabs', voiceId: '', ttsModel: ELEVENLABS_TTS_MODEL, stsModel: ELEVENLABS_STS_MODEL },
+  voiceSettings: { ...DEFAULT_VOICE_SETTINGS },
+})
+
+export function speakerCharacters(characters: Pick<Character, 'name'>[], names: string[]): Character[] {
+  const fresh: Character[] = []
+  const known = new Set(characters.map((c) => c.name.trim().toLowerCase()))
+  for (const name of names.map((n) => n.trim())) {
+    if (!name || known.has(name.toLowerCase())) continue
+    known.add(name.toLowerCase())
+    fresh.push(blankCharacter(crypto.randomUUID(), name, characters.length + fresh.length))
+  }
+  return fresh
 }
 
 export const VOICE_SETTING_KEYS = [

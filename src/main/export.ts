@@ -53,7 +53,7 @@ import {
 } from '@shared/export-settings'
 import { renderChunks, videoTimelinePlan } from '@shared/sources'
 import { sanitizeRevision } from '@shared/approval'
-import { EXPORT_STALE, exportStale } from '@shared/agent-render'
+import { EXPORT_STALE, revisionStale } from '@shared/agent-render'
 import { isInsideDir } from '@shared/project-summary'
 import { emptyEdits, type Cue, type Project } from '@shared/domain'
 import { loudnessFilter, METRICS_FILTER, parseMetrics, type AudioMetrics } from '@shared/audio-metrics'
@@ -210,7 +210,12 @@ export async function planBatchExport(req: BatchExportRequest, owner = 0, revisi
     ...(revision === undefined ? {} : { revision }),
   }
   planned = new Map(jobs.map((j) => [j.outPath, j]))
-  await fs.rm(stagingDir, { recursive: true, force: true })
+  try {
+    await fs.rm(stagingDir, { recursive: true, force: true })
+  } catch (error) {
+    abortBatchExport(token)
+    throw error
+  }
   return { token, jobs, outDir }
 }
 
@@ -283,8 +288,34 @@ export function encodeJob(outPath: string, wav: unknown): Promise<ExportResult> 
   return encodeTo(job, wav, job.formatArgs)
 }
 
-export const encodeAnalysis = (job: ExportJob, wav: unknown): Promise<ExportResult> =>
-  encodeTo(job, wav, [...(job.sampleRate === undefined ? [] : ['-ar', String(job.sampleRate)]), '-c:a', 'pcm_f32le'])
+export async function agentRenderDir(projectDir: string): Promise<string> {
+  const root = await fs.realpath(projectDir)
+  let dir = root
+  for (const part of ['agent', 'renders']) {
+    dir = path.join(dir, part)
+    await fs.mkdir(dir).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EEXIST') throw error
+    })
+    if (!(await fs.lstat(dir)).isDirectory()) throw new Error(`The project has a link or file at ${dir}; remove it and render again`)
+  }
+  if (!isInsideDir(await fs.realpath(dir), root)) throw new Error(`${dir} is outside the project; remove it and render again`)
+  return dir
+}
+
+export async function encodeAnalysis(job: ExportJob, wav: unknown): Promise<ExportResult> {
+  const tmp = path.join(path.dirname(job.outPath), `.${randomUUID()}.wav`)
+  try {
+    const result = await encodeTo({ ...job, outPath: tmp }, wav, [
+      ...(job.sampleRate === undefined ? [] : ['-ar', String(job.sampleRate)]),
+      '-c:a',
+      'pcm_f32le',
+    ])
+    await fs.rename(tmp, job.outPath)
+    return { ...result, outPath: job.outPath }
+  } finally {
+    await fs.rm(tmp, { force: true }).catch(() => undefined)
+  }
+}
 
 async function encodeTo(job: ExportJob, wav: unknown, codecArgs: string[]): Promise<ExportResult> {
   const outPath = job.outPath
@@ -347,34 +378,46 @@ export async function removeSuperseded(outDir: string, files: string[]): Promise
   }
 }
 
+export interface ExportStamp {
+  version: number
+  changes: number
+}
+
 export async function finishExport(
   token: string,
   summary: ExportSummary,
-  stamp: () => Promise<number | undefined>,
-  revision?: number
+  stamp: () => Promise<ExportStamp | undefined>,
+  revision: () => number | undefined = () => undefined,
+  hold: (publish: () => Promise<void>) => Promise<void> = (publish) => publish()
 ): Promise<DeliverPaths> {
   if (!batchPlan || token !== batchPlan.token) throw new Error('This batch export plan is no longer current')
   const current = batchPlan
   try {
-    return await publishExport(current, summary, stamp, revision)
+    return await publishExport(current, summary, stamp, revision, hold)
   } finally {
     current.running = false
+    if (batchPlan === current) batchPlan = null
   }
+}
+
+async function refuseStale(current: BatchPlan, revision: number | undefined, own?: number): Promise<void> {
+  if (!revisionStale(current.revision, revision, own)) return
+  await fs.rm(current.stagingDir, { recursive: true, force: true })
+  throw new Error(EXPORT_STALE)
 }
 
 async function publishExport(
   current: BatchPlan,
   summary: ExportSummary,
-  stamp: () => Promise<number | undefined>,
-  revision: number | undefined
+  stamp: () => Promise<ExportStamp | undefined>,
+  revision: () => number | undefined,
+  hold: (publish: () => Promise<void>) => Promise<void>
 ): Promise<DeliverPaths> {
   if (!current.live) throw new Error(PROJECT_CHANGED)
   if (ctx().project.id !== current.project.id) throw new Error('The exported project is no longer open')
-  if (exportStale(current.revision, revision)) {
-    await fs.rm(current.stagingDir, { recursive: true, force: true })
-    throw new Error(EXPORT_STALE)
-  }
-  const version = await stamp()
+  await refuseStale(current, revision())
+  const stamped = await stamp()
+  const version = stamped?.version
   const { project, outDir, stagingDir } = current
   for (const f of summary.failed) {
     const outPath = path.join(stagingDir, 'audio', f.name)
@@ -409,8 +452,12 @@ async function publishExport(
   if (index !== null) await fs.writeFile(path.join(stagingDir, 'index.updated.csv'), index)
   const report = buildReport(project.name, deliver, version)
   await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
-  await removeSuperseded(outDir, supersededFiles(previous?.exported ?? [], exported))
-  await copyTree(stagingDir, outDir)
+  const publish = async (): Promise<void> => {
+    await refuseStale(current, revision(), stamped?.changes)
+    await removeSuperseded(outDir, supersededFiles(previous?.exported ?? [], exported))
+    await copyTree(stagingDir, outDir)
+  }
+  await (current.revision === undefined ? publish() : hold(publish))
   await fs.rm(stagingDir, { recursive: true, force: true })
   return {
     ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }),
@@ -481,6 +528,10 @@ async function closeVideoRun(): Promise<void> {
   const run = videoRun
   videoRun = null
   if (run) await releaseVideoRun(run)
+}
+
+export function abortBatchExport(token: string): void {
+  if (batchPlan?.token === token) batchPlan = null
 }
 
 export function cancelExports(): void {

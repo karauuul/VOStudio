@@ -27,6 +27,7 @@ interface Recording {
 }
 
 const recordings = new Map<string, Recording>()
+const starting = new Set<{ cueId: string; session: TakeSession }>()
 
 const sidecarSchema = z.object({
   cueId: z.string().min(1).max(200),
@@ -125,6 +126,16 @@ export async function beginRecording(
 ): Promise<string> {
   if (!session.repository.isLive()) throw new Error('No project is open')
   if (!session.repository.projectForMain().cues.some((c) => c.id === cueId)) throw new Error('Cue not found')
+  const claim = { cueId, session }
+  starting.add(claim)
+  try {
+    return await openRecording(session, cueId, sampleRate, bitDepth)
+  } finally {
+    starting.delete(claim)
+  }
+}
+
+async function openRecording(session: TakeSession, cueId: string, sampleRate: number, bitDepth: PcmBitDepth): Promise<string> {
   const dir = recordingsDir(session.dir)
   await fs.mkdir(dir, { recursive: true })
   const fileName = `${takeBase()}_rec.wav`
@@ -245,6 +256,9 @@ export async function abortRecording(id: string): Promise<void> {
   await enqueue(rec, () => rec.handle.close()).catch(() => undefined)
   await discard(rec.abs)
 }
+
+export const recordingActive = (cueId: string): boolean =>
+  [...recordings.values(), ...starting].some((rec) => rec.cueId === cueId && rec.session.repository.isLive())
 
 export async function closeRecordings(repository: SerialProjectRepository): Promise<void> {
   const closing: Promise<unknown>[] = []

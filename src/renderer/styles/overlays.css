@@ -665,3 +665,78 @@
   font: 11px var(--mono);
   color: var(--tx3);
 }
+
+.gls {
+  flex: 1;
+  min-height: 0;
+  padding: 0 0 8px;
+}
+
+.gls-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) 200px;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.gls-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: 30px;
+  background: var(--panel);
+  font: 600 11px var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tx3);
+}
+
+.gls-head span {
+  padding-left: 9px;
+}
+
+.gls-in {
+  width: 100%;
+  min-width: 0;
+  height: var(--ctl);
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--tx);
+  font: 13px var(--sans);
+  outline: none;
+}
+
+.gls-in:hover {
+  border-color: var(--line);
+}
+
+.gls-in:focus {
+  border-color: var(--ac);
+  background: var(--bg);
+}
+
+.gls-row .gls-in:nth-child(3) {
+  color: var(--tx2);
+}
+
+.gls-acts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.gls-st {
+  margin-right: auto;
+  font: 11px var(--mono);
+  color: var(--warn);
+}
+
+.gls-row.prop {
+  box-shadow: inset 3px 0 0 var(--warn);
+}

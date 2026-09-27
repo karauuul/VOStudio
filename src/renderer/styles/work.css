@@ -52,6 +52,17 @@
 .search input::-webkit-search-cancel-button {
   display: none;
 }
+.lines-q {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  margin: 12px 16px;
+}
+.lines-q .search {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
 .grp {
   height: 26px;
   display: flex;
@@ -121,6 +132,9 @@
   height: 5px;
   border-radius: 50%;
   background: var(--c, transparent);
+}
+.ln.pend::before {
+  box-shadow: 0 0 0 1.5px var(--warn);
 }
 .ln.sel,
 .ln.sel:hover {
@@ -347,7 +361,8 @@
   color: var(--tx3);
   white-space: nowrap;
 }
-.gen .seg {
+.gen .seg,
+.lines-q .seg {
   display: flex;
   width: 100%;
   height: var(--ctl);
@@ -356,7 +371,8 @@
   overflow: hidden;
   background: var(--bg);
 }
-.gen .seg button {
+.gen .seg button,
+.lines-q .seg button {
   flex: 1;
   min-width: 0;
   border: 0;
@@ -366,12 +382,24 @@
   font: 13px var(--sans);
   cursor: pointer;
 }
-.gen .seg button:last-child {
+.gen .seg button:last-child,
+.lines-q .seg button:last-child {
   border-right: 0;
 }
-.gen .seg button.on {
+.gen .seg button.on,
+.lines-q .seg button.on {
   background: var(--ac-bg);
   color: var(--ac);
+}
+.lines-q .seg {
+  width: auto;
+  flex: none;
+}
+.lines-q .seg button {
+  flex: none;
+  padding: 0 6px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 .gen .gsec {
   grid-column: 1 / -1;
@@ -1235,6 +1263,7 @@ input.tl-name:focus {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 1fr 1fr auto;
   overflow-y: auto;
 }
@@ -1594,6 +1623,55 @@ input.tl-name:focus {
   position: relative;
   margin-left: auto;
   display: flex;
+}
+
+.props-prop {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 16px;
+}
+
+.props-prop + .props-prop {
+  border-top: 1px solid var(--line);
+}
+
+.props-prop .cp-k {
+  font: 12px var(--sans);
+}
+
+.props-prop .v {
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.props-prop .p {
+  font: 11px var(--mono);
+  color: var(--tx2);
+}
+
+.props-prop .r {
+  grid-column: 2 / -1;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--tx3);
+  overflow-wrap: anywhere;
+}
+
+.props-prop .acts {
+  grid-column: 2 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.props-prop .btn {
+  height: 24px;
+  padding: 0 10px;
 }
 
 .props .row2 {

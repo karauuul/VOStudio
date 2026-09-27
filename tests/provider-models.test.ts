@@ -9,6 +9,7 @@ import {
   parseModels,
   supportedSettings,
   supportsLanguageCode,
+  ttsPlan,
 } from '../src/shared/provider-models'
 import {
   emptyEdits,
@@ -385,5 +386,34 @@ describe('the model stored on a tts take', () => {
     const parsed = projectFileSchema.parse(JSON.parse(before))
     expect(JSON.stringify(parsed, null, 2)).toBe(before)
     expect(takeOf(parsed).meta.model).toBe('eleven_v3')
+  })
+})
+
+describe('ttsPlan — what a TTS job sends', () => {
+  const voice = { stability: 0.5, similarity: 0.5, style: 0, speed: 1, boost: true }
+  const base = (): Project => ({
+    id: 'p', schemaVersion: 1, createdAt: 'now', name: 'P', pronunciationRules: 'VO → vee oh',
+    media: { referenceDir: '', referencePattern: '' }, sessions: [], exportTemplate: '{key}.{ext}', ui: { filter: '', search: '' },
+    characters: [{ id: 'a', name: 'Ada', color: '#fff', provider: { providerId: 'elevenlabs', voiceId: 'v1', ttsModel: 'eleven_v3', stsModel: 's' }, voiceSettings: voice }],
+    cues: [{ id: 'c', characterId: 'a', key: 'K', fields: {}, sourceText: '', text: 'VO line', status: 'translated', notes: '', takes: [] }],
+  })
+
+  it('applies pronunciation rules and resolves voice and model', () => {
+    const project = base()
+    expect(ttsPlan(project, project.cues[0], 'VO line')).toMatchObject({ voiceId: 'v1', model: 'eleven_v3', text: 'vee oh line' })
+  })
+
+  it('sends the project language only with the project model', () => {
+    const project = base()
+    project.provider = { tts: { model: 'eleven_v3', language: 'uk' } }
+    expect(ttsPlan(project, project.cues[0], 'x').language).toBe('uk')
+    expect(ttsPlan(project, project.cues[0], 'x', 'eleven_flash').language).toBeUndefined()
+  })
+
+  it('names the missing character or voice', () => {
+    const project = base()
+    expect(() => ttsPlan(project, { ...project.cues[0], characterId: 'zz' }, 'x')).toThrow('Line has no character')
+    project.characters[0].provider.voiceId = ''
+    expect(() => ttsPlan(project, project.cues[0], 'x')).toThrow('No voice configured for character "Ada"')
   })
 })

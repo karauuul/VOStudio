@@ -1,4 +1,5 @@
 import { clipSpeed, emptyEdits, type Cue, type CueComp, type VoiceSettings } from './domain'
+import { clipEnd, clipTrackId, trackClips } from './comp'
 import { clipText, placeClip, resolveTake, resolveTargetTrack, type TakeLookup } from './library'
 
 export type GenTarget =
@@ -90,6 +91,28 @@ export function placeTake(req: PlaceTakeRequest): {
     edits: emptyEdits(),
     ...(req.replaceClipId ? { replaceClipId: req.replaceClipId } : {}),
   })
+}
+
+export type TakePlacement = 'replace' | 'append'
+
+export const TARGET_CLIP_GONE = 'The targeted clip was removed before the new take arrived; the take stays in the library'
+
+export const hasClip = (comp: CueComp | undefined, clipId: string): boolean => comp?.clips.some((c) => c.id === clipId) === true
+
+export function placeOnTrack(
+  comp: CueComp | undefined,
+  req: { placement: TakePlacement; takeId: string; duration: number; targetTrackId?: string; replaceClipId?: string }
+): CueComp {
+  const base = comp ?? { clips: [] }
+  const trackId = resolveTargetTrack(base, req.targetTrackId)
+  const place = (on: CueComp, playhead: number, replaceClipId?: string): CueComp =>
+    placeTake({ comp: on, takeId: req.takeId, duration: req.duration, targetTrackId: trackId, playhead, ...(replaceClipId ? { replaceClipId } : {}) }).comp
+  if (req.replaceClipId) {
+    if (!hasClip(base, req.replaceClipId)) throw new Error(`${TARGET_CLIP_GONE} as take ${req.takeId}; place it with take_use.`)
+    return place(base, 0, req.replaceClipId)
+  }
+  if (req.placement === 'append') return place(base, Math.max(0, ...trackClips(base, trackId).map(clipEnd)))
+  return place({ ...base, clips: base.clips.filter((c) => clipTrackId(c) !== trackId) }, 0)
 }
 
 export interface GhostPlacement {

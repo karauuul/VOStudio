@@ -2,11 +2,7 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
 import {
-  DEFAULT_VOICE_SETTINGS,
-  ELEVENLABS_STS_MODEL,
-  ELEVENLABS_TTS_MODEL,
-  characterColor,
-  type Character,
+  speakerCharacters,
   type Cue,
   type Project,
   type ProjectSource,
@@ -119,29 +115,6 @@ async function speechRegions(source: ProjectSource): Promise<DetectedRegion[]> {
   return transcriptRegions(await voiceProvider().sttWords({ audio, filename: `${source.id}.wav` }))
 }
 
-function speakerCharacters(project: Project, regions: DetectedRegion[]): Character[] {
-  const fresh: Character[] = []
-  for (const speaker of new Set(regions.map((r) => r.speaker).filter(Boolean) as string[])) {
-    const known = [...project.characters, ...fresh].some(
-      (c) => c.name.toLowerCase() === speaker.toLowerCase()
-    )
-    if (known) continue
-    fresh.push({
-      id: randomUUID(),
-      name: speaker,
-      color: characterColor(project.characters.length + fresh.length),
-      provider: {
-        providerId: 'elevenlabs',
-        voiceId: '',
-        ttsModel: ELEVENLABS_TTS_MODEL,
-        stsModel: ELEVENLABS_STS_MODEL,
-      },
-      voiceSettings: { ...DEFAULT_VOICE_SETTINGS },
-    })
-  }
-  return fresh
-}
-
 export async function detectLines(
   project: Project,
   sourceId: string,
@@ -149,7 +122,7 @@ export async function detectLines(
 ): Promise<{ result: DetectResult; changes: ChangeSet }> {
   const source = sourceById(project, sourceId)
   const regions = mode === 'silence' ? await silenceRegions(source) : await speechRegions(source)
-  const fresh = speakerCharacters(project, regions)
+  const fresh = speakerCharacters(project.characters, regions.map((r) => r.speaker ?? ''))
   project.characters.push(...fresh)
   const byName = new Map(project.characters.map((c) => [c.name.toLowerCase(), c.id]))
   const merge = mergeRegionCues(project.cues, sourceId)

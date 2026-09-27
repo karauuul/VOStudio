@@ -6,10 +6,15 @@ import { CHARACTER_ID_MAX, CUE_KEY_MAX, TABLE_COLUMNS_MAX, TABLE_ROWS_MAX } from
 import { PUNCH_PREROLL_MAX, PUNCH_PREROLL_STEP, RECORD_LATENCY_MAX_MS } from '@shared/punch'
 import { LOOP_PASS_MAX } from '@shared/loop-record'
 import { ANALYSIS_FRAMES_MAX } from '@shared/prosody'
+import { AGENT_BUDGET_MAX } from '@shared/ipc'
+import { TTS_TEXT_MAX } from '@shared/agent-generate'
 import { LUFS_TARGET_MAX, LUFS_TARGET_MIN, PEAK_TARGET_MAX, PEAK_TARGET_MIN } from '@shared/export-settings'
 import {
+  ASSET_ROW_MAX,
   DUCK_MAX_DB,
   DUCK_MIN_DB,
+  ORIGINS_MAX,
+  PROPOSAL_REASON_MAX,
   ORIGINAL_START_MAX,
   TEMPLATE_NAME_MAX,
   TERM_TEXT_MAX,
@@ -127,6 +132,7 @@ export const projectFileSchema = z
     cues: z.array(z.unknown()),
     sessions: z.array(z.unknown()),
     sources: z.array(z.unknown()).optional(),
+    assets: z.array(z.unknown()).optional(),
     versions: z.array(z.unknown()).optional(),
     pronunciationRules: z.string(),
     exportTemplate: z.string(),
@@ -419,7 +425,7 @@ export const recAbortSchema = z.object({ session: recSession })
 
 export const ttsSchema = z.object({
   cueId: z.string().min(1),
-  text: z.string().min(1).max(5000),
+  text: z.string().min(1).max(TTS_TEXT_MAX),
   voiceSettings: voiceSettingsSchema,
   model: z.string().min(1).max(120).optional(),
   fragment: z.boolean().optional(),
@@ -433,6 +439,13 @@ export const stsSchema = z.object({
   fragment: z.boolean().optional(),
   selectOutput: z.boolean().optional(),
 })
+
+export const genRunSchema = z.discriminatedUnion('kind', [
+  ttsSchema.extend({ kind: z.literal('tts') }),
+  stsSchema.extend({ kind: z.literal('sts') }),
+])
+
+export const jobIdsSchema = z.array(z.string().min(1).max(200)).max(1000)
 
 export function autoSelectsOutput(
   req: { fragment?: boolean; selectOutput?: boolean },
@@ -467,6 +480,36 @@ const takeSchema = z
   })
   .passthrough()
 
+const assetRow = z.number().int().min(0).max(ASSET_ROW_MAX)
+const confidence = finite.min(0).max(1)
+const reasonText = z.string().max(PROPOSAL_REASON_MAX)
+
+export const characterProposalSchema = z.object({
+  characterId: z.string().min(1).max(CHARACTER_ID_MAX),
+  confidence,
+  reason: reasonText,
+})
+
+export const linkProposalSchema = z.object({
+  assetId: z.string().min(1).max(200),
+  row: assetRow,
+  confidence,
+  reason: reasonText,
+})
+
+export const cueProposalsSchema = z.object({
+  character: characterProposalSchema.optional(),
+  link: linkProposalSchema.optional(),
+})
+
+export const cueOriginSchema = z.object({ assetId: z.string().min(1).max(200), row: assetRow.optional() })
+
+const proposalKind = z.enum(['character', 'link', 'text'])
+const proposalRefs = z
+  .array(z.object({ cueId: z.string().min(1).max(200), kind: proposalKind }))
+  .min(1)
+  .max(TABLE_ROWS_MAX)
+
 export const cueSchema = z
   .object({
     id: safeId,
@@ -487,6 +530,8 @@ export const cueSchema = z
     finalTakeId: z.string().min(1).max(200).optional(),
     comp: compSchema.unwrap().optional(),
     voiceSettingsOverride: voiceSettingsSchema.partial().optional(),
+    proposals: cueProposalsSchema.optional(),
+    origins: z.array(cueOriginSchema).max(ORIGINS_MAX).optional(),
   })
   .merge(cueRevisionFieldsSchema)
   .passthrough()
@@ -542,6 +587,20 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   cueId.extend({ type: z.literal('cue.setCharacter'), characterId: z.string().max(200) }),
   cueId.extend({ type: z.literal('cue.setExcluded'), excluded: z.boolean() }),
   z.object({
+    type: z.literal('cue.propose'),
+    items: z
+      .array(
+        cueId.extend({
+          character: characterProposalSchema.nullable().optional(),
+          link: linkProposalSchema.nullable().optional(),
+        })
+      )
+      .min(1)
+      .max(TABLE_ROWS_MAX),
+  }),
+  z.object({ type: z.literal('proposal.accept'), items: proposalRefs }),
+  z.object({ type: z.literal('proposal.reject'), items: proposalRefs }),
+  z.object({
     type: z.literal('cue.create'),
     afterCueId: z.string().min(1).max(200).nullable(),
     lines: z
@@ -589,7 +648,14 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('terms.set'),
     terms: z
-      .array(z.object({ term: z.string().max(TERM_TEXT_MAX), translation: z.string().max(TERM_TEXT_MAX), note: z.string().max(TERM_TEXT_MAX).optional() }))
+      .array(
+        z.object({
+          term: z.string().max(TERM_TEXT_MAX),
+          translation: z.string().max(TERM_TEXT_MAX),
+          note: z.string().max(TERM_TEXT_MAX).optional(),
+          proposed: z.literal(true).optional(),
+        })
+      )
       .max(TERMS_MAX),
   }),
   z.object({ type: z.literal('project.rename'), name: z.string().min(1).max(200) }),
@@ -616,6 +682,7 @@ export const appSettingsSchema = z.object({
   countIn: z.boolean(),
   autoReference: z.boolean(),
   agentAccess: z.literal(true).optional(),
+  agentCharacterBudget: z.number().int().min(0).max(AGENT_BUDGET_MAX).optional(),
 })
 
 export const bridgeReplySchema = z.object({

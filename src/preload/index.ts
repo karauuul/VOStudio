@@ -14,6 +14,8 @@ const channelMap: Record<IpcChannel, true> = {
   'import:tablePreview': true,
   'import:table': true,
   'import:template': true,
+  'assets:add': true,
+  'assets:read': true,
   'source:detect': true,
   'project:command': true,
   'project:saveVersion': true,
@@ -41,8 +43,9 @@ const channelMap: Record<IpcChannel, true> = {
   'stems:isolate': true,
   'stems:save': true,
 
-  'provider:tts': true,
-  'provider:sts': true,
+  'gen:run': true,
+  'gen:cancel': true,
+  'gen:list': true,
   'provider:transcribe': true,
   'provider:voices': true,
   'provider:models': true,
@@ -63,6 +66,7 @@ const channelMap: Record<IpcChannel, true> = {
   'export:copy': true,
   'export:encode': true,
   'export:finish': true,
+  'export:abort': true,
   'export:videoPlan': true,
   'export:videoChunk': true,
   'export:videoFinish': true,
@@ -90,6 +94,7 @@ const eventMap: Record<EventChannel, true> = {
   'render:plan': true,
   'render:image': true,
   'render:prosody': true,
+  'jobs:changed': true,
 }
 
 const api = {} as Record<string, unknown>

@@ -22,7 +22,7 @@ import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '
 import { externalChanges, pickHistory, redoStale, takeKey, type UndoSide } from '@shared/undo-route'
 import { dropCompRedo, nextCompEdit, pruneCompHistory, recordCompEdit, type CompHistory } from '@shared/comp-history'
 import { PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
-import { hasSourceMaterial, TABLE_FILE } from '@shared/import-table'
+import { hasSourceMaterial } from '@shared/import-table'
 import { keyedQueue } from '@shared/keyed-queue'
 import type { UpdateStatus } from '@shared/updater'
 import { api, audioUrl } from './api'
@@ -33,13 +33,16 @@ import {
   cancelQueuedJobs,
   clearTerminalJobs,
   isCueBusyNow,
+  mirrorJobs,
+  runGeneration,
   useBusyCount,
   useCueBusy,
   useJobCount,
   useJobFailed,
-  useJobsStore,
 } from './jobs/store'
-import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues, groupLines } from '@shared/cue-filter'
+import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues, groupLines, REVIEW_FILTER } from '@shared/cue-filter'
+import { proposalRefs } from '@shared/linking'
+import { assetKind, binAddedText, inPlaceKind, routeDrop } from '@shared/asset-readers'
 import { LinesPanel } from './work/LinesPanel'
 import type { TextPanelProps } from './work/TextPanel'
 import { ImportRoom } from './rooms/ImportRoom'
@@ -56,6 +59,7 @@ import { CueText } from './work/CueText'
 import type { RecordPlacement } from './cue/useVoiceToVoice'
 import { TimelinePanel } from './work/TimelinePanel'
 import { RulesDialog } from './RulesPanel'
+import { GlossaryDialog } from './GlossaryDialog'
 import { ProjectHome } from './ProjectHome'
 import { TopBar, type MenuItem, type Route } from './shell/TopBar'
 import { HotkeyHint } from './shell/HotkeyHint'
@@ -103,6 +107,8 @@ import {
   clipTargetText,
   deriveGenTarget,
   placeTake,
+  hasClip,
+  TARGET_CLIP_GONE,
   targetText,
   toPercent,
   type GenTarget,
@@ -158,6 +164,7 @@ export default function App() {
   const mode: GenMode = genMode ?? 'tts'
   const [providerModels, setProviderModels] = useState<ProviderModel[]>([])
   const [showRules, setShowRules] = useState(false)
+  const [showGlossary, setShowGlossary] = useState(false)
   const [tableFile, setTableFile] = useState<string | null>(null)
   const [tables, setTables] = useState<TableImportResult[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
@@ -205,11 +212,16 @@ export default function App() {
   const targetTrackRef = useRef<Record<string, string>>({})
   targetTrackRef.current = targetTrack
 
-  const submitJob = useJobsStore((s) => s.submit)
   const jobCount = useJobCount()
   const jobFailed = useJobFailed()
   const busyCount = useBusyCount()
   const activeCueBusy = useCueBusy(activeCueId ?? '')
+
+  useEffect(() => {
+    const off = api.on('jobs:changed', mirrorJobs)
+    void api['gen:list']().then(mirrorJobs)
+    return off
+  }, [])
 
   useEffect(() => {
     activeCueIdRef.current = activeCueId
@@ -419,6 +431,26 @@ export default function App() {
   }, [project, reviewIds, filter, search, liveCharacterFilter])
 
   const visible = grouped.cues
+
+  const reviewCount = useMemo(
+    () => (project ? filterCues(project.cues, REVIEW_FILTER, search, liveCharacterFilter).length : 0),
+    [project, search, liveCharacterFilter]
+  )
+
+  const pickFilter = useCallback((id: string) => {
+    setFilter(id)
+    setReviewIds(null)
+  }, [])
+
+  const settleProposals = useCallback(
+    (cue: Cue, accept: boolean, kinds = proposalRefs([cue])) => {
+      if (kinds.length === 0) return
+      void dispatch({ type: accept ? 'proposal.accept' : 'proposal.reject', items: kinds }).catch((e: unknown) =>
+        pushStatus('err', String(e))
+      )
+    },
+    [dispatch, pushStatus]
+  )
 
   const storedCue = useMemo(
     () => project?.cues.find((c) => c.id === activeCueId),
@@ -789,10 +821,7 @@ export default function App() {
       const recent = lastPlacedRef.current.get(cueId)
       const stored = recent && recent.base === cue.comp ? recent.comp : cue.comp
       let comp = isActiveCue(cueId) && compRef.current ? compRef.current.current() : stored
-      const replace =
-        replaceClipId && comp?.clips.some((c) => c.id === replaceClipId)
-          ? replaceClipId
-          : undefined
+      if (replaceClipId && !hasClip(comp, replaceClipId)) throw new Error(TARGET_CLIP_GONE)
       let trackId = drop?.trackId ?? targetTrackRef.current[cueId]
       let playhead =
         drop?.at ??
@@ -827,7 +856,7 @@ export default function App() {
             duration: durations[i],
             targetTrackId: trackId,
             playhead,
-            ...(replace ? { replaceClipId: replace } : {}),
+            ...(replaceClipId ? { replaceClipId } : {}),
           })
           comp = placed.comp
           trackId = placed.trackId
@@ -884,17 +913,17 @@ export default function App() {
       override?: VoiceSettings,
       model?: string
     ) => {
-      submitJob({
-        kind: 'tts',
+      runGeneration(
         cueId,
-        run: async (live) => {
+        async (live) => {
           if (announce) pushStatus('info', 'Generating TTS…')
           const project = projectRef.current
           const cue = project?.cues.find((c) => c.id === cueId)
           if (!project || !cue) throw new Error('Cue is no longer in the project')
           const character = project.characters.find((c) => c.id === cue.characterId)
           const voiceSettings = override ?? resolveVoiceSettings(character, cue)
-          const take = await api['provider:tts']({
+          const take = await api['gen:run']({
+            kind: 'tts',
             cueId,
             text,
             voiceSettings,
@@ -907,10 +936,10 @@ export default function App() {
           await placeOnComp(cueId, take, target.kind === 'clip' ? target.clipId : undefined)
           if (announce) pushStatus('ok', 'Take placed')
         },
-        onError: (e) => pushStatus('err', String(e)),
-      })
+        (e) => pushStatus('err', String(e))
+      )
     },
-    [submitJob, onTakeAdded, pushStatus, projectRef, placeOnComp]
+    [onTakeAdded, pushStatus, projectRef, placeOnComp]
   )
 
   const refuseWithoutKey = useCallback((): boolean => {
@@ -1586,15 +1615,16 @@ export default function App() {
 
   const dropFiles = useCallback(
     (files: File[], drop?: { trackId: string; at: number }) => {
-      const paths = api.pathsFor(files)
-      const table = paths.find((path) => TABLE_FILE.test(path))
-      if (table) {
-        openTable(table)
-        return
+      const route = routeDrop(api.pathsFor(files))
+      if (route.bin.length > 0) {
+        void api['assets:add']({ paths: route.bin, skipMedia: true }).then(
+          (r) => pushStatus(r.added.length > 0 ? 'ok' : 'info', binAddedText(r)),
+          (e: unknown) => pushStatus('err', String(e))
+        )
       }
-      void importFiles(paths, drop).catch((e: unknown) => pushStatus('err', String(e)))
+      void importFiles(route.lines.filter((path) => inPlaceKind(assetKind(path))), drop).catch((e: unknown) => pushStatus('err', String(e)))
     },
-    [openTable, importFiles, pushStatus]
+    [importFiles, pushStatus]
   )
 
   const pickAudio = useCallback(() => {
@@ -1611,6 +1641,7 @@ export default function App() {
         const plan = await api['export:planBatch']({ cueIds: [cueId] })
         const job = plan.jobs[0]
         if (!job) {
+          await api['export:abort'](plan.token)
           pushStatus('err', 'Nothing to export')
           return
         }
@@ -1818,7 +1849,7 @@ export default function App() {
     ]
   )
 
-  const blocked = showRules || showSettings || showShortcuts || showJobs || menuOpen
+  const blocked = showRules || showGlossary || showSettings || showShortcuts || showJobs || menuOpen
 
   useKeyboard(handlers, !blocked, {
     home: !project,
@@ -1878,6 +1909,7 @@ export default function App() {
       ? [{ label: 'Sync CSV', disabled: bulk || exporting, onClick: () => void syncCsv() }]
       : []),
     { label: 'Rules…', onClick: () => setShowRules(true) },
+    { label: 'Glossary…', onClick: () => setShowGlossary(true) },
     { label: 'Settings', onClick: () => setShowSettings(true) },
     { label: 'Shortcuts', onClick: () => setShowShortcuts(true) },
   ]
@@ -1917,6 +1949,9 @@ export default function App() {
     { label: 'Copy original', onClick: () => onCopy('source', cue) },
     { label: 'Copy translation', onClick: () => onCopy('translation', cue) },
     { label: 'Copy as prompt', onClick: () => onCopy('prompt', cue) },
+    { sep: true },
+    { label: 'Accept proposals', disabled: proposalRefs([cue]).length === 0, onClick: () => settleProposals(cue, true) },
+    { label: 'Reject proposals', disabled: proposalRefs([cue]).length === 0, onClick: () => settleProposals(cue, false) },
     { sep: true },
     {
       label: cue.status === 'excluded' ? 'Include in export' : 'Exclude from export',
@@ -2102,6 +2137,9 @@ export default function App() {
       ? { label: `Selection · ${visible.length}`, onExit: () => setReviewIds(null) }
       : undefined,
     menu: lineMenu,
+    filter: reviewIds ? '' : filter,
+    review: reviewCount,
+    onFilter: pickFilter,
   }
 
   const modelId =
@@ -2343,6 +2381,10 @@ export default function App() {
       if (row) onDeleteTake(row.cueId, takeId)
     },
     onOpenLine: openCue,
+    assets: project.assets ?? [],
+    onProposal: (kind, accept) => {
+      if (activeCue) settleProposals(activeCue, accept, [{ cueId: activeCue.id, kind }])
+    },
     onDone: (done) => {
       if (activeCueId) void setDone(activeCueId, done)
     },
@@ -2382,7 +2424,6 @@ export default function App() {
         onGenerate={generateSelected}
         onAssignCharacter={(ids, characterId) => void assignCharacter(ids, characterId)}
         tables={tables}
-        onTable={openTable}
         onPickTable={pickTable}
         dispatch={dispatch}
         onVoiceSettings={onCharacterVoice}
@@ -2446,6 +2487,14 @@ export default function App() {
           ai={hasSourceMaterial(project)}
           onImport={importTable}
           onClose={() => setTableFile(null)}
+        />
+      )}
+
+      {showGlossary && (
+        <GlossaryDialog
+          terms={project.terms ?? []}
+          onCommit={(terms) => runCommand({ type: 'terms.set', terms })}
+          onClose={() => setShowGlossary(false)}
         />
       )}
 

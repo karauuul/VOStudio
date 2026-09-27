@@ -2,6 +2,7 @@ import type {
   ClipEdits,
   CompTrack,
   MatchRule,
+  ProjectAsset,
   ProjectVersion,
   Stem,
   Take,
@@ -23,6 +24,7 @@ import type { PcmBitDepth } from './wav-header'
 import type { LatencySetting } from './punch'
 import type { PassRange } from './loop-record'
 import type { Prosody, ProsodyFigure } from './prosody'
+import type { JobsSnapshot } from './jobs'
 
 export interface CsvPreview {
   headers: string[]
@@ -46,6 +48,22 @@ export interface StsRequest {
   selectOutput?: boolean
 }
 
+export type GenRequest = ({ kind: 'tts' } & TtsRequest) | ({ kind: 'sts' } & StsRequest)
+
+export interface PlannedVoice {
+  characterId: string
+  voiceId: string
+  model: string
+  language?: string
+}
+
+export interface JobPlan {
+  providerText?: string
+  planned?: PlannedVoice
+}
+
+export type GenJob = GenRequest & JobPlan
+
 export interface AppSettings {
   micDeviceId?: string
   micDeviceLabel?: string
@@ -56,9 +74,18 @@ export interface AppSettings {
   countIn: boolean
   autoReference: boolean
   agentAccess?: true
+  agentCharacterBudget?: number
 }
 
 export const sanitizeAgentAccess = (value: unknown): true | undefined => (value === true ? true : undefined)
+
+export const AGENT_BUDGET_DEFAULT = 20_000
+export const AGENT_BUDGET_MAX = 10_000_000
+
+export const sanitizeAgentBudget = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= AGENT_BUDGET_MAX ? value : undefined
+
+export const agentBudget = (value: unknown): number => sanitizeAgentBudget(value) ?? AGENT_BUDGET_DEFAULT
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   countIn: true,
@@ -220,6 +247,21 @@ export interface AudioImportResult {
   files: number
   unmatched?: number
   duplicates?: string[]
+  failed?: { name: string; reason: string }[]
+  truncated?: number
+}
+
+export interface AssetAddResult {
+  added: ProjectAsset[]
+  skipped: { name: string; reason: string }[]
+  truncated?: number
+}
+
+export interface AssetPage {
+  format: string
+  total: number
+  columns: string[]
+  rows: string[][]
 }
 
 export interface TableRequest {
@@ -338,6 +380,8 @@ export interface IpcApi {
   'import:tablePreview': (req: TableRequest) => Promise<TablePreview>
   'import:table': (req: TableRequest) => Promise<TableImportResult>
   'import:template': (dir: string) => Promise<ReimportResult>
+  'assets:add': (req: { paths: string[]; skipMedia?: true }) => Promise<AssetAddResult>
+  'assets:read': (req: { id: string; from?: number; count?: number }) => Promise<AssetPage>
   'source:detect': (req: { sourceId: string; mode: 'silence' | 'transcribe' }) => Promise<DetectResult>
   'project:command': (command: ProjectCommand) => Promise<CommandResult>
   'project:saveVersion': (req: { name?: string }) => Promise<ProjectVersion[]>
@@ -367,8 +411,9 @@ export interface IpcApi {
   'stems:isolate': (cueId: string, wav: ArrayBuffer) => Promise<ArrayBuffer>
   'stems:save': (cueId: string, voiceWav: ArrayBuffer, restWav: ArrayBuffer) => Promise<Stem[]>
 
-  'provider:tts': (req: TtsRequest) => Promise<Take>
-  'provider:sts': (req: StsRequest) => Promise<Take>
+  'gen:run': (req: GenRequest) => Promise<Take>
+  'gen:cancel': (ids: string[]) => Promise<string[]>
+  'gen:list': () => Promise<JobsSnapshot>
   'provider:transcribe': (req: { cueIds: string[]; overwrite?: boolean }) => Promise<TranscribeResult>
   'provider:voices': () => Promise<ProviderVoice[]>
   'provider:models': () => Promise<ProviderModel[]>
@@ -389,6 +434,7 @@ export interface IpcApi {
   'export:copy': (outPath: string) => Promise<ExportResult>
   'export:encode': (outPath: string, wav: ArrayBuffer) => Promise<ExportResult>
   'export:finish': (token: string, summary: ExportSummary) => Promise<DeliverPaths>
+  'export:abort': (token: string) => Promise<void>
   'export:videoPlan': (sourceId: string) => Promise<VideoExportPlan | null>
   'export:videoChunk': (
     token: string,
@@ -421,6 +467,7 @@ export interface IpcEvents {
   'render:plan': RenderPlanRequest
   'render:image': RenderImageRequest
   'render:prosody': RenderProsodyRequest
+  'jobs:changed': JobsSnapshot
 }
 
 export type EventChannel = keyof IpcEvents

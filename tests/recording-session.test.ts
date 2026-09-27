@@ -27,6 +27,7 @@ const {
   closeRecordings,
   finishPasses,
   finishRecording,
+  recordingActive,
   recordingLimitBytes,
   recordingsDir,
   recoverRecordings,
@@ -170,6 +171,26 @@ describe('recording ceiling', () => {
 })
 
 describe('recording session', () => {
+  it('claims the line synchronously so a generation cannot slip in while the file opens', async () => {
+    const { dir, repository } = setup()
+    const pending = beginRecording({ repository, dir }, 'c', RATE)
+    expect(recordingActive('c')).toBe(true)
+    const id = await pending
+    expect(recordingActive('c')).toBe(true)
+    await abortRecording(id)
+    expect(recordingActive('c')).toBe(false)
+  })
+
+  it('releases the claim when the file cannot be opened', async () => {
+    const { dir, repository } = setup()
+    const blocked = path.join(dir, 'file')
+    await fs.writeFile(blocked, '')
+    const pending = beginRecording({ repository, dir: blocked }, 'c', RATE)
+    expect(recordingActive('c')).toBe(true)
+    await expect(pending).rejects.toThrow()
+    expect(recordingActive('c')).toBe(false)
+  })
+
   it('streams chunks to a partial file and finishes into a library take', async () => {
     const { dir, repository } = setup()
     const published: CommandResult[] = []

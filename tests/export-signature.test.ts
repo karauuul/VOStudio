@@ -16,7 +16,7 @@ import {
 vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }))
 
 const store = await import('../src/main/project-store')
-const { cancelExports, copyJob, exportInfo, finishExport, planBatchExport, removeSuperseded } = await import('../src/main/export')
+const { cancelExports, copyJob, exportBusy, exportInfo, finishExport, planBatchExport, removeSuperseded } = await import('../src/main/export')
 
 const TEMPLATE = '{Key}.{ext}'
 
@@ -280,13 +280,24 @@ describe('export records the signature in report.json', () => {
     store.adoptProject(p, cancelled)
     const plan = await planBatchExport({ cueIds: ['c-a'] })
     cancelExports()
-    const stamp = vi.fn(async () => 7)
+    const stamp = vi.fn(async () => ({ version: 7, changes: 1 }))
     await expect(copyJob(plan.jobs[0].outPath)).rejects.toThrow('Export cancelled: the project changed')
     await expect(
       finishExport(plan.token, { exported: [{ cueKey: 'a', name: 'a.wav', bytes: 1, sha256: 'f'.repeat(64) }], failed: [] }, stamp)
     ).rejects.toThrow('Export cancelled: the project changed')
     expect(stamp).not.toHaveBeenCalled()
     await expect(fs.access(path.join(cancelled, 'export', 'report.json'))).rejects.toThrow()
+  })
+
+  it('a plan whose staging cleanup fails is not left active', async () => {
+    store.adoptProject(project({ format: 'wav-48-24' }, ['a']), path.join(root, 'F.vostudio'))
+    const rm = vi.spyOn(fs, 'rm').mockRejectedValueOnce(new Error('EBUSY'))
+    try {
+      await expect(planBatchExport({ cueIds: ['c-a'] })).rejects.toThrow('EBUSY')
+    } finally {
+      rm.mockRestore()
+    }
+    expect(exportBusy()).toBe(false)
   })
 
   it('a live plan stamps the version and records it in the report', async () => {
@@ -297,7 +308,7 @@ describe('export records the signature in report.json', () => {
     const result = await finishExport(
       plan.token,
       { exported: [{ cueKey: 'a', name: 'a.wav', bytes: 1, sha256: 'f'.repeat(64) }], failed: [] },
-      async () => 7
+      async () => ({ version: 7, changes: 1 })
     )
     expect(result.version).toBe(7)
     const report = JSON.parse(await fs.readFile(path.join(stamped, 'export', 'report.json'), 'utf8'))
