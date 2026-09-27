@@ -177,6 +177,8 @@ function setup(open = true) {
       { at: '2026-01-02T00:00:00.000Z', source: 'crash', message: 'new' },
     ],
     screenshot: async () => null,
+    windowOpen: () => true,
+    quit: vi.fn(async () => undefined),
   }
   const spec: McpServer = { info: { name: 'vo-studio', version: '1.2.3' }, instructions: AGENT_INSTRUCTIONS, tools: agentTools(deps) }
   const call = async (
@@ -201,7 +203,7 @@ describe('agent tool registry', () => {
     expect(tools.map((t) => t.name)).toEqual([
       'status', 'projects', 'project_open', 'project_close', 'lines', 'line', 'lines_edit', 'characters', 'character_set', 'voices', 'versions', 'command',
       'import', 'asset_add', 'assets', 'asset_read', 'lines_build', 'link', 'characters_assign', 'proposals', 'transcribe', 'translate_context', 'translations_suggest', 'glossary', 'glossary_check', 'rules', 'render', 'verify', 'export', 'generate', 'jobs', 'take_use',
-      'diagnostics', 'screenshot',
+      'diagnostics', 'screenshot', 'app_quit',
     ])
     for (const tool of tools) {
       expect(tool.inputSchema.type).toBe('object')
@@ -269,6 +271,38 @@ describe('status and reads', () => {
     expect(((await call('diagnostics', { since: '2026-01-01T12:00:00Z' })).data.entries as { message: string }[]).map((e) => e.message)).toEqual(['new'])
     expect((await call('diagnostics', { since: 'yesterday' })).error).toMatch(/^since must be an ISO/)
     expect((await call('screenshot')).error).toBe('The app has no open window to capture.')
+  })
+
+  it('reports headless mode when no window is open', async () => {
+    const { call, deps } = setup()
+    deps.windowOpen = () => false
+    expect((await call('status')).data.mode).toBe('headless')
+  })
+})
+
+describe('app_quit', () => {
+  it('quits through the app without a guard version', async () => {
+    const { deps, spec } = setup()
+    const beforeWrite = vi.fn(async () => undefined)
+    spec.beforeWrite = beforeWrite
+    const sent: RpcMessage[] = []
+    await handleMessage(spec, createSession(), { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'app_quit', arguments: {} } }, (m) => sent.push(m))
+    expect((sent[0].result as { structuredContent: unknown }).structuredContent).toEqual({ quitting: true })
+    expect(deps.quit).toHaveBeenCalledTimes(1)
+    expect(beforeWrite).not.toHaveBeenCalled()
+  })
+
+  it('passes on the app refusal and refuses while generation jobs are unfinished', async () => {
+    const { call, deps, gen } = setup()
+    deps.quit = vi.fn(async () => {
+      throw new Error('VO Studio has a window open; the user quits it from the app.')
+    })
+    expect((await call('app_quit')).error).toBe('VO Studio has a window open; the user quits it from the app.')
+    expect((await call('character_set', { character: 'Ada', voiceId: 'va' })).error).toBeUndefined()
+    gen.hold = new Promise(() => undefined)
+    await call('generate', { lines: ['L1'] })
+    expect((await call('app_quit')).error).toBe('Generation jobs are unfinished; wait for them with jobs, then retry.')
+    expect(deps.quit).toHaveBeenCalledTimes(1)
   })
 })
 

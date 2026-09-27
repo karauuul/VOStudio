@@ -116,13 +116,14 @@ import { audioWithinRoots, type ChangeSet, type CommandResult } from '@shared/pr
 import { setupImportedProject, setupOpenedProject } from './project-import'
 import { isInsideDir, normalizePath, PROJECT_SUFFIX, uniqueProjectName } from '@shared/project-summary'
 import { TAKE_FILE_EXTENSIONS } from '@shared/take-import'
-import { AGENT_FLAG } from '@shared/agent-endpoint'
+import { AGENT_FLAG, HEADLESS_FLAG } from '@shared/agent-endpoint'
 import { sanitizeAgentAccess } from '@shared/ipc'
 import type { McpServer, McpSession } from '@shared/mcp'
 import { needsGuardVersion } from '@shared/versions'
 import { sha256Hex, startAgentServer, type AgentServerHandle } from './agent/server'
 import { AGENT_INSTRUCTIONS, agentTools, ASSET_READ_MAX } from './agent/tools'
 import { diagnostics, watchDiagnostics } from './agent/diagnostics'
+import { agentPrompts } from './agent/prompts'
 import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
 import { closeRenderWorker, renderExportPlan, renderLineWav, renderWorker, settleRender } from './agent/render-worker'
 import { hardenedWindow, loadRenderer, uiWindows } from './windows'
@@ -1127,6 +1128,7 @@ function agentServerSpec(): McpServer {
     info: { name: 'vo-studio', version: app.getVersion() },
     instructions: AGENT_INSTRUCTIONS,
     beforeWrite: guardAgentWrite,
+    prompts: agentPrompts,
     tools: agentTools({
       version: app.getVersion(),
       repository: () => projectRepository,
@@ -1164,11 +1166,14 @@ function agentServerSpec(): McpServer {
         const win = uiWindow()
         return win ? (await win.webContents.capturePage()).toPNG() : null
       },
+      windowOpen: () => uiWindows().length > 0,
+      quit: quitHeadless,
     }),
   }
 }
 
-let agentForced = process.argv.includes(AGENT_FLAG)
+const headless = process.argv.includes(HEADLESS_FLAG)
+let agentForced = headless || process.argv.includes(AGENT_FLAG)
 let agentServer: AgentServerHandle | null = null
 let agentSync: Promise<void> = Promise.resolve()
 
@@ -1263,7 +1268,7 @@ if (primaryInstance) void app.whenReady().then(() => {
 
   Menu.setApplicationMenu(null)
   registerHandlers()
-  createWindow()
+  if (!headless) createWindow()
   initializeUpdater((next) => emit('updater:status', next))
   void syncAgentServer()
 
@@ -1272,10 +1277,12 @@ if (primaryInstance) void app.whenReady().then(() => {
   })
 
   app.on('second-instance', (_event, argv) => {
-    if (argv.includes(AGENT_FLAG) && !agentForced) {
+    const asHeadless = argv.includes(HEADLESS_FLAG)
+    if ((asHeadless || argv.includes(AGENT_FLAG)) && !agentForced) {
       agentForced = true
       void syncAgentServer()
     }
+    if (asHeadless) return
     const win = uiWindows()[0]
     if (!win) return createWindow()
     if (win.isMinimized()) win.restore()
@@ -1294,7 +1301,14 @@ app.on('will-quit', () => {
 })
 
 function quitIfNoWindows(): void {
-  if (BrowserWindow.getAllWindows().length === 0) app.quit()
+  if (!headless && BrowserWindow.getAllWindows().length === 0) app.quit()
+}
+
+async function quitHeadless(): Promise<void> {
+  if (!headless) throw new Error('VO Studio was not started with --headless; the user quits it from the app.')
+  if (uiWindows().length > 0) throw new Error('VO Studio has a window open; the user quits it from the app.')
+  await flushPersist()
+  setImmediate(() => app.quit())
 }
 
 app.on('window-all-closed', () => {

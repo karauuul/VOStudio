@@ -114,6 +114,8 @@ export interface AgentDeps {
   settings: () => Promise<AppSettings>
   diagnostics: () => DiagnosticEntry[]
   screenshot: () => Promise<Buffer | null>
+  windowOpen: () => boolean
+  quit: () => Promise<void>
 }
 
 export const AGENT_INSTRUCTIONS = [
@@ -128,7 +130,8 @@ export const AGENT_INSTRUCTIONS = [
   'Agent generation is capped by a per-connection character budget the user sets in Settings; generate refuses a batch that would exceed it.',
   'generate queues jobs in the app queue shared with the user; pass wait, or call jobs with wait, until they finish.',
   'Check lines with render (exact export audio and its metrics) or verify (speech-to-text against the line text, costs money) before export; call export with dryRun first to see readiness and file names.',
-  'Use screenshot and diagnostics to check what the user sees.',
+  'Use screenshot and diagnostics to check what the user sees; status mode headless means no window is open and app_quit ends the app.',
+  'Prompts localize, voice_lines and smoke_test are step-by-step workflows over these tools.',
 ].join(' ')
 
 const READ: ToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
@@ -501,7 +504,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         const active = project?.cues.find((c) => c.id === project.ui.activeCueId)
         return structured({
           version: deps.version,
-          mode: 'live',
+          mode: deps.windowOpen() ? 'live' : 'headless',
           provider: provider.id,
           hasApiKey: await provider.hasApiKey(),
           project: currentOverview(deps),
@@ -1573,6 +1576,19 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         const png = await deps.screenshot()
         if (!png) throw new Error('The app has no open window to capture.')
         return { image: { data: png.toString('base64'), mimeType: 'image/png' } }
+      },
+    }),
+    defineTool({
+      name: 'app_quit',
+      title: 'Quit app',
+      description: 'Save and quit VO Studio when it runs headless (started with --headless, no window open). Refused while a window is open or generation jobs are unfinished.',
+      input: z.object({}),
+      annotations: WRITE,
+      writes: () => false,
+      async run() {
+        if (deps.generation.list().some((j) => !isTerminal(j))) throw new Error('Generation jobs are unfinished; wait for them with jobs, then retry.')
+        await deps.quit()
+        return structured({ quitting: true })
       },
     }),
   ]

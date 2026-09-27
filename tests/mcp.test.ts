@@ -330,3 +330,66 @@ describe('MCP framing errors', () => {
     expect(sent).toEqual([{ jsonrpc: '2.0', id: null, error: { code: RPC_PARSE_ERROR, message: 'Parse error' } }])
   })
 })
+
+describe('MCP prompts', () => {
+  const prompts = [
+    {
+      name: 'greet',
+      title: 'Greet',
+      description: 'Greets someone.',
+      arguments: [
+        { name: 'who', description: 'Who to greet', required: true },
+        { name: 'tone', description: 'Tone', required: false, values: ['warm', 'dry'] },
+      ],
+      text: (a: Record<string, string>) => `Greet ${a.who} ${a.tone ?? 'warm'}ly.`,
+    },
+  ]
+
+  it('advertises prompts only when the server has them', async () => {
+    const plain = (await exchange(server().spec, req(1, 'initialize', {})))[0].result as { capabilities: unknown }
+    expect(plain.capabilities).toEqual({ tools: {} })
+    const withPrompts = (await exchange(server({ prompts }).spec, req(1, 'initialize', {})))[0].result as { capabilities: unknown }
+    expect(withPrompts.capabilities).toEqual({ tools: {}, prompts: {} })
+    expect((await exchange(server().spec, req(2, 'prompts/list')))[0]).toMatchObject({ error: { code: RPC_METHOD_NOT_FOUND } })
+  })
+
+  it('lists prompts with their arguments', async () => {
+    const [reply] = await exchange(server({ prompts }).spec, req(1, 'prompts/list'))
+    expect(reply.result).toEqual({
+      prompts: [
+        {
+          name: 'greet',
+          title: 'Greet',
+          description: 'Greets someone.',
+          arguments: [
+            { name: 'who', description: 'Who to greet', required: true },
+            { name: 'tone', description: 'Tone', required: false },
+          ],
+        },
+      ],
+    })
+  })
+
+  it('renders a prompt as one user message with trimmed arguments', async () => {
+    const [reply] = await exchange(server({ prompts }).spec, req(1, 'prompts/get', { name: 'greet', arguments: { who: ' Ann ', tone: 'dry' } }))
+    expect(reply.result).toEqual({
+      description: 'Greets someone.',
+      messages: [{ role: 'user', content: { type: 'text', text: 'Greet Ann dryly.' } }],
+    })
+    const [fallback] = await exchange(server({ prompts }).spec, req(2, 'prompts/get', { name: 'greet', arguments: { who: 'Bob', tone: '' } }))
+    expect(fallback.result).toMatchObject({ messages: [{ content: { text: 'Greet Bob warmly.' } }] })
+  })
+
+  it('rejects unknown prompts and invalid arguments with invalid params', async () => {
+    const { spec } = server({ prompts })
+    const error = async (params: unknown) => (await exchange(spec, req(1, 'prompts/get', params)))[0].error
+    expect(await error({ name: 'nope' })).toEqual({ code: RPC_INVALID_PARAMS, message: 'Unknown prompt: nope' })
+    expect(await error({ name: 'greet' })).toEqual({ code: RPC_INVALID_PARAMS, message: 'Missing required argument: who' })
+    expect(await error({ name: 'greet', arguments: { who: '  ' } })).toEqual({ code: RPC_INVALID_PARAMS, message: 'Missing required argument: who' })
+    expect(await error({ name: 'greet', arguments: { who: 3 } })).toEqual({ code: RPC_INVALID_PARAMS, message: 'Argument who must be a string' })
+    expect(await error({ name: 'greet', arguments: { who: 'Ann', tone: 'loud' } })).toEqual({
+      code: RPC_INVALID_PARAMS,
+      message: 'Argument tone must be one of warm, dry',
+    })
+  })
+})
