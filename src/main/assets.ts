@@ -78,7 +78,7 @@ export async function addAssets(
   paths: string[],
   skipMedia = false
 ): Promise<AssetAddResult> {
-  const files = await collectFiles(
+  const { files, truncated } = await collectFiles(
     paths,
     (abs) => !path.basename(abs).startsWith('.') && !(skipMedia && inPlaceKind(assetKind(abs)))
   )
@@ -135,7 +135,7 @@ export async function addAssets(
     known.push(asset)
     added.push(asset)
   }
-  return { added, skipped }
+  return { added, skipped, ...(truncated > 0 ? { truncated } : {}) }
 }
 
 async function readText(file: string, cap: number): Promise<string> {

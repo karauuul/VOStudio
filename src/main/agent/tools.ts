@@ -39,7 +39,7 @@ import {
   type RowColumns,
   type RowMapping,
 } from '@shared/linking'
-import type { AssetTable } from '@shared/asset-readers'
+import { MAX_PICKED_FILES, type AssetTable } from '@shared/asset-readers'
 import {
   cursorOffset,
   findAsset,
@@ -642,6 +642,9 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           assets: result.added.slice(0, REPORT_LIST_MAX).map((a) => assetView(a, counts)),
           skipped: result.skipped.slice(0, REPORT_LIST_MAX),
           ...(result.skipped.length > REPORT_LIST_MAX ? { skippedTotal: result.skipped.length } : {}),
+          ...(result.truncated
+            ? { notAdded: { files: result.truncated, reason: `over the ${MAX_PICKED_FILES} file limit per call; add the remaining folders separately` } }
+            : {}),
         })
       },
     }),

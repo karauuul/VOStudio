@@ -9,10 +9,10 @@ import { pendingTakeDurations, type TakeDurationEntry } from '@shared/library'
 import type { AudioImportResult } from '@shared/ipc'
 import { isInsideDir } from '@shared/project-summary'
 import { takeFileKind } from '@shared/take-import'
+import { MAX_PICKED_FILES } from '@shared/asset-readers'
 import { probeMedia, transcodeToWav } from './ffmpeg'
 
 const CONCURRENCY = 8
-const MAX_FILES = 20_000
 
 export async function probeDuration(file: string): Promise<number | undefined> {
   try {
@@ -53,8 +53,12 @@ export interface PickedAudio extends PickedFile {
   assetId?: string
 }
 
-async function walk(dir: string, root: string, out: PickedFile[], accept: (abs: string) => boolean): Promise<void> {
-  if (out.length >= MAX_FILES) return
+export interface CollectedFiles {
+  files: PickedFile[]
+  truncated: number
+}
+
+async function walk(dir: string, root: string, out: CollectedFiles, accept: (abs: string) => boolean): Promise<void> {
   const entries = await fs.readdir(dir, { withFileTypes: true })
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const abs = path.join(dir, entry.name)
@@ -67,13 +71,14 @@ async function walk(dir: string, root: string, out: PickedFile[], accept: (abs: 
   }
 }
 
-function push(out: PickedFile[], abs: string, rel: string, accept: (abs: string) => boolean, dir = ''): void {
-  if (!accept(abs) || out.length >= MAX_FILES) return
-  out.push({ rel: rel.replace(/\\/g, '/'), dir: dir.replace(/\\/g, '/'), src: abs })
+function push(out: CollectedFiles, abs: string, rel: string, accept: (abs: string) => boolean, dir = ''): void {
+  if (!accept(abs)) return
+  if (out.files.length >= MAX_PICKED_FILES) out.truncated++
+  else out.files.push({ rel: rel.replace(/\\/g, '/'), dir: dir.replace(/\\/g, '/'), src: abs })
 }
 
-export async function collectFiles(paths: string[], accept: (abs: string) => boolean): Promise<PickedFile[]> {
-  const out: PickedFile[] = []
+export async function collectFiles(paths: string[], accept: (abs: string) => boolean): Promise<CollectedFiles> {
+  const out: CollectedFiles = { files: [], truncated: 0 }
   for (const target of paths) {
     const stat = await fs.stat(target).catch(() => null)
     if (!stat) continue
@@ -97,8 +102,9 @@ export function pickedAudio(file: PickedFile): PickedAudio | null {
   return format ? { ...file, name: path.basename(file.src, path.extname(file.src)), format } : null
 }
 
-export async function collectAudio(paths: string[]): Promise<PickedAudio[]> {
-  return (await collectFiles(paths, (abs) => audioFormat(abs) !== undefined)).flatMap((file) => pickedAudio(file) ?? [])
+export async function collectAudio(paths: string[]): Promise<{ files: PickedAudio[]; truncated: number }> {
+  const { files, truncated } = await collectFiles(paths, (abs) => audioFormat(abs) !== undefined)
+  return { files: files.flatMap((file) => pickedAudio(file) ?? []), truncated }
 }
 
 function buildCue(file: PickedAudio, abs: string, duration: number | undefined): Cue {
@@ -125,7 +131,9 @@ export async function importAudio(
   paths: string[],
   rule: MatchRule
 ): Promise<{ result: AudioImportResult; changes: ChangeSet }> {
-  return importPickedAudio(project, projectDir, await collectAudio(paths), rule)
+  const { files, truncated } = await collectAudio(paths)
+  const imported = await importPickedAudio(project, projectDir, files, rule)
+  return truncated > 0 ? { ...imported, result: { ...imported.result, truncated } } : imported
 }
 
 export async function importPickedAudio(
@@ -151,18 +159,17 @@ export async function importPickedAudio(
 
   const probed = await mapLimited(kept, async (file) => {
     const abs = path.join(referenceRoot, referenceRel(file))
-    if (takeFileKind(file.src) === 'transcode') {
+    const transcode = takeFileKind(file.src) === 'transcode'
+    if (transcode || path.resolve(abs).toLowerCase() !== path.resolve(file.src).toLowerCase()) {
       const part = path.join(path.dirname(abs), `.part-${randomUUID()}-${path.basename(abs)}`)
       try {
-        await transcodeToWav(file.src, part)
+        await (transcode ? transcodeToWav(file.src, part) : fs.copyFile(file.src, part))
         await fs.rename(part, abs)
       } catch {
         await fs.rm(part, { force: true }).catch(() => undefined)
-        failed.push({ name: file.rel, reason: 'could not be converted to wav' })
+        failed.push({ name: file.rel, reason: transcode ? 'could not be converted to wav' : 'could not be read' })
         return null
       }
-    } else if (path.resolve(abs).toLowerCase() !== path.resolve(file.src).toLowerCase()) {
-      await fs.copyFile(file.src, abs)
     }
     return { file, abs, duration: await probeDuration(abs) }
   })

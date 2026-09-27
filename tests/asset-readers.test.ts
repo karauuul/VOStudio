@@ -137,6 +137,7 @@ describe('bin routing', () => {
   it('reports what landed in the bin', () => {
     expect(binAddedText({ added: [1, 2], skipped: [] })).toBe('2 added to the bin')
     expect(binAddedText({ added: [], skipped: [1] })).toBe('0 added to the bin · 1 skipped')
+    expect(binAddedText({ added: [1], skipped: [], truncated: 7 })).toBe('1 added to the bin · 7 over the 20000 file limit')
   })
 
   it('offers every known extension in the file picker', () => {

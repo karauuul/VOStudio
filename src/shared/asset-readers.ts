@@ -49,8 +49,13 @@ export function routeDrop(paths: string[]): DropRoute {
   return route
 }
 
-export const binAddedText = (result: { added: unknown[]; skipped: unknown[] }): string =>
-  `${result.added.length} added to the bin${result.skipped.length > 0 ? ` · ${result.skipped.length} skipped` : ''}`
+export const MAX_PICKED_FILES = 20_000
+
+export const overLimitText = (truncated: number | undefined): string =>
+  truncated ? ` · ${truncated} over the ${MAX_PICKED_FILES} file limit` : ''
+
+export const binAddedText = (result: { added: unknown[]; skipped: unknown[]; truncated?: number }): string =>
+  `${result.added.length} added to the bin${result.skipped.length > 0 ? ` · ${result.skipped.length} skipped` : ''}${overLimitText(result.truncated)}`
 
 export interface AssetTable {
   format: string

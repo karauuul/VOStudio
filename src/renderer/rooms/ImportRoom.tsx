@@ -1,6 +1,6 @@
 import { memo, useCallback, useRef, useState, type MutableRefObject, type RefObject } from 'react'
 import type { Cue, MatchRule, Project, ProjectAsset, VoiceSettings } from '@shared/domain'
-import { binAddedText, inPlaceKind, routeDrop } from '@shared/asset-readers'
+import { binAddedText, inPlaceKind, overLimitText, routeDrop } from '@shared/asset-readers'
 import { reviewGeneration } from '@shared/cue-filter'
 import type { TableImportResult } from '@shared/ipc'
 import { proposalRefs } from '@shared/linking'
@@ -98,7 +98,7 @@ export const ImportRoom = memo(function ImportRoom({
       const parts: string[] = []
       if (route.bin.length > 0) {
         const r = await api['assets:add']({ paths: route.bin, skipMedia: true })
-        if (r.added.length > 0 || r.skipped.length > 0) parts.push(binAddedText(r))
+        if (r.added.length > 0 || r.skipped.length > 0 || r.truncated) parts.push(binAddedText(r))
       }
       if (route.lines.length > 0) {
         const r = await api['import:audio']({ paths: route.lines, rule: matchBy })
@@ -107,7 +107,8 @@ export const ImportRoom = memo(function ImportRoom({
             (r.unmatched === undefined
               ? `${r.files} files · ${r.added} lines added, ${r.updated} updated`
               : `${r.files} files · ${r.updated} updated${r.unmatched > 0 ? ` · ${r.unmatched} unmatched` : ''}`) +
-              (r.failed ? ` · ${r.failed.length} skipped` : '')
+              (r.failed ? ` · ${r.failed.length} skipped` : '') +
+              overLimitText(r.truncated)
           )
         }
       }

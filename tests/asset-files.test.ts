@@ -14,6 +14,8 @@ vi.mock('electron', () => ({ app: { getPath: () => H.root } }))
 mkdirSync(H.root, { recursive: true })
 
 const { addAssets, assetAudioLines, assetPage, clearAssetCache, loadAsset, readAssetCached } = await import('../src/main/assets')
+const { collectFiles } = await import('../src/main/audio-import')
+const { MAX_PICKED_FILES } = await import('../src/shared/asset-readers')
 const store = await import('../src/main/project-store')
 const ffmpegStatic = (await import('ffmpeg-static')).default as unknown as string
 
@@ -165,6 +167,42 @@ describe('audio assets of every audio format become lines', () => {
     expect(await fs.readdir(target)).toEqual([])
     await expect(fs.stat(path.join(H.root, 'victim.wav'))).rejects.toThrow()
   })
+})
+
+describe('audio assets whose file went missing', () => {
+  it('skips the unreadable one, builds the rest and leaves no partial copy behind', async () => {
+    const dir = path.join(H.root, 'gone')
+    await fs.mkdir(dir, { recursive: true })
+    await tone(path.join(dir, 'kept_001.wav'))
+    await tone(path.join(dir, 'lost_001.wav'))
+    const target = path.join(H.root, 'VOStudio', 'gone.vostudio')
+    const { added } = await addAssets([], target, [dir])
+    await fs.rm(path.join(dir, 'lost_001.wav'))
+    const project = { ...base(), id: 'p', schemaVersion: 1, createdAt: '', assets: added } as Project
+    const { result, changes } = await assetAudioLines(project, target, added.map((a) => a.id))
+    expect(result).toMatchObject({ added: 1, updated: 0, skipped: [{ asset: 'gone/lost_001.wav', reason: 'could not be read' }] })
+    expect(project.cues.map((c) => c.key)).toEqual(['kept_001'])
+    expect(changes.cues?.map((c) => c.key)).toEqual(['kept_001'])
+    expect(await fs.readdir(path.join(target, 'audio', 'reference', 'gone'))).toEqual(['kept_001.wav'])
+  })
+})
+
+describe('a dropped folder over the file limit', () => {
+  it('collects up to the limit and counts every accepted file past it', async () => {
+    const dir = path.join(H.root, 'many')
+    await fs.mkdir(dir, { recursive: true })
+    const names = Array.from({ length: MAX_PICKED_FILES + 3 }, (_, i) => `f${String(i).padStart(6, '0')}.txt`)
+    for (let i = 0; i < names.length; i += 500) {
+      await Promise.all(names.slice(i, i + 500).map((name) => fs.writeFile(path.join(dir, name), '')))
+    }
+    await fs.writeFile(path.join(dir, '.hidden'), '')
+    const { files, truncated } = await collectFiles([dir], (abs) => !path.basename(abs).startsWith('.'))
+    expect(files).toHaveLength(MAX_PICKED_FILES)
+    expect(files.at(-1)?.rel).toBe(`many/${names[MAX_PICKED_FILES - 1]}`)
+    expect(truncated).toBe(3)
+    expect((await collectFiles([path.join(dir, names[0])], () => true)).truncated).toBe(0)
+    await fs.rm(dir, { recursive: true, force: true })
+  }, 60_000)
 })
 
 describe('project.json keeps the new fields across a reopen', () => {

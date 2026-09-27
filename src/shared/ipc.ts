@@ -220,11 +220,13 @@ export interface AudioImportResult {
   unmatched?: number
   duplicates?: string[]
   failed?: { name: string; reason: string }[]
+  truncated?: number
 }
 
 export interface AssetAddResult {
   added: ProjectAsset[]
   skipped: { name: string; reason: string }[]
+  truncated?: number
 }
 
 export interface AssetPage {

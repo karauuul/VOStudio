@@ -580,6 +580,12 @@ describe('bin tools', () => {
     expect(((await call('assets', { kind: 'audio' })).data.assets as { id: string; lines: number }[]).map((a) => [a.id, a.lines])).toEqual([['wav', 1]])
     expect(((await call('assets', { unlinked: true, limit: 2 })).data as { nextCursor: string }).nextCursor).toBe('2')
     expect((await call('asset_add', { paths: ['rel.txt'] })).error).toBe('Invalid arguments at "paths.0": must be an absolute path.')
+    expect(added.data).not.toHaveProperty('notAdded')
+    deps.addAssets.mockResolvedValueOnce({ added: [], skipped: [], truncated: 42 })
+    expect((await call('asset_add', { paths: ['/data/huge'] })).data).toMatchObject({
+      added: 0,
+      notAdded: { files: 42, reason: 'over the 20000 file limit per call; add the remaining folders separately' },
+    })
   })
 
   it('reads tables, raw text and audio in pages and cuts long cells', async () => {
