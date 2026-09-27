@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import path from 'path'
 import { z } from 'zod/v4'
-import type { Cue, ProjectVersion } from '@shared/domain'
+import type { Cue, ProjectVersion, WordTiming } from '@shared/domain'
 import { resolveVoiceSettings, TERM_TEXT_MAX, TERMS_MAX } from '@shared/domain'
 import { clampVoiceSettings } from '@shared/generation'
 import { LINE_TEXT_MAX } from '@shared/lines'
@@ -26,7 +26,6 @@ import { transcriptMatch } from '@shared/agent-render'
 import type { AudioMetrics } from '@shared/audio-metrics'
 import { findCollisions, originalLength, planBatch, planLine, renderedWords } from '@shared/export-plan'
 import {
-  analyzeProsody,
   ANALYSIS_MAX_SECONDS,
   ANALYSIS_RATE,
   prosodyPanel,
@@ -87,6 +86,7 @@ export interface AgentDeps {
   exportLines: (cueIds: string[], expected?: SerialProjectRepository) => Promise<BatchExportResult>
   transcribeFile: (file: string) => Promise<string>
   decodeAudio: (file: string) => Promise<Float32Array>
+  analyzeAudio: (pcm: Float32Array, rate: number, words: WordTiming[]) => Promise<Prosody>
   drawFigure: (figure: ProsodyFigure) => Promise<Buffer>
   provider: () => VoiceProvider
   diagnostics: () => DiagnosticEntry[]
@@ -215,8 +215,8 @@ interface HeardLine {
 
 async function hear(deps: AgentDeps, source: RenderSource, render: LineRender, words: ReturnType<typeof renderedWords>): Promise<HeardLine> {
   const repository = requireRepository(deps)
-  const pcm = await liveCall(repository, () => deps.decodeAudio(render.path))
-  return { source, render, prosody: analyzeProsody(pcm, ANALYSIS_RATE, source === 'output' ? words : []) }
+  const prosody = await liveCall(repository, async () => deps.analyzeAudio(await deps.decodeAudio(render.path), ANALYSIS_RATE, source === 'output' ? words : []))
+  return { source, render, prosody }
 }
 
 const heardSummary = (heard: HeardLine): Record<string, unknown> => ({

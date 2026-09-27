@@ -2,11 +2,19 @@ import { describe, expect, it, vi } from 'vitest'
 import { SerialProjectRepository } from '../src/main/project-repository'
 import { agentTools, AGENT_INSTRUCTIONS, type AgentDeps } from '../src/main/agent/tools'
 import type { VoiceProvider } from '../src/main/providers/voice-provider'
-import { projectDirSchema, projectNameSchema } from '../src/main/schemas'
-import { emptyEdits, type Cue, type Project } from '../src/shared/domain'
+import { projectDirSchema, projectNameSchema, renderReplySchema } from '../src/main/schemas'
+import { emptyEdits, type Cue, type Project, type WordTiming } from '../src/shared/domain'
 import { createSession, handleMessage, type McpServer, type RpcMessage } from '../src/shared/mcp'
 import type { CommandResult } from '../src/shared/project-commands'
 import { transcribeCues } from '../src/main/transcribe'
+import { analyzeProsody } from '../src/shared/prosody'
+
+const prosody = await vi.importActual<typeof import('../src/shared/prosody')>('../src/shared/prosody')
+
+vi.mock('../src/shared/prosody', async (original) => {
+  const actual = await original<typeof import('../src/shared/prosody')>()
+  return { ...actual, analyzeProsody: vi.fn(actual.analyzeProsody) }
+})
 
 const voice = { stability: 0.5, similarity: 0.5, style: 0, speed: 1, boost: true }
 
@@ -113,6 +121,7 @@ function setup(open = true) {
     ],
     screenshot: async () => null,
     decodeAudio: vi.fn(async (file: string) => (file.endsWith('.original.wav') ? tones([[0.1, 0], [0.9, 150], [0.2, 0]]) : tones([[0.1, 0], [0.5, 170], [0.3, 0], [0.6, 170], [0.2, 0]]))),
+    analyzeAudio: vi.fn(async (pcm: Float32Array, rate: number, words: WordTiming[]) => prosody.analyzeProsody(pcm, rate, words)),
     drawFigure: vi.fn(async () => Buffer.from('png')),
   }
   const spec: McpServer = { info: { name: 'vo-studio', version: '1.2.3' }, instructions: AGENT_INSTRUCTIONS, tools: agentTools(deps) }
@@ -748,6 +757,39 @@ describe('analyze and compare', () => {
     expect(data.rhythm).toBeLessThan(0.6)
     const suggestions = data.suggestions as string[]
     expect(suggestions[0]).toMatch(/^dub speech is 0\.\d\d s longer than the original \(1\.4\d vs 0\.9\d s\): speed 1\.20 \(the speed limit; also shorten the text\) or remove the 0\.\d\d s pause after "Voiced"$/)
+  })
+
+  it('runs the analysis in the render worker, never in the main process', async () => {
+    const { call, deps, repo } = setup()
+    withWords(repo!)
+    vi.mocked(analyzeProsody).mockClear()
+    expect((await call('analyze', { line: 'L3' })).data).toMatchObject({ source: 'output' })
+    expect(deps.analyzeAudio).toHaveBeenCalledTimes(1)
+    expect(deps.analyzeAudio).toHaveBeenCalledWith(expect.any(Float32Array), prosody.ANALYSIS_RATE, repo!.projectForMain().cues[2].takes[0].words)
+    expect((await call('compare', { line: 'L3' })).data).toMatchObject({ line: 'L3' })
+    expect(deps.analyzeAudio).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(deps.analyzeAudio).mock.calls[2][2]).toEqual([])
+    expect(analyzeProsody).not.toHaveBeenCalled()
+  })
+
+  it('reports a failed worker analysis as the tool error', async () => {
+    const { call, deps } = setup()
+    deps.analyzeAudio = vi.fn(async () => {
+      throw new Error('The render window crashed; it restarts on the next call, retry.')
+    })
+    expect((await call('analyze', { line: 'L1' })).error).toBe('The render window crashed; it restarts on the next call, retry.')
+  })
+
+  it('keeps every prosody field through the worker reply schema', () => {
+    const words = [
+      { text: 'Voiced', start: 0.1, end: 0.6 },
+      { text: 'line', start: 0.9, end: 1.5 },
+    ]
+    const heard = prosody.analyzeProsody(tones([[0.1, 0], [0.5, 170], [0.3, 0], [0.6, 170], [0.2, 0]]), prosody.ANALYSIS_RATE, words)
+    const id = '00000000-0000-4000-8000-000000000000'
+    expect(renderReplySchema.parse({ id, ok: true, prosody: heard }).prosody).toEqual(heard)
+    const tooLong = { ...heard, track: { ...heard.track, db: new Float32Array(prosody.ANALYSIS_FRAMES_MAX + 1) } }
+    expect(renderReplySchema.safeParse({ id, ok: true, prosody: tooLong }).success).toBe(false)
   })
 
   it('explains what is missing for a comparison', async () => {

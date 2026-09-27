@@ -89,6 +89,7 @@ const eventMap: Record<EventChannel, true> = {
   'render:line': true,
   'render:plan': true,
   'render:image': true,
+  'render:prosody': true,
 }
 
 const api = {} as Record<string, unknown>

@@ -1,3 +1,4 @@
+import { analyzeProsody } from '@shared/prosody'
 import { api } from '../api'
 import { figurePng } from './prosody-image'
 import { renderJob, runPlan } from './run-export'
@@ -16,6 +17,14 @@ export function startRenderWorker(): void {
       (png) => api['render:reply']({ id, ok: true, png }),
       (e: unknown) => api['render:reply']({ id, ok: false, error: reason(e) })
     )
+  })
+  api.on('render:prosody', ({ id, pcm, rate, words }) => {
+    void Promise.resolve()
+      .then(() => analyzeProsody(pcm, rate, words))
+      .then(
+        (prosody) => api['render:reply']({ id, ok: true, prosody }),
+        (e: unknown) => api['render:reply']({ id, ok: false, error: reason(e) })
+      )
   })
   api.on('render:plan', ({ id, plan }) => {
     void runPlan(plan).then(

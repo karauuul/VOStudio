@@ -118,7 +118,7 @@ import { startAgentServer, type AgentServerHandle } from './agent/server'
 import { AGENT_INSTRUCTIONS, agentTools } from './agent/tools'
 import { diagnostics, watchDiagnostics } from './agent/diagnostics'
 import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
-import { closeRenderWorker, renderExportPlan, renderLineWav, renderProsodyImage, renderWorker, settleRender } from './agent/render-worker'
+import { analyzeInWorker, closeRenderWorker, renderExportPlan, renderLineWav, renderProsodyImage, renderWorker, settleRender } from './agent/render-worker'
 import { hardenedWindow, loadRenderer, uiWindows } from './windows'
 import { renderFileName } from '@shared/agent-render'
 import { ANALYSIS_MAX_SECONDS, ANALYSIS_RATE } from '@shared/prosody'
@@ -1129,6 +1129,7 @@ function agentServerSpec(): McpServer {
       exportLines: exportForAgent,
       transcribeFile,
       decodeAudio: (file) => ffmpegPcm(file, ANALYSIS_RATE, ANALYSIS_MAX_SECONDS),
+      analyzeAudio: analyzeInWorker,
       drawFigure: renderProsodyImage,
       provider: voiceProvider,
       diagnostics,

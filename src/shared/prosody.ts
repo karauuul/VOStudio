@@ -3,6 +3,7 @@ import type { WordTiming } from './domain'
 export const ANALYSIS_RATE = 16000
 export const ANALYSIS_MAX_SECONDS = 60
 export const HOP_SECONDS = 0.01
+export const ANALYSIS_FRAMES_MAX = Math.ceil(ANALYSIS_MAX_SECONDS / HOP_SECONDS) + 1
 export const RMS_SECONDS = 0.02
 export const PITCH_SECONDS = 0.04
 export const F0_MIN = 60

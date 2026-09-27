@@ -1,8 +1,9 @@
 import type { BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
 import type { z } from 'zod'
-import type { BatchExportResult, ExportJob, ExportPlan, RenderImageRequest, RenderLineRequest, RenderPlanRequest } from '@shared/ipc'
-import type { ProsodyFigure } from '@shared/prosody'
+import type { WordTiming } from '@shared/domain'
+import type { BatchExportResult, ExportJob, ExportPlan, RenderImageRequest, RenderLineRequest, RenderPlanRequest, RenderProsodyRequest } from '@shared/ipc'
+import type { Prosody, ProsodyFigure } from '@shared/prosody'
 import { planTimeoutMs } from '@shared/agent-render'
 import { errorText } from '@shared/mcp'
 import type { renderReplySchema } from '../schemas'
@@ -14,6 +15,7 @@ type RenderReply = z.infer<typeof renderReplySchema>
 export const RENDER_IDLE_MS = 60_000
 export const LINE_TIMEOUT_MS = 120_000
 export const IMAGE_TIMEOUT_MS = 30_000
+export const ANALYSIS_TIMEOUT_MS = 30_000
 
 const CLOSED = 'The render window closed before it finished; retry.'
 const CRASHED = 'The render window crashed; it restarts on the next call, retry.'
@@ -129,4 +131,10 @@ export async function renderProsodyImage(figure: ProsodyFigure): Promise<Buffer>
   const reply = await request((win, id) => win.webContents.send('render:image', { id, figure } satisfies RenderImageRequest), IMAGE_TIMEOUT_MS)
   if (!reply.ok || !reply.png) throw failed('Drawing', reply, 'no image came back')
   return Buffer.from(reply.png instanceof Uint8Array ? reply.png : new Uint8Array(reply.png))
+}
+
+export async function analyzeInWorker(pcm: Float32Array, rate: number, words: WordTiming[]): Promise<Prosody> {
+  const reply = await request((win, id) => win.webContents.send('render:prosody', { id, pcm, rate, words } satisfies RenderProsodyRequest), ANALYSIS_TIMEOUT_MS)
+  if (!reply.ok || !reply.prosody) throw failed('Analysis', reply, 'no analysis came back')
+  return reply.prosody
 }

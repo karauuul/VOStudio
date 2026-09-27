@@ -8,6 +8,7 @@ import type {
   UsageInfo,
   VoiceSettings,
   UiSessionState,
+  WordTiming,
 } from './domain'
 import type { ProviderModel } from './provider-models'
 import type { TableMapping, TableMatchBy, TableSummary, TableUndo } from './import-table'
@@ -21,7 +22,7 @@ import type { ProjectSummary } from './project-summary'
 import type { PcmBitDepth } from './wav-header'
 import type { LatencySetting } from './punch'
 import type { PassRange } from './loop-record'
-import type { ProsodyFigure } from './prosody'
+import type { Prosody, ProsodyFigure } from './prosody'
 
 export interface CsvPreview {
   headers: string[]
@@ -305,6 +306,13 @@ export interface RenderImageRequest {
   figure: ProsodyFigure
 }
 
+export interface RenderProsodyRequest {
+  id: string
+  pcm: Float32Array
+  rate: number
+  words: WordTiming[]
+}
+
 export interface RenderPlanRequest {
   id: string
   plan: ExportPlan
@@ -313,6 +321,7 @@ export interface RenderPlanRequest {
 export interface RenderReply extends BridgeReply {
   wav?: ArrayBuffer
   png?: ArrayBuffer
+  prosody?: Prosody
   result?: BatchExportResult
 }
 
@@ -411,6 +420,7 @@ export interface IpcEvents {
   'render:line': RenderLineRequest
   'render:plan': RenderPlanRequest
   'render:image': RenderImageRequest
+  'render:prosody': RenderProsodyRequest
 }
 
 export type EventChannel = keyof IpcEvents
