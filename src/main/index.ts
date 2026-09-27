@@ -1307,6 +1307,7 @@ function quitIfNoWindows(): void {
 async function quitHeadless(): Promise<void> {
   if (!headless) throw new Error('VO Studio was not started with --headless; the user quits it from the app.')
   if (uiWindows().length > 0) throw new Error('VO Studio has a window open; the user quits it from the app.')
+  if (exportBusy()) throw new Error('The app is exporting; wait for that export to finish, then retry.')
   await flushPersist()
   setImmediate(() => app.quit())
 }

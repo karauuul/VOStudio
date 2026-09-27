@@ -153,7 +153,7 @@ async function run() {
   check(dry.ready === n && dry.skippedTotal === 0, `export dryRun: ${JSON.stringify(dry)}`)
   const exported = tool('export', { filter: 'all' })
   check(exported.written === n && exported.failed.length === 0 && exported.skippedTotal === 0, `export: ${JSON.stringify(exported)}`)
-  const files = dry.files.map((f) => path.join(exported.outDir, 'audio', f.name))
+  const files = dry.files.map((f) => path.join(exported.outDir, f.name))
   const missing = files.filter((f) => !existsSync(f))
   check(missing.length === 0, `exported files missing: ${missing.join(', ')} (folder has ${readdirSync(exported.outDir, { recursive: true }).join(', ')})`)
   step(`export ok: ${exported.written} files in ${exported.outDir}`)

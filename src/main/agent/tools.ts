@@ -1390,7 +1390,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
             outDir: info.outDir,
             summary: summarize(project, rows),
             ready: ready.length,
-            files: page.map((r) => ({ line: r.cueKey, name: r.name, changed: r.changed, duration: r.outputLength ?? null })),
+            files: page.map((r) => ({ line: r.cueKey, name: `audio/${r.name}`, changed: r.changed, duration: r.outputLength ?? null })),
             ...skipped,
             collisions: findCollisions(planBatch(project)).filter((c) => c.cueKeys.some((k) => scoped.has(k))).slice(0, REPORT_LIST_MAX).map((c) => ({ name: c.name, lines: c.cueKeys })),
             ...(nextCursor === undefined ? {} : { nextCursor }),
@@ -1581,7 +1581,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
     defineTool({
       name: 'app_quit',
       title: 'Quit app',
-      description: 'Save and quit VO Studio when it runs headless (started with --headless, no window open). Refused while a window is open or generation jobs are unfinished.',
+      description: 'Save and quit VO Studio when it runs headless (started with --headless, no window open). Refused while a window is open, generation jobs are unfinished or an export runs.',
       input: z.object({}),
       annotations: WRITE,
       writes: () => false,

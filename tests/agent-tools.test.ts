@@ -763,7 +763,7 @@ describe('render, verify and export', () => {
       dryRun: true,
       outDir: '/root/Demo.vostudio/export',
       ready: 1,
-      files: [{ line: 'L3', name: '{key}.mp3', changed: false, duration: 2 }],
+      files: [{ line: 'L3', name: 'audio/{key}.mp3', changed: false, duration: 2 }],
       skippedTotal: 5,
       collisions: [],
     })
