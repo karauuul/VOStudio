@@ -34,6 +34,7 @@ const WORD_ROWS = 2
 const WORD_ROW = 14
 const MIN_RANGE_ST = 12
 const PITCH_BAND = 0.62
+const PITCH_MARGIN = 8
 const WAVE_ALPHA = 0.35
 const HZ_TICKS = [60, 80, 100, 120, 150, 200, 250, 300, 400, 500]
 const ARROWS: Record<Contour, string> = { rising: '↗', flat: '→', falling: '↘' }
@@ -83,7 +84,8 @@ function drawPanel(g: CanvasRenderingContext2D, panel: ProsodyPanel, top: number
   g.lineWidth = 1
   g.fillStyle = COLORS.tx3
   g.textAlign = 'right'
-  const yOf = (st: number): number => pitchBottom - ((st - scale.lo) / (scale.hi - scale.lo)) * (pitchBottom - plotTop - 6)
+  const yOf = (st: number): number =>
+    pitchBottom - PITCH_MARGIN - ((st - scale.lo) / (scale.hi - scale.lo)) * (pitchBottom - plotTop - 2 * PITCH_MARGIN)
   for (const hz of HZ_TICKS) {
     const st = semitones(hz)
     if (st < scale.lo || st > scale.hi) continue
@@ -202,6 +204,11 @@ function drawPanel(g: CanvasRenderingContext2D, panel: ProsodyPanel, top: number
   g.fillStyle = COLORS.tx
   g.textAlign = 'left'
   g.fillText(LABELS[panel.kind], LEFT + 6, top + 3)
+  if (!panel.f0.some((f) => f > 0)) {
+    g.font = `12px ${FONT}`
+    g.fillStyle = COLORS.tx3
+    g.fillText(`no F0 in ${F0_MIN}–${F0_MAX} Hz`, LEFT + 6 + g.measureText(LABELS[panel.kind]).width + 24, top + 3)
+  }
 }
 
 function drawLegend(g: CanvasRenderingContext2D): void {
