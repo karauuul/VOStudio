@@ -1,6 +1,6 @@
 import { changeCueSourceText, changeCueText, invalidateVoicedOutput } from './approval'
 import { parseCsv } from './csv'
-import { LINE_TEXT_MAX, newLineCue, nextLineNumber, splitParagraphs } from './lines'
+import { newLineCue, nextLineNumber, splitParagraphs, textTooLong } from './lines'
 import { matchRowsByText, type TextMatchReport } from './agent-text'
 import { PATH_FIELD } from './export-plan'
 import type { ChangeSet, FieldStep, LineFields } from './project-commands'
@@ -243,8 +243,7 @@ export function applyTable(
       (idColumn === undefined ? !source && !translation : !id) ||
       id.length > CUE_KEY_MAX ||
       character.length > CHARACTER_ID_MAX ||
-      source.length > LINE_TEXT_MAX ||
-      translation.length > LINE_TEXT_MAX
+      textTooLong(source, translation)
     ) {
       summary.skipped++
       continue

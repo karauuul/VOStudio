@@ -805,6 +805,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           suggestions: plan.fields.filter((f) => f.to.suggestedText !== undefined).length,
           characterProposals: plan.proposals.filter((p) => p.character).length,
           ...(plan.addCharacters.length > 0 ? { createdCharacters: plan.addCharacters.map((c) => c.name) } : {}),
+          ...(plan.skipped.length > 0 ? { skipped: { count: plan.skipped.length, rows: plan.skipped.slice(0, REPORT_LIST_MAX) } } : {}),
         })
       },
     }),

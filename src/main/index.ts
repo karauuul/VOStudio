@@ -89,7 +89,7 @@ import {
   exportInfo,
 } from './export'
 import { detectLines, importSources, splitMediaPaths } from './sources'
-import { addAssets, assetAudioLines, assetPage, loadAsset, type AudioLinesResult } from './assets'
+import { addAssets, assetAudioLines, assetPage, clearAssetCache, readAssetCached, type AudioLinesResult } from './assets'
 import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
@@ -286,12 +286,14 @@ async function detachCurrentRepository(): Promise<void> {
   await repository?.detach()
   if (repository) await closeRecordings(repository)
   projectRepository = null
+  clearAssetCache()
 }
 
 function abandonProject(): void {
   cancelExports()
   if (projectRepository) void closeRecordings(projectRepository)
   projectRepository = null
+  clearAssetCache()
   store.closeProject()
 }
 
@@ -617,7 +619,7 @@ async function readAssetPage(req: { id: string; from?: number; count?: number })
   const parsed = assetReadSchema.parse(req)
   const asset = requireRepository().projectForMain().assets?.find((a) => a.id === parsed.id)
   if (!asset) throw new Error('Asset not found')
-  return assetPage(await loadAsset(asset, {}), parsed.from ?? 0, parsed.count ?? ASSET_READ_MAX)
+  return assetPage(await readAssetCached(asset, {}), parsed.from ?? 0, parsed.count ?? ASSET_READ_MAX)
 }
 
 async function previewTableImport(req: TableRequest, expected?: SerialProjectRepository): Promise<TablePreview> {
@@ -1134,7 +1136,7 @@ function agentServerSpec(): McpServer {
       importTable,
       reimportTemplate: reimportTemplateDir,
       addAssets: (paths, expected) => addAssetPaths({ paths }, expected),
-      loadAsset,
+      loadAsset: readAssetCached,
       buildAudioLines,
       transcribe,
       provider: voiceProvider,

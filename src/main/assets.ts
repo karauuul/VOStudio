@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'crypto'
 import type { Project, ProjectAsset } from '@shared/domain'
 import { DEFAULT_MATCH_RULE } from '@shared/import-table'
 import type { ChangeSet } from '@shared/project-commands'
+import { Lru } from '@shared/lru'
 import {
   assetKind,
   extensionOf,
@@ -173,6 +174,27 @@ export async function loadAsset(asset: ProjectAsset, options: AssetReadOptions):
   }
   if (options.jsonPath !== undefined) return jsonRecords(parsed, options.jsonPath, options.fields)
   return { format: 'json', lines: JSON.stringify(parsed, null, 2).split('\n') }
+}
+
+const ASSET_CACHE_ENTRIES = 4
+
+const assetCache = new Lru<{ stamp: string; content: AssetContent }>({ maxEntries: ASSET_CACHE_ENTRIES })
+
+export async function readAssetCached(asset: ProjectAsset, options: AssetReadOptions): Promise<AssetContent> {
+  if (asset.kind === 'audio' || asset.kind === 'video') return loadAsset(asset, options)
+  const stat = await fs.stat(asset.file.relPath).catch(() => null)
+  if (!stat) return loadAsset(asset, options)
+  const key = JSON.stringify([asset.id, asset.file.relPath, options.jsonPath ?? null, options.fields ?? null])
+  const stamp = `${stat.mtimeMs}:${stat.size}`
+  const hit = assetCache.get(key)
+  if (hit?.stamp === stamp) return hit.content
+  const content = await loadAsset(asset, options)
+  assetCache.set(key, { stamp, content })
+  return content
+}
+
+export function clearAssetCache(): void {
+  assetCache.clear()
 }
 
 const PAGE_CELL_MAX = 1000

@@ -21,6 +21,7 @@ import {
   SPEAKER_CONFIDENCE,
 } from '../src/shared/linking'
 import { SUBTITLE_COLUMNS } from '../src/shared/asset-readers'
+import { LINE_TEXT_MAX, TEXT_TOO_LONG } from '../src/shared/lines'
 
 const cue = (id: string, key: string, sourceText = '', fields: Record<string, string> = {}): Cue => ({
   id,
@@ -209,6 +210,22 @@ describe('linkPlan', () => {
       },
       { cueId: 'c2', link: { assetId: 'a1', row: 1, confidence: 0.7, reason: 'r2' }, character: { characterId: 'ada', confidence: SPEAKER_CONFIDENCE, reason: 'speaker in subs/demo.srt' } },
     ])
+  })
+
+  it('skips a row whose original or translation is over the line text cap, keeping a row exactly at the cap', () => {
+    const p = project([cue('c1', 'k1', 'a'), cue('c2', 'k2', 'b'), cue('c3', 'k3', 'c')])
+    const over = 'x'.repeat(LINE_TEXT_MAX + 1)
+    const full = 'y'.repeat(LINE_TEXT_MAX)
+    const rows = [['k1', over, 'T', 'Bob'], ['k2', 'S', over, 'Eve'], ['k3', full, full, '']]
+    const links = [0, 1, 2].map((row) => ({ row, cueId: `c${row + 1}`, key: `k${row + 1}`, confidence: 1, reason: 'r' }))
+    const plan = linkPlan(p, links, rows, { key: 0, text: 1, translation: 2, character: 3 }, asset)
+    expect(plan.skipped).toEqual([
+      { row: 0, reason: TEXT_TOO_LONG },
+      { row: 1, reason: TEXT_TOO_LONG },
+    ])
+    expect(plan.fields.map((f) => f.cueId)).toEqual(['c3'])
+    expect(plan.proposals.map((item) => item.cueId)).toEqual(['c3'])
+    expect(plan.addCharacters).toEqual([])
   })
 })
 

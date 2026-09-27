@@ -13,6 +13,7 @@ import {
 import { PATH_FIELD } from './export-plan'
 import { detectMapping, commitTable, type TableMapping } from './import-table'
 import { inPlaceKind, resolveColumn, SUBTITLE_COLUMNS } from './asset-readers'
+import { TEXT_TOO_LONG, textTooLong } from './lines'
 import type { ChangeSet, FieldStep, ProposalItem, ProposalRef } from './project-commands'
 
 export const KEY_EXACT = 1
@@ -247,6 +248,7 @@ export interface LinkPlan {
   fields: FieldStep[]
   addCharacters: Character[]
   proposals: ProposalItem[]
+  skipped: { row: number; reason: string }[]
 }
 
 export function linkPlan(
@@ -257,9 +259,16 @@ export function linkPlan(
   asset: Pick<ProjectAsset, 'id' | 'name'>
 ): LinkPlan {
   const byId = new Map(project.cues.map((cue) => [cue.id, cue]))
-  const { created, ids } = speakerIds(project, links.map((link) => cell(rows[link.row], columns.character)))
-  const plan: LinkPlan = { fields: [], addCharacters: created, proposals: [] }
-  for (const link of links) {
+  const oversized = (link: Link): boolean => textTooLong(cell(rows[link.row], columns.text), cell(rows[link.row], columns.translation))
+  const kept = links.filter((link) => !oversized(link))
+  const { created, ids } = speakerIds(project, kept.map((link) => cell(rows[link.row], columns.character)))
+  const plan: LinkPlan = {
+    fields: [],
+    addCharacters: created,
+    proposals: [],
+    skipped: links.filter(oversized).map((link) => ({ row: link.row, reason: TEXT_TOO_LONG })),
+  }
+  for (const link of kept) {
     const cue = byId.get(link.cueId)
     if (!cue) continue
     const cells = rows[link.row]

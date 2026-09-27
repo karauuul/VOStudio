@@ -3,7 +3,7 @@ import { mkdirSync, promises as fs } from 'fs'
 import path from 'path'
 import { promisify } from 'util'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import type { Project } from '../src/shared/domain'
+import type { Project, ProjectAsset } from '../src/shared/domain'
 
 const H = vi.hoisted(() => ({
   root: `${process.env['TEMP'] ?? process.env['TMPDIR'] ?? '/tmp'}/vostudio-assets-${Date.now()}`,
@@ -13,7 +13,7 @@ vi.mock('electron', () => ({ app: { getPath: () => H.root } }))
 
 mkdirSync(H.root, { recursive: true })
 
-const { addAssets, assetAudioLines, assetPage, loadAsset } = await import('../src/main/assets')
+const { addAssets, assetAudioLines, assetPage, clearAssetCache, loadAsset, readAssetCached } = await import('../src/main/assets')
 const store = await import('../src/main/project-store')
 const ffmpegStatic = (await import('ffmpeg-static')).default as unknown as string
 
@@ -218,5 +218,35 @@ describe('project.json keeps the new fields across a reopen', () => {
     expect(assetPage(table, 1, 5)).toEqual({ format: 'csv', total: 3, columns: ['id', 'text'], rows: [['2', 'b'], ['3', 'x'.repeat(1000)]] })
     expect(assetPage({ format: 'xml', lines: ['<a>', '</a>'] }, 0, 1)).toEqual({ format: 'xml', total: 2, columns: [], rows: [['<a>']] })
     expect(assetPage({ format: 'audio', duration: 2 }, 0, 10)).toEqual({ format: 'audio', total: 0, columns: [], rows: [] })
+  })
+})
+
+describe('cached asset reads', () => {
+  it('parses once per file state and options, and rereads after a size or mtime change or a clear', async () => {
+    const file = path.join(H.root, 'cached.json')
+    await fs.writeFile(file, '{"lines":[{"id":"a","en":"Hi"}]}')
+    const asset: ProjectAsset = { id: 'cache1', name: 'cached.json', kind: 'data', file: { fileId: 'cached.json', relPath: file }, size: 0, addedAt: '' }
+    const first = await readAssetCached(asset, {})
+    expect(await readAssetCached(asset, {})).toBe(first)
+    const records = await readAssetCached(asset, { jsonPath: '$.lines[*]' })
+    expect(records).toEqual({ format: 'json', columns: ['id', 'en'], rows: [['a', 'Hi']] })
+    expect(await readAssetCached(asset, {})).toBe(first)
+
+    await fs.writeFile(file, '{"lines":[{"id":"a","en":"Hi"},{"id":"b","en":"Yo"}]}')
+    const grown = await readAssetCached(asset, { jsonPath: '$.lines[*]' })
+    expect(grown).not.toBe(records)
+    expect(grown).toMatchObject({ rows: [['a', 'Hi'], ['b', 'Yo']] })
+
+    await fs.writeFile(file, '{"lines":[{"id":"a","en":"Ho"},{"id":"b","en":"Yo"}]}')
+    const later = new Date(Date.now() + 60_000)
+    await fs.utimes(file, later, later)
+    expect(await readAssetCached(asset, { jsonPath: '$.lines[*]' })).toMatchObject({ rows: [['a', 'Ho'], ['b', 'Yo']] })
+
+    const cached = await readAssetCached(asset, {})
+    expect(await readAssetCached(asset, {})).toBe(cached)
+    clearAssetCache()
+    const fresh = await readAssetCached(asset, {})
+    expect(fresh).not.toBe(cached)
+    expect(fresh).toEqual(cached)
   })
 })
