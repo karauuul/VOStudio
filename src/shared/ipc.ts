@@ -284,7 +284,9 @@ export interface TakeDurationUpdate {
   duration: number
 }
 
-export type BridgeKind = 'flush'
+export type BridgeAsk = { kind: 'flush' } | { kind: 'leave' } | { kind: 'removable'; cueIds: string[] }
+
+export type BridgeRequest = BridgeAsk & { id: string }
 
 export interface BridgeReply {
   id: string
@@ -382,7 +384,7 @@ export interface IpcEvents {
   'recordings:recovered': number
   'project:opened': SerializedSnapshot
   'project:closed': null
-  'bridge:request': { id: string; kind: BridgeKind }
+  'bridge:request': BridgeRequest
 }
 
 export type EventChannel = keyof IpcEvents

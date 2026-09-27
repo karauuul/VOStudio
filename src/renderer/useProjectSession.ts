@@ -18,6 +18,8 @@ import { durationQueue } from './audio/duration-backfill'
 import { playback } from './playback'
 import { useTextDraft } from './text-draft-store'
 
+const FLUSH_PASSES = 5
+
 export type StatusKind = 'ok' | 'err' | 'info'
 
 function applyDurations(project: Project, items: TakeDurationUpdate[]): Project {
@@ -222,7 +224,10 @@ export function useProjectSession(o: {
     pendingVoice.current = null
     return p.fn().then(
       () => true,
-      () => false
+      () => {
+        if (!pendingVoice.current) pendingVoice.current = p
+        return false
+      }
     )
   }, [])
 
@@ -268,8 +273,14 @@ export function useProjectSession(o: {
     }
     const next = pendingUi.current
     pendingUi.current = null
-    if (!next) return Promise.resolve()
-    return api['ui:save'](next).catch(() => {})
+    if (!next) return Promise.resolve(true)
+    return api['ui:save'](next).then(
+      () => true,
+      () => {
+        if (!pendingUi.current) pendingUi.current = next
+        return false
+      }
+    )
   }, [])
 
   const abandon = useCallback(() => {
@@ -288,19 +299,23 @@ export function useProjectSession(o: {
   }, [])
 
   const flushAll = useCallback(async (): Promise<boolean> => {
-    const saved = await flushText()
-    await flushVoice()
-    if (!saved) return false
-    await flushUi()
+    for (let pass = 0; pendingText.current || pendingVoice.current || pass === 0; pass++) {
+      if (pass === FLUSH_PASSES) return false
+      const saved = await flushText()
+      const voiced = await flushVoice()
+      if (!saved || !voiced) return false
+    }
+    if (!(await flushUi())) return false
     await durationQueue.flushNow()
     return true
   }, [flushText, flushVoice, flushUi])
 
   useEffect(
     () =>
-      api.on('bridge:request', ({ id }) => {
+      api.on('bridge:request', ({ id, kind }) => {
+        if (kind !== 'flush') return
         void flushAll().then(
-          (ok) => api['bridge:reply']({ id, ok, ...(ok ? {} : { error: 'the line text could not be saved' }) }),
+          (ok) => api['bridge:reply']({ id, ok, ...(ok ? {} : { error: 'the line text or voice settings could not be saved' }) }),
           (e: unknown) => api['bridge:reply']({ id, ok: false, error: String(e) })
         )
       }),

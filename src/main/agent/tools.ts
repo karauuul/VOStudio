@@ -47,6 +47,7 @@ export interface AgentDeps {
   saveVersion: (name?: string) => Promise<ProjectVersion[]>
   restoreVersion: (n: number) => Promise<unknown>
   flushUi: () => Promise<void>
+  checkRemovable: (cueIds: string[]) => Promise<void>
   emit: (result: CommandResult) => void
   audioRoots: () => string[]
   importAudio: (req: { paths: string[]; rule: MatchRule }) => Promise<AudioImportResult>
@@ -131,8 +132,21 @@ function requireRepository(deps: AgentDeps): SerialProjectRepository {
   return repository
 }
 
+const removedCueIds = (command: ProjectCommand): string[] =>
+  command.type === 'cue.delete' ? command.cueIds : command.type === 'table.step' ? command.remove : []
+
+const pin = (deps: AgentDeps): AgentDeps => {
+  const repository = requireRepository(deps)
+  return { ...deps, repository: () => repository }
+}
+
 async function execute(deps: AgentDeps, command: ProjectCommand): Promise<CommandResult> {
-  const result = await requireRepository(deps).execute(command)
+  const repository = requireRepository(deps)
+  const removed = removedCueIds(command)
+  if (removed.length > 0) await deps.checkRemovable(removed)
+  const result = await repository.execute(command).catch((error: unknown) => {
+    throw repository.isLive() ? error : new Error('The project was closed or switched during this call; call status, then retry')
+  })
   deps.emit(result)
   return result
 }
@@ -318,11 +332,12 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       input: z.object({ ops: z.array(editOp).min(1).max(500) }),
       annotations: DESTRUCTIVE,
       async run(ctx, args) {
+        const pinned = pin(deps)
         const applied: { op: string; line: string; id: string }[] = []
         for (const [i, op] of args.ops.entries()) {
           if (ctx.signal.aborted) break
           try {
-            applied.push(await applyEdit(deps, op))
+            applied.push(await applyEdit(pinned, op))
           } catch (error) {
             const reason = (error instanceof Error ? error.message : String(error)).replace(/\.$/, '')
             throw new Error(`Op ${i + 1} (${op.op}) failed after ${applied.length} applied: ${reason}.`)
@@ -364,14 +379,15 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         }),
       annotations: DESTRUCTIVE,
       async run(_ctx, args) {
+        const pinned = pin(deps)
         let id: string
         if (args.create !== undefined) {
           id = randomUUID()
-          await execute(deps, { type: 'character.create', id, name: args.create })
-        } else id = findCharacter(requireRepository(deps).projectForMain(), args.character ?? '').id
-        if (args.rename !== undefined) await execute(deps, { type: 'character.rename', characterId: id, name: args.rename })
+          await execute(pinned, { type: 'character.create', id, name: args.create })
+        } else id = findCharacter(requireRepository(pinned).projectForMain(), args.character ?? '').id
+        if (args.rename !== undefined) await execute(pinned, { type: 'character.rename', characterId: id, name: args.rename })
         if (args.voiceId !== undefined || args.ttsModel !== undefined || args.stsModel !== undefined) {
-          await execute(deps, {
+          await execute(pinned, {
             type: 'character.setProvider',
             characterId: id,
             ...(args.voiceId === undefined ? {} : { voiceId: args.voiceId }),
@@ -380,11 +396,11 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           })
         }
         if (args.settings !== undefined) {
-          const current = findCharacter(requireRepository(deps).projectForMain(), id)
+          const current = findCharacter(requireRepository(pinned).projectForMain(), id)
           const settings = clampVoiceSettings(resolveVoiceSettings(current, { voiceSettingsOverride: args.settings }))
-          await execute(deps, { type: 'character.setVoiceSettings', characterId: id, settings })
+          await execute(pinned, { type: 'character.setVoiceSettings', characterId: id, settings })
         }
-        return structured({ character: characterView(findCharacter(requireRepository(deps).projectForMain(), id)) })
+        return structured({ character: characterView(findCharacter(requireRepository(pinned).projectForMain(), id)) })
       },
     }),
     defineTool({
@@ -575,7 +591,8 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       }),
       annotations: WRITE,
       async run(_ctx, args) {
-        const project = requireRepository(deps).projectForMain()
+        const pinned = pin(deps)
+        const project = requireRepository(pinned).projectForMain()
         const outcomes: { line: string; outcome: string; reason?: string }[] = []
         const steps: FieldStep[] = []
         const texts: { cue: Cue; text: string; was: string; outcome: { outcome: string; reason?: string } }[] = []
@@ -607,10 +624,10 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           }
         }
         if (steps.length > 0) {
-          await execute(deps, { type: 'table.step', remove: [], restore: [], fields: steps, addCharacters: [], dropCharacters: [] })
+          await execute(pinned, { type: 'table.step', remove: [], restore: [], fields: steps, addCharacters: [], dropCharacters: [] })
         }
         for (const { cue, text, was, outcome } of texts) {
-          const result = await execute(deps, { type: 'cue.saveText', cueId: cue.id, text, ifText: was })
+          const result = await execute(pinned, { type: 'cue.saveText', cueId: cue.id, text, ifText: was })
           if (result.changes.cues?.find((c) => c.id === cue.id)?.text !== text) {
             Object.assign(outcome, { outcome: 'error', reason: 'the line text changed meanwhile; read it again and retry' })
           }

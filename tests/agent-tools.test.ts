@@ -53,6 +53,7 @@ function setup(open = true) {
     saveVersion: vi.fn(async () => []),
     restoreVersion: vi.fn(async () => undefined),
     flushUi: vi.fn(async () => undefined),
+    checkRemovable: vi.fn(async () => undefined),
     emit: (result) => emitted.push(result),
     audioRoots: () => ['/root/Demo.vostudio'],
     importAudio: vi.fn(async () => ({ added: 2, updated: 0, files: 3, duplicates: ['vo/b/hit.wav'] })),
@@ -202,6 +203,40 @@ describe('lines_edit', () => {
     expect(error).toBe('Op 2 (setText) failed after 1 applied: Line L2 no longer has the ifText you passed; read it again with line and retry.')
     expect(repo!.projectForMain().cues.map((c) => c.key)).toContain('L6')
     expect(repo!.projectForMain().cues[0].text).toBe('Changed')
+  })
+
+  it('keeps a multi-op edit on the project it started on', async () => {
+    const { call, repo, deps } = setup()
+    const other = new SerialProjectRepository(project(), vi.fn(), 60_000)
+    deps.checkRemovable = vi.fn(async () => {
+      await repo!.detach()
+      deps.repository = () => other
+    })
+    const { error } = await call('lines_edit', {
+      ops: [
+        { op: 'delete', line: 'L6' },
+        { op: 'setText', line: 'L1', text: 'Moved on' },
+      ],
+    })
+    expect(error).toBe('Op 1 (delete) failed after 0 applied: The project was closed or switched during this call; call status, then retry.')
+    expect(other.projectForMain().cues.find((c) => c.key === 'L1')!.text).not.toBe('Moved on')
+    expect(other.projectForMain().cues.map((c) => c.key)).toContain('L6')
+  })
+
+  it('asks the UI before deleting lines and stops when a line is busy', async () => {
+    const { call, repo, deps } = setup()
+    deps.checkRemovable = vi.fn(async () => {
+      throw new Error('Line is busy; ask the user to finish it in the app, then retry.')
+    })
+    expect((await call('lines_edit', { ops: [{ op: 'delete', line: 'L6' }] })).error).toBe(
+      'Op 1 (delete) failed after 0 applied: Line is busy; ask the user to finish it in the app, then retry.'
+    )
+    const id = repo!.projectForMain().cues.find((c) => c.key === 'L6')!.id
+    expect((await call('command', { command: { type: 'cue.delete', cueIds: [id] } })).error).toBe(
+      'Line is busy; ask the user to finish it in the app, then retry.'
+    )
+    expect(deps.checkRemovable).toHaveBeenCalledWith([id])
+    expect(repo!.projectForMain().cues.map((c) => c.key)).toContain('L6')
   })
 
   it('refuses to mark a line done without a voiced output', async () => {
