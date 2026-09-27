@@ -6,6 +6,7 @@ import {
   EFFECT_PRESETS,
   effectsSummary,
   planAlignment,
+  SLIVER,
   timelineWords,
   type EditOp,
   type TakeOf,
@@ -224,14 +225,33 @@ describe('align planning', () => {
 
   it('moves a late or early phrase with a gap or a pause cut and fits a long one with speed', () => {
     const plan = planAlignment({ comp: comp(), takeOf, from: 0, dub, original, pairs })
-    expect(plan.ops.map((o) => o.op)).toEqual(['gap', 'split', 'split', 'speed', 'cut'])
-    expect(plan.ops[0]).toEqual({ op: 'gap', at: 0.07, track: 'track-1', seconds: 0.2 })
+    expect(plan.ops.map((o) => o.op)).toEqual(['gap', 'split', 'split', 'speed', 'cut', 'cut'])
+    expect(plan.ops[0]).toEqual({ op: 'gap', at: 0, track: 'track-1', seconds: 0.2 })
+    expect(plan.ops[5]).toEqual({ op: 'cut', range: { start: 0.95, end: 0.97 }, track: 'track-1', ripple: false })
+    expect(plan.comp.clips.every((c) => clipEnd(c) - c.start >= SLIVER)).toBe(true)
     expect(plan.ops[3]).toMatchObject({ op: 'speed', value: 1.2 })
     expect(plan.phrases.map((p) => p.after)).toEqual([
       { start: 0.3, duration: 0.5 },
       { start: 1, duration: 0.5 },
     ])
     expect(plan.phrases[1]).toMatchObject({ dub: [2, 2], original: [2, 2], speed: [1.2], note: 'speed limit reached; also change the text to fit' })
+  })
+
+  it('never leaves a wordless sliver when a phrase boundary sits 0.03 s from a clip edge', () => {
+    const tight: CueComp = { clips: [clip('a', 0.14, 0.14, 1.25)] }
+    const long = [{ start: 0.2, end: 1.8 }]
+    const plan = planAlignment({ comp: tight, takeOf, from: 0, dub: [{ start: 0.2, end: 1.2 }], original: long, pairs: [pairs[0]] })
+    expect(plan.ops).toEqual([{ op: 'speed', at: 0.695, track: 'track-1', value: 0.7 }])
+    expect(layout(plan.comp)).toEqual([[0.14, 0.14, 1.25, 1.726]])
+    const edged: CueComp = { clips: [clip('a', 0, 0, 0.2), clip('b', 0.2, 0.2, 2)] }
+    const early = planAlignment({ comp: edged, takeOf, from: 0, dub: [{ start: 0.2, end: 0.6 }], original: [{ start: 0.1, end: 0.5 }], pairs: [pairs[0]] })
+    expect(early.ops).toEqual([
+      { op: 'cut', range: { start: 0.07, end: 0.17 }, track: 'track-1', ripple: true },
+      { op: 'cut', range: { start: 0.07, end: 0.1 }, track: 'track-1', ripple: false },
+      { op: 'cut', range: { start: 0, end: 0.07 }, track: 'track-1', ripple: false },
+    ])
+    expect(layout(early.comp)).toEqual([[0.1, 0.2, 2, 1.9]])
+    expect(early.phrases[0].after).toEqual({ start: 0.1, duration: 0.4 })
   })
 
   it('replays through the edit path to the timeline it predicted', () => {

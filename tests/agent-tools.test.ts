@@ -1063,13 +1063,13 @@ describe('timeline, edit, effects and align', () => {
     expect(dry.beforeWrite).not.toHaveBeenCalled()
     const plan = dry.result.structuredContent as { ops: { op: string; value?: number }[]; phrases: { speed?: number[] }[]; applied: boolean }
     expect(plan.applied).toBe(false)
-    expect(plan.ops.map((o) => o.op)).toEqual(['split', 'split', 'speed'])
+    expect(plan.ops.map((o) => o.op)).toEqual(['split', 'speed'])
     expect(plan.phrases[0].speed).toEqual([1.2])
     expect(repo!.projectForMain().cues[2].comp).toEqual(comp)
     const { data } = await call('align', { line: 'L3', apply: true })
     expect(data).toMatchObject({ applied: true, after: { rhythm: expect.any(Number) } })
     const clips = repo!.projectForMain().cues[2].comp?.clips ?? []
-    expect(clips.map((c) => c.edits.timeStretch ?? 1)).toEqual([1, 1.2, 1])
+    expect(clips.map((c) => c.edits.timeStretch ?? 1)).toEqual([1.2, 1])
     expect(repo!.projectForMain().cues[2].takes).toEqual(takes)
   })
 

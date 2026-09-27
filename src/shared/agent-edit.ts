@@ -25,6 +25,7 @@ export const EDGE = 0.002
 export const TRIM_PAD = 0.05
 export const ALIGN_PAD = 0.03
 export const ALIGN_TOLERANCE = 0.03
+export const SLIVER = 0.1
 
 export type TakeOf = (takeId: string) => Take | undefined
 
@@ -413,6 +414,20 @@ function splittable(comp: CueComp, track: string, t: number): boolean {
   return !!clip && splitClipAt(comp, clip.id, t).clips.length > comp.clips.length
 }
 
+interface Slivers {
+  clip: CompClip
+  before: boolean
+  after: boolean
+}
+
+function slivers(comp: CueComp, takeOf: TakeOf, track: string, t: number): Slivers | null {
+  const clip = cutCandidate(comp, t, track)
+  if (!clip || !takeOf(clip.sourceTakeId)?.words?.length) return null
+  const words = timelineWords(comp, takeOf).filter((w) => w.clip === clip.id)
+  const empty = (from: number, to: number): boolean => to - from < SLIVER && !words.some((w) => w.end > from && w.start < to)
+  return { clip, before: empty(clip.start, t), after: empty(t, clipEnd(clip)) }
+}
+
 export function planAlignment(input: AlignInput): AlignPlan {
   const { takeOf, from, dub, original } = input
   const base = normalizeComp(input.comp)
@@ -451,7 +466,8 @@ export function planAlignment(input: AlignInput): AlignPlan {
       if (Math.abs(length - want) >= TIMING_TOLERANCE && want > 0) {
         for (const anchor of [left, right]) {
           const at = locate(comp, anchor)
-          if (at && splittable(comp, track, r3(at.t))) run({ op: 'split', at: r3(at.t), track })
+          const edge = at && slivers(comp, takeOf, track, r3(at.t))
+          if (at && splittable(comp, track, r3(at.t)) && !edge?.before && !edge?.after) run({ op: 'split', at: r3(at.t), track })
         }
         const lo = locate(comp, startAnchor)?.t ?? startT
         const hi = locate(comp, endAnchor)?.t ?? startT + length
@@ -472,13 +488,21 @@ export function planAlignment(input: AlignInput): AlignPlan {
       const now = locate(comp, startAnchor)?.t ?? startT
       const delta = o.start + from - now
       if (delta >= ALIGN_TOLERANCE) {
-        const at = locate(comp, left)?.t ?? Math.max(0, now - ALIGN_PAD)
-        run({ op: 'gap', at: r3(Math.min(at, now)), track, seconds: r3(delta) })
+        const at = r3(Math.min(locate(comp, left)?.t ?? Math.max(0, now - ALIGN_PAD), now))
+        const edge = slivers(comp, takeOf, track, at)
+        run({ op: 'gap', at: edge?.before ? r3(edge.clip.start) : edge?.after ? r3(clipEnd(edge.clip)) : at, track, seconds: r3(delta) })
       } else if (delta <= -ALIGN_TOLERANCE) {
         const floor = prevEnd ? (locate(comp, prevEnd)?.t ?? 0) + ALIGN_PAD : 0
         const end = now - ALIGN_PAD
         const amount = Math.min(-delta, end - floor)
-        if (amount >= ALIGN_TOLERANCE) run({ op: 'cut', range: { start: r3(end - amount), end: r3(end) }, track, ripple: true })
+        if (amount >= ALIGN_TOLERANCE) {
+          const range = { start: r3(end - amount), end: r3(end) }
+          const head = slivers(comp, takeOf, track, range.start)
+          const tail = slivers(comp, takeOf, track, range.end)
+          run({ op: 'cut', range, track, ripple: true })
+          if (tail?.after) run({ op: 'cut', range: { start: range.start, end: r3(range.start + clipEnd(tail.clip) - range.end) }, track, ripple: false })
+          if (head?.before) run({ op: 'cut', range: { start: r3(head.clip.start), end: range.start }, track, ripple: false })
+        }
         if (amount < -delta - ALIGN_TOLERANCE) entry.note = 'the pause before it is too short to start it on time'
       }
     } catch (error) {
