@@ -256,10 +256,10 @@ describe('command', () => {
 })
 
 describe('project lifecycle tools', () => {
-  it('flushes the UI and opens by name through the lifecycle function', async () => {
+  it('opens by name through the lifecycle function', async () => {
     const { call, deps } = setup(false)
     expect((await call('project_open', { name: 'demo' })).error).toBe('No project at /root/Demo.vostudio; call projects to list them.')
-    expect(deps.flushUi).toHaveBeenCalledTimes(1)
+    expect(deps.flushUi).not.toHaveBeenCalled()
     expect(deps.openProject).toHaveBeenCalledWith('/root/Demo.vostudio')
     expect((await call('project_open', { name: 'Other' })).error).toBe('No project is named "Other"; call projects to list them.')
   })
@@ -282,7 +282,7 @@ describe('project lifecycle tools', () => {
     expect((await call('project_open', { name: 'a', create: 'b' })).error).toBe('Invalid arguments: pass exactly one of name, dir, create or template.')
   })
 
-  it('lists, saves and restores versions after flushing the UI', async () => {
+  it('lists, saves after flushing the UI, and restores versions', async () => {
     const { call, deps } = setup()
     expect((await call('versions', { action: 'list' })).data).toEqual({ versions: [] })
     await call('versions', { action: 'save', name: 'Mine' })
@@ -290,7 +290,7 @@ describe('project lifecycle tools', () => {
     expect((await call('versions', { action: 'restore' })).error).toBe('Invalid arguments: restore needs n, a version number from list.')
     await call('versions', { action: 'restore', n: 2 })
     expect(deps.restoreVersion).toHaveBeenCalledWith(2)
-    expect(deps.flushUi).toHaveBeenCalledTimes(2)
+    expect(deps.flushUi).toHaveBeenCalledTimes(1)
   })
 })
 

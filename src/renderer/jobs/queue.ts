@@ -41,6 +41,10 @@ export function fail(jobs: Job[], id: string, error: string): Job[] {
   return prune(jobs.map((j) => (j.id === id ? { ...j, state: 'error', error } : j)))
 }
 
+export function dropQueued(jobs: Job[]): Job[] {
+  return jobs.filter((j) => j.state !== 'queued')
+}
+
 export function pendingCount(jobs: Job[]): number {
   return jobs.reduce((n, j) => (isTerminal(j) ? n : n + 1), 0)
 }

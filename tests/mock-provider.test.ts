@@ -83,17 +83,17 @@ describe('mock voice provider', () => {
     for (const convert of [mockProvider.sts, mockProvider.audioIsolation]) {
       const out = await convert({ audio: source, filename: 'rec.mp3', voiceId: 'mock-bass', model: 'm', settings: DEFAULT_VOICE_SETTINGS })
       expect(Math.abs((await decodedSeconds(out)) - seconds)).toBeLessThan(0.06)
-      expect(await mockProvider.stt({ audio: out, filename: 'out.mp3' })).toBe('')
+      await expect(mockProvider.stt({ audio: out, filename: 'out.mp3' })).rejects.toThrow(/mock voice/)
     }
   })
 
-  it('transcribes untagged audio to nothing', async () => {
+  it('refuses to transcribe untagged audio', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-mock-test-'))
     const wav = path.join(dir, 'tone.wav')
     await runFfmpeg(['-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.5', wav])
     const file = { audio: await fs.readFile(wav), filename: 'tone.wav' }
-    expect(await mockProvider.stt(file)).toBe('')
-    expect(await mockProvider.sttWords(file)).toEqual([])
+    await expect(mockProvider.stt(file)).rejects.toThrow(/mock voice/)
+    await expect(mockProvider.sttWords(file)).rejects.toThrow(/mock voice/)
     await fs.rm(dir, { recursive: true, force: true })
   })
 

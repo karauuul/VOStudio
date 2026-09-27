@@ -260,7 +260,6 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         }),
       annotations: WRITE,
       async run(_ctx, args) {
-        await deps.flushUi()
         let warnings: TemplateIssue[] = []
         if (args.create !== undefined) await deps.createProject(args.create)
         else if (args.template !== undefined) {
@@ -280,7 +279,6 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       input: z.object({}),
       annotations: { ...WRITE, idempotentHint: true },
       async run() {
-        await deps.flushUi()
         await deps.closeProject()
         return structured({ closed: true })
       },
@@ -420,7 +418,6 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           return structured({ versions: await deps.saveVersion(args.name) })
         }
         if (args.action === 'restore') {
-          await deps.flushUi()
           await deps.restoreVersion(args.n ?? 0)
           return structured({ restored: args.n, project: currentOverview(deps) })
         }
