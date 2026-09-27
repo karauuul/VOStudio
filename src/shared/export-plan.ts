@@ -1,8 +1,20 @@
-import { compDuration, compEffectsTail, compOriginalStart, isEmptyComp, withSourceEffects } from './comp'
-import { clipSpeed, DEFAULT_DUCK_DB, type ClipEdits, type CompClip, type CompTrack, type Cue, type CueComp, type Project, type ProjectSource, type Take } from './domain'
+import { clipTrackId, compDuration, compEffectsTail, compOriginalStart, isEmptyComp, trackAudible, withSourceEffects } from './comp'
+import {
+  clipSpeed,
+  DEFAULT_DUCK_DB,
+  type ClipEdits,
+  type CompClip,
+  type CompTrack,
+  type Cue,
+  type CueComp,
+  type Project,
+  type ProjectSource,
+  type Take,
+  type WordTiming,
+} from './domain'
 import { effectsTail, hasEffects } from './effects'
 import { hasValidVoicedOutput, usesCompOutput } from './approval'
-import { compTracks, lineLabel, resolveTake, type TakeLookup } from './library'
+import { clipWords, compTracks, lineLabel, resolveTake, type TakeLookup } from './library'
 import { formatSpec, lengthMode, loudnessMode, type ExportSettings } from './export-settings'
 import type { VideoLineComp } from './sources'
 
@@ -339,6 +351,34 @@ export function compPlanFor(cue: Cue, take: Take, project: Project): CompPlan | 
     ...(tracks ? { tracks } : {}),
     ...(mixed ? { originals } : {}),
   }
+}
+
+export function renderedWords(project: Project, cue: Cue): WordTiming[] {
+  const planned = planLine(project, cue)
+  if (!planned) return []
+  const take = planned.take
+  const comp = outputComp(cue, project)
+  const window = renderWindow(cue, take, project)
+  const from = Math.max(0, window?.in ?? 0)
+  const until = window ? window.out - from : Infinity
+  const known = take.duration > 0 ? take.duration : (originalLength(cue) ?? 0)
+  const tracks = comp ? compTracks(comp) : []
+  const pieces = comp
+    ? comp.clips.flatMap((clip) => {
+        const found = resolveTake(project, cue, clip.sourceTakeId)
+        return found && trackAudible(tracks, clipTrackId(clip)) ? [{ take: found.take, srcIn: clip.srcIn, srcOut: clip.srcOut, start: clip.start, speed: clipSpeed(clip.edits) }] : []
+      })
+    : [{ take, srcIn: Math.max(0, take.edits.trimStart), srcOut: known - Math.max(0, take.edits.trimEnd), start: 0, speed: clipSpeed(take.edits) }]
+  return pieces
+    .flatMap((p) =>
+      (p.take.words?.length ? clipWords(p.take, p.srcIn, p.srcOut) : []).map((w) => ({
+        text: w.text,
+        start: Math.max(0, p.start + Math.max(0, w.start) / p.speed - from),
+        end: p.start + Math.min(p.srcOut - p.srcIn, w.end) / p.speed - from,
+      }))
+    )
+    .filter((w) => w.end > 0 && w.start < until && w.end > w.start)
+    .sort((a, b) => a.start - b.start)
 }
 
 export function videoLines(project: Project, sourceId: string): VideoLineComp[] {

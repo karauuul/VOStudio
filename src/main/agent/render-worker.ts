@@ -1,7 +1,8 @@
 import type { BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
 import type { z } from 'zod'
-import type { BatchExportResult, ExportJob, ExportPlan, RenderLineRequest, RenderPlanRequest } from '@shared/ipc'
+import type { BatchExportResult, ExportJob, ExportPlan, RenderImageRequest, RenderLineRequest, RenderPlanRequest } from '@shared/ipc'
+import type { ProsodyFigure } from '@shared/prosody'
 import { errorText } from '@shared/mcp'
 import type { renderReplySchema } from '../schemas'
 import { hardenedWindow, loadRenderer, markWorker } from '../windows'
@@ -13,6 +14,7 @@ export const RENDER_IDLE_MS = 60_000
 export const LINE_TIMEOUT_MS = 120_000
 export const PLAN_TIMEOUT_MS = 60_000
 export const PLAN_JOB_TIMEOUT_MS = 60_000
+export const IMAGE_TIMEOUT_MS = 30_000
 
 const CLOSED = 'The render window closed before it finished; retry.'
 const CRASHED = 'The render window crashed; it restarts on the next call, retry.'
@@ -123,4 +125,10 @@ export async function renderExportPlan(plan: ExportPlan): Promise<BatchExportRes
   const reply = await request((win, id) => win.webContents.send('render:plan', { id, plan } satisfies RenderPlanRequest), timeout)
   if (!reply.ok || !reply.result) throw failed('Export', reply, 'no result came back')
   return reply.result
+}
+
+export async function renderProsodyImage(figure: ProsodyFigure): Promise<Buffer> {
+  const reply = await request((win, id) => win.webContents.send('render:image', { id, figure } satisfies RenderImageRequest), IMAGE_TIMEOUT_MS)
+  if (!reply.ok || !reply.png) throw failed('Drawing', reply, 'no image came back')
+  return Buffer.from(reply.png instanceof Uint8Array ? reply.png : new Uint8Array(reply.png))
 }

@@ -35,6 +35,18 @@ const metrics = {
   duration: 2.25, lufs: -20.1, truePeakDb: -6.2, samplePeakDb: -6.3, rmsDb: -21, leadingSilence: 0.05, trailingSilence: 0.1, clipped: false,
 }
 
+function tones(parts: [number, number][]): Float32Array {
+  const rate = 16000
+  const out = new Float32Array(Math.round(parts.reduce((sum, [seconds]) => sum + seconds, 0) * rate))
+  let at = 0
+  for (const [seconds, hz] of parts) {
+    const n = Math.round(seconds * rate)
+    for (let i = 0; i < n && hz > 0; i++) out[at + i] = 0.4 * Math.min(1, i / 160, (n - 1 - i) / 160) * Math.sin((2 * Math.PI * hz * i) / rate)
+    at += n
+  }
+  return out
+}
+
 const provider: VoiceProvider = {
   id: 'mock',
   hasApiKey: async () => true,
@@ -100,6 +112,8 @@ function setup(open = true) {
       { at: '2026-01-02T00:00:00.000Z', source: 'crash', message: 'new' },
     ],
     screenshot: async () => null,
+    decodeAudio: vi.fn(async (file: string) => (file.endsWith('.original.wav') ? tones([[0.1, 0], [0.9, 150], [0.2, 0]]) : tones([[0.1, 0], [0.5, 170], [0.3, 0], [0.6, 170], [0.2, 0]]))),
+    drawFigure: vi.fn(async () => Buffer.from('png')),
   }
   const spec: McpServer = { info: { name: 'vo-studio', version: '1.2.3' }, instructions: AGENT_INSTRUCTIONS, tools: agentTools(deps) }
   const call = async (name: string, args: Record<string, unknown> = {}): Promise<{ data: Record<string, unknown>; error?: string }> => {
@@ -119,7 +133,7 @@ describe('agent tool registry', () => {
     const tools = (sent[0].result as { tools: { name: string; inputSchema: { type: string }; annotations: Record<string, unknown> }[] }).tools
     expect(tools.map((t) => t.name)).toEqual([
       'status', 'projects', 'project_open', 'project_close', 'lines', 'line', 'lines_edit', 'characters', 'character_set', 'voices', 'versions', 'command',
-      'import', 'transcribe', 'translate_context', 'translations_suggest', 'glossary', 'glossary_check', 'rules', 'render', 'verify', 'export',
+      'import', 'transcribe', 'translate_context', 'translations_suggest', 'glossary', 'glossary_check', 'rules', 'render', 'verify', 'analyze', 'compare', 'export',
       'diagnostics', 'screenshot',
     ])
     for (const tool of tools) {
@@ -651,5 +665,93 @@ describe('render, verify and export', () => {
     expect(beforeWrite).toHaveBeenCalledTimes(1)
     expect((await call('export', { changed: true })).error).toBe('None of the selected lines is ready to export; call export with dryRun to see why.')
     expect((await call('export', { changed: true, filter: 'all' })).error).toBe('Invalid arguments: pass at most one of lines, filter or changed.')
+  })
+})
+
+describe('analyze and compare', () => {
+  const withWords = (repo: SerialProjectRepository) => {
+    repo.projectForMain().cues[2].takes[0].words = [
+      { text: 'Voiced', start: 0.1, end: 0.6 },
+      { text: 'line', start: 0.9, end: 1.5 },
+    ]
+  }
+
+  it('analyzes the original of a line without voiced output as phrases only, without the write guard', async () => {
+    const { spec, deps } = setup()
+    const beforeWrite = vi.fn(async () => undefined)
+    const sent: RpcMessage[] = []
+    const guardedSpec: McpServer = { ...spec, beforeWrite }
+    await handleMessage(guardedSpec, createSession(), { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'analyze', arguments: { line: 'L1' } } }, (m) => sent.push(m))
+    const data = (sent[0].result as { structuredContent: Record<string, unknown> }).structuredContent
+    expect(data).toMatchObject({ line: 'L1', source: 'original', path: '/root/Demo.vostudio/agent/renders/c1.original.wav', duration: 1.2 })
+    expect(data.transcript).toMatch(/^0\.1\d-(0\.9\d|1\.0\d) 150Hz 0st -\d+dB \| flat, voiced \d+%$/)
+    expect(data).not.toHaveProperty('words')
+    expect(deps.decodeAudio).toHaveBeenCalledWith('/root/Demo.vostudio/agent/renders/c1.original.wav')
+    expect(beforeWrite).not.toHaveBeenCalled()
+  })
+
+  it('analyzes the voiced output per word from the take timings and says when a source is missing', async () => {
+    const { call, repo } = setup()
+    withWords(repo!)
+    const { data } = await call('analyze', { line: 'L3' })
+    expect(data).toMatchObject({ line: 'L3', source: 'output' })
+    expect((data.words as { text: string; f0: { mean: number } }[]).map((w) => [w.text, Math.round(w.f0.mean / 10) * 10])).toEqual([
+      ['Voiced', 170],
+      ['line', 170],
+    ])
+    expect(data.transcript).toMatch(/^0\.10 Voiced .170Hz -\d+dB \| flat, \d(\.\d)? w\/s · \[pause 0\.\d\d\] · 0\.90 line .170Hz -\d+dB \| flat, \d(\.\d)? w\/s$/)
+    expect((await call('analyze', { line: 'L3', source: 'original' })).data).toMatchObject({ source: 'original' })
+    expect((await call('analyze', { line: 'L1', source: 'output' })).error).toBe('Line L1 has no voiced output to analyze; generate a take, or pass source "original".')
+    expect((await call('analyze', { line: 'L6', source: 'original' })).error).toBe('Line L6 has no original audio to analyze.')
+  })
+
+  it('flags a voiced output without word timings', async () => {
+    const { call } = setup()
+    expect((await call('analyze', { line: 'L3' })).data).toMatchObject({ wordTimings: false })
+  })
+
+  it('returns the figure as image content next to the analysis', async () => {
+    const { spec, deps, repo } = setup()
+    withWords(repo!)
+    const sent: RpcMessage[] = []
+    await handleMessage(spec, createSession(), { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'compare', arguments: { line: 'L3', image: true } } }, (m) => sent.push(m))
+    const result = sent[0].result as { content: { type: string; data?: string }[]; structuredContent: Record<string, unknown> }
+    expect(result.content.map((c) => c.type)).toEqual(['text', 'image'])
+    expect(result.content[1]).toEqual({ type: 'image', data: Buffer.from('png').toString('base64'), mimeType: 'image/png' })
+    const figure = vi.mocked(deps.drawFigure).mock.calls[0][0]
+    expect(figure.title).toBe('L3')
+    expect(figure.panels.map((p) => p.kind)).toEqual(['original', 'dub'])
+    expect(figure.panels[1].words.map((w) => w.text)).toEqual(['Voiced', 'line'])
+    expect(result.structuredContent.line).toBe('L3')
+  })
+
+  it('keeps the analysis when the figure cannot be drawn', async () => {
+    const { call, deps } = setup()
+    deps.drawFigure = vi.fn(async () => {
+      throw new Error('The render window crashed; it restarts on the next call, retry.')
+    })
+    const { data } = await call('analyze', { line: 'L1', image: true })
+    expect(data).toMatchObject({ source: 'original', imageError: 'The render window crashed; it restarts on the next call, retry' })
+  })
+
+  it('compares the dub with the original: alignment, scores and suggestions from the numbers', async () => {
+    const { call, repo } = setup()
+    withWords(repo!)
+    const { data } = await call('compare', { line: 'L3' })
+    expect(data).toMatchObject({
+      line: 'L3',
+      dub: { path: '/root/Demo.vostudio/agent/renders/c3.wav', metrics: { duration: 2.25 } },
+      original: { path: '/root/Demo.vostudio/agent/renders/c3.original.wav', metrics: { duration: 1.5 } },
+      pairs: [{ dub: [1, 2], original: 1 }],
+    })
+    expect(data.speechDiff).toBeCloseTo(0.5, 1)
+    expect(data.rhythm).toBeLessThan(0.6)
+    const suggestions = data.suggestions as string[]
+    expect(suggestions[0]).toMatch(/^dub speech is 0\.\d\d s longer than the original \(1\.4\d vs 0\.9\d s\): speed 1\.20 \(the speed limit; also shorten the text\) or remove the 0\.\d\d s pause after "Voiced"$/)
+  })
+
+  it('explains what is missing for a comparison', async () => {
+    const { call } = setup()
+    expect((await call('compare', { line: 'L1' })).error).toBe('Line L1 has no voiced output to compare; generate a take first, or analyze the original with source "original".')
   })
 })

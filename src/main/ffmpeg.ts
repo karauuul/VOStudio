@@ -20,6 +20,24 @@ export function ffmpegStderr(args: string[]): Promise<string> {
   })
 }
 
+export function ffmpegPcm(file: string, rate: number, seconds: number): Promise<Float32Array> {
+  return new Promise((resolve, reject) => {
+    const args = ['-v', 'error', '-i', file, '-t', String(seconds), '-vn', '-ac', '1', '-ar', String(rate), '-f', 'f32le', 'pipe:1']
+    const proc = spawn(ffmpegPath(), args, { windowsHide: true })
+    const chunks: Buffer[] = []
+    let stderr = ''
+    proc.stdout.on('data', (d: Buffer) => chunks.push(d))
+    proc.stderr.on('data', (d) => (stderr += d.toString()))
+    proc.on('error', reject)
+    proc.on('close', (code) => {
+      if (code !== 0) return reject(new Error(`ffmpeg exit ${code}: ${stderr.slice(-500)}`))
+      const bytes = Buffer.concat(chunks)
+      const usable = bytes.length - (bytes.length % 4)
+      resolve(new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + usable)))
+    })
+  })
+}
+
 export async function runFfmpeg(args: string[]): Promise<void> {
   await ffmpegStderr(args)
 }

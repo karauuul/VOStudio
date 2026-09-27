@@ -21,6 +21,7 @@ import type { ProjectSummary } from './project-summary'
 import type { PcmBitDepth } from './wav-header'
 import type { LatencySetting } from './punch'
 import type { PassRange } from './loop-record'
+import type { ProsodyFigure } from './prosody'
 
 export interface CsvPreview {
   headers: string[]
@@ -299,6 +300,11 @@ export interface RenderLineRequest {
   job: ExportJob
 }
 
+export interface RenderImageRequest {
+  id: string
+  figure: ProsodyFigure
+}
+
 export interface RenderPlanRequest {
   id: string
   plan: ExportPlan
@@ -306,6 +312,7 @@ export interface RenderPlanRequest {
 
 export interface RenderReply extends BridgeReply {
   wav?: ArrayBuffer
+  png?: ArrayBuffer
   result?: BatchExportResult
 }
 
@@ -403,6 +410,7 @@ export interface IpcEvents {
   'bridge:request': BridgeRequest
   'render:line': RenderLineRequest
   'render:plan': RenderPlanRequest
+  'render:image': RenderImageRequest
 }
 
 export type EventChannel = keyof IpcEvents

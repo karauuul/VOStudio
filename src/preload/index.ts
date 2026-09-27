@@ -88,6 +88,7 @@ const eventMap: Record<EventChannel, true> = {
   'bridge:request': true,
   'render:line': true,
   'render:plan': true,
+  'render:image': true,
 }
 
 const api = {} as Record<string, unknown>

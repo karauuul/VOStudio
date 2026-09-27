@@ -35,7 +35,7 @@ import { emit } from './emit'
 import * as store from './project-store'
 import { voiceProvider } from './providers/voice-provider'
 import { setApiKey } from './secrets'
-import { runFfmpeg } from './ffmpeg'
+import { ffmpegPcm, runFfmpeg } from './ffmpeg'
 import { parseCsv } from '@shared/csv'
 import { applyRules } from '@shared/pronunciation'
 import { NO_LANGUAGE_CODE_MODEL } from '@shared/provider-models'
@@ -117,9 +117,10 @@ import { startAgentServer, type AgentServerHandle } from './agent/server'
 import { AGENT_INSTRUCTIONS, agentTools } from './agent/tools'
 import { diagnostics, watchDiagnostics } from './agent/diagnostics'
 import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
-import { closeRenderWorker, renderExportPlan, renderLineWav, renderWorker, settleRender } from './agent/render-worker'
+import { closeRenderWorker, renderExportPlan, renderLineWav, renderProsodyImage, renderWorker, settleRender } from './agent/render-worker'
 import { hardenedWindow, loadRenderer, uiWindows } from './windows'
 import { renderFileName } from '@shared/agent-render'
+import { ANALYSIS_MAX_SECONDS, ANALYSIS_RATE } from '@shared/prosody'
 import type { BatchExportResult } from '@shared/ipc'
 
 const primaryInstance = app.requestSingleInstanceLock()
@@ -1120,6 +1121,8 @@ function agentServerSpec(): McpServer {
       exportInfo,
       exportLines: exportForAgent,
       transcribeFile,
+      decodeAudio: (file) => ffmpegPcm(file, ANALYSIS_RATE, ANALYSIS_MAX_SECONDS),
+      drawFigure: renderProsodyImage,
       provider: voiceProvider,
       diagnostics,
       screenshot: async () => {

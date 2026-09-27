@@ -625,8 +625,11 @@ export const bridgeReplySchema = z.object({
 
 const shortText = z.string().max(4096)
 
+const bytes = z.union([z.instanceof(ArrayBuffer), z.instanceof(Uint8Array)])
+
 export const renderReplySchema = bridgeReplySchema.extend({
-  wav: z.union([z.instanceof(ArrayBuffer), z.instanceof(Uint8Array)]).optional(),
+  wav: bytes.optional(),
+  png: bytes.optional(),
   result: z
     .object({
       written: z.number().int().min(0),
