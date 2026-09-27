@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   ASSET_EXTENSIONS,
   assetKind,
-  binOnlyPath,
+  binAddedText,
+  routeDrop,
   jsonRecords,
   markdownTable,
   parseJsonPath,
@@ -116,9 +117,23 @@ describe('resolveColumn', () => {
 })
 
 describe('bin routing', () => {
-  it('sends files that no line import reads to the bin and keeps folders, media and tables on their flows', () => {
-    expect(['C:/in/subs.srt', '/in/notes.md', '/in/lines.json', '/in/game.locres', '/in/a.vtt'].map(binOnlyPath)).toEqual([true, true, true, true, true])
-    expect(['/in/voice', '/in/a.wav', '/in/b.MP3', '/in/c.mp4', '/in/t.csv', '/in/t.xlsx'].map(binOnlyPath)).toEqual([false, false, false, false, false, false])
+  it('sends audio and video to lines, every other file to the bin, folders to both and a template to re-import', () => {
+    expect(
+      routeDrop(['/in/a.wav', '/in/b.MP3', '/in/c.mp4', '/in/t.csv', '/in/t.xlsx', '/in/n.txt', '/in/s.srt', '/in/d.json', '/in/x.xml', '/in/voice', '/in/g.locres', '/in/demo.vostudio-src'])
+    ).toEqual({
+      templates: ['/in/demo.vostudio-src'],
+      lines: ['/in/a.wav', '/in/b.MP3', '/in/c.mp4', '/in/voice', '/in/g.locres'],
+      bin: ['/in/t.csv', '/in/t.xlsx', '/in/n.txt', '/in/s.srt', '/in/d.json', '/in/x.xml', '/in/voice', '/in/g.locres'],
+    })
+  })
+
+  it('leaves an audio-only drop on the line import exactly as before', () => {
+    expect(routeDrop(['C:/vo/a.wav', 'C:/vo/b.ogg'])).toEqual({ templates: [], lines: ['C:/vo/a.wav', 'C:/vo/b.ogg'], bin: [] })
+  })
+
+  it('reports what landed in the bin', () => {
+    expect(binAddedText({ added: [1, 2], skipped: [] })).toBe('2 added to the bin')
+    expect(binAddedText({ added: [], skipped: [1] })).toBe('0 added to the bin · 1 skipped')
   })
 
   it('offers every known extension in the file picker', () => {

@@ -66,9 +66,13 @@ async function rowCount(asset: ProjectAsset): Promise<number | undefined> {
 export async function addAssets(
   existing: ProjectAsset[],
   projectDir: string,
-  paths: string[]
+  paths: string[],
+  skipMedia = false
 ): Promise<AssetAddResult> {
-  const files = await collectFiles(paths, (abs) => !path.basename(abs).startsWith('.'))
+  const files = await collectFiles(
+    paths,
+    (abs) => !path.basename(abs).startsWith('.') && !(skipMedia && inPlaceKind(assetKind(abs)))
+  )
   const known = [...existing]
   const added: ProjectAsset[] = []
   const skipped: AssetAddResult['skipped'] = []

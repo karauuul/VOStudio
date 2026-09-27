@@ -134,7 +134,7 @@
   background: var(--c, transparent);
 }
 .ln.pend::before {
-  box-shadow: 0 0 0 1.5px var(--ac);
+  box-shadow: 0 0 0 1.5px var(--warn);
 }
 .ln.sel,
 .ln.sel:hover {
@@ -397,7 +397,7 @@
 }
 .lines-q .seg button {
   flex: none;
-  padding: 0 8px;
+  padding: 0 6px;
   font-size: 12px;
   white-space: nowrap;
 }
@@ -1263,6 +1263,7 @@ input.tl-name:focus {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 1fr 1fr auto;
   overflow-y: auto;
 }

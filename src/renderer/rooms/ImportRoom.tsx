@@ -1,8 +1,7 @@
 import { memo, useCallback, useRef, useState, type MutableRefObject, type RefObject } from 'react'
 import type { Cue, MatchRule, Project, ProjectAsset, VoiceSettings } from '@shared/domain'
-import { binOnlyPath, inPlaceKind } from '@shared/asset-readers'
+import { binAddedText, inPlaceKind, routeDrop } from '@shared/asset-readers'
 import { reviewGeneration } from '@shared/cue-filter'
-import { TABLE_FILE } from '@shared/import-table'
 import type { TableImportResult } from '@shared/ipc'
 import { proposalRefs } from '@shared/linking'
 import type { ProjectCommand } from '@shared/project-commands'
@@ -16,8 +15,6 @@ import { ProjectPanel } from '../import/ProjectPanel'
 import type { MenuEntry } from '../shell/ContextMenu'
 
 type Status = (kind: 'ok' | 'err' | 'info', text: string) => void
-
-const TEMPLATE_RE = /\.vostudio-src$/i
 
 interface Props {
   hidden: boolean
@@ -35,7 +32,6 @@ interface Props {
   onGenerate: (cues: Cue[]) => void
   onAssignCharacter: (cueIds: string[], characterId: string) => void
   tables: TableImportResult[]
-  onTable: (path: string) => void
   onPickTable: () => void
   dispatch: (command: ProjectCommand) => Promise<void>
   onVoiceSettings: (characterId: string, settings: VoiceSettings) => void
@@ -60,7 +56,6 @@ export const ImportRoom = memo(function ImportRoom({
   onGenerate,
   onAssignCharacter,
   tables,
-  onTable,
   onPickTable,
   dispatch,
   onVoiceSettings,
@@ -91,39 +86,33 @@ export const ImportRoom = memo(function ImportRoom({
 
   const importPaths = useCallback(
     async (paths: string[]): Promise<void> => {
-      const templates = paths.filter((p) => TEMPLATE_RE.test(p))
-      const tablePaths = paths.filter((p) => TABLE_FILE.test(p))
-      const binPaths = paths.filter((p) => !TABLE_FILE.test(p) && binOnlyPath(p))
-      const audio = paths.filter((p) => !TEMPLATE_RE.test(p) && !TABLE_FILE.test(p) && !binPaths.includes(p))
-      if (templates.length > 0) {
-        const r = await api['import:template'](templates[0])
+      const route = routeDrop(paths)
+      if (route.templates.length > 0) {
+        const r = await api['import:template'](route.templates[0])
         onStatus(
           'ok',
           `Re-import: ${r.added} added, ${r.updated} updated, ${r.untouched} untouched, ${r.orphaned} orphaned`
         )
         return
       }
-      if (binPaths.length > 0) {
-        const r = await api['assets:add']({ paths: binPaths })
-        onStatus(
-          r.added.length > 0 ? 'ok' : 'info',
-          `${r.added.length} added to the bin${r.skipped.length > 0 ? ` · ${r.skipped.length} skipped` : ''}`
-        )
+      const parts: string[] = []
+      if (route.bin.length > 0) {
+        const r = await api['assets:add']({ paths: route.bin, skipMedia: true })
+        if (r.added.length > 0 || r.skipped.length > 0) parts.push(binAddedText(r))
       }
-      if (tablePaths.length > 0) {
-        onTable(tablePaths[0])
-        return
+      if (route.lines.length > 0) {
+        const r = await api['import:audio']({ paths: route.lines, rule: matchBy })
+        if (r.files > 0 || parts.length === 0) {
+          parts.push(
+            r.unmatched === undefined
+              ? `${r.files} files · ${r.added} lines added, ${r.updated} updated`
+              : `${r.files} files · ${r.updated} updated${r.unmatched > 0 ? ` · ${r.unmatched} unmatched` : ''}`
+          )
+        }
       }
-      if (audio.length === 0) return
-      const r = await api['import:audio']({ paths: audio, rule: matchBy })
-      onStatus(
-        'ok',
-        r.unmatched === undefined
-          ? `${r.files} files · ${r.added} lines added, ${r.updated} updated`
-          : `${r.files} files · ${r.updated} updated${r.unmatched > 0 ? ` · ${r.unmatched} unmatched` : ''}`
-      )
+      if (parts.length > 0) onStatus('ok', parts.join(' · '))
     },
-    [onTable, matchBy, onStatus]
+    [matchBy, onStatus]
   )
 
   const drop = useCallback((paths: string[]) => run(() => importPaths(paths)), [run, importPaths])

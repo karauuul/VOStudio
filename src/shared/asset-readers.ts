@@ -30,9 +30,30 @@ export const inPlaceKind = (kind: AssetKind): boolean => kind === 'audio' || kin
 
 export const ASSET_EXTENSIONS = Object.keys(KIND_BY_EXTENSION)
 
-const LINE_IMPORT_KINDS: AssetKind[] = ['audio', 'video', 'table']
+const TEMPLATE_DIR = /\.vostudio-src$/i
 
-export const binOnlyPath = (path: string): boolean => extensionOf(path) !== '' && !LINE_IMPORT_KINDS.includes(assetKind(path))
+export interface DropRoute {
+  templates: string[]
+  lines: string[]
+  bin: string[]
+}
+
+export function routeDrop(paths: string[]): DropRoute {
+  const route: DropRoute = { templates: [], lines: [], bin: [] }
+  for (const path of paths) {
+    if (TEMPLATE_DIR.test(path)) {
+      route.templates.push(path)
+      continue
+    }
+    const kind = assetKind(path)
+    if (inPlaceKind(kind) || kind === 'other') route.lines.push(path)
+    if (!inPlaceKind(kind)) route.bin.push(path)
+  }
+  return route
+}
+
+export const binAddedText = (result: { added: unknown[]; skipped: unknown[] }): string =>
+  `${result.added.length} added to the bin${result.skipped.length > 0 ? ` · ${result.skipped.length} skipped` : ''}`
 
 export interface AssetTable {
   format: string

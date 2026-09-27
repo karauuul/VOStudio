@@ -318,7 +318,7 @@ export interface IpcApi {
   'import:tablePreview': (req: TableRequest) => Promise<TablePreview>
   'import:table': (req: TableRequest) => Promise<TableImportResult>
   'import:template': (dir: string) => Promise<ReimportResult>
-  'assets:add': (req: { paths: string[] }) => Promise<AssetAddResult>
+  'assets:add': (req: { paths: string[]; skipMedia?: true }) => Promise<AssetAddResult>
   'assets:read': (req: { id: string; from?: number; count?: number }) => Promise<AssetPage>
   'source:detect': (req: { sourceId: string; mode: 'silence' | 'transcribe' }) => Promise<DetectResult>
   'project:command': (command: ProjectCommand) => Promise<CommandResult>

@@ -254,7 +254,7 @@ const audioImportSchema = z.object({
   rule: matchRuleSchema,
 })
 
-const assetAddSchema = z.object({ paths: z.array(filePath).min(1).max(200) })
+const assetAddSchema = z.object({ paths: z.array(filePath).min(1).max(200), skipMedia: z.literal(true).optional() })
 
 const assetReadSchema = z.object({
   id: z.string().min(1).max(200),
@@ -578,13 +578,13 @@ function importAudioPaths(req: { paths: string[]; rule: MatchRule }): Promise<Au
   })
 }
 
-function addAssetPaths(req: { paths: string[] }): Promise<AssetAddResult> {
+function addAssetPaths(req: { paths: string[]; skipMedia?: true }): Promise<AssetAddResult> {
   return serialLifecycle(async () => {
     const parsed = assetAddSchema.parse(req)
     const repository = requireRepository()
     const projectDir = store.getProjectDir()
     if (!projectDir) throw new Error('No project is open')
-    const result = await addAssets(repository.projectForMain().assets ?? [], projectDir, parsed.paths)
+    const result = await addAssets(repository.projectForMain().assets ?? [], projectDir, parsed.paths, parsed.skipMedia === true)
     if (result.added.length > 0) {
       await publish(repository, (project) => {
         project.assets = [...(project.assets ?? []), ...result.added]

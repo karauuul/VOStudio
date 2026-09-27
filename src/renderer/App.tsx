@@ -22,7 +22,7 @@ import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '
 import { externalChanges, pickHistory, redoStale, takeKey, type UndoSide } from '@shared/undo-route'
 import { dropCompRedo, nextCompEdit, pruneCompHistory, recordCompEdit, type CompHistory } from '@shared/comp-history'
 import { PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
-import { hasSourceMaterial, TABLE_FILE } from '@shared/import-table'
+import { hasSourceMaterial } from '@shared/import-table'
 import { keyedQueue } from '@shared/keyed-queue'
 import type { UpdateStatus } from '@shared/updater'
 import { api, audioUrl } from './api'
@@ -41,6 +41,7 @@ import {
 } from './jobs/store'
 import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues, groupLines, REVIEW_FILTER } from '@shared/cue-filter'
 import { proposalRefs } from '@shared/linking'
+import { assetKind, binAddedText, inPlaceKind, routeDrop } from '@shared/asset-readers'
 import { LinesPanel } from './work/LinesPanel'
 import type { TextPanelProps } from './work/TextPanel'
 import { ImportRoom } from './rooms/ImportRoom'
@@ -1582,15 +1583,16 @@ export default function App() {
 
   const dropFiles = useCallback(
     (files: File[], drop?: { trackId: string; at: number }) => {
-      const paths = api.pathsFor(files)
-      const table = paths.find((path) => TABLE_FILE.test(path))
-      if (table) {
-        openTable(table)
-        return
+      const route = routeDrop(api.pathsFor(files))
+      if (route.bin.length > 0) {
+        void api['assets:add']({ paths: route.bin, skipMedia: true }).then(
+          (r) => pushStatus(r.added.length > 0 ? 'ok' : 'info', binAddedText(r)),
+          (e: unknown) => pushStatus('err', String(e))
+        )
       }
-      void importFiles(paths, drop).catch((e: unknown) => pushStatus('err', String(e)))
+      void importFiles(route.lines.filter((path) => inPlaceKind(assetKind(path))), drop).catch((e: unknown) => pushStatus('err', String(e)))
     },
-    [openTable, importFiles, pushStatus]
+    [importFiles, pushStatus]
   )
 
   const pickAudio = useCallback(() => {
@@ -2389,7 +2391,6 @@ export default function App() {
         onGenerate={generateSelected}
         onAssignCharacter={(ids, characterId) => void assignCharacter(ids, characterId)}
         tables={tables}
-        onTable={openTable}
         onPickTable={pickTable}
         dispatch={dispatch}
         onVoiceSettings={onCharacterVoice}

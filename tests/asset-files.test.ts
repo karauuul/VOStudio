@@ -80,6 +80,11 @@ describe('addAssets', () => {
     expect(renamed.added[0].file.relPath).toBe(path.join(PROJECT_DIR, 'assets', 'lines (2).csv'))
   })
 
+  it('leaves audio and video of a dropped folder to the line import when asked to skip media', async () => {
+    const { added } = await addAssets([], path.join(H.root, 'skip.vostudio'), [DROP], true)
+    expect(added.map((a) => a.name).sort()).toEqual(['drop/dump.json', 'drop/lines.csv', 'drop/strings.locres', 'drop/subs.srt'])
+  })
+
   it('reads each kind the way the agent sees it', async () => {
     const { added } = await addAssets([], PROJECT_DIR, [path.join(DROP, 'subs.srt'), path.join(DROP, 'dump.json'), path.join(DROP, 'strings.locres')])
     const [srt, json, raw] = added
