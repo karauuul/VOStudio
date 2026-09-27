@@ -371,7 +371,8 @@ export interface AlignPair {
 export interface AlignInput {
   comp: CueComp
   takeOf: TakeOf
-  from: number
+  dubFrom: number
+  originalFrom: number
   dub: Span[]
   original: Span[]
   pairs: AlignPair[]
@@ -437,7 +438,7 @@ function slivers(comp: CueComp, takeOf: TakeOf, track: string, t: number): Slive
 }
 
 export function planAlignment(input: AlignInput): AlignPlan {
-  const { takeOf, from, dub, original } = input
+  const { takeOf, dubFrom: from, originalFrom, dub, original } = input
   const base = normalizeComp(input.comp)
   let comp = base
   const ops: EditOp[] = []
@@ -472,7 +473,7 @@ export function planAlignment(input: AlignInput): AlignPlan {
   for (const pair of input.pairs) {
     const [a, b] = pair.dub
     const d = { start: dub[a].start, end: dub[b].end }
-    const o = { start: original[pair.original[0]].start, end: original[pair.original[1]].end }
+    const o = { start: original[pair.original[0]].start + originalFrom - from, end: original[pair.original[1]].end + originalFrom - from }
     const target = { start: r3(o.start), duration: r3(o.end - o.start) }
     const entry: AlignPhrase = { dub: [a + 1, b + 1], original: [pair.original[0] + 1, pair.original[1] + 1], target, before: { start: r3(d.start), duration: r3(d.end - d.start) } }
     phrases.push(entry)

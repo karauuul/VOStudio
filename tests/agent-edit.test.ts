@@ -225,7 +225,7 @@ describe('align planning', () => {
   const comp = (): CueComp => ({ clips: [clip('a', 0, 0, 2)] })
 
   it('moves a late or early phrase with a gap or a pause cut and fits a long one with speed', () => {
-    const plan = planAlignment({ comp: comp(), takeOf, from: 0, dub, original, pairs })
+    const plan = planAlignment({ comp: comp(), takeOf, dubFrom: 0, originalFrom: 0, dub, original, pairs })
     expect(plan.ops.map((o) => o.op)).toEqual(['gap', 'split', 'split', 'speed', 'cut', 'cut'])
     expect(plan.ops[0]).toEqual({ op: 'gap', at: 0, track: 'track-1', seconds: 0.2 })
     expect(plan.ops[5]).toEqual({ op: 'cut', range: { start: 0.95, end: 0.97 }, track: 'track-1', ripple: false })
@@ -241,11 +241,11 @@ describe('align planning', () => {
   it('never leaves a wordless sliver when a phrase boundary sits 0.03 s from a clip edge', () => {
     const tight: CueComp = { clips: [clip('a', 0.14, 0.14, 1.25)] }
     const long = [{ start: 0.2, end: 1.8 }]
-    const plan = planAlignment({ comp: tight, takeOf, from: 0, dub: [{ start: 0.2, end: 1.2 }], original: long, pairs: [pairs[0]] })
+    const plan = planAlignment({ comp: tight, takeOf, dubFrom: 0, originalFrom: 0, dub: [{ start: 0.2, end: 1.2 }], original: long, pairs: [pairs[0]] })
     expect(plan.ops).toEqual([{ op: 'speed', at: 0.695, track: 'track-1', value: 0.7 }])
     expect(layout(plan.comp)).toEqual([[0.14, 0.14, 1.25, 1.726]])
     const edged: CueComp = { clips: [clip('a', 0, 0, 0.2), clip('b', 0.2, 0.2, 2)] }
-    const early = planAlignment({ comp: edged, takeOf, from: 0, dub: [{ start: 0.2, end: 0.6 }], original: [{ start: 0.1, end: 0.5 }], pairs: [pairs[0]] })
+    const early = planAlignment({ comp: edged, takeOf, dubFrom: 0, originalFrom: 0, dub: [{ start: 0.2, end: 0.6 }], original: [{ start: 0.1, end: 0.5 }], pairs: [pairs[0]] })
     expect(early.ops).toEqual([
       { op: 'cut', range: { start: 0.07, end: 0.17 }, track: 'track-1', ripple: true },
       { op: 'cut', range: { start: 0.07, end: 0.1 }, track: 'track-1', ripple: false },
@@ -256,22 +256,34 @@ describe('align planning', () => {
   })
 
   it('replays through the edit path to the timeline it predicted', () => {
-    const plan = planAlignment({ comp: comp(), takeOf, from: 0, dub, original, pairs })
+    const plan = planAlignment({ comp: comp(), takeOf, dubFrom: 0, originalFrom: 0, dub, original, pairs })
     expect(layout(applyEditOps(comp(), plan.ops, takeOf).comp)).toEqual(layout(plan.comp))
   })
 
   it('works in render time when the render starts past zero on the timeline', () => {
     const shifted: CueComp = { clips: [clip('a', 0.5, 0, 2)] }
-    const plan = planAlignment({ comp: shifted, takeOf, from: 0.5, dub, original, pairs })
+    const plan = planAlignment({ comp: shifted, takeOf, dubFrom: 0.5, originalFrom: 0.5, dub, original, pairs })
     expect(plan.phrases.map((p) => p.after?.start)).toEqual([0.3, 1])
+  })
+
+  it('places targets from where the original lane starts on the timeline, apart from the dub render start', () => {
+    const moved: CueComp = { clips: [clip('a', 0, 0, 2)], originalStart: 0.4 }
+    const lane = [{ start: 0, end: 0.5 }]
+    const plan = planAlignment({ comp: moved, takeOf, dubFrom: 0, originalFrom: 0.4, dub: [dub[0]], original: lane, pairs: [pairs[0]] })
+    expect(plan.ops).toEqual([{ op: 'gap', at: 0, track: 'track-1', seconds: 0.3 }])
+    expect(plan.phrases[0]).toMatchObject({ target: { start: 0.4, duration: 0.5 }, after: { start: 0.4, duration: 0.5 } })
+    const trimmed = planAlignment({ comp: { ...moved, clips: [clip('a', 0.5, 0, 2)] }, takeOf, dubFrom: 0.5, originalFrom: 0.4, dub: [dub[0]], original: lane, pairs: [pairs[0]] })
+    expect(trimmed.phrases[0]).toMatchObject({ target: { start: -0.1, duration: 0.5 } })
+    expect(trimmed.ops[0]).toMatchObject({ op: 'cut', ripple: true })
+    expect(trimmed.phrases[0].after).toEqual({ start: -0.1, duration: 0.5 })
   })
 
   it('reports a phrase it cannot move early enough and leaves aligned phrases alone', () => {
     const early = [original[0], { start: 0.4, end: 0.9 }]
-    const plan = planAlignment({ comp: comp(), takeOf, from: 0, dub: [dub[0], { start: 0.7, end: 1.2 }], original: early, pairs })
+    const plan = planAlignment({ comp: comp(), takeOf, dubFrom: 0, originalFrom: 0, dub: [dub[0], { start: 0.7, end: 1.2 }], original: early, pairs })
     expect(plan.ops.slice(-1)).toEqual([{ op: 'cut', range: { start: 0.83, end: 0.87 }, track: 'track-1', ripple: true }])
     expect(plan.phrases[1]).toMatchObject({ after: { start: 0.86, duration: 0.5 }, note: 'the pause before it is too short to start it on time' })
-    expect(planAlignment({ comp: comp(), takeOf, from: 0, dub: [dub[0]], original: [dub[0]], pairs: [pairs[0]] }).ops).toEqual([])
+    expect(planAlignment({ comp: comp(), takeOf, dubFrom: 0, originalFrom: 0, dub: [dub[0]], original: [dub[0]], pairs: [pairs[0]] }).ops).toEqual([])
   })
 
   it('retimes only the one audible track and refuses when two audible tracks carry clips', () => {
@@ -280,13 +292,13 @@ describe('align planning', () => {
       { id: 'bg', name: 'Bed', gainDb: 0, muted: bgMuted, solo: false },
     ]
     const layered = (bgMuted: boolean, voiceSolo = false): CueComp => ({ tracks: tracks(bgMuted, voiceSolo), clips: [clip('bg1', 0, 0, 2, { trackId: 'bg' }), clip('a', 0, 0, 2)] })
-    const alone = planAlignment({ comp: comp(), takeOf, from: 0, dub, original, pairs })
+    const alone = planAlignment({ comp: comp(), takeOf, dubFrom: 0, originalFrom: 0, dub, original, pairs })
     for (const layers of [layered(true), layered(false, true)]) {
-      const plan = planAlignment({ comp: layers, takeOf, from: 0, dub, original, pairs })
+      const plan = planAlignment({ comp: layers, takeOf, dubFrom: 0, originalFrom: 0, dub, original, pairs })
       expect(plan.ops).toEqual(alone.ops)
       expect(plan.comp.clips.filter((c) => c.trackId === 'bg')).toEqual(layers.clips.filter((c) => c.trackId === 'bg'))
     }
-    expect(() => planAlignment({ comp: layered(false), takeOf, from: 0, dub, original, pairs })).toThrow(ALIGN_ONE_VOICE)
+    expect(() => planAlignment({ comp: layered(false), takeOf, dubFrom: 0, originalFrom: 0, dub, original, pairs })).toThrow(ALIGN_ONE_VOICE)
   })
 
   it('keeps a later placement of the same source range apart from the earlier one', () => {
@@ -295,7 +307,7 @@ describe('align planning', () => {
       { start: 3.2, end: 3.6 },
       { start: 3.8, end: 4.2 },
     ]
-    const plan = planAlignment({ comp: twice, takeOf, from: 0, dub: late, original: [late[0], { start: 3.9, end: 4.46 }], pairs })
+    const plan = planAlignment({ comp: twice, takeOf, dubFrom: 0, originalFrom: 0, dub: late, original: [late[0], { start: 3.9, end: 4.46 }], pairs })
     expect(plan.ops.length).toBeGreaterThan(0)
     for (const op of plan.ops) expect((op as { at?: number }).at ?? (op as { range: { start: number } }).range.start).toBeGreaterThan(3)
     expect(layout(plan.comp)[0]).toEqual([0, 0, 2, 2])
@@ -307,14 +319,14 @@ describe('align planning', () => {
 
   it('anchors a phrase starting exactly at a seam to the clip that begins there', () => {
     const seam = (): CueComp => ({ clips: [clip('a', 0, 0, 0.75), clip('b', 0.75, 0.8, 2)] })
-    const plan = planAlignment({ comp: seam(), takeOf, from: 0, dub: [{ start: 0.75, end: 1.15 }], original: [{ start: 0.65, end: 1.05 }], pairs: [pairs[0]] })
+    const plan = planAlignment({ comp: seam(), takeOf, dubFrom: 0, originalFrom: 0, dub: [{ start: 0.75, end: 1.15 }], original: [{ start: 0.65, end: 1.05 }], pairs: [pairs[0]] })
     expect(layout(plan.comp)).toEqual([[0, 0, 0.62, 0.62], [0.65, 0.8, 2, 1.85]])
     expect(plan.phrases[0].after).toEqual({ start: 0.65, duration: 0.4 })
     expect(layout(applyEditOps(seam(), plan.ops, takeOf).comp)).toEqual(layout(plan.comp))
   })
 
   it('fits a phrase spanning two clips without scaling the pause between them', () => {
-    const plan = planAlignment({ comp: split(), takeOf, from: 0, dub: [{ start: 0.8, end: 2.0 }], original: [{ start: 0.8, end: 2.3 }], pairs: [pairs[0]] })
+    const plan = planAlignment({ comp: split(), takeOf, dubFrom: 0, originalFrom: 0, dub: [{ start: 0.8, end: 2.0 }], original: [{ start: 0.8, end: 2.3 }], pairs: [pairs[0]] })
     expect(plan.phrases[0].speed).toEqual([0.77, 0.77])
     expect(plan.phrases[0].after?.start).toBeCloseTo(0.8, 1)
     expect(plan.phrases[0].after?.duration).toBeCloseTo(1.5, 2)

@@ -1944,7 +1944,8 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         const plan = planAlignment({
           comp,
           takeOf: takeLookup(project, live),
-          from,
+          dubFrom: from,
+          originalFrom: compOriginalStart(comp),
           dub: compared.dub.prosody.phrases,
           original: compared.original.prosody.phrases,
           pairs: compared.comparison.pairs,
