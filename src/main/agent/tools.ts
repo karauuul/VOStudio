@@ -1,16 +1,24 @@
 import { randomUUID } from 'crypto'
 import path from 'path'
 import { z } from 'zod/v4'
-import type { Cue, ProjectVersion, Take } from '@shared/domain'
-import { resolveVoiceSettings, TERM_TEXT_MAX, TERMS_MAX } from '@shared/domain'
+import type { Cue, ProjectAsset, ProjectVersion, Take, Term } from '@shared/domain'
+import { ASSET_KINDS, PROPOSAL_REASON_MAX, resolveVoiceSettings, speakerCharacters, TERM_TEXT_MAX, TERMS_MAX } from '@shared/domain'
 import { clampVoiceSettings, placeOnTrack, type TakePlacement } from '@shared/generation'
 import { LINE_TEXT_MAX } from '@shared/lines'
 import { defineTool, errorText, issueText, type McpSession, type McpTool, type ToolAnnotations, type ToolOutput } from '@shared/mcp'
-import { audioWithinRoots, type CommandResult, type FieldStep, type ProjectCommand } from '@shared/project-commands'
+import {
+  audioWithinRoots,
+  type CommandResult,
+  type FieldStep,
+  type ProjectCommand,
+  type ProposalItem,
+  type ProposalRef,
+} from '@shared/project-commands'
 import type { ProjectSummary } from '@shared/project-summary'
 import { agentBudget } from '@shared/ipc'
 import type {
   AppSettings,
+  AssetAddResult,
   AudioImportResult,
   GenRequest,
   ReimportResult,
@@ -22,9 +30,22 @@ import type {
 import type { MatchRule } from '@shared/domain'
 import { DEFAULT_MATCH_RULE, TABLE_COLUMNS_MAX } from '@shared/import-table'
 import { ALL_CHARACTERS, filterCues } from '@shared/cue-filter'
-import { glossaryIssues, removeTerms, translationContext, upsertTerms, type TextMatchReport } from '@shared/agent-text'
+import { glossaryIssues, removeTerms, TEXT_MATCH_MIN, translationContext, upsertTerms, type TextMatchReport } from '@shared/agent-text'
+import {
+  assetLinks,
+  buildRowLines,
+  linkPlan,
+  linkRows,
+  listProposals,
+  rowColumns,
+  type ProposalEntry,
+  type RowColumns,
+  type RowMapping,
+} from '@shared/linking'
+import { MAX_PICKED_FILES, type AssetTable } from '@shared/asset-readers'
 import {
   cursorOffset,
+  findAsset,
   findCharacter,
   findLine,
   LINE_FILTERS,
@@ -39,6 +60,7 @@ import { planLine, type LinePlan } from '@shared/agent-generate'
 import { generationRefusal, isTerminal, JOB_CANCELLED, JOB_RETIRED, type Job } from '@shared/jobs'
 import { resolveTake } from '@shared/library'
 import type { SerialProjectRepository } from '../project-repository'
+import { isTable, type AssetContent, type AssetReadOptions, type AudioLinesResult } from '../assets'
 import type { GenerationQueue, QueuedGeneration } from '../gen-queue'
 import type { VoiceProvider } from '../providers/voice-provider'
 import { projectCommandSchema } from '../schemas'
@@ -64,6 +86,9 @@ export interface AgentDeps {
   importTable: (req: TableRequest, expected?: SerialProjectRepository) => Promise<TableImportResult>
   reimportTemplate: (dir: string, expected?: SerialProjectRepository) => Promise<ReimportResult>
   transcribe: (req: { cueIds: string[]; overwrite?: boolean }, expected?: SerialProjectRepository) => Promise<{ updated: number; skipped: number }>
+  addAssets: (paths: string[], expected?: SerialProjectRepository) => Promise<AssetAddResult>
+  loadAsset: (asset: ProjectAsset, options: AssetReadOptions) => Promise<AssetContent>
+  buildAudioLines: (assetIds: string[], expected?: SerialProjectRepository) => Promise<AudioLinesResult>
   provider: () => VoiceProvider
   generation: GenerationQueue
   queueGeneration: (req: GenRequest, expected: SerialProjectRepository, after: (take: Take) => Promise<void>) => QueuedGeneration
@@ -78,7 +103,9 @@ export const AGENT_INSTRUCTIONS = [
   'Call status first to see the open project and the line the user is on.',
   'Address lines by key, or by id when a key is ambiguous; lines paginates, so follow nextCursor.',
   'Nothing here deletes audio: takes stay on disk and a version named "Before agent" is saved before your first change to a project.',
-  'Text pipeline order: import (audio folder, subtitle table, template), then transcribe or a subtitle table matched by text, then translate_context, translations_suggest and glossary_check.',
+  'Recommended flow for raw files: asset_add (files or folders land in the bin as they are), assets and asset_read to learn each format, lines_build (perFile for audio, a column mapping for tables, subtitles, text and JSON) or link to attach text to existing lines, transcribe when there are no subtitles, characters_assign, proposals to review, then translate_context, translations_suggest and glossary.',
+  'File names are hints, never truth: anything inferred is stored as a proposal with confidence and reason for the user to accept or reject; asset rows are numbered from 0.',
+  'An older path still works: import (audio folder, subtitle table, template).',
   'Voice generation costs money: always call generate with dryRun true first and show the user the characters it would send.',
   'Agent generation is capped by a per-connection character budget the user sets in Settings; generate refuses a batch that would exceed it.',
   'generate queues jobs in the app queue shared with the user; pass wait, or call jobs with wait, until they finish.',
@@ -109,11 +136,34 @@ const termRow = z.object({
   term: z.string().min(1).max(TERM_TEXT_MAX),
   translation: z.string().min(1).max(TERM_TEXT_MAX),
   note: z.string().max(TERM_TEXT_MAX).optional(),
+  proposed: z.literal(true).optional(),
 })
+const assetRef = z.string().min(1).max(4096)
+const columnRef = z.union([columnIndex, z.string().min(1).max(1000)])
+const rowMapping = z
+  .object({ key: columnRef, text: columnRef, translation: columnRef, character: columnRef, start: columnRef, end: columnRef })
+  .partial()
+const assetShape = {
+  jsonPath: z.string().min(1).max(1000).optional(),
+  fields: z.array(z.string().max(1000)).min(1).max(200).optional(),
+}
+const confidence = z.number().min(0).max(1)
+const reasonText = z.string().max(PROPOSAL_REASON_MAX)
+const cueProposalKind = z.enum(['character', 'link', 'text'])
+const proposalKind = z.enum(['character', 'link', 'text', 'term'])
+const proposalItem = z.union([
+  z.object({ kind: cueProposalKind, line: lineRef }),
+  z.object({ kind: z.literal('term'), term: z.string().min(1).max(TERM_TEXT_MAX) }),
+])
 
 export const TRANSCRIBE_PAGE_MAX = 500
 export const CONTEXT_PAGE_MAX = 50
 export const REPORT_LIST_MAX = 100
+export const ASSET_READ_MAX = 200
+export const ASSETS_PAGE_MAX = 500
+export const PROPOSALS_PAGE_MAX = 200
+export const CELL_MAX = 500
+export const ASSIGN_MAX = 2000
 
 const PROJECT_SWITCHED = 'The project was closed or switched during this call; call status, then retry.'
 
@@ -142,6 +192,58 @@ function textMatchView(report: TextMatchReport | undefined): Record<string, unkn
 }
 
 const reason = (error: unknown): string => errorText(error).replace(/\.$/, '')
+
+const clip = (text: string, max = CELL_MAX): string => (text.length > max ? `${text.slice(0, max)}… [${text.length} chars]` : text)
+
+async function assetTable(deps: AgentDeps, asset: ProjectAsset, options: AssetReadOptions): Promise<AssetTable> {
+  if (asset.kind === 'audio' || asset.kind === 'video') throw new Error(`${asset.name} is ${asset.kind}; build lines from it with strategy perFile.`)
+  const content = await deps.loadAsset(asset, options)
+  if (isTable(content)) return content
+  throw new Error(`${asset.name} reads as plain ${content.format}${asset.kind === 'data' ? '; pass jsonPath to read records' : ''}.`)
+}
+
+const columnNames = (table: AssetTable, columns: RowColumns): Record<string, string> =>
+  Object.fromEntries(Object.entries(columns).map(([field, at]) => [field, table.columns[at as number]]))
+
+function assetView(asset: ProjectAsset, counts: ReturnType<typeof assetLinks>): Record<string, unknown> {
+  const linked = counts.get(asset.id)
+  return {
+    id: asset.id,
+    name: asset.name,
+    kind: asset.kind,
+    size: asset.size,
+    ...(asset.duration === undefined ? {} : { duration: asset.duration }),
+    ...(asset.rows === undefined ? {} : { rows: asset.rows }),
+    lines: linked?.lines ?? 0,
+    ...(linked?.proposed ? { proposedLinks: linked.proposed } : {}),
+  }
+}
+
+function proposalView(project: ReturnType<SerialProjectRepository['projectForMain']>, entry: ProposalEntry): Record<string, unknown> {
+  if (entry.term) return { kind: 'term', term: entry.term.term, translation: entry.term.translation, ...(entry.term.note ? { note: entry.term.note } : {}) }
+  const cue = entry.cue as Cue
+  const name = (id: string): string | null => project.characters.find((c) => c.id === id)?.name ?? null
+  const base = { kind: entry.kind, line: cue.key, id: cue.id }
+  if (entry.kind === 'text') return { ...base, proposed: clip(cue.suggestedText ?? ''), current: clip(cue.text) }
+  const scored = { confidence: entry.confidence, reason: entry.reason }
+  if (entry.kind === 'character') return { ...base, proposed: name(cue.proposals?.character?.characterId ?? ''), current: name(cue.characterId), ...scored }
+  const link = cue.proposals?.link
+  const asset = project.assets?.find((a) => a.id === link?.assetId)
+  return { ...base, asset: asset?.name ?? link?.assetId, row: link?.row, sourceText: clip(cue.sourceText), ...scored }
+}
+
+async function settleTerms(deps: AgentDeps, names: string[], accept: boolean): Promise<string[]> {
+  const current = requireRepository(deps).projectForMain().terms ?? []
+  const wanted = new Set(names.map((n) => n.trim().toLowerCase()))
+  const hit = current.filter((t) => t.proposed && wanted.has(t.term.toLowerCase()))
+  if (hit.length === 0) return []
+  const chosen = new Set(hit)
+  const terms: Term[] = accept
+    ? current.map((t) => (chosen.has(t) ? { term: t.term, translation: t.translation, ...(t.note ? { note: t.note } : {}) } : t))
+    : current.filter((t) => !chosen.has(t))
+  await execute(deps, { type: 'terms.set', terms })
+  return hit.map((t) => t.term)
+}
 
 function requireRepository(deps: AgentDeps): SerialProjectRepository {
   const repository = deps.repository()
@@ -614,6 +716,330 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       },
     }),
     defineTool({
+      name: 'asset_add',
+      title: 'Add assets',
+      description:
+        'Add files or folders (recursive) to the project bin as raw assets without interpreting them. Audio and video stay where they are; other files are copied into the project. Files already in the bin are skipped.',
+      input: z.object({ paths: z.array(absolutePath).min(1).max(200) }),
+      annotations: WRITE,
+      async run(_ctx, args) {
+        const result = await deps.addAssets(args.paths, requireRepository(deps))
+        const counts = assetLinks(requireRepository(deps).projectForMain().cues)
+        return structured({
+          added: result.added.length,
+          assets: result.added.slice(0, REPORT_LIST_MAX).map((a) => assetView(a, counts)),
+          skipped: result.skipped.slice(0, REPORT_LIST_MAX),
+          ...(result.skipped.length > REPORT_LIST_MAX ? { skippedTotal: result.skipped.length } : {}),
+          ...(result.truncated
+            ? { notAdded: { files: result.truncated, reason: `over the ${MAX_PICKED_FILES} file limit per call; add the remaining folders separately` } }
+            : {}),
+        })
+      },
+    }),
+    defineTool({
+      name: 'assets',
+      title: 'Assets',
+      description: `Assets in the project bin, one page at a time (at most ${ASSETS_PAGE_MAX}), with how many lines were built from or linked to each and how many link proposals are pending. unlinked keeps assets no line comes from yet.`,
+      input: z.object({
+        kind: z.enum(ASSET_KINDS as [string, ...string[]]).optional(),
+        unlinked: z.boolean().optional(),
+        cursor: pageCursor.optional(),
+        limit: z.number().int().min(1).max(ASSETS_PAGE_MAX).optional(),
+      }),
+      annotations: READ,
+      async run(_ctx, args) {
+        const project = requireRepository(deps).projectForMain()
+        const counts = assetLinks(project.cues)
+        const matched = (project.assets ?? []).filter(
+          (a) => (args.kind === undefined || a.kind === args.kind) && (args.unlinked !== true || !(counts.get(a.id)?.lines ?? 0))
+        )
+        const start = cursorOffset(args.cursor, matched.length)
+        const next = start + (args.limit ?? 100)
+        return structured({
+          total: matched.length,
+          assets: matched.slice(start, next).map((a) => assetView(a, counts)),
+          ...(next < matched.length ? { nextCursor: String(next) } : {}),
+        })
+      },
+    }),
+    defineTool({
+      name: 'asset_read',
+      title: 'Read asset',
+      description: `Read an asset (id or name) as the app parses it: tables, subtitles (index, start, end, speaker, text), text (paragraphs; a markdown table as rows) and JSON records selected by jsonPath such as "$.lines[*]" with optional fields paths per column. Anything else, and JSON without jsonPath, comes back as raw text lines. from is the first row or line (from 0), count at most ${ASSET_READ_MAX}; long cells are cut.`,
+      input: z.object({
+        asset: assetRef,
+        from: z.number().int().min(0).optional(),
+        count: z.number().int().min(1).max(ASSET_READ_MAX).optional(),
+        ...assetShape,
+      }),
+      annotations: READ,
+      async run(_ctx, args) {
+        const asset = findAsset(requireRepository(deps).projectForMain(), args.asset)
+        const content = await deps.loadAsset(asset, { ...(args.jsonPath ? { jsonPath: args.jsonPath } : {}), ...(args.fields ? { fields: args.fields } : {}) })
+        const from = args.from ?? 0
+        const end = from + (args.count ?? 50)
+        const head = { asset: asset.name, kind: asset.kind, format: content.format }
+        if ('duration' in content) return structured({ ...head, duration: content.duration })
+        const items = isTable(content) ? content.rows : content.lines
+        const page = {
+          total: items.length,
+          from,
+          ...(end < items.length ? { nextFrom: end } : {}),
+        }
+        if (isTable(content)) {
+          return structured({ ...head, columns: content.columns, ...page, rows: content.rows.slice(from, end).map((cells) => cells.map((c) => clip(c))) })
+        }
+        return structured({ ...head, ...page, lines: content.lines.slice(from, end).map((line) => clip(line)) })
+      },
+    }),
+    defineTool({
+      name: 'lines_build',
+      title: 'Build lines',
+      description:
+        'Create lines from assets. assets with strategy perFile: one line per audio file (no assets = every audio asset no line comes from yet; nested folders keep their relative folder in the line field "path"). asset with mapping: one line per row of a table, subtitle, text or JSON asset (jsonPath, fields); mapping names columns by header or index for key, text (original), translation, character, start and end, and is detected when omitted. A key matching an existing line updates it; rows built before are skipped; speakers become character proposals.',
+      input: z
+        .object({
+          assets: z.array(assetRef).min(1).max(20_000).optional(),
+          strategy: z.literal('perFile').optional(),
+          asset: assetRef.optional(),
+          mapping: rowMapping.optional(),
+          ...assetShape,
+        })
+        .refine((a) => a.asset === undefined || (a.assets === undefined && a.strategy === undefined), {
+          message: 'pass asset (with mapping) or strategy perFile (with assets), not both',
+        })
+        .refine((a) => a.asset !== undefined || a.strategy === 'perFile', { message: 'pass asset, or strategy perFile' }),
+      annotations: WRITE,
+      async run(_ctx, args) {
+        const repository = requireRepository(deps)
+        await deps.flushUi()
+        const project = repository.projectForMain()
+        if (args.asset === undefined) {
+          const counts = assetLinks(project.cues)
+          const ids = args.assets
+            ? args.assets.map((ref) => findAsset(project, ref).id)
+            : (project.assets ?? []).filter((a) => a.kind === 'audio' && !counts.get(a.id)?.lines).map((a) => a.id)
+          if (ids.length === 0) throw new Error('Every audio asset already has lines; call assets to check.')
+          const done = await deps.buildAudioLines(ids, repository)
+          return structured({
+            created: done.added,
+            updated: done.updated,
+            ...(done.unmatched ? { skippedUnmatched: done.unmatched } : {}),
+            ...(done.duplicates ? { duplicates: done.duplicates.slice(0, REPORT_LIST_MAX) } : {}),
+            skipped: done.skipped.slice(0, REPORT_LIST_MAX),
+          })
+        }
+        const asset = findAsset(project, args.asset)
+        const table = await assetTable(deps, asset, { ...(args.jsonPath ? { jsonPath: args.jsonPath } : {}), ...(args.fields ? { fields: args.fields } : {}) })
+        const columns = rowColumns(asset.kind, table.columns, args.mapping as RowMapping | undefined)
+        let summary: ReturnType<typeof buildRowLines>['summary'] | undefined
+        const result = await repository.mutate((current) => {
+          const built = buildRowLines(current, table.rows, columns, findAsset(current, asset.id))
+          summary = built.summary
+          return built.changes
+        })
+        if (result) deps.emit(result)
+        return structured({ rows: table.rows.length, mapping: columnNames(table, columns), ...summary })
+      },
+    }),
+    defineTool({
+      name: 'link',
+      title: 'Link asset rows to lines',
+      description: `Link rows of a table, subtitle, text or JSON asset to existing lines. key: the row key matches a line key or field after normalizing case, separators, zero padding and a prefix or suffix shared by all keys. text: similarity of the row text to the line original text (lines without it need transcribe first). auto: key, then text for the rest. Without apply only reports. apply writes the row text into the original text and a translation column into a pending suggestion for links with confidence at least ${TEXT_MATCH_MIN}, and stores each link, plus speakers, as proposals.`,
+      input: z.object({
+        asset: assetRef,
+        strategy: z.enum(['key', 'text', 'auto']).optional(),
+        apply: z.boolean().optional(),
+        mapping: rowMapping.optional(),
+        ...assetShape,
+      }),
+      annotations: DESTRUCTIVE,
+      writes: (args) => args.apply === true,
+      async run(_ctx, args) {
+        const pinned = pin(deps)
+        if (args.apply === true) await deps.flushUi()
+        const project = requireRepository(pinned).projectForMain()
+        const asset = findAsset(project, args.asset)
+        const table = await assetTable(deps, asset, { ...(args.jsonPath ? { jsonPath: args.jsonPath } : {}), ...(args.fields ? { fields: args.fields } : {}) })
+        const columns = rowColumns(asset.kind, table.columns, args.mapping as RowMapping | undefined)
+        const report = linkRows(project.cues, table.rows, columns, args.strategy ?? 'auto')
+        const view = {
+          rows: table.rows.length,
+          mapping: columnNames(table, columns),
+          linked: report.links.length,
+          coverage: {
+            rows: table.rows.length ? Math.round((report.links.length / table.rows.length) * 1000) / 1000 : 0,
+            lines: project.cues.length ? Math.round((report.links.length / project.cues.length) * 1000) / 1000 : 0,
+          },
+          links: report.links.slice(0, REPORT_LIST_MAX).map((l) => ({ row: l.row, line: l.key, confidence: l.confidence, reason: l.reason })),
+          ambiguous: report.ambiguous.slice(0, REPORT_LIST_MAX),
+          unmatched: { count: report.unmatched.length, rows: report.unmatched.slice(0, REPORT_LIST_MAX) },
+          ...(report.needsTranscribe.length > 0
+            ? { needsTranscribe: { count: report.needsTranscribe.length, lines: report.needsTranscribe.slice(0, REPORT_LIST_MAX) } }
+            : {}),
+        }
+        if (args.apply !== true) return structured(view)
+        const byId = new Map(project.cues.map((c) => [c.id, c]))
+        const chosen = report.links.filter((l) => {
+          const origins = byId.get(l.cueId)?.origins ?? []
+          return l.confidence >= TEXT_MATCH_MIN && !origins.some((o) => o.assetId === asset.id && o.row === l.row)
+        })
+        const plan = linkPlan(project, chosen, table.rows, columns, asset)
+        if (plan.fields.length > 0 || plan.addCharacters.length > 0) {
+          await execute(pinned, { type: 'table.step', remove: [], restore: [], fields: plan.fields, addCharacters: plan.addCharacters, dropCharacters: [] })
+        }
+        if (plan.proposals.length > 0) await execute(pinned, { type: 'cue.propose', items: plan.proposals })
+        return structured({
+          ...view,
+          applied: plan.proposals.length,
+          originalTexts: plan.fields.filter((f) => f.to.sourceText !== undefined).length,
+          suggestions: plan.fields.filter((f) => f.to.suggestedText !== undefined).length,
+          characterProposals: plan.proposals.filter((p) => p.character).length,
+          ...(plan.addCharacters.length > 0 ? { createdCharacters: plan.addCharacters.map((c) => c.name) } : {}),
+          ...(plan.skipped.length > 0 ? { skipped: { count: plan.skipped.length, rows: plan.skipped.slice(0, REPORT_LIST_MAX) } } : {}),
+        })
+      },
+    }),
+    defineTool({
+      name: 'characters_assign',
+      title: 'Assign characters',
+      description: `Assign characters (name or id) to lines with a confidence and a reason, as proposals the user reviews (default) or set directly. create adds characters that do not exist yet. At most ${ASSIGN_MAX} items.`,
+      input: z.object({
+        items: z
+          .array(z.object({ line: lineRef, character: characterRef, confidence, reason: reasonText }))
+          .min(1)
+          .max(ASSIGN_MAX),
+        create: z.boolean().optional(),
+        apply: z.enum(['propose', 'set']).optional(),
+      }),
+      annotations: DESTRUCTIVE,
+      async run(_ctx, args) {
+        const pinned = pin(deps)
+        await deps.flushUi()
+        const project = requireRepository(pinned).projectForMain()
+        const known = (ref: string): boolean => {
+          try {
+            findCharacter(project, ref)
+            return true
+          } catch {
+            return false
+          }
+        }
+        const missing = args.items.map((item) => item.character).filter((ref) => !known(ref))
+        const created = args.create === true ? speakerCharacters(project.characters, missing) : []
+        if (created.length > 0) {
+          await execute(pinned, { type: 'table.step', remove: [], restore: [], fields: [], addCharacters: created, dropCharacters: [] })
+        }
+        const now = requireRepository(pinned).projectForMain()
+        const outcomes: { line: string; outcome: string; reason?: string }[] = []
+        const proposals: ProposalItem[] = []
+        const steps: FieldStep[] = []
+        const seen = new Set<string>()
+        for (const item of args.items) {
+          let cue: Cue
+          let characterId: string
+          try {
+            cue = findLine(now, item.line)
+            characterId = findCharacter(now, item.character).id
+          } catch (error) {
+            outcomes.push({ line: item.line, outcome: 'error', reason: reason(error) })
+            continue
+          }
+          if (seen.has(cue.id)) {
+            outcomes.push({ line: cue.key, outcome: 'error', reason: 'this line appears twice in items' })
+            continue
+          }
+          seen.add(cue.id)
+          if (args.apply === 'set') {
+            if (cue.characterId !== characterId) steps.push({ cueId: cue.id, from: { characterId: cue.characterId }, to: { characterId } })
+            if (cue.proposals?.character) proposals.push({ cueId: cue.id, character: null })
+            outcomes.push({ line: cue.key, outcome: cue.characterId === characterId ? 'unchanged' : 'set' })
+          } else if (cue.characterId === characterId) {
+            outcomes.push({ line: cue.key, outcome: 'unchanged' })
+          } else {
+            proposals.push({ cueId: cue.id, character: { characterId, confidence: item.confidence, reason: item.reason } })
+            outcomes.push({ line: cue.key, outcome: 'proposed' })
+          }
+        }
+        if (steps.length > 0) {
+          await execute(pinned, { type: 'table.step', remove: [], restore: [], fields: steps, addCharacters: [], dropCharacters: [] })
+        }
+        if (proposals.length > 0) await execute(pinned, { type: 'cue.propose', items: proposals })
+        return structured({ outcomes, ...(created.length > 0 ? { createdCharacters: created.map((c) => c.name) } : {}) })
+      },
+    }),
+    defineTool({
+      name: 'proposals',
+      title: 'Proposals',
+      description: `Review what was inferred rather than known: character and link proposals (with confidence and reason), pending text suggestions (no confidence) and proposed glossary terms. Pass exactly one key: list (at most ${PROPOSALS_PAGE_MAX} per page), accept, reject, or acceptAll by kind and minimum confidence. Accepting a character sets it, a link keeps the line tied to its asset row, a text replaces the line text, a term joins the glossary.`,
+      input: z
+        .object({
+          list: z
+            .object({
+              kind: proposalKind.optional(),
+              minConfidence: confidence.optional(),
+              cursor: pageCursor.optional(),
+              limit: z.number().int().min(1).max(PROPOSALS_PAGE_MAX).optional(),
+            })
+            .optional(),
+          accept: z.array(proposalItem).min(1).max(TERMS_MAX).optional(),
+          reject: z.array(proposalItem).min(1).max(TERMS_MAX).optional(),
+          acceptAll: z.object({ kind: proposalKind, minConfidence: confidence.optional() }).optional(),
+        })
+        .refine((a) => exactlyOne([a.list, a.accept, a.reject, a.acceptAll]), {
+          message: 'pass exactly one of list, accept, reject or acceptAll',
+        }),
+      annotations: DESTRUCTIVE,
+      writes: (args) => args.list === undefined,
+      async run(_ctx, args) {
+        const pinned = pin(deps)
+        if (args.list === undefined) await deps.flushUi()
+        const project = requireRepository(pinned).projectForMain()
+        if (args.list) {
+          const entries = listProposals(project, args.list.kind, args.list.minConfidence)
+          const start = cursorOffset(args.list.cursor, entries.length)
+          const next = start + (args.list.limit ?? 50)
+          return structured({
+            total: entries.length,
+            items: entries.slice(start, next).map((e) => proposalView(project, e)),
+            ...(next < entries.length ? { nextCursor: String(next) } : {}),
+          })
+        }
+        const accept = args.reject === undefined
+        const items = args.acceptAll
+          ? listProposals(project, args.acceptAll.kind, args.acceptAll.minConfidence).map((e) =>
+              e.term ? { kind: 'term' as const, term: e.term.term } : { kind: e.kind as ProposalRef['kind'], line: (e.cue as Cue).id }
+            )
+          : (args.accept ?? args.reject ?? [])
+        const refs: ProposalRef[] = []
+        const lines: string[] = []
+        const errors: { line: string; reason: string }[] = []
+        const has = (cue: Cue, kind: ProposalRef['kind']): boolean =>
+          kind === 'text' ? cue.suggestedText !== undefined : cue.proposals?.[kind] !== undefined
+        for (const item of items) {
+          if (!('line' in item)) continue
+          try {
+            const cue = findLine(project, item.line)
+            if (!has(cue, item.kind)) errors.push({ line: cue.key, reason: `no pending ${item.kind} proposal` })
+            else if (!refs.some((r) => r.cueId === cue.id && r.kind === item.kind)) {
+              refs.push({ cueId: cue.id, kind: item.kind })
+              if (!lines.includes(cue.key)) lines.push(cue.key)
+            }
+          } catch (error) {
+            errors.push({ line: item.line, reason: reason(error) })
+          }
+        }
+        if (refs.length > 0) await execute(pinned, { type: accept ? 'proposal.accept' : 'proposal.reject', items: refs })
+        const terms = await settleTerms(pinned, items.flatMap((item) => ('term' in item ? [item.term] : [])), accept)
+        return structured({
+          [accept ? 'accepted' : 'rejected']: refs.length + terms.length,
+          lines: lines.slice(0, REPORT_LIST_MAX),
+          ...(terms.length > 0 ? { terms } : {}),
+          ...(errors.length > 0 ? { errors: errors.slice(0, REPORT_LIST_MAX) } : {}),
+        })
+      },
+    }),
+    defineTool({
       name: 'transcribe',
       title: 'Transcribe',
       description: `Speech-to-text of each line's original audio into its original text, one line at a time, at most ${TRANSCRIBE_PAGE_MAX} per call; follow nextCursor. Lines that already have original text are left alone unless overwrite. Uses the voice provider and may cost money.`,
@@ -742,7 +1168,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
     defineTool({
       name: 'glossary',
       title: 'Glossary',
-      description: 'List, add or replace (matched by term, case-insensitive), or remove project glossary terms. Pass exactly one key.',
+      description: 'List, add or replace (matched by term, case-insensitive), or remove project glossary terms. Terms you infer should carry proposed: true so the user reviews them in proposals. Pass exactly one key.',
       input: z
         .object({
           list: z.literal(true).optional(),

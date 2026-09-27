@@ -1,5 +1,7 @@
 import { spawn } from 'child_process'
+import { promises as fs } from 'fs'
 import ffmpegStatic from 'ffmpeg-static'
+import { DECODE_BUDGET_BYTES } from '@shared/take-import'
 
 export function ffmpegPath(): string {
   const p = ffmpegStatic as unknown as string
@@ -22,6 +24,11 @@ export function ffmpegStderr(args: string[]): Promise<string> {
 
 export async function runFfmpeg(args: string[]): Promise<void> {
   await ffmpegStderr(args)
+}
+
+export async function transcodeToWav(src: string, abs: string): Promise<void> {
+  await runFfmpeg(['-i', src, '-vn', '-c:a', 'pcm_s16le', '-fs', String(DECODE_BUDGET_BYTES), abs])
+  if ((await fs.stat(abs)).size >= DECODE_BUDGET_BYTES) throw new Error('Converted audio is too large')
 }
 
 export function ffmpegInfo(file: string): Promise<string> {

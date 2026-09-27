@@ -68,6 +68,9 @@ export function replacesWholeText(value: string, start: number, end: number): bo
 export const LINE_TEXT_MAX = 5000
 export const CREATE_LINES_MAX = 1000
 export const PARAGRAPH_TOO_LONG = `Paragraph over ${LINE_TEXT_MAX} characters`
+export const TEXT_TOO_LONG = `Text over ${LINE_TEXT_MAX} characters`
+
+export const textTooLong = (...texts: string[]): boolean => texts.some((text) => text.length > LINE_TEXT_MAX)
 
 export function pasteOverflows(value: string, start: number, end: number, pasted: string): boolean {
   return value.length - (end - start) + pasted.replace(/\r\n?/g, '\n').length > LINE_TEXT_MAX

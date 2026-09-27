@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Lru } from '../src/renderer/audio/lru'
+import { Lru } from '../src/shared/lru'
 
 describe('Lru', () => {
   it('evicts the least recently used entry on overflow', () => {

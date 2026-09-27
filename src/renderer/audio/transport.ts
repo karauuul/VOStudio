@@ -9,7 +9,7 @@ import {
 } from './clip-graph'
 import type { ResolvedComp } from './comp-source'
 import { playBounds, resumeAt } from '@shared/resume'
-import { Lru } from './lru'
+import { Lru } from '@shared/lru'
 import { DECODE_BUDGET_BYTES } from '@shared/take-import'
 import { ensureEffectWorklets } from './effect-worklets'
 

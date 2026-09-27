@@ -2,7 +2,7 @@ import { memo, useEffect, useRef } from 'react'
 import type { TakeKind } from '@shared/domain'
 import { LoadQueue } from '@shared/load-queue'
 import { audioUrl } from './api'
-import { Lru } from './audio/lru'
+import { Lru } from '@shared/lru'
 import { transport } from './audio/transport'
 import { drawWave } from './cue/timeline-draw'
 

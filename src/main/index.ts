@@ -38,7 +38,9 @@ import { decodedDuration, runFfmpeg } from './ffmpeg'
 import { parseCsv } from '@shared/csv'
 import { applyRules } from '@shared/pronunciation'
 import { DEFAULT_EXPORT_TEMPLATE } from '@shared/export-plan'
+import { ASSET_EXTENSIONS, inPlaceKind } from '@shared/asset-readers'
 import {
+  ASSET_ROW_MAX,
   singleFlight,
   type Cue,
   type ProjectVersion,
@@ -53,6 +55,8 @@ import type {
   GenRequest,
   ReimportResult,
   TableImportResult,
+  AssetAddResult,
+  AssetPage,
   TablePreview,
   TableRequest,
 } from '@shared/ipc'
@@ -85,6 +89,7 @@ import {
   exportInfo,
 } from './export'
 import { detectLines, importSources, splitMediaPaths } from './sources'
+import { addAssets, assetAudioLines, assetPage, clearAssetCache, readAssetCached, type AudioLinesResult } from './assets'
 import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
@@ -109,7 +114,7 @@ import { sanitizeAgentAccess } from '@shared/ipc'
 import type { McpServer, McpSession } from '@shared/mcp'
 import { needsGuardVersion } from '@shared/versions'
 import { startAgentServer, type AgentServerHandle } from './agent/server'
-import { AGENT_INSTRUCTIONS, agentTools } from './agent/tools'
+import { AGENT_INSTRUCTIONS, agentTools, ASSET_READ_MAX } from './agent/tools'
 import { diagnostics, watchDiagnostics } from './agent/diagnostics'
 import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
 import { createGenerationQueue, type QueuedGeneration } from './gen-queue'
@@ -142,6 +147,9 @@ function isAllowedPath(abs: string): boolean {
   const project = store.getProject()
   if (!project) return false
   if (project.sources?.some((s) => s.media !== undefined && path.resolve(s.media).toLowerCase() === norm)) {
+    return true
+  }
+  if (project.assets?.some((a) => inPlaceKind(a.kind) && path.resolve(a.file.relPath).toLowerCase() === norm)) {
     return true
   }
   return project.cues.some(
@@ -250,6 +258,14 @@ const audioImportSchema = z.object({
   rule: matchRuleSchema,
 })
 
+const assetAddSchema = z.object({ paths: z.array(filePath).min(1).max(200), skipMedia: z.literal(true).optional() })
+
+const assetReadSchema = z.object({
+  id: z.string().min(1).max(200),
+  from: z.number().int().min(0).max(ASSET_ROW_MAX).optional(),
+  count: z.number().int().min(1).max(ASSET_READ_MAX).optional(),
+})
+
 const takeImportSchema = z.object({
   cueId: z.string().min(1).max(200),
   paths: z.array(filePath).min(1).max(200),
@@ -288,6 +304,7 @@ async function detachCurrentRepository(): Promise<void> {
   await repository?.detach()
   if (repository) await closeRecordings(repository)
   projectRepository = null
+  clearAssetCache()
 }
 
 function abandonProject(): void {
@@ -295,6 +312,7 @@ function abandonProject(): void {
   generations.retire(null)
   if (projectRepository) void closeRecordings(projectRepository)
   projectRepository = null
+  clearAssetCache()
   store.closeProject()
 }
 
@@ -586,6 +604,41 @@ function importAudioPaths(req: { paths: string[]; rule: MatchRule }, expected?: 
   })
 }
 
+function addAssetPaths(req: { paths: string[]; skipMedia?: true }, expected?: SerialProjectRepository): Promise<AssetAddResult> {
+  return serialLifecycle(async () => {
+    const parsed = assetAddSchema.parse(req)
+    const repository = liveRepository(expected)
+    const projectDir = store.getProjectDir()
+    if (!projectDir) throw new Error('No project is open')
+    const result = await addAssets(repository.projectForMain().assets ?? [], projectDir, parsed.paths, parsed.skipMedia === true)
+    if (result.added.length > 0) {
+      await publish(repository, (project) => {
+        project.assets = [...(project.assets ?? []), ...result.added]
+        return { assets: structuredClone(project.assets) }
+      })
+    }
+    return result
+  })
+}
+
+function buildAudioLines(assetIds: string[], expected?: SerialProjectRepository): Promise<AudioLinesResult> {
+  return serialLifecycle(async () => {
+    const repository = liveRepository(expected)
+    const projectDir = store.getProjectDir()
+    if (!projectDir) throw new Error('No project is open')
+    const { result, changes } = await assetAudioLines(repository.projectForMain(), projectDir, assetIds)
+    emit('project:changed', await repository.commit(changes))
+    return result
+  })
+}
+
+async function readAssetPage(req: { id: string; from?: number; count?: number }): Promise<AssetPage> {
+  const parsed = assetReadSchema.parse(req)
+  const asset = requireRepository().projectForMain().assets?.find((a) => a.id === parsed.id)
+  if (!asset) throw new Error('Asset not found')
+  return assetPage(await readAssetCached(asset, {}), parsed.from ?? 0, parsed.count ?? ASSET_READ_MAX)
+}
+
 async function previewTableImport(req: TableRequest, expected?: SerialProjectRepository): Promise<TablePreview> {
   const parsed = tableImportSchema.parse(req)
   const table = await readTable(parsed.path)
@@ -733,10 +786,11 @@ function registerHandlers(): void {
                 filters: [{ name: 'Tables', extensions: ['csv', 'tsv', 'txt', 'xlsx'] }],
               }
             : {
-                title: 'Import audio files',
+                title: 'Import files',
                 properties: ['openFile', 'multiSelections'],
                 filters: [
-                  { name: 'Media', extensions: ['wav', 'mp3', 'ogg', 'm4a', 'mp4', 'mov', 'mkv'] },
+                  { name: 'Files', extensions: ASSET_EXTENSIONS },
+                  { name: 'All files', extensions: ['*'] },
                 ],
               }
     const win = BrowserWindow.getFocusedWindow()
@@ -766,6 +820,10 @@ function registerHandlers(): void {
   )
 
   typedHandle('import:template', (dir) => reimportTemplateDir(dir))
+
+  typedHandle('assets:add', (req) => addAssetPaths(req))
+
+  typedHandle('assets:read', readAssetPage)
 
   typedHandle('project:command', (command) => {
     if (!projectRepository) throw new Error('No project is open')
@@ -1033,6 +1091,9 @@ function agentServerSpec(): McpServer {
       previewTable: previewTableImport,
       importTable,
       reimportTemplate: reimportTemplateDir,
+      addAssets: (paths, expected) => addAssetPaths({ paths }, expected),
+      loadAsset: readAssetCached,
+      buildAudioLines,
       transcribe,
       provider: voiceProvider,
       generation: generations,

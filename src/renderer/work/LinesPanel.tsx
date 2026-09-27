@@ -3,7 +3,7 @@ import { GroupedVirtuoso, type GroupedVirtuosoHandle } from 'react-virtuoso'
 import type { Character, Cue } from '@shared/domain'
 import { lineDotColor } from '@shared/approval'
 import type { TakeLookup } from '@shared/library'
-import type { CueGroup } from '@shared/cue-filter'
+import { DEFAULT_FILTER, hasPendingProposal, REVIEW_FILTER, type CueGroup } from '@shared/cue-filter'
 import { regionTimecode } from '@shared/sources'
 import { useContextMenu, type MenuEntry } from '../shell/ContextMenu'
 
@@ -22,6 +22,9 @@ interface Props {
   exported: ReadonlySet<string>
   lookup?: TakeLookup
   menu?: (cue: Cue) => MenuEntry[]
+  filter: string
+  review: number
+  onFilter: (id: string) => void
 }
 
 export function LinesPanel({
@@ -39,6 +42,9 @@ export function LinesPanel({
   exported,
   lookup,
   menu,
+  filter,
+  review,
+  onFilter,
 }: Props) {
   const vRef = useRef<GroupedVirtuosoHandle>(null)
   const pop = useContextMenu()
@@ -71,18 +77,30 @@ export function LinesPanel({
         </div>
       ) : null}
 
-      <div className="search">
-        <svg width="13" height="13" viewBox="0 0 13 13" aria-hidden="true">
-          <circle cx="5.5" cy="5.5" r="4" fill="none" stroke="currentColor" strokeWidth="1.4" />
-          <path d="M8.5 8.5l3.5 3.5" stroke="currentColor" strokeWidth="1.4" />
-        </svg>
-        <input
-          type="search"
-          ref={searchRef}
-          value={search}
-          placeholder="Search"
-          onChange={(e) => onSearch(e.target.value)}
-        />
+      <div className="lines-q">
+        <div className="search">
+          <svg width="13" height="13" viewBox="0 0 13 13" aria-hidden="true">
+            <circle cx="5.5" cy="5.5" r="4" fill="none" stroke="currentColor" strokeWidth="1.4" />
+            <path d="M8.5 8.5l3.5 3.5" stroke="currentColor" strokeWidth="1.4" />
+          </svg>
+          <input
+            type="search"
+            ref={searchRef}
+            value={search}
+            placeholder="Search"
+            onChange={(e) => onSearch(e.target.value)}
+          />
+        </div>
+        <span className="seg" role="group">
+          {[
+            { id: DEFAULT_FILTER, label: 'All' },
+            { id: REVIEW_FILTER, label: `Review ${review}` },
+          ].map((f) => (
+            <button key={f.id} className={filter === f.id ? 'on' : ''} aria-pressed={filter === f.id} onClick={() => onFilter(f.id)}>
+              {f.label}
+            </button>
+          ))}
+        </span>
       </div>
 
       <GroupedVirtuoso
@@ -101,7 +119,7 @@ export function LinesPanel({
           const color = lineDotColor(cue, exported.has(cue.id), lookup)
           return (
             <div
-              className={'ln' + (cue.id === activeCueId ? ' sel' : '')}
+              className={'ln' + (cue.id === activeCueId ? ' sel' : '') + (hasPendingProposal(cue) ? ' pend' : '')}
               style={color ? ({ '--c': color } as CSSProperties) : undefined}
               role="button"
               tabIndex={0}

@@ -2,20 +2,26 @@ import { approveCue, sanitizeRevision, changeCompOutput, changeCueSourceText, ch
 import { compProblem, normalizeComp } from './comp'
 import { sanitizeEffects } from './effects'
 import {
-  characterColor,
+  blankCharacter,
   DEFAULT_VOICE_SETTINGS,
-  ELEVENLABS_STS_MODEL,
-  ELEVENLABS_TTS_MODEL,
   hasVoicedTake,
+  sanitizeCharacterProposal,
   sanitizeCueRegion,
   sanitizeLanguages,
+  sanitizeLinkProposal,
   sanitizeOriginal,
   sanitizePinned,
   sanitizeProviderSettings,
   sanitizeStems,
   sanitizeTerms,
+  withOrigin,
   type AudioRef,
   type Character,
+  type CharacterProposal,
+  type CueProposals,
+  type LinkProposal,
+  type ProjectAsset,
+  type ProposalKind,
   type CueApproval,
   type CueOutput,
   type ClipEffects,
@@ -54,6 +60,9 @@ export type ProjectCommand =
   | { type: 'cue.deleteTake'; cueId: string; takeId: string; deletedAt?: string }
   | { type: 'cue.setCharacter'; cueId: string; characterId: string }
   | { type: 'cue.setExcluded'; cueId: string; excluded: boolean }
+  | { type: 'cue.propose'; items: ProposalItem[] }
+  | { type: 'proposal.accept'; items: ProposalRef[] }
+  | { type: 'proposal.reject'; items: ProposalRef[] }
   | { type: 'cue.create'; afterCueId: string | null; lines: { id: string; text: string }[] }
   | { type: 'cue.delete'; cueIds: string[] }
   | { type: 'cue.restore'; cues: PlacedCue[] }
@@ -80,6 +89,17 @@ export type ProjectCommand =
   | { type: 'project.setExport'; settings: ExportSettings | null }
   | { type: 'project.setProvider'; provider: ProviderSettings | null }
   | { type: 'project.setExportTemplate'; template: string }
+
+export interface ProposalItem {
+  cueId: string
+  character?: CharacterProposal | null
+  link?: LinkProposal | null
+}
+
+export interface ProposalRef {
+  cueId: string
+  kind: ProposalKind
+}
 
 export interface OutputState {
   status: Cue['status']
@@ -117,6 +137,7 @@ export interface ChangeSet {
   removedCueIds?: string[]
   removedCues?: PlacedCue[]
   sources?: ProjectSource[]
+  assets?: ProjectAsset[]
   characters?: Project['characters']
   charactersReplace?: boolean
   pronunciationRules?: string
@@ -301,7 +322,84 @@ function tableStep(project: Project, command: Extract<ProjectCommand, { type: 't
   }
 }
 
+function setProposal<K extends keyof CueProposals>(cue: Cue, kind: K, value: CueProposals[K]): void {
+  const next = { ...cue.proposals }
+  if (value) next[kind] = value
+  else delete next[kind]
+  if (next.character || next.link) cue.proposals = next
+  else delete cue.proposals
+}
+
+function uniqueCues(project: Project, ids: string[]): Cue[] {
+  if (ids.length === 0) throw new Error('No lines given')
+  return [...new Set(ids)].map((id) => cueById(project, id))
+}
+
+function propose(project: Project, items: ProposalItem[]): ChangeSet {
+  const touched = new Map<string, Cue>()
+  const cues = new Map(uniqueCues(project, items.map((item) => item.cueId)).map((cue) => [cue.id, cue]))
+  for (const item of items) {
+    const cue = cues.get(item.cueId) as Cue
+    if (item.character !== undefined) {
+      const character = item.character === null ? undefined : sanitizeCharacterProposal(item.character)
+      if (item.character !== null && !character) throw new Error('Invalid character proposal')
+      if (character) characterById(project, character.characterId)
+      setProposal(cue, 'character', character)
+      touched.set(cue.id, cue)
+    }
+    if (item.link !== undefined) {
+      const link = item.link === null ? undefined : sanitizeLinkProposal(item.link)
+      if (item.link !== null && !link) throw new Error('Invalid link proposal')
+      if (link && !project.assets?.some((asset) => asset.id === link.assetId)) throw new Error('Asset not found')
+      setProposal(cue, 'link', link)
+      touched.set(cue.id, cue)
+    }
+  }
+  return { cues: structuredClone([...touched.values()]) }
+}
+
+function acceptProposal(project: Project, cue: Cue, kind: ProposalKind): void {
+  if (kind === 'text') {
+    if (cue.suggestedText === undefined) return
+    Object.assign(cue, changeCueText(cue, cue.suggestedText, project))
+    delete cue.suggestedText
+    if (cue.status === 'empty') cue.status = 'translated'
+    return
+  }
+  if (kind === 'character') {
+    const proposal = cue.proposals?.character
+    setProposal(cue, 'character', undefined)
+    if (!proposal || cue.characterId === proposal.characterId) return
+    if (!project.characters.some((item) => item.id === proposal.characterId)) return
+    cue.characterId = proposal.characterId
+    Object.assign(cue, invalidateVoicedOutput(cue, project))
+    return
+  }
+  const link = cue.proposals?.link
+  setProposal(cue, 'link', undefined)
+  if (link && project.assets?.some((asset) => asset.id === link.assetId)) cue.origins = withOrigin(cue.origins, { assetId: link.assetId, row: link.row })
+}
+
+function rejectProposal(cue: Cue, kind: ProposalKind): void {
+  if (kind === 'text') delete cue.suggestedText
+  else setProposal(cue, kind, undefined)
+}
+
+function settleProposals(project: Project, items: ProposalRef[], accept: boolean): ChangeSet {
+  const cues = new Map(uniqueCues(project, items.map((item) => item.cueId)).map((cue) => [cue.id, cue]))
+  for (const { cueId, kind } of items) {
+    const cue = cues.get(cueId) as Cue
+    if (accept) acceptProposal(project, cue, kind)
+    else rejectProposal(cue, kind)
+  }
+  return { cues: structuredClone([...cues.values()]) }
+}
+
 export function applyProjectCommand(project: Project, command: ProjectCommand): ChangeSet {
+  if (command.type === 'cue.propose') return propose(project, command.items)
+  if (command.type === 'proposal.accept' || command.type === 'proposal.reject') {
+    return settleProposals(project, command.items, command.type === 'proposal.accept')
+  }
   if (command.type === 'cue.create') {
     if (command.lines.length === 0) throw new Error('No lines to create')
     const ids = new Set(command.lines.map((line) => line.id))
@@ -329,18 +427,7 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
   }
   if (command.type === 'character.create') {
     if (project.characters.some((item) => item.id === command.id)) throw new Error('Character id is already used')
-    project.characters.push({
-      id: command.id,
-      name: uniqueName(project, command.name),
-      color: characterColor(project.characters.length),
-      provider: {
-        providerId: 'elevenlabs',
-        voiceId: '',
-        ttsModel: ELEVENLABS_TTS_MODEL,
-        stsModel: ELEVENLABS_STS_MODEL,
-      },
-      voiceSettings: { ...DEFAULT_VOICE_SETTINGS },
-    })
+    project.characters.push(blankCharacter(command.id, uniqueName(project, command.name), project.characters.length))
     return characterList(project)
   }
   if (command.type === 'character.rename') {
@@ -368,9 +455,12 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
     }
     const moved: Cue[] = []
     for (const cue of project.cues) {
-      if (cue.characterId !== character.id) continue
-      cue.characterId = command.reassignTo
-      Object.assign(cue, invalidateVoicedOutput(cue, project))
+      const proposed = cue.proposals?.character?.characterId === character.id
+      if (proposed) setProposal(cue, 'character', undefined)
+      if (cue.characterId === character.id) {
+        cue.characterId = command.reassignTo
+        Object.assign(cue, invalidateVoicedOutput(cue, project))
+      } else if (!proposed) continue
       moved.push(structuredClone(cue))
     }
     project.characters = project.characters.filter((item) => item.id !== character.id)
@@ -614,6 +704,7 @@ export function applyChangeSet(project: Project, changes: ChangeSet): Project {
   }
   if (changes.versions) next = { ...next, versions: structuredClone(changes.versions) }
   if (changes.sources) next = { ...next, sources: structuredClone(changes.sources) }
+  if (changes.assets) next = { ...next, assets: structuredClone(changes.assets) }
   if (changes.removedCueIds && changes.removedCueIds.length > 0) {
     const gone = new Set(changes.removedCueIds)
     next = { ...next, cues: next.cues.filter((cue) => !gone.has(cue.id)) }

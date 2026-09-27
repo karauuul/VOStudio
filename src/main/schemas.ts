@@ -9,8 +9,11 @@ import { AGENT_BUDGET_MAX } from '@shared/ipc'
 import { TTS_TEXT_MAX } from '@shared/agent-generate'
 import { LUFS_TARGET_MAX, LUFS_TARGET_MIN, PEAK_TARGET_MAX, PEAK_TARGET_MIN } from '@shared/export-settings'
 import {
+  ASSET_ROW_MAX,
   DUCK_MAX_DB,
   DUCK_MIN_DB,
+  ORIGINS_MAX,
+  PROPOSAL_REASON_MAX,
   ORIGINAL_START_MAX,
   TEMPLATE_NAME_MAX,
   TERM_TEXT_MAX,
@@ -128,6 +131,7 @@ export const projectFileSchema = z
     cues: z.array(z.unknown()),
     sessions: z.array(z.unknown()),
     sources: z.array(z.unknown()).optional(),
+    assets: z.array(z.unknown()).optional(),
     versions: z.array(z.unknown()).optional(),
     pronunciationRules: z.string(),
     exportTemplate: z.string(),
@@ -475,6 +479,36 @@ const takeSchema = z
   })
   .passthrough()
 
+const assetRow = z.number().int().min(0).max(ASSET_ROW_MAX)
+const confidence = finite.min(0).max(1)
+const reasonText = z.string().max(PROPOSAL_REASON_MAX)
+
+export const characterProposalSchema = z.object({
+  characterId: z.string().min(1).max(CHARACTER_ID_MAX),
+  confidence,
+  reason: reasonText,
+})
+
+export const linkProposalSchema = z.object({
+  assetId: z.string().min(1).max(200),
+  row: assetRow,
+  confidence,
+  reason: reasonText,
+})
+
+export const cueProposalsSchema = z.object({
+  character: characterProposalSchema.optional(),
+  link: linkProposalSchema.optional(),
+})
+
+export const cueOriginSchema = z.object({ assetId: z.string().min(1).max(200), row: assetRow.optional() })
+
+const proposalKind = z.enum(['character', 'link', 'text'])
+const proposalRefs = z
+  .array(z.object({ cueId: z.string().min(1).max(200), kind: proposalKind }))
+  .min(1)
+  .max(TABLE_ROWS_MAX)
+
 export const cueSchema = z
   .object({
     id: safeId,
@@ -495,6 +529,8 @@ export const cueSchema = z
     finalTakeId: z.string().min(1).max(200).optional(),
     comp: compSchema.unwrap().optional(),
     voiceSettingsOverride: voiceSettingsSchema.partial().optional(),
+    proposals: cueProposalsSchema.optional(),
+    origins: z.array(cueOriginSchema).max(ORIGINS_MAX).optional(),
   })
   .merge(cueRevisionFieldsSchema)
   .passthrough()
@@ -550,6 +586,20 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   cueId.extend({ type: z.literal('cue.setCharacter'), characterId: z.string().max(200) }),
   cueId.extend({ type: z.literal('cue.setExcluded'), excluded: z.boolean() }),
   z.object({
+    type: z.literal('cue.propose'),
+    items: z
+      .array(
+        cueId.extend({
+          character: characterProposalSchema.nullable().optional(),
+          link: linkProposalSchema.nullable().optional(),
+        })
+      )
+      .min(1)
+      .max(TABLE_ROWS_MAX),
+  }),
+  z.object({ type: z.literal('proposal.accept'), items: proposalRefs }),
+  z.object({ type: z.literal('proposal.reject'), items: proposalRefs }),
+  z.object({
     type: z.literal('cue.create'),
     afterCueId: z.string().min(1).max(200).nullable(),
     lines: z
@@ -597,7 +647,14 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('terms.set'),
     terms: z
-      .array(z.object({ term: z.string().max(TERM_TEXT_MAX), translation: z.string().max(TERM_TEXT_MAX), note: z.string().max(TERM_TEXT_MAX).optional() }))
+      .array(
+        z.object({
+          term: z.string().max(TERM_TEXT_MAX),
+          translation: z.string().max(TERM_TEXT_MAX),
+          note: z.string().max(TERM_TEXT_MAX).optional(),
+          proposed: z.literal(true).optional(),
+        })
+      )
       .max(TERMS_MAX),
   }),
   z.object({ type: z.literal('project.rename'), name: z.string().min(1).max(200) }),
