@@ -51,6 +51,7 @@ import {
 } from '@shared/export-settings'
 import { renderChunks, videoTimelinePlan } from '@shared/sources'
 import { sanitizeRevision } from '@shared/approval'
+import { isInsideDir } from '@shared/project-summary'
 import type { Project } from '@shared/domain'
 import * as store from './project-store'
 import { ffmpegStderr, runFfmpeg } from './ffmpeg'
@@ -265,6 +266,17 @@ async function copyTree(from: string, to: string): Promise<void> {
   }
 }
 
+export async function removeSuperseded(outDir: string, files: string[]): Promise<void> {
+  const audioRoot = await fs.realpath(path.join(outDir, 'audio')).catch(() => null)
+  if (!audioRoot) return
+  for (const file of files) {
+    const target = path.join(outDir, file)
+    const folder = await fs.realpath(path.dirname(target)).catch(() => null)
+    if (!folder || (folder !== audioRoot && !isInsideDir(folder, audioRoot))) continue
+    await fs.rm(path.join(folder, path.basename(target)), { force: true })
+  }
+}
+
 export async function finishExport(
   token: string,
   summary: ExportSummary,
@@ -310,9 +322,7 @@ export async function finishExport(
   await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
   await copyTree(stagingDir, outDir)
   await fs.rm(stagingDir, { recursive: true, force: true })
-  for (const file of supersededFiles(previous?.exported ?? [], exported)) {
-    await fs.rm(path.join(outDir, file), { force: true })
-  }
+  await removeSuperseded(outDir, supersededFiles(previous?.exported ?? [], exported))
   return {
     ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }),
     reportPath: path.join(outDir, 'report.json'),

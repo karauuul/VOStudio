@@ -51,7 +51,7 @@ export interface AgentDeps {
   emit: (result: CommandResult) => void
   audioRoots: () => string[]
   importAudio: (req: { paths: string[]; rule: MatchRule }, expected?: SerialProjectRepository) => Promise<AudioImportResult>
-  previewTable: (req: TableRequest) => Promise<TablePreview>
+  previewTable: (req: TableRequest, expected?: SerialProjectRepository) => Promise<TablePreview>
   importTable: (req: TableRequest, expected?: SerialProjectRepository) => Promise<TableImportResult>
   reimportTemplate: (dir: string, expected?: SerialProjectRepository) => Promise<ReimportResult>
   transcribe: (req: { cueIds: string[]; overwrite?: boolean }, expected?: SerialProjectRepository) => Promise<{ updated: number; skipped: number }>
@@ -511,7 +511,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           const done = await deps.importTable(req, repository)
           return structured({ applied: true, rows: done.rows, mapping: done.mapping, summary: done.summary, ...textMatchView(done.textMatch) })
         }
-        const preview = await deps.previewTable(req)
+        const preview = await deps.previewTable(req, repository)
         return structured({
           preview: true,
           total: preview.total,

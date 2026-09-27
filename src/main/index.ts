@@ -569,10 +569,10 @@ function importAudioPaths(req: { paths: string[]; rule: MatchRule }, expected?: 
   })
 }
 
-async function previewTableImport(req: TableRequest): Promise<TablePreview> {
+async function previewTableImport(req: TableRequest, expected?: SerialProjectRepository): Promise<TablePreview> {
   const parsed = tableImportSchema.parse(req)
   const table = await readTable(parsed.path)
-  return previewTableFile(requireRepository().projectForMain(), table, parsed)
+  return previewTableFile(liveRepository(expected).projectForMain(), table, parsed)
 }
 
 function importTable(req: TableRequest, expected?: SerialProjectRepository): Promise<TableImportResult> {
@@ -683,7 +683,7 @@ function registerHandlers(): void {
 
   typedHandle('import:audio', (req) => importAudioPaths(req))
 
-  typedHandle('import:tablePreview', previewTableImport)
+  typedHandle('import:tablePreview', (req) => previewTableImport(req))
 
   typedHandle('import:table', (req) => importTable(req))
 

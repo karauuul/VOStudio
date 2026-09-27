@@ -347,7 +347,7 @@ describe('import', () => {
   it('previews a table by default and applies only with preview false', async () => {
     const { call, deps, repo } = setup()
     const { data } = await call('import', { table: { path: '/data/subs.csv', matchBy: 'text' } })
-    expect(deps.previewTable).toHaveBeenCalledWith({ path: '/data/subs.csv', rule: 'id', matchBy: 'text' })
+    expect(deps.previewTable).toHaveBeenCalledWith({ path: '/data/subs.csv', rule: 'id', matchBy: 'text' }, repo)
     expect(deps.importTable).not.toHaveBeenCalled()
     expect(data).toMatchObject({
       preview: true,

@@ -138,6 +138,7 @@ export async function importAudio(
     if (!row) continue
     cue.referenceAudio = { fileId: cue.key, relPath: row.abs, format: file.format }
     if (row.duration !== undefined) cue.referenceDuration = row.duration
+    if (!attach && file.dir && cue.fields[PATH_FIELD] !== file.dir) cue.fields = { ...cue.fields, [PATH_FIELD]: file.dir }
     changed.push(cue)
   }
   const added: Cue[] = []
