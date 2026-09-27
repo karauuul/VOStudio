@@ -199,7 +199,7 @@ export const PROPOSALS_PAGE_MAX = 200
 export const CELL_MAX = 500
 export const ASSIGN_MAX = 2000
 
-const PROJECT_SWITCHED = 'The project was closed or switched during this call; call status, then retry.'
+export const PROJECT_SWITCHED = 'The project was closed or switched during this call; call status, then retry.'
 
 const exactlyOne = (values: unknown[]): boolean => values.filter((v) => v !== undefined).length === 1
 
@@ -301,7 +301,9 @@ async function figureOutput(deps: AgentDeps, revision: number, view: Record<stri
   } catch (error) {
     output = structured({ ...view, imageError: reason(error) })
   }
-  requireRevision(revision, requireRepository(deps).currentRevision())
+  const repository = requireRepository(deps)
+  if (!repository.isLive()) throw new Error(PROJECT_SWITCHED)
+  requireRevision(revision, repository.currentRevision())
   return output
 }
 

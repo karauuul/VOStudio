@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { SerialProjectRepository } from '../src/main/project-repository'
-import { agentTools, AGENT_INSTRUCTIONS, type AgentDeps } from '../src/main/agent/tools'
+import { agentTools, AGENT_INSTRUCTIONS, PROJECT_SWITCHED, type AgentDeps } from '../src/main/agent/tools'
 import type { VoiceProvider } from '../src/main/providers/voice-provider'
 import { projectDirSchema, projectNameSchema, renderReplySchema } from '../src/main/schemas'
 import { emptyEdits, type Cue, type Project, type ProjectAsset, type WordTiming } from '../src/shared/domain'
@@ -946,6 +946,11 @@ describe('analyze and compare', () => {
       throw new Error('The render window crashed')
     })
     expect((await call('analyze', { line: 'L3', image: true })).error).toBe(LINE_CHANGED)
+    deps.drawFigure = vi.fn(async () => {
+      await repo!.detach()
+      throw new Error('The render window closed before it finished; retry.')
+    })
+    expect((await call('analyze', { line: 'L3', image: true })).error).toBe(PROJECT_SWITCHED)
   })
 
   it('explains what is missing for a comparison', async () => {
