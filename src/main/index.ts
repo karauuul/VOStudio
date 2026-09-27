@@ -437,7 +437,7 @@ function announceProject(from?: WebContents): void {
 
 function announcedLifecycle<T>(from: WebContents | undefined, fn: () => Promise<T>): Promise<T> {
   return serialLifecycle(async () => {
-    await requestUi('flush', from)
+    await requestUi({ kind: 'flush' }, from)
     const before = projectRepository
     try {
       return await fn()
@@ -1014,6 +1014,7 @@ function registerHandlers(): void {
 const guardedSessions = new WeakMap<McpSession, string>()
 
 async function guardAgentWrite(session: McpSession): Promise<void> {
+  await requestUi({ kind: 'flush' })
   const dir = store.getProjectDir()
   if (!projectRepository || !dir || guardedSessions.get(session) === dir) return
   await serialLifecycle(async () => {
@@ -1039,7 +1040,8 @@ function agentServerSpec(): McpServer {
       closeProject: () => closeProject(),
       saveVersion: (name) => serialLifecycle(() => recordVersions((previous) => store.saveVersion(previous, name))),
       restoreVersion: (n) => restoreVersion({ n }),
-      flushUi: () => requestUi('flush'),
+      flushUi: () => requestUi({ kind: 'flush' }),
+      checkRemovable: (cueIds) => requestUi({ kind: 'removable', cueIds }),
       emit: emitChange,
       audioRoots: trustedAudioRoots,
       provider: voiceProvider,

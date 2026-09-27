@@ -1264,6 +1264,16 @@ export default function App() {
     []
   )
 
+  useEffect(
+    () =>
+      api.on('bridge:request', (request) => {
+        if (request.kind !== 'removable') return
+        const block = lineRemovalBlock(request.cueIds)
+        void api['bridge:reply']({ id: request.id, ok: block === null, ...(block ? { error: block } : {}) })
+      }),
+    [lineRemovalBlock]
+  )
+
   const flushPending = useCallback(
     async (): Promise<boolean> =>
       (await flushText()) &&

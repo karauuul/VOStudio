@@ -298,7 +298,8 @@ export function useProjectSession(o: {
 
   useEffect(
     () =>
-      api.on('bridge:request', ({ id }) => {
+      api.on('bridge:request', ({ id, kind }) => {
+        if (kind !== 'flush') return
         void flushAll().then(
           (ok) => api['bridge:reply']({ id, ok, ...(ok ? {} : { error: 'the line text could not be saved' }) }),
           (e: unknown) => api['bridge:reply']({ id, ok: false, error: String(e) })

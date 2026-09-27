@@ -35,6 +35,7 @@ export interface AgentDeps {
   saveVersion: (name?: string) => Promise<ProjectVersion[]>
   restoreVersion: (n: number) => Promise<unknown>
   flushUi: () => Promise<void>
+  checkRemovable: (cueIds: string[]) => Promise<void>
   emit: (result: CommandResult) => void
   audioRoots: () => string[]
   provider: () => VoiceProvider
@@ -70,7 +71,12 @@ function requireRepository(deps: AgentDeps): SerialProjectRepository {
   return repository
 }
 
+const removedCueIds = (command: ProjectCommand): string[] =>
+  command.type === 'cue.delete' ? command.cueIds : command.type === 'table.step' ? command.remove : []
+
 async function execute(deps: AgentDeps, command: ProjectCommand): Promise<CommandResult> {
+  const removed = removedCueIds(command)
+  if (removed.length > 0) await deps.checkRemovable(removed)
   const result = await requireRepository(deps).execute(command)
   deps.emit(result)
   return result
