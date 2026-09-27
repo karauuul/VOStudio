@@ -337,15 +337,15 @@ const withAudio = (repo: SerialProjectRepository, cueId: string, relPath: string
 
 describe('import', () => {
   it('imports audio with the default rule and reports duplicates', async () => {
-    const { call, deps } = setup()
+    const { call, deps, repo } = setup()
     const { data } = await call('import', { audio: { paths: ['/data/vo'] } })
-    expect(deps.importAudio).toHaveBeenCalledWith({ paths: ['/data/vo'], rule: 'id' })
+    expect(deps.importAudio).toHaveBeenCalledWith({ paths: ['/data/vo'], rule: 'id' }, repo)
     expect(data).toEqual({ added: 2, updated: 0, files: 3, duplicates: ['vo/b/hit.wav'] })
     expect(deps.flushUi).toHaveBeenCalled()
   })
 
   it('previews a table by default and applies only with preview false', async () => {
-    const { call, deps } = setup()
+    const { call, deps, repo } = setup()
     const { data } = await call('import', { table: { path: '/data/subs.csv', matchBy: 'text' } })
     expect(deps.previewTable).toHaveBeenCalledWith({ path: '/data/subs.csv', rule: 'id', matchBy: 'text' })
     expect(deps.importTable).not.toHaveBeenCalled()
@@ -355,14 +355,14 @@ describe('import', () => {
       textMatch: { matched: 1, ambiguous: 1, unmatched: 1, pairs: [{ row: 1, line: 'L1', score: 0.9 }], ambiguousRows: [{ row: 2, candidates: ['DUP'] }], unmatchedRows: [3] },
     })
     const applied = await call('import', { table: { path: '/data/subs.csv', preview: false, keepOriginal: true, mapping: { text: 0 } } })
-    expect(deps.importTable).toHaveBeenCalledWith({ path: '/data/subs.csv', rule: 'id', mapping: { text: 0 }, keepOriginal: true })
+    expect(deps.importTable).toHaveBeenCalledWith({ path: '/data/subs.csv', rule: 'id', mapping: { text: 0 }, keepOriginal: true }, repo)
     expect(applied.data).toEqual({ applied: true, rows: 3, mapping: { text: 0 }, summary: { added: 0, updated: 1, suggested: 0, unchanged: 0, skipped: 2 } })
   })
 
   it('reimports a template and needs exactly one absolute source', async () => {
-    const { call, deps } = setup()
+    const { call, deps, repo } = setup()
     expect((await call('import', { templateReimport: '/data/demo.vostudio-src' })).data).toMatchObject({ updated: 5 })
-    expect(deps.reimportTemplate).toHaveBeenCalledWith('/data/demo.vostudio-src')
+    expect(deps.reimportTemplate).toHaveBeenCalledWith('/data/demo.vostudio-src', repo)
     expect((await call('import', {})).error).toBe('Invalid arguments: pass exactly one of audio, table or templateReimport.')
     expect((await call('import', { audio: { paths: ['rel/x.wav'] } })).error).toBe('Invalid arguments at "audio.paths.0": must be an absolute path.')
     expect((await setup(false).call('import', { templateReimport: '/x' })).error).toBe('No project is open; call project_open first.')
