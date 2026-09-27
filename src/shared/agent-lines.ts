@@ -54,14 +54,37 @@ export function cursorOffset(cursor: string | undefined, total: number): number 
   return offset
 }
 
+export function offsetPage<T>(items: T[], cursor: string | undefined, limit: number): { page: T[]; nextCursor?: string } {
+  const start = cursorOffset(cursor, items.length)
+  const next = start + limit
+  return { page: items.slice(start, next), ...(next < items.length ? { nextCursor: String(next) } : {}) }
+}
+
+export function stablePage<T>(
+  items: T[],
+  cueOf: (item: T) => Cue,
+  cues: Cue[],
+  cursor: string | undefined,
+  limit: number
+): { page: T[]; nextCursor?: string } {
+  const positions = new Map(cues.map((cue, i) => [cue.id, i]))
+  const position = (item: T): number => positions.get(cueOf(item).id) ?? cues.length
+  const resume = cursorOffset(cursor, cues.length)
+  const found = items.findIndex((item) => position(item) >= resume)
+  const start = found < 0 ? items.length : found
+  const page = items.slice(start, start + limit)
+  const next = items[start + limit]
+  return { page, ...(next === undefined ? {} : { nextCursor: String(position(next)) }) }
+}
+
 export function listLines(project: Project, query: LineQuery): Record<string, unknown> {
   const characterId = query.character ? findCharacter(project, query.character).id : ALL_CHARACTERS
   const matched = filterCues(project.cues, query.filter ?? 'all', query.search ?? '', characterId)
-  const start = cursorOffset(query.cursor, matched.length)
   const limit = Math.min(LINES_PAGE_MAX, Math.max(1, query.limit ?? LINES_PAGE_DEFAULT))
+  const { page, nextCursor } = stablePage(matched, (cue) => cue, project.cues, query.cursor, limit)
   const readiness = readinessById(project)
   const full = query.detail === 'full'
-  const rows = matched.slice(start, start + limit).map((cue) => {
+  const rows = page.map((cue) => {
     const duration = outputDuration(cue)
     return {
       key: cue.key,
@@ -77,8 +100,7 @@ export function listLines(project: Project, query: LineQuery): Record<string, un
       readiness: readiness.get(cue.id)?.status ?? 'no-audio',
     }
   })
-  const next = start + limit
-  return { total: matched.length, rows, ...(next < matched.length ? { nextCursor: String(next) } : {}) }
+  return { total: matched.length, rows, ...(nextCursor === undefined ? {} : { nextCursor }) }
 }
 
 export function lineDetail(project: Project, cue: Cue): Record<string, unknown> {

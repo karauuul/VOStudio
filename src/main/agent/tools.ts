@@ -28,7 +28,9 @@ import {
   LINES_PAGE_MAX,
   lineDetail,
   listLines,
+  offsetPage,
   projectOverview,
+  stablePage,
 } from '@shared/agent-lines'
 import type { SerialProjectRepository } from '../project-repository'
 import type { VoiceProvider } from '../providers/voice-provider'
@@ -579,14 +581,15 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       async run(_ctx, args) {
         const project = requireRepository(deps).projectForMain()
         const selected = selectLines(deps, args)
-        const start = cursorOffset(args.cursor, selected.length)
-        const next = start + (args.limit ?? 20)
+        const { page, nextCursor } = args.lines
+          ? offsetPage(selected, args.cursor, args.limit ?? 20)
+          : stablePage(selected, (cue) => cue, project.cues, args.cursor, args.limit ?? 20)
         return structured({
           total: selected.length,
           languages: project.languages ?? null,
           pronunciationRules: project.pronunciationRules,
-          lines: translationContext(project, selected.slice(start, next)),
-          ...(next < selected.length ? { nextCursor: String(next) } : {}),
+          lines: translationContext(project, page),
+          ...(nextCursor === undefined ? {} : { nextCursor }),
         })
       },
     }),
@@ -683,17 +686,16 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       async run(_ctx, args) {
         const project = requireRepository(deps).projectForMain()
         const issues = glossaryIssues(project.terms ?? [], filterCues(project.cues, args.filter ?? 'all', '', ALL_CHARACTERS))
-        const start = cursorOffset(args.cursor, issues.length)
-        const next = start + (args.limit ?? 50)
+        const { page, nextCursor } = stablePage(issues, (issue) => issue.cue, project.cues, args.cursor, args.limit ?? 50)
         return structured({
           total: issues.length,
-          issues: issues.slice(start, next).map(({ cue, missing }) => ({
+          issues: page.map(({ cue, missing }) => ({
             line: cue.key,
             sourceText: cue.sourceText,
             text: cue.text,
             missing: missing.map((t) => ({ term: t.term, translation: t.translation })),
           })),
-          ...(next < issues.length ? { nextCursor: String(next) } : {}),
+          ...(nextCursor === undefined ? {} : { nextCursor }),
         })
       },
     }),

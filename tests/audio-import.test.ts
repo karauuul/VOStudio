@@ -217,6 +217,18 @@ describe('importAudio from nested folders', () => {
     expect(p.cues.find((c) => c.key === 'hit')!.fields).toEqual({ EventName: 'hit', path: 'b' })
   })
 
+  it('clears the stored folder when a nested source moves to the folder root', async () => {
+    const dir = path.join(H.root, 'rooted-src')
+    const projectDir = path.join(H.root, 'rooted.vostudio')
+    await fs.mkdir(path.join(dir, 'a'), { recursive: true })
+    await fs.copyFile(path.join(SRC, 'LINE_A.wav'), path.join(dir, 'a', 'hit.wav'))
+    const p = project()
+    await importAudio(p, projectDir, [dir], 'id')
+    await fs.rename(path.join(dir, 'a', 'hit.wav'), path.join(dir, 'hit.wav'))
+    await importAudio(p, projectDir, [dir], 'id')
+    expect(p.cues.find((c) => c.key === 'hit')!.fields).toEqual({ EventName: 'hit' })
+  })
+
   it('stores no folder for files picked one by one', async () => {
     const p = project()
     await importAudio(p, path.join(H.root, 'picked.vostudio'), [path.join(SRC, 'LINE_A.wav')], 'id')
