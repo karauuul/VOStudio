@@ -94,6 +94,7 @@ import {
   lineJob,
   measureAudio,
   releaseExports,
+  type ExportStamp,
 } from './export'
 import { detectLines, importSources, splitMediaPaths } from './sources'
 import { addAssets, assetAudioLines, assetPage, clearAssetCache, readAssetCached, type AudioLinesResult } from './assets'
@@ -119,13 +120,13 @@ import { AGENT_FLAG } from '@shared/agent-endpoint'
 import { sanitizeAgentAccess } from '@shared/ipc'
 import type { McpServer, McpSession } from '@shared/mcp'
 import { needsGuardVersion } from '@shared/versions'
-import { startAgentServer, type AgentServerHandle } from './agent/server'
+import { sha256Hex, startAgentServer, type AgentServerHandle } from './agent/server'
 import { AGENT_INSTRUCTIONS, agentTools, ASSET_READ_MAX } from './agent/tools'
 import { diagnostics, watchDiagnostics } from './agent/diagnostics'
 import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
 import { closeRenderWorker, renderExportPlan, renderLineWav, renderWorker, settleRender } from './agent/render-worker'
 import { hardenedWindow, loadRenderer, uiWindows } from './windows'
-import { renderFileName } from '@shared/agent-render'
+import { renderFileName, requireRevision } from '@shared/agent-render'
 import type { BatchExportResult } from '@shared/ipc'
 
 const primaryInstance = app.requestSingleInstanceLock()
@@ -244,9 +245,13 @@ async function recordVersions(
   return versions
 }
 
-async function stampVersion(): Promise<number> {
-  const versions = await recordVersions(store.ensureVersion)
-  return versions[versions.length - 1].n
+async function stampVersion(): Promise<ExportStamp> {
+  let previous: ProjectVersion[] = []
+  const versions = await recordVersions((current) => {
+    previous = current
+    return store.ensureVersion(current)
+  })
+  return { version: versions[versions.length - 1].n, changes: versions === previous ? 0 : 1 }
 }
 
 const audioImportSchema = z.object({
@@ -1066,7 +1071,7 @@ function registerHandlers(): void {
         planToken,
         parsed,
         () => (parsed.exported.length > 0 ? stampVersion() : Promise.resolve(undefined)),
-        projectRepository?.currentRevision()
+        () => projectRepository?.currentRevision()
       )
     )
   })
@@ -1106,14 +1111,17 @@ async function renderForAgent(cueId: string, source: 'output' | 'original', expe
   const project = repository.projectForMain()
   const cue = project.cues.find((c) => c.id === cueId)
   if (!cue) throw new Error('The line was removed meanwhile; call lines, then retry.')
-  const outPath = path.join(dir, 'agent', 'renders', renderFileName(cue.key, cue.id, source === 'original' ? '.original' : ''))
+  const revision = repository.currentRevision()
+  const outPath = path.join(dir, 'agent', 'renders', renderFileName(cue.key, cue.id, sha256Hex, source === 'original' ? '.original' : ''))
   const job = lineJob(project, cue, outPath, source)
   if (!job) return null
   const wav = await renderLineWav(job)
-  liveRepository(expected)
+  requireRevision(revision, liveRepository(expected).currentRevision())
   await fs.mkdir(path.dirname(outPath), { recursive: true })
   await encodeAnalysis(job, wav)
-  return { path: outPath, name: job.name, metrics: await measureAudio(outPath) }
+  const metrics = await measureAudio(outPath)
+  requireRevision(revision, liveRepository(expected).currentRevision())
+  return { path: outPath, name: job.name, metrics }
 }
 
 const serialAgentExport = serialQueue()

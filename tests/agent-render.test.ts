@@ -1,9 +1,23 @@
+import { createHash } from 'crypto'
 import { mkdtempSync, promises as fs } from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { emptyEdits, serialQueue, type Cue, type Project, type Take } from '../src/shared/domain'
-import { EXPORT_STALE, exportStale, MAX_TIMER_MS, PLAN_JOB_TIMEOUT_MS, PLAN_TIMEOUT_MS, planTimeoutMs, RENDER_ID_MAX, renderFileName, transcriptMatch } from '../src/shared/agent-render'
+import {
+  EXPORT_STALE,
+  LINE_CHANGED,
+  MAX_TIMER_MS,
+  PLAN_JOB_TIMEOUT_MS,
+  PLAN_TIMEOUT_MS,
+  planTimeoutMs,
+  RENDER_HASH_HEX,
+  RENDER_ID_MAX,
+  renderFileName,
+  requireRevision,
+  revisionStale,
+  transcriptMatch,
+} from '../src/shared/agent-render'
 import { edgeSilence, loudnessFilter, METRICS_FILTER, parseMetrics, silenceFilter } from '../src/shared/audio-metrics'
 import { originalOnlyPlan, planBatch, planLine } from '../src/shared/export-plan'
 
@@ -51,44 +65,62 @@ describe('transcript match', () => {
   })
 })
 
+const sha256Hex = (text: string): string => createHash('sha256').update(text).digest('hex')
+const fileName = (key: string, id: string, suffix?: string): string => renderFileName(key, id, sha256Hex, suffix)
+
 describe('render file names', () => {
   it('keeps keys readable, tags the cue id and never escapes the renders folder', () => {
-    expect(renderFileName('Line 1', 'c-line_1')).toBe('Line 1-c-line_1.wav')
-    expect(renderFileName('Line 1', 'c-Line 1')).toMatch(/^Line 1-c-Line_1~[0-9a-f]{8}\.wav$/)
-    expect(renderFileName('vo/a:b', '3fa85f64-5717-4562-b3fc-2c963f66afa6', '.original')).toBe('vo_a_b-3fa85f64-5717-4562-b3fc-2c963f66afa6.original.wav')
-    expect(renderFileName('../..', '../../x')).toMatch(/^\.\._-______x~[0-9a-f]{8}\.wav$/)
-    expect(renderFileName('..', 'abc')).toBe('line-abc.wav')
-    expect(renderFileName('x'.repeat(300), 'id')).toBe(`${'x'.repeat(120)}-id.wav`)
-    expect(renderFileName('k', 'i'.repeat(300))).toMatch(new RegExp(`^k-i{${RENDER_ID_MAX}}~[0-9a-f]{8}\\.wav$`))
-    expect(renderFileName('k', 'cue-7')).toBe(renderFileName('k', 'cue-7'))
+    expect(fileName('Line 1', 'c-line_1')).toBe('Line 1-c-line_1.wav')
+    expect(fileName('Line 1', 'c-Line 1')).toMatch(/^Line 1-c-Line_1~[0-9a-f]{16}\.wav$/)
+    expect(fileName('vo/a:b', '3fa85f64-5717-4562-b3fc-2c963f66afa6', '.original')).toBe('vo_a_b-3fa85f64-5717-4562-b3fc-2c963f66afa6.original.wav')
+    expect(fileName('../..', '../../x')).toMatch(/^\.\._-______x~[0-9a-f]{16}\.wav$/)
+    expect(fileName('..', 'abc')).toBe('line-abc.wav')
+    expect(fileName('x'.repeat(300), 'id')).toBe(`${'x'.repeat(120)}-id.wav`)
+    expect(fileName('k', 'i'.repeat(300))).toMatch(new RegExp(`^k-i{${RENDER_ID_MAX}}~[0-9a-f]{16}\\.wav$`))
+    expect(fileName('k', 'cue-7')).toBe(fileName('k', 'cue-7'))
+    expect(RENDER_HASH_HEX).toBeGreaterThanOrEqual(16)
+    expect(fileName('k', 'c-Line 1')).toBe(`k-c-Line_1~${sha256Hex('c-Line 1').slice(0, RENDER_HASH_HEX)}.wav`)
   })
 
   it('keeps ids that share a prefix, differ only past the cap, by sanitizing or by case apart', () => {
     const ids = ['cue-00001', 'cue-00002', 'a:b', 'a/b', 'a_b', `${'i'.repeat(RENDER_ID_MAX)}1`, `${'i'.repeat(RENDER_ID_MAX)}2`, 'Cue-A', 'cue-a']
-    const names = ids.map((id) => renderFileName('dup', id).toLowerCase())
+    const names = ids.map((id) => fileName('dup', id).toLowerCase())
     expect(new Set(names).size).toBe(ids.length)
   })
 
   it('gives distinct files to lines whose keys collide', () => {
     const names = [
-      renderFileName('dup', '11111111-a'),
-      renderFileName('dup', '22222222-a'),
-      renderFileName('a/b', '33333333'),
-      renderFileName('a:b', '44444444'),
-      renderFileName(`${'k'.repeat(300)}1`, '55555555'),
-      renderFileName(`${'k'.repeat(300)}2`, '66666666'),
+      fileName('dup', '11111111-a'),
+      fileName('dup', '22222222-a'),
+      fileName('a/b', '33333333'),
+      fileName('a:b', '44444444'),
+      fileName(`${'k'.repeat(300)}1`, '55555555'),
+      fileName(`${'k'.repeat(300)}2`, '66666666'),
     ]
     expect(new Set(names).size).toBe(names.length)
   })
 })
 
-describe('export revision guard', () => {
+describe('revision guard', () => {
   it('refuses only plans that carry a revision the project has since moved past', () => {
-    expect(exportStale(undefined, 9)).toBe(false)
-    expect(exportStale(undefined, undefined)).toBe(false)
-    expect(exportStale(4, 4)).toBe(false)
-    expect(exportStale(4, 5)).toBe(true)
-    expect(exportStale(4, undefined)).toBe(true)
+    expect(revisionStale(undefined, 9)).toBe(false)
+    expect(revisionStale(undefined, undefined)).toBe(false)
+    expect(revisionStale(4, 4)).toBe(false)
+    expect(revisionStale(4, 5)).toBe(true)
+    expect(revisionStale(4, undefined)).toBe(true)
+  })
+
+  it('allows exactly the changes the caller made itself', () => {
+    expect(revisionStale(4, 5, 1)).toBe(false)
+    expect(revisionStale(4, 4, 0)).toBe(false)
+    expect(revisionStale(4, 6, 1)).toBe(true)
+    expect(revisionStale(4, 4, 1)).toBe(true)
+    expect(revisionStale(undefined, 7, 1)).toBe(false)
+  })
+
+  it('a render is refused once the project moved past the revision it started from', () => {
+    expect(() => requireRevision(3, 3)).not.toThrow()
+    expect(() => requireRevision(3, 4)).toThrow(LINE_CHANGED)
   })
 })
 
@@ -268,18 +300,51 @@ describe('analysis renders and export state in main', () => {
       return plan
     }
     const summary = (name: string) => ({ exported: [{ cueKey: 'a', name, bytes: 3, sha256: 'x' }], failed: [] })
-    const stamp = vi.fn(async () => 1)
+    const stamp = vi.fn(async () => ({ version: 1, changes: 0 }))
     const stale = await staged(5)
-    await expect(finishExport(stale.token, summary(stale.jobs[0].name), stamp, 6)).rejects.toThrow(EXPORT_STALE)
+    await expect(finishExport(stale.token, summary(stale.jobs[0].name), stamp, () => 6)).rejects.toThrow(EXPORT_STALE)
     expect(stamp).not.toHaveBeenCalled()
     expect(exportBusy()).toBe(false)
     await expect(fs.stat(path.join(dir, 'export.staging'))).rejects.toThrow()
     await expect(fs.stat(path.join(stale.outDir, 'audio', stale.jobs[0].name))).rejects.toThrow()
     const fresh = await staged(6)
-    await finishExport(fresh.token, summary(fresh.jobs[0].name), stamp, 6)
+    await finishExport(fresh.token, summary(fresh.jobs[0].name), stamp, () => 6)
     expect(await fs.readFile(path.join(fresh.outDir, 'audio', fresh.jobs[0].name), 'utf8')).toBe('wav')
     const ui = await staged()
-    await finishExport(ui.token, summary(ui.jobs[0].name), stamp, 99)
+    await finishExport(ui.token, summary(ui.jobs[0].name), stamp, () => 99)
     expect(stamp).toHaveBeenCalledTimes(2)
+  })
+
+  it('an edit while the version is stamped keeps the previous export in place', async () => {
+    const dir = path.join(root, 'V.vostudio')
+    store.adoptProject(project([cue('a', '/tmp/a.wav')]), dir)
+    let revision = 6
+    const staged = async (audio: string) => {
+      const plan = await planBatchExport({ cueIds: ['c-a'] }, 3, revision)
+      await fs.mkdir(path.dirname(plan.jobs[0].outPath), { recursive: true })
+      await fs.writeFile(plan.jobs[0].outPath, audio)
+      return plan
+    }
+    const summary = (name: string) => ({ exported: [{ cueKey: 'a', name, bytes: 3, sha256: 'x' }], failed: [] })
+    const stamping = (edits: number, version: number) =>
+      vi.fn(async () => {
+        revision += 1 + edits
+        return { version, changes: 1 }
+      })
+    const first = await staged('old')
+    const own = stamping(0, 3)
+    expect((await finishExport(first.token, summary(first.jobs[0].name), own, () => revision)).version).toBe(3)
+    const audio = path.join(first.outDir, 'audio', first.jobs[0].name)
+    const report = path.join(first.outDir, 'report.json')
+    const published = await fs.readFile(report, 'utf8')
+    expect(JSON.parse(published).exported[0].version).toBe(3)
+    const raced = await staged('new')
+    const edited = stamping(1, 4)
+    await expect(finishExport(raced.token, summary(raced.jobs[0].name), edited, () => revision)).rejects.toThrow(EXPORT_STALE)
+    expect(edited).toHaveBeenCalledTimes(1)
+    expect(exportBusy()).toBe(false)
+    expect(await fs.readFile(audio, 'utf8')).toBe('old')
+    expect(await fs.readFile(report, 'utf8')).toBe(published)
+    await expect(fs.stat(path.join(dir, 'export.staging'))).rejects.toThrow()
   })
 })

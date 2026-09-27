@@ -53,7 +53,7 @@ import {
 } from '@shared/export-settings'
 import { renderChunks, videoTimelinePlan } from '@shared/sources'
 import { sanitizeRevision } from '@shared/approval'
-import { EXPORT_STALE, exportStale } from '@shared/agent-render'
+import { EXPORT_STALE, revisionStale } from '@shared/agent-render'
 import { isInsideDir } from '@shared/project-summary'
 import { emptyEdits, type Cue, type Project } from '@shared/domain'
 import { loudnessFilter, METRICS_FILTER, parseMetrics, type AudioMetrics } from '@shared/audio-metrics'
@@ -347,11 +347,16 @@ export async function removeSuperseded(outDir: string, files: string[]): Promise
   }
 }
 
+export interface ExportStamp {
+  version: number
+  changes: number
+}
+
 export async function finishExport(
   token: string,
   summary: ExportSummary,
-  stamp: () => Promise<number | undefined>,
-  revision?: number
+  stamp: () => Promise<ExportStamp | undefined>,
+  revision: () => number | undefined = () => undefined
 ): Promise<DeliverPaths> {
   if (!batchPlan || token !== batchPlan.token) throw new Error('This batch export plan is no longer current')
   const current = batchPlan
@@ -362,19 +367,23 @@ export async function finishExport(
   }
 }
 
+async function refuseStale(current: BatchPlan, revision: number | undefined, own?: number): Promise<void> {
+  if (!revisionStale(current.revision, revision, own)) return
+  await fs.rm(current.stagingDir, { recursive: true, force: true })
+  throw new Error(EXPORT_STALE)
+}
+
 async function publishExport(
   current: BatchPlan,
   summary: ExportSummary,
-  stamp: () => Promise<number | undefined>,
-  revision: number | undefined
+  stamp: () => Promise<ExportStamp | undefined>,
+  revision: () => number | undefined
 ): Promise<DeliverPaths> {
   if (!current.live) throw new Error(PROJECT_CHANGED)
   if (ctx().project.id !== current.project.id) throw new Error('The exported project is no longer open')
-  if (exportStale(current.revision, revision)) {
-    await fs.rm(current.stagingDir, { recursive: true, force: true })
-    throw new Error(EXPORT_STALE)
-  }
-  const version = await stamp()
+  await refuseStale(current, revision())
+  const stamped = await stamp()
+  const version = stamped?.version
   const { project, outDir, stagingDir } = current
   for (const f of summary.failed) {
     const outPath = path.join(stagingDir, 'audio', f.name)
@@ -409,6 +418,7 @@ async function publishExport(
   if (index !== null) await fs.writeFile(path.join(stagingDir, 'index.updated.csv'), index)
   const report = buildReport(project.name, deliver, version)
   await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
+  await refuseStale(current, revision(), stamped?.changes)
   await removeSuperseded(outDir, supersededFiles(previous?.exported ?? [], exported))
   await copyTree(stagingDir, outDir)
   await fs.rm(stagingDir, { recursive: true, force: true })

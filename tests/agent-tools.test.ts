@@ -8,6 +8,7 @@ import type { AssetContent } from '../src/main/assets'
 import { createSession, handleMessage, type McpServer, type RpcMessage } from '../src/shared/mcp'
 import type { CommandResult } from '../src/shared/project-commands'
 import { transcribeCues } from '../src/main/transcribe'
+import { LINE_CHANGED } from '../src/shared/agent-render'
 
 const voice = { stability: 0.5, similarity: 0.5, style: 0, speed: 1, boost: true }
 
@@ -630,6 +631,26 @@ describe('render, verify and export', () => {
       throw new Error('The render window closed before it finished; retry.')
     })
     expect((await call('render', { line: 'L3' })).error).toBe('The project was closed or switched during this call; call status, then retry.')
+  })
+
+  it('refuses a render or verify when the project changes while it runs', async () => {
+    const { call, repo, deps } = setup()
+    const render = deps.renderLine
+    const edit = () => repo!.execute({ type: 'cue.saveText', cueId: 'c3', text: 'Edited line' })
+    deps.renderLine = vi.fn(async (cueId: string, source: 'output' | 'original') => {
+      if (source === 'original') await edit()
+      return render(cueId, source)
+    })
+    expect((await call('render', { line: 'L3', withOriginal: true })).error).toBe(LINE_CHANGED)
+    deps.renderLine = render
+    const transcribe = deps.transcribeFile
+    deps.transcribeFile = vi.fn(async (file: string) => {
+      await edit()
+      return transcribe(file)
+    })
+    expect((await call('verify', { line: 'L3' })).error).toBe(LINE_CHANGED)
+    deps.transcribeFile = transcribe
+    expect((await call('verify', { line: 'L3' })).data).toMatchObject({ expected: 'Edited line', heard: 'Voiced, line extra!' })
   })
 
   it('verifies the render against the line text and names missing and extra words', async () => {

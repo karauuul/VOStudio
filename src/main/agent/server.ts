@@ -13,7 +13,7 @@ export interface AgentServerHandle {
   stop: () => Promise<void>
 }
 
-const sha256Hex = (text: string): string => createHash('sha256').update(text).digest('hex')
+export const sha256Hex = (text: string): string => createHash('sha256').update(text).digest('hex')
 
 function sameToken(line: string, token: string): boolean {
   const given = Buffer.from(line.trim())

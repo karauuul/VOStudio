@@ -29,7 +29,7 @@ import type {
 import type { MatchRule } from '@shared/domain'
 import { DEFAULT_MATCH_RULE, TABLE_COLUMNS_MAX } from '@shared/import-table'
 import { ALL_CHARACTERS, filterCues } from '@shared/cue-filter'
-import { transcriptMatch } from '@shared/agent-render'
+import { requireRevision, transcriptMatch } from '@shared/agent-render'
 import type { AudioMetrics } from '@shared/audio-metrics'
 import { findCollisions, originalLength, planBatch } from '@shared/export-plan'
 import { readinessRows, statusWords, summarize } from '@shared/readiness'
@@ -216,19 +216,23 @@ interface RenderedLine {
   source: RenderSource
   render: LineRender
   view: Record<string, unknown>
+  revision: number
 }
 
 async function renderCue(deps: AgentDeps, cue: Cue, withOriginal: boolean): Promise<RenderedLine> {
   const repository = requireRepository(deps)
+  const revision = repository.currentRevision()
   const render = (source: RenderSource): Promise<LineRender | null> => liveCall(repository, () => deps.renderLine(cue.id, source, repository))
   const output = await render('output')
   const rendered = output ?? (await render('original'))
   if (!rendered) throw new Error(`Line ${cue.key} has no voiced output and no original audio to render.`)
   const source: RenderSource = output ? 'output' : 'original'
   const original = withOriginal && output ? await render('original') : null
+  requireRevision(revision, repository.currentRevision())
   const reference = originalLength(cue) ?? null
   return {
     source,
+    revision,
     render: rendered,
     view: {
       line: cue.key,
@@ -1240,6 +1244,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           if (!repository.isLive()) throw error
           throw new Error(`Transcription is unavailable for this audio (${reason(error)}); render gives the metrics without it.`)
         }
+        requireRevision(rendered.revision, repository.currentRevision())
         return structured({ ...rendered.view, expected, heard, ...transcriptMatch(expected, heard) })
       },
     }),

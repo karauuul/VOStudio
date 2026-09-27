@@ -280,7 +280,7 @@ describe('export records the signature in report.json', () => {
     store.adoptProject(p, cancelled)
     const plan = await planBatchExport({ cueIds: ['c-a'] })
     cancelExports()
-    const stamp = vi.fn(async () => 7)
+    const stamp = vi.fn(async () => ({ version: 7, changes: 1 }))
     await expect(copyJob(plan.jobs[0].outPath)).rejects.toThrow('Export cancelled: the project changed')
     await expect(
       finishExport(plan.token, { exported: [{ cueKey: 'a', name: 'a.wav', bytes: 1, sha256: 'f'.repeat(64) }], failed: [] }, stamp)
@@ -297,7 +297,7 @@ describe('export records the signature in report.json', () => {
     const result = await finishExport(
       plan.token,
       { exported: [{ cueKey: 'a', name: 'a.wav', bytes: 1, sha256: 'f'.repeat(64) }], failed: [] },
-      async () => 7
+      async () => ({ version: 7, changes: 1 })
     )
     expect(result.version).toBe(7)
     const report = JSON.parse(await fs.readFile(path.join(stamped, 'export', 'report.json'), 'utf8'))
