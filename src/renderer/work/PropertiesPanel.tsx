@@ -111,6 +111,7 @@ export interface PropertiesPanelProps {
   onCharacter: (characterId: string) => void
   onOriginal: (patch: Partial<OriginalLane>) => void
   onTakeEffects: (takeId: string, effects: ClipEffects | undefined) => void
+  onShowInLibrary: (takeId: string) => void
   onPinSource: (takeId: string, pinned: boolean) => void
   onDeleteSource: (takeId: string) => void
   onOpenLine: (cueId: string) => void
@@ -159,6 +160,7 @@ export function PropertiesPanel({
   onCharacter,
   onOriginal,
   onTakeEffects,
+  onShowInLibrary,
   onPinSource,
   onDeleteSource,
   onOpenLine,
@@ -169,8 +171,6 @@ export function PropertiesPanel({
   const clip = selection?.clip ?? null
   const tracks = selection?.tracks ?? []
   const track = tracks.find((t) => t.id === selection?.trackId) ?? tracks[0]
-
-  const clipTake = cue && clip ? resolveTake(project, cue, clip.sourceTakeId)?.take : undefined
 
   const targets: PropertiesTargets = {
     source: sourceRow?.take.id ?? '',
@@ -197,7 +197,7 @@ export function PropertiesPanel({
       copyEffects: () => {
         if (active === 'track') copyEffects(track?.effects)
         else if (active === 'source') copyEffects(sourceRow?.take.edits.effects)
-        else copyEffects(clipTake?.edits.effects)
+        else if (clip) copyEffects(clip.edits.effects)
       },
       pasteEffects: () => {
         const fx = copiedEffects()
@@ -211,10 +211,10 @@ export function PropertiesPanel({
           }
         } else if (active === 'source') {
           if (sourceRow) onTakeEffects(sourceRow.take.id, pickEffects(fx, EFFECT_KINDS))
-        } else if (clipTake) onTakeEffects(clipTake.id, pickEffects(fx, EFFECT_KINDS))
+        } else if (clip) compRef.current?.editSelected({ effects: pickEffects(fx, EFFECT_KINDS) }, true)
       },
     }),
-    [active, track, sourceRow, clipTake, compRef, onTakeEffects]
+    [active, track, sourceRow, clip, compRef, onTakeEffects]
   )
   useWire(propsRef, api)
 
@@ -263,7 +263,10 @@ export function PropertiesPanel({
             clip={clip}
             track={track}
             compRef={compRef}
-            onTakeEffects={onTakeEffects}
+            onSourceTab={(takeId) => {
+              onShowInLibrary(takeId)
+              setTab('source')
+            }}
             onTrackTab={() => setTab('track')}
           />
         )}
@@ -322,6 +325,16 @@ function Sec({ children, action }: { children: ReactNode; action?: ReactNode }) 
       <span className="lab">{children}</span>
       {action}
     </div>
+  )
+}
+
+function TabLink({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button className="ico sm" aria-label={label} onClick={onClick}>
+      <svg width="8" height="12" viewBox="0 0 8 12">
+        <path d="M2 1l4 5-4 5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      </svg>
+    </button>
   )
 }
 
@@ -603,7 +616,7 @@ function ClipTab({
   clip,
   track,
   compRef,
-  onTakeEffects,
+  onSourceTab,
   onTrackTab,
 }: {
   cue: Cue
@@ -612,7 +625,7 @@ function ClipTab({
   clip: NonNullable<TimelineSelection['clip']>
   track: CompTrack | undefined
   compRef: MutableRefObject<CompApi | null>
-  onTakeEffects: (takeId: string, effects: ClipEffects | undefined) => void
+  onSourceTab: (takeId: string) => void
   onTrackTab: () => void
 }) {
   const project = useMemo(() => ({ cues }), [cues])
@@ -625,6 +638,7 @@ function ClipTab({
   const voice = characterName(characters, track?.characterId ?? cue.characterId)
   const edit = (patch: Parameters<CompApi['editSelected']>[0], commit: boolean): void =>
     compRef.current?.editSelected(patch, commit)
+  const sourceFx = EFFECT_KINDS.filter((k) => take?.edits.effects?.[k]).length
 
   return (
     <>
@@ -717,23 +731,21 @@ function ClipTab({
       </Row2>
 
       <EffectStack
-        key={take?.id ?? 'no-source'}
-        title="Source effects"
-        note={[version, take ? `${secs(take.duration)}s` : ''].filter(Boolean).join(' · ')}
-        effects={take?.edits.effects}
+        key={clip.id}
+        title="Clip effects"
+        effects={edits.effects}
         kinds={EFFECT_KINDS}
-        onChange={(next) => take && onTakeEffects(take.id, next)}
+        onChange={(next) => edit({ effects: next }, true)}
       />
 
-      <Sec
-        action={
-          <button className="ico sm" aria-label="Open the Track tab" onClick={onTrackTab}>
-            <svg width="8" height="12" viewBox="0 0 8 12">
-              <path d="M2 1l4 5-4 5" fill="none" stroke="currentColor" strokeWidth="1.4" />
-            </svg>
-          </button>
-        }
-      >
+      {take && sourceFx > 0 && (
+        <Sec action={<TabLink label="Open the Source tab" onClick={() => onSourceTab(take.id)} />}>
+          Source effects
+          <i className="props-note">{sourceFx}</i>
+        </Sec>
+      )}
+
+      <Sec action={<TabLink label="Open the Track tab" onClick={onTrackTab} />}>
         Track effects
         <i className="props-note">
           {TRACK_EFFECT_KINDS.filter((k) => track?.effects?.[k]).length}
