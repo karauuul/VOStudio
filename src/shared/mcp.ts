@@ -28,9 +28,12 @@ export interface ToolContext {
   progress: (progress: number, total?: number, message?: string) => void
 }
 
-export type ToolOutput =
-  | { structured: Record<string, unknown> }
-  | { image: { data: string; mimeType: string } }
+export interface ToolImage {
+  data: string
+  mimeType: string
+}
+
+export type ToolOutput = { structured: Record<string, unknown>; image?: ToolImage } | { image: ToolImage }
 
 export interface McpTool<I extends z.ZodType = z.ZodType> {
   name: string
@@ -112,9 +115,9 @@ export function listedTool(tool: McpTool): RpcMessage {
 const errorResult = (text: string): RpcMessage => ({ content: [{ type: 'text', text }], isError: true })
 
 function toolResult(output: ToolOutput): RpcMessage {
-  if ('image' in output) return { content: [{ type: 'image', ...output.image }] }
+  if (!('structured' in output)) return { content: [{ type: 'image', ...output.image }] }
   return {
-    content: [{ type: 'text', text: JSON.stringify(output.structured) }],
+    content: [{ type: 'text', text: JSON.stringify(output.structured) }, ...(output.image ? [{ type: 'image', ...output.image }] : [])],
     structuredContent: output.structured,
   }
 }

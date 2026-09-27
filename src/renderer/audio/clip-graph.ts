@@ -14,6 +14,7 @@ import {
   compDuration,
   compRenderPlan,
   duckEnvelope,
+  trackAudible,
 } from '@shared/comp'
 import { dbToGain } from '@shared/effects'
 import { connectEffects } from './effects-graph'
@@ -237,15 +238,13 @@ function trackBuses(
   channels: number
 ): (trackId: string) => AudioNode {
   if (!tracks) return () => destination
-  const soloed = tracks.some((t) => t.solo)
   const buses = new Map<string, AudioNode>()
   return (trackId: string): AudioNode => {
     const hit = buses.get(trackId)
     if (hit) return hit
     const track = tracks.find((t) => t.id === trackId)
     const gain = ctx.createGain()
-    const audible = !track || (!track.muted && (!soloed || track.solo))
-    gain.gain.value = audible ? dbToGain(track?.gainDb ?? 0) : 0
+    gain.gain.value = trackAudible(tracks, trackId) ? dbToGain(track?.gainDb ?? 0) : 0
     connectEffects(ctx, gain, track?.effects, channels).connect(destination)
     buses.set(trackId, gain)
     return gain
