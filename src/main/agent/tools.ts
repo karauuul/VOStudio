@@ -49,7 +49,9 @@ import {
   LINES_PAGE_MAX,
   lineDetail,
   listLines,
+  offsetPage,
   projectOverview,
+  stablePage,
 } from '@shared/agent-lines'
 import type { SerialProjectRepository } from '../project-repository'
 import { isTable, type AssetContent, type AssetReadOptions, type AudioLinesResult } from '../assets'
@@ -69,16 +71,17 @@ export interface AgentDeps {
   saveVersion: (name?: string) => Promise<ProjectVersion[]>
   restoreVersion: (n: number) => Promise<unknown>
   flushUi: () => Promise<void>
+  checkRemovable: (cueIds: string[]) => Promise<void>
   emit: (result: CommandResult) => void
   audioRoots: () => string[]
-  importAudio: (req: { paths: string[]; rule: MatchRule }) => Promise<AudioImportResult>
-  previewTable: (req: TableRequest) => Promise<TablePreview>
-  importTable: (req: TableRequest) => Promise<TableImportResult>
-  reimportTemplate: (dir: string) => Promise<ReimportResult>
-  transcribe: (req: { cueIds: string[]; overwrite?: boolean }) => Promise<{ updated: number; skipped: number }>
-  addAssets: (paths: string[]) => Promise<AssetAddResult>
+  importAudio: (req: { paths: string[]; rule: MatchRule }, expected?: SerialProjectRepository) => Promise<AudioImportResult>
+  previewTable: (req: TableRequest, expected?: SerialProjectRepository) => Promise<TablePreview>
+  importTable: (req: TableRequest, expected?: SerialProjectRepository) => Promise<TableImportResult>
+  reimportTemplate: (dir: string, expected?: SerialProjectRepository) => Promise<ReimportResult>
+  transcribe: (req: { cueIds: string[]; overwrite?: boolean }, expected?: SerialProjectRepository) => Promise<{ updated: number; skipped: number }>
+  addAssets: (paths: string[], expected?: SerialProjectRepository) => Promise<AssetAddResult>
   loadAsset: (asset: ProjectAsset, options: AssetReadOptions) => Promise<AssetContent>
-  buildAudioLines: (assetIds: string[]) => Promise<AudioLinesResult>
+  buildAudioLines: (assetIds: string[], expected?: SerialProjectRepository) => Promise<AudioLinesResult>
   provider: () => VoiceProvider
   diagnostics: () => DiagnosticEntry[]
   screenshot: () => Promise<Buffer | null>
@@ -149,13 +152,15 @@ export const PROPOSALS_PAGE_MAX = 200
 export const CELL_MAX = 500
 export const ASSIGN_MAX = 2000
 
+const PROJECT_SWITCHED = 'The project was closed or switched during this call; call status, then retry.'
+
 const exactlyOne = (values: unknown[]): boolean => values.filter((v) => v !== undefined).length === 1
 
 const structured = (value: Record<string, unknown>): ToolOutput => ({ structured: value })
 
 function selectLines(deps: AgentDeps, args: { lines?: string[]; filter?: string }): Cue[] {
   const project = requireRepository(deps).projectForMain()
-  if (args.lines) return args.lines.map((ref) => findLine(project, ref))
+  if (args.lines) return [...new Map(args.lines.map((ref) => findLine(project, ref)).map((cue) => [cue.id, cue])).values()]
   return filterCues(project.cues, args.filter ?? 'all', '', ALL_CHARACTERS)
 }
 
@@ -233,8 +238,21 @@ function requireRepository(deps: AgentDeps): SerialProjectRepository {
   return repository
 }
 
+const removedCueIds = (command: ProjectCommand): string[] =>
+  command.type === 'cue.delete' ? command.cueIds : command.type === 'table.step' ? command.remove : []
+
+const pin = (deps: AgentDeps): AgentDeps => {
+  const repository = requireRepository(deps)
+  return { ...deps, repository: () => repository }
+}
+
 async function execute(deps: AgentDeps, command: ProjectCommand): Promise<CommandResult> {
-  const result = await requireRepository(deps).execute(command)
+  const repository = requireRepository(deps)
+  const removed = removedCueIds(command)
+  if (removed.length > 0) await deps.checkRemovable(removed)
+  const result = await repository.execute(command).catch((error: unknown) => {
+    throw repository.isLive() ? error : new Error(PROJECT_SWITCHED)
+  })
   deps.emit(result)
   return result
 }
@@ -420,11 +438,12 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       input: z.object({ ops: z.array(editOp).min(1).max(500) }),
       annotations: DESTRUCTIVE,
       async run(ctx, args) {
+        const pinned = pin(deps)
         const applied: { op: string; line: string; id: string }[] = []
         for (const [i, op] of args.ops.entries()) {
           if (ctx.signal.aborted) break
           try {
-            applied.push(await applyEdit(deps, op))
+            applied.push(await applyEdit(pinned, op))
           } catch (error) {
             const reason = (error instanceof Error ? error.message : String(error)).replace(/\.$/, '')
             throw new Error(`Op ${i + 1} (${op.op}) failed after ${applied.length} applied: ${reason}.`)
@@ -466,14 +485,15 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         }),
       annotations: DESTRUCTIVE,
       async run(_ctx, args) {
+        const pinned = pin(deps)
         let id: string
         if (args.create !== undefined) {
           id = randomUUID()
-          await execute(deps, { type: 'character.create', id, name: args.create })
-        } else id = findCharacter(requireRepository(deps).projectForMain(), args.character ?? '').id
-        if (args.rename !== undefined) await execute(deps, { type: 'character.rename', characterId: id, name: args.rename })
+          await execute(pinned, { type: 'character.create', id, name: args.create })
+        } else id = findCharacter(requireRepository(pinned).projectForMain(), args.character ?? '').id
+        if (args.rename !== undefined) await execute(pinned, { type: 'character.rename', characterId: id, name: args.rename })
         if (args.voiceId !== undefined || args.ttsModel !== undefined || args.stsModel !== undefined) {
-          await execute(deps, {
+          await execute(pinned, {
             type: 'character.setProvider',
             characterId: id,
             ...(args.voiceId === undefined ? {} : { voiceId: args.voiceId }),
@@ -482,11 +502,11 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           })
         }
         if (args.settings !== undefined) {
-          const current = findCharacter(requireRepository(deps).projectForMain(), id)
+          const current = findCharacter(requireRepository(pinned).projectForMain(), id)
           const settings = clampVoiceSettings(resolveVoiceSettings(current, { voiceSettingsOverride: args.settings }))
-          await execute(deps, { type: 'character.setVoiceSettings', characterId: id, settings })
+          await execute(pinned, { type: 'character.setVoiceSettings', characterId: id, settings })
         }
-        return structured({ character: characterView(findCharacter(requireRepository(deps).projectForMain(), id)) })
+        return structured({ character: characterView(findCharacter(requireRepository(pinned).projectForMain(), id)) })
       },
     }),
     defineTool({
@@ -556,6 +576,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           table: z
             .object({
               path: absolutePath,
+              rule: z.enum(['id', 'exportName', 'tableId']).optional(),
               mapping: z
                 .object({ id: columnIndex, text: columnIndex, translation: columnIndex, character: columnIndex })
                 .partial()
@@ -574,27 +595,27 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       annotations: DESTRUCTIVE,
       writes: (args) => !args.table || args.table.preview === false,
       async run(_ctx, args) {
-        requireRepository(deps)
+        const repository = requireRepository(deps)
         await deps.flushUi()
         if (args.audio) {
-          return structured({ ...(await deps.importAudio({ paths: args.audio.paths, rule: args.audio.rule ?? DEFAULT_MATCH_RULE })) })
+          return structured({ ...(await deps.importAudio({ paths: args.audio.paths, rule: args.audio.rule ?? DEFAULT_MATCH_RULE }, repository)) })
         }
-        if (args.templateReimport !== undefined) return structured({ ...(await deps.reimportTemplate(args.templateReimport)) })
+        if (args.templateReimport !== undefined) return structured({ ...(await deps.reimportTemplate(args.templateReimport, repository)) })
         const table = args.table
         if (!table) throw new Error('pass exactly one of audio, table or templateReimport.')
         const req: TableRequest = {
           path: table.path,
-          rule: DEFAULT_MATCH_RULE,
+          rule: table.rule ?? DEFAULT_MATCH_RULE,
           ...(table.mapping ? { mapping: table.mapping } : {}),
           ...(table.matchBy ? { matchBy: table.matchBy } : {}),
           ...(table.replaceTranslations === undefined ? {} : { replaceTranslations: table.replaceTranslations }),
           ...(table.keepOriginal === undefined ? {} : { keepOriginal: table.keepOriginal }),
         }
         if (table.preview === false) {
-          const done = await deps.importTable(req)
+          const done = await deps.importTable(req, repository)
           return structured({ applied: true, rows: done.rows, mapping: done.mapping, summary: done.summary, ...textMatchView(done.textMatch) })
         }
-        const preview = await deps.previewTable(req)
+        const preview = await deps.previewTable(req, repository)
         return structured({
           preview: true,
           total: preview.total,
@@ -614,8 +635,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       input: z.object({ paths: z.array(absolutePath).min(1).max(200) }),
       annotations: WRITE,
       async run(_ctx, args) {
-        requireRepository(deps)
-        const result = await deps.addAssets(args.paths)
+        const result = await deps.addAssets(args.paths, requireRepository(deps))
         const counts = assetLinks(requireRepository(deps).projectForMain().cues)
         return structured({
           added: result.added.length,
@@ -709,7 +729,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
             ? args.assets.map((ref) => findAsset(project, ref).id)
             : (project.assets ?? []).filter((a) => a.kind === 'audio' && !counts.get(a.id)?.lines).map((a) => a.id)
           if (ids.length === 0) throw new Error('Every audio asset already has lines; call assets to check.')
-          const done = await deps.buildAudioLines(ids)
+          const done = await deps.buildAudioLines(ids, repository)
           return structured({
             created: done.added,
             updated: done.updated,
@@ -745,7 +765,8 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       annotations: DESTRUCTIVE,
       writes: (args) => args.apply === true,
       async run(_ctx, args) {
-        const project = requireRepository(deps).projectForMain()
+        const pinned = pin(deps)
+        const project = requireRepository(pinned).projectForMain()
         const asset = findAsset(project, args.asset)
         const table = await assetTable(deps, asset, { ...(args.jsonPath ? { jsonPath: args.jsonPath } : {}), ...(args.fields ? { fields: args.fields } : {}) })
         const columns = rowColumns(asset.kind, table.columns, args.mapping as RowMapping | undefined)
@@ -767,7 +788,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         }
         if (args.apply !== true) return structured(view)
         await deps.flushUi()
-        const current = requireRepository(deps).projectForMain()
+        const current = requireRepository(pinned).projectForMain()
         const byId = new Map(current.cues.map((c) => [c.id, c]))
         const chosen = report.links.filter((l) => {
           const origins = byId.get(l.cueId)?.origins ?? []
@@ -775,9 +796,9 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         })
         const plan = linkPlan(current, chosen, table.rows, columns, asset)
         if (plan.fields.length > 0 || plan.addCharacters.length > 0) {
-          await execute(deps, { type: 'table.step', remove: [], restore: [], fields: plan.fields, addCharacters: plan.addCharacters, dropCharacters: [] })
+          await execute(pinned, { type: 'table.step', remove: [], restore: [], fields: plan.fields, addCharacters: plan.addCharacters, dropCharacters: [] })
         }
-        if (plan.proposals.length > 0) await execute(deps, { type: 'cue.propose', items: plan.proposals })
+        if (plan.proposals.length > 0) await execute(pinned, { type: 'cue.propose', items: plan.proposals })
         return structured({
           ...view,
           applied: plan.proposals.length,
@@ -802,8 +823,9 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       }),
       annotations: DESTRUCTIVE,
       async run(_ctx, args) {
+        const pinned = pin(deps)
         await deps.flushUi()
-        const project = requireRepository(deps).projectForMain()
+        const project = requireRepository(pinned).projectForMain()
         const known = (ref: string): boolean => {
           try {
             findCharacter(project, ref)
@@ -815,9 +837,9 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         const missing = args.items.map((item) => item.character).filter((ref) => !known(ref))
         const created = args.create === true ? speakerCharacters(project.characters, missing) : []
         if (created.length > 0) {
-          await execute(deps, { type: 'table.step', remove: [], restore: [], fields: [], addCharacters: created, dropCharacters: [] })
+          await execute(pinned, { type: 'table.step', remove: [], restore: [], fields: [], addCharacters: created, dropCharacters: [] })
         }
-        const now = requireRepository(deps).projectForMain()
+        const now = requireRepository(pinned).projectForMain()
         const outcomes: { line: string; outcome: string; reason?: string }[] = []
         const proposals: ProposalItem[] = []
         const steps: FieldStep[] = []
@@ -849,9 +871,9 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           }
         }
         if (steps.length > 0) {
-          await execute(deps, { type: 'table.step', remove: [], restore: [], fields: steps, addCharacters: [], dropCharacters: [] })
+          await execute(pinned, { type: 'table.step', remove: [], restore: [], fields: steps, addCharacters: [], dropCharacters: [] })
         }
-        if (proposals.length > 0) await execute(deps, { type: 'cue.propose', items: proposals })
+        if (proposals.length > 0) await execute(pinned, { type: 'cue.propose', items: proposals })
         return structured({ outcomes, ...(created.length > 0 ? { createdCharacters: created.map((c) => c.name) } : {}) })
       },
     }),
@@ -879,7 +901,8 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       annotations: DESTRUCTIVE,
       writes: (args) => args.list === undefined,
       async run(_ctx, args) {
-        const project = requireRepository(deps).projectForMain()
+        const pinned = pin(deps)
+        const project = requireRepository(pinned).projectForMain()
         if (args.list) {
           const entries = listProposals(project, args.list.kind, args.list.minConfidence)
           const start = cursorOffset(args.list.cursor, entries.length)
@@ -915,7 +938,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
             errors.push({ line: item.line, reason: reason(error) })
           }
         }
-        if (refs.length > 0) await execute(deps, { type: accept ? 'proposal.accept' : 'proposal.reject', items: refs })
+        if (refs.length > 0) await execute(pinned, { type: accept ? 'proposal.accept' : 'proposal.reject', items: refs })
         const terms = await settleTerms(deps, items.flatMap((item) => ('term' in item ? [item.term] : [])), accept)
         return structured({
           [accept ? 'accepted' : 'rejected']: refs.length + terms.length,
@@ -934,16 +957,22 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         .refine(oneSelection, oneSelectionMessage),
       annotations: { ...DESTRUCTIVE, openWorldHint: true },
       async run(ctx, args) {
+        const repository = requireRepository(deps)
         const selected = selectLines(deps, args)
         const overwrite = args.overwrite === true
         const explicit = args.lines !== undefined
         const updated: string[] = []
         const skipped: { line: string; reason: string }[] = []
         const failed: { line: string; reason: string }[] = []
-        let at = cursorOffset(args.cursor, selected.length)
+        const positions = new Map(repository.projectForMain().cues.map((cue, i) => [cue.id, i]))
+        const place = (cue: Cue, i: number): number => (explicit ? i : (positions.get(cue.id) ?? i))
+        const resume = cursorOffset(args.cursor, explicit ? selected.length : positions.size)
+        let at = selected.findIndex((cue, i) => place(cue, i) >= resume)
+        if (at < 0) at = selected.length
         let work = 0
         for (; at < selected.length && work < TRANSCRIBE_PAGE_MAX; at++) {
           if (ctx.signal.aborted) break
+          if (!repository.isLive()) throw new Error(PROJECT_SWITCHED)
           const cue = selected[at]
           const why = !cue.referenceAudio ? 'no original audio' : !overwrite && cue.sourceText.trim() ? 'already has original text; pass overwrite' : null
           if (why) {
@@ -952,15 +981,16 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           }
           work++
           try {
-            const done = await deps.transcribe({ cueIds: [cue.id], overwrite })
+            const done = await deps.transcribe({ cueIds: [cue.id], overwrite }, repository)
             if (done.updated > 0) updated.push(cue.key)
             else skipped.push({ line: cue.key, reason: 'the transcript came back empty' })
           } catch (error) {
+            if (!repository.isLive()) throw new Error(PROJECT_SWITCHED)
             failed.push({ line: cue.key, reason: reason(error) })
           }
           ctx.progress(work, undefined, cue.key)
         }
-        return structured({ updated, skipped, failed, ...(at < selected.length ? { nextCursor: String(at) } : {}) })
+        return structured({ updated, skipped, failed, ...(at < selected.length ? { nextCursor: String(place(selected[at], at)) } : {}) })
       },
     }),
     defineTool({
@@ -974,14 +1004,15 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       async run(_ctx, args) {
         const project = requireRepository(deps).projectForMain()
         const selected = selectLines(deps, args)
-        const start = cursorOffset(args.cursor, selected.length)
-        const next = start + (args.limit ?? 20)
+        const { page, nextCursor } = args.lines
+          ? offsetPage(selected, args.cursor, args.limit ?? 20)
+          : stablePage(selected, (cue) => cue, project.cues, args.cursor, args.limit ?? 20)
         return structured({
           total: selected.length,
           languages: project.languages ?? null,
           pronunciationRules: project.pronunciationRules,
-          lines: translationContext(project, selected.slice(start, next)),
-          ...(next < selected.length ? { nextCursor: String(next) } : {}),
+          lines: translationContext(project, page),
+          ...(nextCursor === undefined ? {} : { nextCursor }),
         })
       },
     }),
@@ -996,10 +1027,11 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       }),
       annotations: WRITE,
       async run(_ctx, args) {
-        const project = requireRepository(deps).projectForMain()
+        const pinned = pin(deps)
+        const project = requireRepository(pinned).projectForMain()
         const outcomes: { line: string; outcome: string; reason?: string }[] = []
         const steps: FieldStep[] = []
-        const texts: { cue: Cue; text: string; was: string; outcome: { outcome: string; reason?: string } }[] = []
+        const texts: { cue: Cue; text: string; was: string; pending: string | null; outcome: { outcome: string; reason?: string } }[] = []
         const seen = new Set<string>()
         for (const item of args.items) {
           let cue: Cue
@@ -1017,8 +1049,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           const pending = cue.suggestedText ?? null
           if (args.apply === true && !cue.text.trim()) {
             const outcome = { line: cue.key, outcome: 'applied' }
-            texts.push({ cue, text: item.text, was: cue.text, outcome })
-            if (pending !== null) steps.push({ cueId: cue.id, from: { suggestedText: pending }, to: { suggestedText: null } })
+            texts.push({ cue, text: item.text, was: cue.text, pending, outcome })
             outcomes.push(outcome)
           } else if (item.text === cue.text || item.text === pending) {
             outcomes.push({ line: cue.key, outcome: 'unchanged' })
@@ -1028,13 +1059,17 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           }
         }
         if (steps.length > 0) {
-          await execute(deps, { type: 'table.step', remove: [], restore: [], fields: steps, addCharacters: [], dropCharacters: [] })
+          await execute(pinned, { type: 'table.step', remove: [], restore: [], fields: steps, addCharacters: [], dropCharacters: [] })
         }
-        for (const { cue, text, was, outcome } of texts) {
-          const result = await execute(deps, { type: 'cue.saveText', cueId: cue.id, text, ifText: was })
+        const cleared: FieldStep[] = []
+        for (const { cue, text, was, pending, outcome } of texts) {
+          const result = await execute(pinned, { type: 'cue.saveText', cueId: cue.id, text, ifText: was })
           if (result.changes.cues?.find((c) => c.id === cue.id)?.text !== text) {
             Object.assign(outcome, { outcome: 'error', reason: 'the line text changed meanwhile; read it again and retry' })
-          }
+          } else if (pending !== null) cleared.push({ cueId: cue.id, from: { suggestedText: pending }, to: { suggestedText: null } })
+        }
+        if (cleared.length > 0) {
+          await execute(pinned, { type: 'table.step', remove: [], restore: [], fields: cleared, addCharacters: [], dropCharacters: [] })
         }
         return structured({ outcomes })
       },
@@ -1074,17 +1109,16 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       async run(_ctx, args) {
         const project = requireRepository(deps).projectForMain()
         const issues = glossaryIssues(project.terms ?? [], filterCues(project.cues, args.filter ?? 'all', '', ALL_CHARACTERS))
-        const start = cursorOffset(args.cursor, issues.length)
-        const next = start + (args.limit ?? 50)
+        const { page, nextCursor } = stablePage(issues, (issue) => issue.cue, project.cues, args.cursor, args.limit ?? 50)
         return structured({
           total: issues.length,
-          issues: issues.slice(start, next).map(({ cue, missing }) => ({
+          issues: page.map(({ cue, missing }) => ({
             line: cue.key,
             sourceText: cue.sourceText,
             text: cue.text,
             missing: missing.map((t) => ({ term: t.term, translation: t.translation })),
           })),
-          ...(next < issues.length ? { nextCursor: String(next) } : {}),
+          ...(nextCursor === undefined ? {} : { nextCursor }),
         })
       },
     }),

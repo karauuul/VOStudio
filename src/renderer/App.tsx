@@ -97,6 +97,7 @@ import {
   afterTextStep,
   type LineChange,
   type LineEdit,
+  dropLineEdits,
   type LineHistory,
   type StepDir,
 } from '@shared/line-history'
@@ -270,6 +271,7 @@ export default function App() {
     const kept = (entry: TakeEffectsEdit): boolean => !external.effects.has(takeKey(entry.cueId, entry.takeId))
     fxUndoRef.current = fxUndoRef.current.filter(kept)
     fxRedoRef.current = fxRedoRef.current.filter(kept)
+    dropLineEdits(linesRef.current, external.lines)
   }, [])
 
   const session = useProjectSession({ onStatus: pushStatus, onBootstrap, onEdit, onExternal })
@@ -1288,6 +1290,16 @@ export default function App() {
     []
   )
 
+  useEffect(
+    () =>
+      api.on('bridge:request', (request) => {
+        if (request.kind !== 'removable') return
+        const block = lineRemovalBlock(request.cueIds)
+        void api['bridge:reply']({ id: request.id, ok: block === null, ...(block ? { error: block } : {}) })
+      }),
+    [lineRemovalBlock]
+  )
+
   const flushPending = useCallback(
     async (): Promise<boolean> =>
       (await flushText()) &&
@@ -1300,15 +1312,30 @@ export default function App() {
   )
 
   const mediaJobsRef = useRef(0)
+  const activityBlock = useCallback(
+    (): string | null =>
+      restoreBlock({
+        exporting: exportingRef.current,
+        recording: recActiveRef.current?.() ?? false,
+        busy: busyCountNow() > 0 || mediaJobsRef.current > 0,
+        syncing: syncingRef.current,
+      }),
+    []
+  )
+
+  useEffect(
+    () =>
+      api.on('bridge:request', (request) => {
+        if (request.kind !== 'leave') return
+        const block = restoreActiveRef.current ? 'Restoring version' : activityBlock()
+        void api['bridge:reply']({ id: request.id, ok: block === null, ...(block ? { error: block } : {}) })
+      }),
+    [activityBlock]
+  )
+
   const restoreVersion = useCallback(
     (n: number) => {
-      const refusal = (): string | null =>
-        restoreBlock({
-          exporting: exportingRef.current,
-          recording: recActiveRef.current?.() ?? false,
-          busy: busyCountNow() > 0 || mediaJobsRef.current > 0,
-          syncing: syncingRef.current,
-        })
+      const refusal = activityBlock
       const block = restoreActiveRef.current ? 'Restoring version' : refusal()
       if (block) {
         pushStatus('info', block)
@@ -1342,7 +1369,7 @@ export default function App() {
       }
       void run().catch((e: unknown) => pushStatus('err', String(e)))
     },
-    [flushPending, flushText, resetHistory, replaceProject, pushStatus]
+    [activityBlock, flushPending, flushText, resetHistory, replaceProject, pushStatus]
   )
 
   const prepareLineRemoval = useCallback(

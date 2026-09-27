@@ -250,6 +250,14 @@ describe('collisions', () => {
     expect(coll[0].cueKeys).toEqual(['100', '200'])
   })
 
+  it('a name that is also a folder of another name collides', () => {
+    const file = cue('500', { fields: { EventName: 'sfx' } })
+    const nested = cue('600', { fields: { EventName: 'x', path: 'sfx.mp3' } })
+    const planned = planBatch({ ...project([file, nested]), exportTemplate: '{Path}{EventName}.{ext}' })
+    expect(planned.map((p) => p.name)).toEqual(['sfx.mp3', 'sfx.mp3/x.mp3'])
+    expect(findCollisions(planned)).toEqual([{ name: 'sfx.mp3/x.mp3', cueKeys: ['500', '600'] }])
+  })
+
   it('names differing only in case collide — the filesystem would overwrite one', () => {
     const upper = cue('400', { fields: { EventName: 'SAME' } })
     const coll = findCollisions(planBatch(project([a, upper, c])))

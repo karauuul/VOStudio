@@ -76,6 +76,7 @@ function setup(open = true) {
     saveVersion: vi.fn(async () => []),
     restoreVersion: vi.fn(async () => undefined),
     flushUi: vi.fn(async () => undefined),
+    checkRemovable: vi.fn(async () => undefined),
     emit: (result) => emitted.push(result),
     audioRoots: () => ['/root/Demo.vostudio'],
     importAudio: vi.fn(async () => ({ added: 2, updated: 0, files: 3, duplicates: ['vo/b/hit.wav'] })),
@@ -239,6 +240,40 @@ describe('lines_edit', () => {
     expect(repo!.projectForMain().cues[0].text).toBe('Changed')
   })
 
+  it('keeps a multi-op edit on the project it started on', async () => {
+    const { call, repo, deps } = setup()
+    const other = new SerialProjectRepository(project(), vi.fn(), 60_000)
+    deps.checkRemovable = vi.fn(async () => {
+      await repo!.detach()
+      deps.repository = () => other
+    })
+    const { error } = await call('lines_edit', {
+      ops: [
+        { op: 'delete', line: 'L6' },
+        { op: 'setText', line: 'L1', text: 'Moved on' },
+      ],
+    })
+    expect(error).toBe('Op 1 (delete) failed after 0 applied: The project was closed or switched during this call; call status, then retry.')
+    expect(other.projectForMain().cues.find((c) => c.key === 'L1')!.text).not.toBe('Moved on')
+    expect(other.projectForMain().cues.map((c) => c.key)).toContain('L6')
+  })
+
+  it('asks the UI before deleting lines and stops when a line is busy', async () => {
+    const { call, repo, deps } = setup()
+    deps.checkRemovable = vi.fn(async () => {
+      throw new Error('Line is busy; ask the user to finish it in the app, then retry.')
+    })
+    expect((await call('lines_edit', { ops: [{ op: 'delete', line: 'L6' }] })).error).toBe(
+      'Op 1 (delete) failed after 0 applied: Line is busy; ask the user to finish it in the app, then retry.'
+    )
+    const id = repo!.projectForMain().cues.find((c) => c.key === 'L6')!.id
+    expect((await call('command', { command: { type: 'cue.delete', cueIds: [id] } })).error).toBe(
+      'Line is busy; ask the user to finish it in the app, then retry.'
+    )
+    expect(deps.checkRemovable).toHaveBeenCalledWith([id])
+    expect(repo!.projectForMain().cues.map((c) => c.key)).toContain('L6')
+  })
+
   it('refuses to mark a line done without a voiced output', async () => {
     const { call } = setup()
     expect((await call('lines_edit', { ops: [{ op: 'done', line: 'L1', done: true }] })).error).toBe(
@@ -337,17 +372,17 @@ const withAudio = (repo: SerialProjectRepository, cueId: string, relPath: string
 
 describe('import', () => {
   it('imports audio with the default rule and reports duplicates', async () => {
-    const { call, deps } = setup()
+    const { call, deps, repo } = setup()
     const { data } = await call('import', { audio: { paths: ['/data/vo'] } })
-    expect(deps.importAudio).toHaveBeenCalledWith({ paths: ['/data/vo'], rule: 'id' })
+    expect(deps.importAudio).toHaveBeenCalledWith({ paths: ['/data/vo'], rule: 'id' }, repo)
     expect(data).toEqual({ added: 2, updated: 0, files: 3, duplicates: ['vo/b/hit.wav'] })
     expect(deps.flushUi).toHaveBeenCalled()
   })
 
   it('previews a table by default and applies only with preview false', async () => {
-    const { call, deps } = setup()
+    const { call, deps, repo } = setup()
     const { data } = await call('import', { table: { path: '/data/subs.csv', matchBy: 'text' } })
-    expect(deps.previewTable).toHaveBeenCalledWith({ path: '/data/subs.csv', rule: 'id', matchBy: 'text' })
+    expect(deps.previewTable).toHaveBeenCalledWith({ path: '/data/subs.csv', rule: 'id', matchBy: 'text' }, repo)
     expect(deps.importTable).not.toHaveBeenCalled()
     expect(data).toMatchObject({
       preview: true,
@@ -355,14 +390,14 @@ describe('import', () => {
       textMatch: { matched: 1, ambiguous: 1, unmatched: 1, pairs: [{ row: 1, line: 'L1', score: 0.9 }], ambiguousRows: [{ row: 2, candidates: ['DUP'] }], unmatchedRows: [3] },
     })
     const applied = await call('import', { table: { path: '/data/subs.csv', preview: false, keepOriginal: true, mapping: { text: 0 } } })
-    expect(deps.importTable).toHaveBeenCalledWith({ path: '/data/subs.csv', rule: 'id', mapping: { text: 0 }, keepOriginal: true })
+    expect(deps.importTable).toHaveBeenCalledWith({ path: '/data/subs.csv', rule: 'id', mapping: { text: 0 }, keepOriginal: true }, repo)
     expect(applied.data).toEqual({ applied: true, rows: 3, mapping: { text: 0 }, summary: { added: 0, updated: 1, suggested: 0, unchanged: 0, skipped: 2 } })
   })
 
   it('reimports a template and needs exactly one absolute source', async () => {
-    const { call, deps } = setup()
+    const { call, deps, repo } = setup()
     expect((await call('import', { templateReimport: '/data/demo.vostudio-src' })).data).toMatchObject({ updated: 5 })
-    expect(deps.reimportTemplate).toHaveBeenCalledWith('/data/demo.vostudio-src')
+    expect(deps.reimportTemplate).toHaveBeenCalledWith('/data/demo.vostudio-src', repo)
     expect((await call('import', {})).error).toBe('Invalid arguments: pass exactly one of audio, table or templateReimport.')
     expect((await call('import', { audio: { paths: ['rel/x.wav'] } })).error).toBe('Invalid arguments at "audio.paths.0": must be an absolute path.')
     expect((await setup(false).call('import', { templateReimport: '/x' })).error).toBe('No project is open; call project_open first.')
@@ -392,6 +427,23 @@ describe('transcribe', () => {
     expect(again.data).toMatchObject({ updated: ['DUP'] })
   })
 
+  it('sends each explicitly listed line once and stops when the project switches mid-batch', async () => {
+    const { call, repo, deps } = setup()
+    withAudio(repo!, 'c1', '/p/a.wav')
+    withAudio(repo!, 'c3', '/p/c.wav')
+    const seen: string[] = []
+    const real = deps.transcribe
+    deps.transcribe = async (req, expected) => {
+      seen.push(...req.cueIds)
+      const result = await real(req, expected)
+      await repo!.detach()
+      return result
+    }
+    const { error } = await call('transcribe', { lines: ['L1', 'c1', 'L3'], overwrite: true })
+    expect(seen).toEqual(['c1'])
+    expect(error).toBe('The project was closed or switched during this call; call status, then retry.')
+  })
+
   it('selects by filter, only works on lines with audio and continues with a stable cursor', async () => {
     const { call, repo } = setup()
     for (const id of ['c1', 'c2', 'c3', 'c4', 'c5', 'c6']) withAudio(repo!, id, `/p/${id}.wav`)
@@ -405,6 +457,24 @@ describe('transcribe', () => {
     expect(second.data.updated).toEqual(['X494', 'X495', 'X496', 'X497', 'X498', 'X499'])
     expect(second.data.nextCursor).toBeUndefined()
     expect((await call('transcribe', { lines: ['L1'], filter: 'all' })).error).toBe('Invalid arguments: pass lines or filter, not both.')
+  })
+})
+
+describe('transcribe cursor', () => {
+  it('resumes by project order when transcribing removes lines from the filter', async () => {
+    const { call, repo, deps } = setup()
+    const cues = repo!.projectForMain().cues
+    for (let i = 0; i < 504; i++) {
+      cues.push({ ...cues[0], id: `x${i}`, key: `X${i}`, sourceText: '', referenceAudio: { fileId: `x${i}`, relPath: `/p/x${i}.wav`, format: 'wav' } })
+    }
+    deps.transcribe = async (req) => {
+      for (const cue of repo!.projectForMain().cues) if (req.cueIds.includes(cue.id)) cue.status = 'excluded'
+      return { updated: req.cueIds.length, skipped: 0 }
+    }
+    const first = await call('transcribe', { filter: 'work', overwrite: true })
+    expect((first.data.updated as string[]).length).toBe(500)
+    const second = await call('transcribe', { filter: 'work', overwrite: true, cursor: first.data.nextCursor as string })
+    expect(second.data.updated).toEqual(['X500', 'X501', 'X502', 'X503'])
   })
 })
 
@@ -500,7 +570,7 @@ describe('bin tools', () => {
   it('adds paths, lists assets with derived link counts and filters by kind and unlinked', async () => {
     const { call, deps, repo } = withBin()
     const added = await call('asset_add', { paths: ['/data/strings.locres'] })
-    expect(deps.addAssets).toHaveBeenCalledWith(['/data/strings.locres'])
+    expect(deps.addAssets).toHaveBeenCalledWith(['/data/strings.locres'], repo)
     expect(added.data).toMatchObject({ added: 1, assets: [{ id: 'new0', name: 'strings.locres', kind: 'other', lines: 0 }], skipped: [{ name: 'dup.csv', reason: 'already in the bin' }] })
     repo!.projectForMain().cues[0].origins = [{ assetId: 'wav' }]
     repo!.projectForMain().cues[1].proposals = { link: { assetId: 'srt', row: 0, confidence: 0.9, reason: 'r' } }
@@ -537,7 +607,7 @@ describe('bin tools', () => {
     expect((await call('lines_build', { asset: 'txt' })).error).toBe('notes.locres reads as plain txt.')
     expect((await call('lines_build', { asset: 'wav' })).error).toBe('vo/a/hit.wav is audio; build lines from it with strategy perFile.')
     expect((await call('lines_build', { strategy: 'perFile' })).data).toMatchObject({ created: 1 })
-    expect(deps.buildAudioLines).toHaveBeenCalledWith(['wav'])
+    expect(deps.buildAudioLines).toHaveBeenCalledWith(['wav'], repo)
     expect((await call('lines_build', { asset: 'srt', strategy: 'perFile' })).error).toMatch(/pass asset \(with mapping\) or strategy perFile/)
     expect((await call('lines_build', { asset: 'csv', mapping: { key: 'nope' } })).error).toBe('No column "nope"; columns are "cueId", "sourceText", "translation".')
   })

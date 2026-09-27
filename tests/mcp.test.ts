@@ -206,7 +206,7 @@ describe('MCP tools/call', () => {
   })
 
   it('lets a tool decide per call whether it writes', async () => {
-    const { spec, writes } = server({})
+    const { spec, writes } = server()
     spec.tools.push(
       defineTool({
         name: 'maybe',
@@ -225,6 +225,34 @@ describe('MCP tools/call', () => {
     expect(writes).toEqual([])
     await exchange(spec, req(12, 'tools/call', { name: 'maybe', arguments: {} }), session)
     expect(writes).toEqual([session])
+  })
+
+  it('does not run a write that was cancelled while its guard was pending', async () => {
+    const hold = deferred()
+    const ran: string[] = []
+    const { spec } = server({ beforeWrite: () => hold.promise })
+    spec.tools.push(
+      defineTool({
+        name: 'mutate',
+        title: 'Mutate',
+        description: 'Records that it ran.',
+        input: z.object({}),
+        annotations: WRITE,
+        async run() {
+          ran.push('mutate')
+          return { structured: {} }
+        },
+      })
+    )
+    const session = createSession()
+    const sent: RpcMessage[] = []
+    const call = handleMessage(spec, session, req(13, 'tools/call', { name: 'mutate' }), (m) => sent.push(m))
+    await Promise.resolve()
+    await handleMessage(spec, session, { jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 13 } }, (m) => sent.push(m))
+    hold.resolve()
+    await call
+    expect(ran).toEqual([])
+    expect(sent).toEqual([])
   })
 
   it('sends progress only when the request carries a progress token', async () => {

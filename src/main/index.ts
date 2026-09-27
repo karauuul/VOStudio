@@ -461,7 +461,8 @@ function announceProject(from?: WebContents): void {
 
 function announcedLifecycle<T>(from: WebContents | undefined, fn: () => Promise<T>): Promise<T> {
   return serialLifecycle(async () => {
-    await requestUi('flush', from)
+    await requestUi({ kind: 'flush' }, from)
+    await requestUi({ kind: 'leave' }, from)
     const before = projectRepository
     try {
       return await fn()
@@ -553,12 +554,18 @@ function restoreVersion(req: { n: number }, from?: WebContents) {
   })
 }
 
-function importAudioPaths(req: { paths: string[]; rule: MatchRule }): Promise<AudioImportResult> {
+function liveRepository(expected?: SerialProjectRepository): SerialProjectRepository {
+  const repository = requireRepository()
+  if (expected && expected !== repository) throw new Error('The project was closed or switched during this call; call status, then retry.')
+  return repository
+}
+
+function importAudioPaths(req: { paths: string[]; rule: MatchRule }, expected?: SerialProjectRepository): Promise<AudioImportResult> {
   return serialLifecycle(async () => {
     const parsed = audioImportSchema.parse(req)
-    const repository = projectRepository
+    const repository = liveRepository(expected)
     const projectDir = store.getProjectDir()
-    if (!repository || !projectDir) throw new Error('No project is open')
+    if (!projectDir) throw new Error('No project is open')
     const { media, rest } = await splitMediaPaths(parsed.paths)
     const sources = await importSources(repository.projectForMain(), projectDir, media)
     if (sources.added.length > 0) {
@@ -578,10 +585,10 @@ function importAudioPaths(req: { paths: string[]; rule: MatchRule }): Promise<Au
   })
 }
 
-function addAssetPaths(req: { paths: string[]; skipMedia?: true }): Promise<AssetAddResult> {
+function addAssetPaths(req: { paths: string[]; skipMedia?: true }, expected?: SerialProjectRepository): Promise<AssetAddResult> {
   return serialLifecycle(async () => {
     const parsed = assetAddSchema.parse(req)
-    const repository = requireRepository()
+    const repository = liveRepository(expected)
     const projectDir = store.getProjectDir()
     if (!projectDir) throw new Error('No project is open')
     const result = await addAssets(repository.projectForMain().assets ?? [], projectDir, parsed.paths, parsed.skipMedia === true)
@@ -595,9 +602,9 @@ function addAssetPaths(req: { paths: string[]; skipMedia?: true }): Promise<Asse
   })
 }
 
-function buildAudioLines(assetIds: string[]): Promise<AudioLinesResult> {
+function buildAudioLines(assetIds: string[], expected?: SerialProjectRepository): Promise<AudioLinesResult> {
   return serialLifecycle(async () => {
-    const repository = requireRepository()
+    const repository = liveRepository(expected)
     const projectDir = store.getProjectDir()
     if (!projectDir) throw new Error('No project is open')
     const { result, changes } = await assetAudioLines(repository.projectForMain(), projectDir, assetIds)
@@ -613,29 +620,29 @@ async function readAssetPage(req: { id: string; from?: number; count?: number })
   return assetPage(await loadAsset(asset, {}), parsed.from ?? 0, parsed.count ?? ASSET_READ_MAX)
 }
 
-async function previewTableImport(req: TableRequest): Promise<TablePreview> {
+async function previewTableImport(req: TableRequest, expected?: SerialProjectRepository): Promise<TablePreview> {
   const parsed = tableImportSchema.parse(req)
   const table = await readTable(parsed.path)
-  return previewTableFile(requireRepository().projectForMain(), table, parsed)
+  return previewTableFile(liveRepository(expected).projectForMain(), table, parsed)
 }
 
-function importTable(req: TableRequest): Promise<TableImportResult> {
+function importTable(req: TableRequest, expected?: SerialProjectRepository): Promise<TableImportResult> {
   return serialLifecycle(async () => {
     const parsed = tableImportSchema.parse(req)
     const table = await readTable(parsed.path)
     let imported: ReturnType<typeof importTableFile> | undefined
-    await publish(requireRepository(), (project) => (imported = importTableFile(project, table, parsed)).changes)
+    await publish(liveRepository(expected), (project) => (imported = importTableFile(project, table, parsed)).changes)
     if (!imported) throw new Error('Table import did not run')
     return imported.result
   })
 }
 
-function reimportTemplateDir(dir: string): Promise<ReimportResult> {
+function reimportTemplateDir(dir: string, expected?: SerialProjectRepository): Promise<ReimportResult> {
   return serialLifecycle(async () => {
     const target = templateDirSchema.parse(dir)
-    const repository = projectRepository
+    const repository = liveRepository(expected)
     const projectDir = store.getProjectDir()
-    if (!repository || !projectDir) throw new Error('No project is open')
+    if (!projectDir) throw new Error('No project is open')
     const validation = await validateTemplate(target)
     const { result, changes } = await reimportTemplate(validation, repository.projectForMain(), projectDir)
     emit('project:changed', await repository.commit(changes))
@@ -643,11 +650,15 @@ function reimportTemplateDir(dir: string): Promise<ReimportResult> {
   })
 }
 
-function transcribe(req: { cueIds: string[]; overwrite?: boolean }): Promise<{ updated: number; skipped: number }> {
+function transcribe(
+  req: { cueIds: string[]; overwrite?: boolean },
+  expected?: SerialProjectRepository
+): Promise<{ updated: number; skipped: number }> {
   return serialLifecycle(async () => {
     const parsed = transcribeSchema.parse(req)
+    const repository = liveRepository(expected)
     const result = await transcribeCues(
-      requireRepository(),
+      repository,
       parsed.cueIds,
       parsed.overwrite === true,
       async (ref) => voiceProvider().stt({ audio: await fs.readFile(ref.relPath), filename: path.basename(ref.relPath) }),
@@ -722,11 +733,11 @@ function registerHandlers(): void {
     return picked.canceled ? [] : picked.filePaths
   })
 
-  typedHandle('import:audio', importAudioPaths)
+  typedHandle('import:audio', (req) => importAudioPaths(req))
 
-  typedHandle('import:tablePreview', previewTableImport)
+  typedHandle('import:tablePreview', (req) => previewTableImport(req))
 
-  typedHandle('import:table', importTable)
+  typedHandle('import:table', (req) => importTable(req))
 
   typedHandle('source:detect', (req) =>
     serialLifecycle(async () => {
@@ -743,9 +754,9 @@ function registerHandlers(): void {
     })
   )
 
-  typedHandle('import:template', reimportTemplateDir)
+  typedHandle('import:template', (dir) => reimportTemplateDir(dir))
 
-  typedHandle('assets:add', addAssetPaths)
+  typedHandle('assets:add', (req) => addAssetPaths(req))
 
   typedHandle('assets:read', readAssetPage)
 
@@ -990,7 +1001,7 @@ function registerHandlers(): void {
     return take
   })
 
-  typedHandle('provider:transcribe', transcribe)
+  typedHandle('provider:transcribe', (req) => transcribe(req))
 
   typedHandle('provider:voices', () => voiceProvider().voices())
   typedHandle('provider:models', () => voiceProvider().models())
@@ -1088,6 +1099,7 @@ function registerHandlers(): void {
 const guardedSessions = new WeakMap<McpSession, string>()
 
 async function guardAgentWrite(session: McpSession): Promise<void> {
+  await requestUi({ kind: 'flush' })
   const dir = store.getProjectDir()
   if (!projectRepository || !dir || guardedSessions.get(session) === dir) return
   await serialLifecycle(async () => {
@@ -1113,14 +1125,15 @@ function agentServerSpec(): McpServer {
       closeProject: () => closeProject(),
       saveVersion: (name) => serialLifecycle(() => recordVersions((previous) => store.saveVersion(previous, name))),
       restoreVersion: (n) => restoreVersion({ n }),
-      flushUi: () => requestUi('flush'),
+      flushUi: () => requestUi({ kind: 'flush' }),
+      checkRemovable: (cueIds) => requestUi({ kind: 'removable', cueIds }),
       emit: emitChange,
       audioRoots: trustedAudioRoots,
       importAudio: importAudioPaths,
       previewTable: previewTableImport,
       importTable,
       reimportTemplate: reimportTemplateDir,
-      addAssets: (paths) => addAssetPaths({ paths }),
+      addAssets: (paths, expected) => addAssetPaths({ paths }, expected),
       loadAsset,
       buildAudioLines,
       transcribe,
@@ -1143,9 +1156,8 @@ function syncAgentServer(): Promise<void> {
     const wanted = agentForced || sanitizeAgentAccess((await store.getSettings()).agentAccess) === true
     if (wanted && !agentServer) agentServer = await startAgentServer(app.getPath('userData'), agentServerSpec())
     else if (!wanted && agentServer) {
-      const running = agentServer
+      await agentServer.stop()
       agentServer = null
-      await running.stop()
     }
   }).catch((e: unknown) => console.error('agent server:', e))
   return agentSync

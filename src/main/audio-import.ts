@@ -156,6 +156,10 @@ export async function importPickedAudio(
     cue.referenceAudio = { fileId: cue.key, relPath: row.abs, format: file.format }
     if (row.duration !== undefined) cue.referenceDuration = row.duration
     if (file.assetId) cue.origins = withOrigin(cue.origins, { assetId: file.assetId })
+    if (!attach && file.rel.includes('/') && (cue.fields[PATH_FIELD] ?? '') !== file.dir) {
+      const { [PATH_FIELD]: _moved, ...fields } = cue.fields
+      cue.fields = file.dir ? { ...fields, [PATH_FIELD]: file.dir } : fields
+    }
     changed.push(cue)
   }
   const added: Cue[] = []
