@@ -73,6 +73,6 @@ export function planLine(project: Project, cue: Cue, options: GenerateOptions): 
   const plan = ttsPlan(project, cue, text, options.model)
   const extra = { text: plan.text, rawText: text, chars: plan.text.length, model: plan.model, ...(plan.language ? { language: plan.language } : {}) }
   if (!text || !plan.text.trim()) return skipped('no text', { ...extra, chars: 0 })
-  if (text.length > TTS_TEXT_MAX) return skipped(`text longer than ${TTS_TEXT_MAX} characters`, { ...extra, chars: 0 })
+  if (plan.text.length > TTS_TEXT_MAX) return skipped(`text longer than ${TTS_TEXT_MAX} characters`, { ...extra, chars: 0 })
   return { ...base, ...extra }
 }

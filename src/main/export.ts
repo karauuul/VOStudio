@@ -162,7 +162,12 @@ export async function planBatchExport(req: BatchExportRequest): Promise<ExportPl
   const jobs = toJobs(items, path.join(stagingDir, 'audio'), project)
   batchPlan = { token, project: structuredClone(project), outDir, stagingDir, live: true }
   planned = new Map(jobs.map((j) => [j.outPath, j]))
-  await fs.rm(stagingDir, { recursive: true, force: true })
+  try {
+    await fs.rm(stagingDir, { recursive: true, force: true })
+  } catch (error) {
+    abortBatchExport(token)
+    throw error
+  }
   return { token, jobs, outDir }
 }
 

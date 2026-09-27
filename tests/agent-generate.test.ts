@@ -97,4 +97,15 @@ describe('planLine', () => {
     const long = project({ text: 'x'.repeat(5001) })
     expect(planLine(long, long.cues[0], { mode: 'tts' }).skip).toBe('text longer than 5000 characters')
   })
+
+  it('caps the text the provider receives after the rules expand it', () => {
+    const fits = { ...project({ text: 'x'.repeat(2500) }), pronunciationRules: 'x → yy' }
+    const ok = planLine(fits, fits.cues[0], { mode: 'tts' })
+    expect(ok.skip).toBeUndefined()
+    expect(ok.chars).toBe(5000)
+    const p = { ...project({ text: 'x'.repeat(2501) }), pronunciationRules: 'x → yy' }
+    const plan = planLine(p, p.cues[0], { mode: 'tts' })
+    expect(plan).toMatchObject({ skip: 'text longer than 5000 characters', chars: 0 })
+    expect(plan.text).toHaveLength(5002)
+  })
 })
