@@ -306,7 +306,7 @@ async function waitForJobs(deps: AgentDeps, ctx: { signal: AbortSignal; progress
 function request(plan: LinePlan): GenRequest {
   const common = { cueId: plan.cue.id, voiceSettings: plan.voiceSettings, selectOutput: false, ...(plan.fragment ? { fragment: true } : {}) }
   if (plan.mode === 'sts') return { kind: 'sts', ...common, sourceTakeId: plan.sourceTakeId ?? '' }
-  return { kind: 'tts', ...common, text: plan.text, ...(plan.model ? { model: plan.model } : {}) }
+  return { kind: 'tts', ...common, text: plan.rawText, ...(plan.model ? { model: plan.model } : {}) }
 }
 
 export function agentTools(deps: AgentDeps): McpTool[] {

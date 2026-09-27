@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { planLine } from '../src/shared/agent-generate'
+import { ttsPlan } from '../src/shared/provider-models'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 
 const voice = { stability: 0.5, similarity: 0.5, style: 0.2, speed: 1, boost: true }
@@ -23,6 +24,15 @@ describe('planLine', () => {
     const plan = planLine(p, p.cues[0], { mode: 'tts', settings: { speed: 3, style: 0.456 } })
     expect(plan.voiceSettings).toEqual({ stability: 0.9, similarity: 0.5, style: 0.46, speed: 1.2, boost: true })
     expect(plan).toMatchObject({ text: 'Hello there', chars: 11, model: 'tm', voice: 'v1', fragment: false })
+  })
+
+  it('keeps the raw text for the request and previews and counts the text after one pass of the rules', () => {
+    const p = { ...project({ text: 'A cat' }), pronunciationRules: 'A → AA' }
+    const plan = planLine(p, p.cues[0], { mode: 'tts' })
+    expect(plan).toMatchObject({ rawText: 'A cat', text: 'AA cat', chars: 6 })
+    const sent = ttsPlan(p, p.cues[0], plan.rawText).text
+    expect(sent).toBe(plan.text)
+    expect(sent.length).toBe(plan.chars)
   })
 
   it('converts the newest live recording in sts mode and skips a line without one', () => {

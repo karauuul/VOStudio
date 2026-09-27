@@ -37,6 +37,7 @@ export interface GenerationQueue {
   cancel: (ids: readonly string[]) => string[]
   retire: (owner: object | null) => void
   list: () => Job[]
+  owned: (owner: object | null) => Job[]
   snapshot: () => JobsSnapshot
   check: (cueId: string) => GenerationGuard
   settle: (ids: readonly string[], ms: number, signal: AbortSignal, progress: (done: number, total: number) => void) => Promise<void>
@@ -58,6 +59,7 @@ export function createGenerationQueue(options: {
   let seq = 0
   const entries = new Map<string, Entry>()
   const owners = new Map<string, object>()
+  const orphans = new Set<string>()
   const listeners = new Set<() => void>()
 
   const publish = (next: Job[]): void => {
@@ -86,16 +88,17 @@ export function createGenerationQueue(options: {
       return
     }
     publish(start(jobs, next.id))
+    const settle = (settled: Job[]): void => publish(orphans.delete(next.id) ? jobs.filter((j) => j.id !== next.id) : settled)
     void entry.spec
       .run()
       .then(
         (take) => {
-          publish(finish(jobs, next.id, take.id))
+          settle(finish(jobs, next.id, take.id))
           entry.resolve(take)
         },
         (error: unknown) => {
           const failure = asError(error)
-          publish(fail(jobs, next.id, failure.message))
+          settle(fail(jobs, next.id, failure.message))
           entry.reject(failure)
         }
       )
@@ -125,6 +128,7 @@ export function createGenerationQueue(options: {
       return cancelled
     },
     retire(owner) {
+      for (const j of jobs) if (j.state === 'running' && owners.get(j.id) !== owner) orphans.add(j.id)
       const stale = (j: Job): boolean => owners.get(j.id) !== owner && j.state !== 'running'
       const dropped = jobs.filter(stale)
       if (dropped.length === 0) return
@@ -132,6 +136,7 @@ export function createGenerationQueue(options: {
       for (const j of dropped) settleEntry(j.id, new Error(JOB_RETIRED))
     },
     list: () => jobs,
+    owned: (owner) => jobs.filter((j) => owners.get(j.id) === owner),
     snapshot: () => ({ seq, jobs }),
     check,
     settle(ids, ms, signal, progress) {

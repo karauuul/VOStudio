@@ -4,6 +4,7 @@ import {
   cueHasPending,
   dropQueued,
   enqueue,
+  exportRefusal,
   fail,
   finish,
   generationRefusal,
@@ -214,5 +215,17 @@ describe('generationRefusal — one decision for every submitter', () => {
 
   it('names the project-wide reason before the line reason', () => {
     expect(generationRefusal({ lineBusy: true, exporting: true, restoring: true, recording: true })).toBe('Export in progress')
+  })
+})
+
+describe('exportRefusal — export waits for generation', () => {
+  it('refuses while any job is queued or running and allows once all are finished', () => {
+    const queued = add(add([], 'a'), 'b', 'c2')
+    expect(exportRefusal([])).toBeNull()
+    expect(exportRefusal(queued)).toBe('Generation in progress; wait until the queued and running jobs finish, then export.')
+    const running = start(queued, 'a')
+    expect(exportRefusal(cancelQueued(running, ['b']))).not.toBeNull()
+    expect(exportRefusal(fail(cancelQueued(running, ['b']), 'a', 'no'))).toBeNull()
+    expect(exportRefusal(finish(finish(queued, 'a', 't1'), 'b', 't2'))).toBeNull()
   })
 })

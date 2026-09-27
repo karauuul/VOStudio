@@ -11,6 +11,7 @@ import { createGenerationQueue } from '../src/main/gen-queue'
 import type { McpSession } from '../src/shared/mcp'
 import type { AppSettings } from '../src/shared/ipc'
 import type { Take } from '../src/shared/domain'
+import { applyRules } from '../src/shared/pronunciation'
 
 const voice = { stability: 0.5, similarity: 0.5, style: 0, speed: 1, boost: true }
 
@@ -88,7 +89,7 @@ function setup(open = true) {
         kind: req.kind,
         cueId: req.cueId,
         origin: 'agent',
-        chars: req.kind === 'tts' ? req.text.length : 0,
+        chars: req.kind === 'tts' ? applyRules(req.text, expected.projectForMain().pronunciationRules).length : 0,
         owner: expected,
         run: async () => {
           gen.sent.push(req)
@@ -605,6 +606,19 @@ describe('generation tools', () => {
     expect((await call('generate', { lines: ['L1'], target: { clipId: 'nope' }, dryRun: true })).error).toBe(
       'Line L1 has no clip "nope"; call line to list its clips.'
     )
+  })
+
+  it('sends the raw text once and budgets the characters the provider receives after the rules', async () => {
+    const { call, gen, generation, settings } = setup()
+    await voiced(call)
+    await call('rules', { set: 'e → ee' })
+    settings.agentCharacterBudget = 100
+    const dry = await call('generate', { lines: ['L1'], dryRun: true })
+    expect((dry.data.lines as { text: string; chars: number }[])[0]).toMatchObject({ text: 'Heello theeree', chars: 14 })
+    const { data } = await call('generate', { lines: ['L1'], wait: 5 })
+    expect(gen.sent).toEqual([expect.objectContaining({ kind: 'tts', text: 'Hello there' })])
+    expect(generation.list()[0].chars).toBe(14)
+    expect(data.budget).toEqual({ limit: 100, used: 14, remaining: 86 })
   })
 
   it('refuses a batch over the remaining budget and queues nothing', async () => {

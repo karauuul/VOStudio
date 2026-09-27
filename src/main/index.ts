@@ -114,7 +114,7 @@ import { diagnostics, watchDiagnostics } from './agent/diagnostics'
 import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
 import { createGenerationQueue, type QueuedGeneration } from './gen-queue'
 import { createStsTake, createTtsTake } from './generate'
-import type { JobOrigin } from '@shared/jobs'
+import { exportRefusal, type JobOrigin } from '@shared/jobs'
 
 const primaryInstance = app.requestSingleInstanceLock()
 if (!primaryInstance) app.quit()
@@ -267,6 +267,11 @@ const generations = createGenerationQueue({
   guard: (cueId) => ({ exporting: exportActive(), restoring: restoringVersion, recording: recordingActive(cueId) }),
   changed: (snapshot) => emit('jobs:changed', snapshot),
 })
+
+function refuseExportWhileGenerating(): void {
+  const refusal = exportRefusal(generations.owned(projectRepository))
+  if (refusal) throw new Error(refusal)
+}
 
 function resetRepository(project: Project, revision = 0): SerialProjectRepository {
   cancelExports()
@@ -933,7 +938,11 @@ function registerHandlers(): void {
 
   typedHandle('csv:sync', () => syncCsv())
 
-  typedHandle('export:planBatch', async (req) => planBatchExport(batchExportSchema.parse(req)))
+  typedHandle('export:planBatch', async (req) => {
+    const parsed = batchExportSchema.parse(req)
+    refuseExportWhileGenerating()
+    return planBatchExport(parsed)
+  })
   typedHandle('export:info', () => exportInfo())
   typedHandle('export:pickDir', async () => {
     const options: Electron.OpenDialogOptions = {
@@ -955,9 +964,11 @@ function registerHandlers(): void {
     )
   })
 
-  typedHandle('export:videoPlan', (sourceId: string) =>
-    planVideoExport(z.string().min(1).max(200).parse(sourceId))
-  )
+  typedHandle('export:videoPlan', (sourceId: string) => {
+    const parsed = z.string().min(1).max(200).parse(sourceId)
+    refuseExportWhileGenerating()
+    return planVideoExport(parsed)
+  })
   typedHandle('export:videoChunk', (token, pcm, sampleRate, channels) =>
     appendVideoChunk(
       z.string().uuid().parse(token),

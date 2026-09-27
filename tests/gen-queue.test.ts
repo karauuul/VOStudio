@@ -118,6 +118,32 @@ describe('main generation queue', () => {
     expect(owner).not.toBe(fresh)
   })
 
+  it('a running job of a switched-away project leaves the list when it settles, with an error or a take', async () => {
+    const { queue, spec, owner } = setup()
+    const failing = deferred()
+    const a = queue.submit(spec('c1', () => failing.promise))
+    const fresh = {}
+    queue.retire(fresh)
+    const b = queue.submit(spec('c2', () => Promise.resolve(take('t2')), { owner: fresh }))
+    expect(queue.owned(fresh).map((j) => j.id)).toEqual([b.id])
+    expect(queue.owned(owner).map((j) => [j.id, j.state])).toEqual([[a.id, 'running']])
+    failing.reject(new Error('The project was closed or switched during generation.'))
+    await expect(a.done).rejects.toThrow('closed or switched')
+    await b.done
+    await flush()
+    expect(queue.list().map((j) => [j.id, j.state])).toEqual([[b.id, 'done']])
+    expect(queue.list().some((j) => j.error !== undefined)).toBe(false)
+    const succeeding = deferred()
+    const c = queue.submit(spec('c3', () => succeeding.promise, { owner: fresh }))
+    const newest = {}
+    queue.retire(newest)
+    expect(queue.list().map((j) => j.id)).toEqual([c.id])
+    succeeding.resolve(take('t3'))
+    await c.done
+    await flush()
+    expect(queue.list()).toEqual([])
+  })
+
   it('settle waits for the listed jobs, reports progress, and gives up at the timeout', async () => {
     const { queue, spec } = setup()
     const first = deferred()
