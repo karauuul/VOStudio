@@ -1,19 +1,20 @@
 import { memo, useCallback, useRef, useState, type MutableRefObject, type RefObject } from 'react'
-import type { Cue, MatchRule, Project, VoiceSettings } from '@shared/domain'
+import type { Cue, MatchRule, Project, ProjectAsset, VoiceSettings } from '@shared/domain'
+import { binAddedText, inPlaceKind, overLimitText, routeDrop } from '@shared/asset-readers'
 import { reviewGeneration } from '@shared/cue-filter'
-import { TABLE_FILE } from '@shared/import-table'
 import type { TableImportResult } from '@shared/ipc'
+import { proposalRefs } from '@shared/linking'
 import type { ProjectCommand } from '@shared/project-commands'
-import { api } from '../api'
+import { api, audioUrl } from '../api'
+import { clipId, transport } from '../audio/transport'
 import { isCueBusyNow, useJobsStore } from '../jobs/store'
+import { AssetPreview } from '../import/AssetPreview'
+import { BinPanel } from '../import/BinPanel'
 import { LinesTable, type GridApi } from '../import/LinesTable'
 import { ProjectPanel } from '../import/ProjectPanel'
-import { SourcesPanel } from '../import/SourcesPanel'
 import type { MenuEntry } from '../shell/ContextMenu'
 
 type Status = (kind: 'ok' | 'err' | 'info', text: string) => void
-
-const TEMPLATE_RE = /\.vostudio-src$/i
 
 interface Props {
   hidden: boolean
@@ -31,7 +32,6 @@ interface Props {
   onGenerate: (cues: Cue[]) => void
   onAssignCharacter: (cueIds: string[], characterId: string) => void
   tables: TableImportResult[]
-  onTable: (path: string) => void
   onPickTable: () => void
   dispatch: (command: ProjectCommand) => Promise<void>
   onVoiceSettings: (characterId: string, settings: VoiceSettings) => void
@@ -56,7 +56,6 @@ export const ImportRoom = memo(function ImportRoom({
   onGenerate,
   onAssignCharacter,
   tables,
-  onTable,
   onPickTable,
   dispatch,
   onVoiceSettings,
@@ -65,7 +64,9 @@ export const ImportRoom = memo(function ImportRoom({
   onCancelVoice,
 }: Props) {
   const [busy, setBusy] = useState(false)
+  const [assetId, setAssetId] = useState<string | null>(null)
   const busyRef = useRef(false)
+  const shown = project.assets?.find((a) => a.id === assetId && !inPlaceKind(a.kind))
   const submitJob = useJobsStore((s) => s.submit)
 
   const run = useCallback(
@@ -85,31 +86,35 @@ export const ImportRoom = memo(function ImportRoom({
 
   const importPaths = useCallback(
     async (paths: string[]): Promise<void> => {
-      const templates = paths.filter((p) => TEMPLATE_RE.test(p))
-      const tablePaths = paths.filter((p) => TABLE_FILE.test(p))
-      const audio = paths.filter((p) => !TEMPLATE_RE.test(p) && !TABLE_FILE.test(p))
-      if (templates.length > 0) {
-        const r = await api['import:template'](templates[0])
+      const route = routeDrop(paths)
+      if (route.templates.length > 0) {
+        const r = await api['import:template'](route.templates[0])
         onStatus(
           'ok',
           `Re-import: ${r.added} added, ${r.updated} updated, ${r.untouched} untouched, ${r.orphaned} orphaned`
         )
         return
       }
-      if (tablePaths.length > 0) {
-        onTable(tablePaths[0])
-        return
+      const parts: string[] = []
+      if (route.bin.length > 0) {
+        const r = await api['assets:add']({ paths: route.bin, skipMedia: true })
+        if (r.added.length > 0 || r.skipped.length > 0 || r.truncated) parts.push(binAddedText(r))
       }
-      if (audio.length === 0) return
-      const r = await api['import:audio']({ paths: audio, rule: matchBy })
-      onStatus(
-        'ok',
-        r.unmatched === undefined
-          ? `${r.files} files · ${r.added} lines added, ${r.updated} updated`
-          : `${r.files} files · ${r.updated} updated${r.unmatched > 0 ? ` · ${r.unmatched} unmatched` : ''}`
-      )
+      if (route.lines.length > 0) {
+        const r = await api['import:audio']({ paths: route.lines, rule: matchBy })
+        if (r.files > 0 || parts.length === 0) {
+          parts.push(
+            (r.unmatched === undefined
+              ? `${r.files} files · ${r.added} lines added, ${r.updated} updated`
+              : `${r.files} files · ${r.updated} updated${r.unmatched > 0 ? ` · ${r.unmatched} unmatched` : ''}`) +
+              (r.failed ? ` · ${r.failed.length} skipped` : '') +
+              overLimitText(r.truncated)
+          )
+        }
+      }
+      if (parts.length > 0) onStatus('ok', parts.join(' · '))
     },
-    [onTable, matchBy, onStatus]
+    [matchBy, onStatus]
   )
 
   const drop = useCallback((paths: string[]) => run(() => importPaths(paths)), [run, importPaths])
@@ -160,9 +165,27 @@ export const ImportRoom = memo(function ImportRoom({
     [run, hasKey, onStatus]
   )
 
+  const settle = useCallback(
+    (cues: Cue[], accept: boolean) => {
+      const items = proposalRefs(accept ? cues.filter((c) => !isCueBusyNow(c.id)) : cues)
+      if (items.length === 0) return
+      void dispatch({ type: accept ? 'proposal.accept' : 'proposal.reject', items }).then(
+        () => onStatus('ok', `${accept ? 'Accepted' : 'Rejected'} ${items.length}`),
+        (e: unknown) => onStatus('err', String(e))
+      )
+    },
+    [dispatch, onStatus]
+  )
+
+  const selectAsset = useCallback((asset: ProjectAsset) => {
+    if (asset.kind === 'audio') void transport.playClip({ id: clipId.original(asset.file.relPath), url: audioUrl(asset.file.relPath) })
+    setAssetId((id) => (id === asset.id && !inPlaceKind(asset.kind) ? null : asset.id))
+  }, [])
+
   const menu = useCallback(
     (cues: Cue[]): MenuEntry[] => {
       const ids = cues.map((c) => c.id)
+      const proposed = proposalRefs(cues).length > 0
       const review = reviewGeneration(cues, project.characters, isCueBusyNow)
       const untranscribed = cues.filter((c) => c.referenceAudio && !c.sourceText.trim()).map((c) => c.id)
       return [
@@ -186,6 +209,9 @@ export const ImportRoom = memo(function ImportRoom({
         },
         { label: 'Review selection', onClick: () => onReviewSelection(ids) },
         { sep: true },
+        { label: 'Accept proposals', disabled: !proposed, onClick: () => settle(cues, true) },
+        { label: 'Reject proposals', disabled: !proposed, onClick: () => settle(cues, false) },
+        { sep: true },
         {
           label: 'Transcribe selected',
           confirm: `Transcribe ${untranscribed.length}`,
@@ -194,27 +220,39 @@ export const ImportRoom = memo(function ImportRoom({
         },
       ]
     },
-    [project.characters, onOpenCue, onAssignCharacter, onGenerate, onReviewSelection, transcribe]
+    [project.characters, onOpenCue, onAssignCharacter, onGenerate, onReviewSelection, transcribe, settle]
   )
 
   return (
     <div className="main import-grid" hidden={hidden}>
-      <SourcesPanel project={project} tables={tables} onPick={pick} onDrop={drop} busy={busy} />
+      <BinPanel
+        project={project}
+        tables={tables}
+        onPick={pick}
+        onDrop={drop}
+        busy={busy}
+        selectedId={assetId}
+        onSelect={selectAsset}
+      />
 
       <div className="gutter" />
 
-      <LinesTable
-        project={project}
-        search={search}
-        onSearch={onSearch}
-        searchRef={searchRef}
-        gridRef={gridRef}
-        onImportText={onPickTable}
-        onTranscribe={transcribe}
-        onDetect={detect}
-        onOpenCue={onOpenCue}
-        menu={menu}
-      />
+      {shown ? (
+        <AssetPreview asset={shown} onClose={() => setAssetId(null)} />
+      ) : (
+        <LinesTable
+          project={project}
+          search={search}
+          onSearch={onSearch}
+          searchRef={searchRef}
+          gridRef={gridRef}
+          onImportText={onPickTable}
+          onTranscribe={transcribe}
+          onDetect={detect}
+          onOpenCue={onOpenCue}
+          menu={menu}
+        />
+      )}
 
       <div className="gutter" />
 

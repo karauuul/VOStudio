@@ -3,11 +3,14 @@ import { promises as fs, type Dirent } from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
 import {
+  sanitizeAssets,
   sanitizeGenMode,
   sanitizeLanguages,
   sanitizeLinesFromTable,
   sanitizeMatchRule,
+  sanitizeOrigins,
   sanitizeProjectSources,
+  sanitizeProposals,
   sanitizeProjectTemplate,
   sanitizeProviderSettings,
   sanitizeTargetTrack,
@@ -300,6 +303,24 @@ async function readProjectFile(file: string): Promise<Project> {
     const sources = sanitizeProjectSources(p.sources)
     if (sources) p.sources = sources
     else delete p.sources
+  }
+  if (p.assets !== undefined) {
+    const assets = sanitizeAssets(p.assets)
+    if (assets) p.assets = assets
+    else delete p.assets
+  }
+  for (const cue of p.cues) {
+    if (!cue || typeof cue !== 'object') continue
+    if (cue.proposals !== undefined) {
+      const proposals = sanitizeProposals(cue.proposals)
+      if (proposals) cue.proposals = proposals
+      else delete cue.proposals
+    }
+    if (cue.origins !== undefined) {
+      const origins = sanitizeOrigins(cue.origins)
+      if (origins) cue.origins = origins
+      else delete cue.origins
+    }
   }
   if (Array.isArray(p.versions)) {
     const versions = sanitizeVersions(p.versions)

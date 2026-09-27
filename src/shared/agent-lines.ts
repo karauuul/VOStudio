@@ -1,6 +1,6 @@
 import { approvalState, isDone } from './approval'
 import { ALL_CHARACTERS, filterCues, FILTERS, outputDuration } from './cue-filter'
-import { clipSpeed, liveTakes, type Character, type Cue, type Project } from './domain'
+import { clipSpeed, liveTakes, type Character, type Cue, type Project, type ProjectAsset } from './domain'
 import { readinessRows, summarize, type LineRow } from './readiness'
 
 export const LINE_FILTERS = FILTERS.map((f) => f.id) as [string, ...string[]]
@@ -25,6 +25,20 @@ export function findCharacter(project: Pick<Project, 'characters'>, ref: string)
     project.characters.find((c) => c.id === ref) ?? project.characters.find((c) => c.name.trim().toLowerCase() === wanted)
   if (!found) throw new Error(`No character "${ref}"; call characters to list them.`)
   return found
+}
+
+export function findAsset(project: Pick<Project, 'assets'>, ref: string): ProjectAsset {
+  const assets = project.assets ?? []
+  const byId = assets.find((asset) => asset.id === ref)
+  if (byId) return byId
+  const wanted = ref.replace(/\\/g, '/').toLowerCase()
+  const byName = assets.filter((asset) => asset.name.toLowerCase() === wanted)
+  const matches = byName.length > 0 ? byName : assets.filter((asset) => asset.name.toLowerCase().split('/').pop() === wanted)
+  if (matches.length === 1) return matches[0]
+  if (matches.length > 1) {
+    throw new Error(`Asset name "${ref}" matches ${matches.length} assets (ids ${matches.map((a) => a.id).join(', ')}); pass one of these ids instead.`)
+  }
+  throw new Error(`No asset has id or name "${ref}"; call assets to list them.`)
 }
 
 const characterName = (project: Project, cue: Cue): string | null =>

@@ -91,6 +91,36 @@
   white-space: nowrap;
 }
 
+.imp-src .m.warn {
+  color: var(--warn);
+}
+
+.imp-src.pick {
+  cursor: pointer;
+}
+
+.imp-src.pick:hover {
+  background: var(--raise);
+}
+
+.imp-src.pick.on {
+  background: var(--ac-bg);
+  box-shadow: inset 3px 0 0 var(--ac);
+}
+
+.imp-src.pick:focus-visible {
+  outline: 2px solid var(--ac);
+  outline-offset: -2px;
+}
+
+.asset-prev .imp-row {
+  cursor: default;
+}
+
+.asset-prev .t-err {
+  padding: 12px 16px;
+}
+
 .foot {
   flex: none;
   height: 44px;

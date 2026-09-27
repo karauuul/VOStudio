@@ -18,6 +18,11 @@ export const FILTERS: { id: string; label: string }[] = [
   { id: 'all', label: 'All' },
 ]
 
+export const REVIEW_FILTER = 'sugg'
+
+export const hasPendingProposal = (cue: Pick<Cue, 'suggestedText' | 'proposals'>): boolean =>
+  cue.suggestedText !== undefined || !!cue.proposals?.character || !!cue.proposals?.link
+
 export function matchesFilter(cue: Cue, filter: string): boolean {
   switch (filter) {
     case 'work':
@@ -33,7 +38,7 @@ export function matchesFilter(cue: Cue, filter: string): boolean {
     case 'appr':
       return cue.status !== 'excluded' && approvalState(cue) === 'approved'
     case 'sugg':
-      return cue.suggestedText !== undefined
+      return hasPendingProposal(cue)
     case 'excluded':
       return cue.status === 'excluded'
     default:
