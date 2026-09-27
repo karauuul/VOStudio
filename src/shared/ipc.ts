@@ -363,6 +363,8 @@ export interface IpcEvents {
   'project:changed': CommandResult
   'updater:status': UpdateStatus
   'recordings:recovered': number
+  'project:opened': SerializedSnapshot
+  'project:closed': null
 }
 
 export type EventChannel = keyof IpcEvents
