@@ -253,6 +253,14 @@ export function SettingsDialog({
           />
           Reference
         </label>
+        <label className="set-row tgl">
+          <input
+            type="checkbox"
+            checked={settings.agentAccess === true}
+            onChange={(e) => onSettings({ ...settings, agentAccess: e.target.checked ? true : undefined })}
+          />
+          Agent access
+        </label>
 
         <div className="sec-h">Version</div>
         <div className="set-row">

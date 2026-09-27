@@ -52,7 +52,10 @@ export interface AppSettings {
   punchPrerollSeconds?: number
   countIn: boolean
   autoReference: boolean
+  agentAccess?: true
 }
+
+export const sanitizeAgentAccess = (value: unknown): true | undefined => (value === true ? true : undefined)
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   countIn: true,
@@ -276,6 +279,16 @@ export interface TakeDurationUpdate {
   duration: number
 }
 
+export type BridgeAsk = { kind: 'flush' } | { kind: 'leave' } | { kind: 'removable'; cueIds: string[] }
+
+export type BridgeRequest = BridgeAsk & { id: string }
+
+export interface BridgeReply {
+  id: string
+  ok: boolean
+  error?: string
+}
+
 export interface IpcApi {
   'project:list': () => Promise<ProjectSummary[]>
   'project:open': (dir: string) => Promise<SerializedSnapshot | null>
@@ -294,6 +307,7 @@ export interface IpcApi {
   'project:saveVersion': (req: { name?: string }) => Promise<ProjectVersion[]>
   'project:restoreVersion': (req: { n: number }) => Promise<SerializedSnapshot>
   'ui:save': (ui: UiSessionState) => Promise<void>
+  'bridge:reply': (reply: BridgeReply) => Promise<void>
 
   'suggestions:load': () => Promise<SuggestionsLoadResult>
 
@@ -365,6 +379,7 @@ export interface IpcEvents {
   'recordings:recovered': number
   'project:opened': SerializedSnapshot
   'project:closed': null
+  'bridge:request': BridgeRequest
 }
 
 export type EventChannel = keyof IpcEvents

@@ -18,6 +18,8 @@ import { durationQueue } from './audio/duration-backfill'
 import { playback } from './playback'
 import { useTextDraft } from './text-draft-store'
 
+const FLUSH_PASSES = 5
+
 export type StatusKind = 'ok' | 'err' | 'info'
 
 function applyDurations(project: Project, items: TakeDurationUpdate[]): Project {
@@ -68,6 +70,7 @@ export function useProjectSession(o: {
   onStatus: (kind: StatusKind, text: string) => void
   onBootstrap: (project: Project) => void
   onEdit: () => void
+  onExternal: (before: Project | null, changes: ChangeSet) => void
 }): ProjectSession {
   const [project, setProject] = useState<Project | null>(null)
   const [, setDraftSeen] = useState(0)
@@ -87,6 +90,8 @@ export function useProjectSession(o: {
   bootstrapRef.current = o.onBootstrap
   const editRef = useRef(o.onEdit)
   editRef.current = o.onEdit
+  const externalRef = useRef(o.onExternal)
+  externalRef.current = o.onExternal
 
   const dispatch = useCallback(async (command: ProjectCommand, replay = false): Promise<ChangeSet> => {
     const result = await api['project:command'](command)
@@ -118,6 +123,7 @@ export function useProjectSession(o: {
         editRef.current()
         if (result.revision <= revisionRef.current) return
         revisionRef.current = result.revision
+        externalRef.current(projectRef.current, result.changes)
         setProject((current) => (current ? applyChangeSet(current, result.changes) : current))
       }),
     []
@@ -218,7 +224,10 @@ export function useProjectSession(o: {
     pendingVoice.current = null
     return p.fn().then(
       () => true,
-      () => false
+      () => {
+        if (!pendingVoice.current) pendingVoice.current = p
+        return false
+      }
     )
   }, [])
 
@@ -264,8 +273,14 @@ export function useProjectSession(o: {
     }
     const next = pendingUi.current
     pendingUi.current = null
-    if (!next) return Promise.resolve()
-    return api['ui:save'](next).catch(() => {})
+    if (!next) return Promise.resolve(true)
+    return api['ui:save'](next).then(
+      () => true,
+      () => {
+        if (!pendingUi.current) pendingUi.current = next
+        return false
+      }
+    )
   }, [])
 
   const abandon = useCallback(() => {
@@ -283,13 +298,33 @@ export function useProjectSession(o: {
     revisionRef.current = 0
   }, [])
 
+  const flushAll = useCallback(async (): Promise<boolean> => {
+    for (let pass = 0; pendingText.current || pendingVoice.current || pass === 0; pass++) {
+      if (pass === FLUSH_PASSES) return false
+      const saved = await flushText()
+      const voiced = await flushVoice()
+      if (!saved || !voiced) return false
+    }
+    if (!(await flushUi())) return false
+    await durationQueue.flushNow()
+    return true
+  }, [flushText, flushVoice, flushUi])
+
+  useEffect(
+    () =>
+      api.on('bridge:request', ({ id, kind }) => {
+        if (kind !== 'flush') return
+        void flushAll().then(
+          (ok) => api['bridge:reply']({ id, ok, ...(ok ? {} : { error: 'the line text or voice settings could not be saved' }) }),
+          (e: unknown) => api['bridge:reply']({ id, ok: false, error: String(e) })
+        )
+      }),
+    [flushAll]
+  )
+
   const close = useCallback(async (): Promise<boolean> => {
     try {
-      const saved = await flushText()
-      await flushVoice()
-      if (!saved) return false
-      await flushUi()
-      await durationQueue.flushNow()
+      if (!(await flushAll())) return false
       playback.stop()
       await api['project:close']()
     } catch (e) {
@@ -299,7 +334,7 @@ export function useProjectSession(o: {
     abandon()
     setProject(null)
     return true
-  }, [flushText, flushVoice, flushUi, abandon])
+  }, [flushAll, abandon])
 
   return {
     project,

@@ -19,7 +19,7 @@ import {
   type VoiceSettings,
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '@shared/ipc'
-import { pickHistory, redoStale, type UndoSide } from '@shared/undo-route'
+import { externalChanges, pickHistory, redoStale, takeKey, type UndoSide } from '@shared/undo-route'
 import { dropCompRedo, nextCompEdit, pruneCompHistory, recordCompEdit, type CompHistory } from '@shared/comp-history'
 import { PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
 import { hasSourceMaterial, TABLE_FILE } from '@shared/import-table'
@@ -94,6 +94,7 @@ import {
   afterTextStep,
   type LineChange,
   type LineEdit,
+  dropLineEdits,
   type LineHistory,
   type StepDir,
 } from '@shared/line-history'
@@ -260,7 +261,16 @@ export default function App() {
     dropCompRedo(compHistRef.current)
   }, [])
 
-  const session = useProjectSession({ onStatus: pushStatus, onBootstrap, onEdit })
+  const onExternal = useCallback((before: Project | null, changes: ChangeSet) => {
+    const external = externalChanges(before, changes)
+    for (const cueId of external.comps) compHistRef.current.delete(cueId)
+    const kept = (entry: TakeEffectsEdit): boolean => !external.effects.has(takeKey(entry.cueId, entry.takeId))
+    fxUndoRef.current = fxUndoRef.current.filter(kept)
+    fxRedoRef.current = fxRedoRef.current.filter(kept)
+    dropLineEdits(linesRef.current, external.lines)
+  }, [])
+
+  const session = useProjectSession({ onStatus: pushStatus, onBootstrap, onEdit, onExternal })
   const {
     project,
     projectRef,
@@ -1256,6 +1266,16 @@ export default function App() {
     []
   )
 
+  useEffect(
+    () =>
+      api.on('bridge:request', (request) => {
+        if (request.kind !== 'removable') return
+        const block = lineRemovalBlock(request.cueIds)
+        void api['bridge:reply']({ id: request.id, ok: block === null, ...(block ? { error: block } : {}) })
+      }),
+    [lineRemovalBlock]
+  )
+
   const flushPending = useCallback(
     async (): Promise<boolean> =>
       (await flushText()) &&
@@ -1268,15 +1288,30 @@ export default function App() {
   )
 
   const mediaJobsRef = useRef(0)
+  const activityBlock = useCallback(
+    (): string | null =>
+      restoreBlock({
+        exporting: exportingRef.current,
+        recording: recActiveRef.current?.() ?? false,
+        busy: busyCountNow() > 0 || mediaJobsRef.current > 0,
+        syncing: syncingRef.current,
+      }),
+    []
+  )
+
+  useEffect(
+    () =>
+      api.on('bridge:request', (request) => {
+        if (request.kind !== 'leave') return
+        const block = restoreActiveRef.current ? 'Restoring version' : activityBlock()
+        void api['bridge:reply']({ id: request.id, ok: block === null, ...(block ? { error: block } : {}) })
+      }),
+    [activityBlock]
+  )
+
   const restoreVersion = useCallback(
     (n: number) => {
-      const refusal = (): string | null =>
-        restoreBlock({
-          exporting: exportingRef.current,
-          recording: recActiveRef.current?.() ?? false,
-          busy: busyCountNow() > 0 || mediaJobsRef.current > 0,
-          syncing: syncingRef.current,
-        })
+      const refusal = activityBlock
       const block = restoreActiveRef.current ? 'Restoring version' : refusal()
       if (block) {
         pushStatus('info', block)
@@ -1310,7 +1345,7 @@ export default function App() {
       }
       void run().catch((e: unknown) => pushStatus('err', String(e)))
     },
-    [flushPending, flushText, resetHistory, replaceProject, pushStatus]
+    [activityBlock, flushPending, flushText, resetHistory, replaceProject, pushStatus]
   )
 
   const prepareLineRemoval = useCallback(

@@ -28,6 +28,7 @@ import {
   recChunkSchema,
   recFinishSchema,
   recFinishPassesSchema,
+  bridgeReplySchema,
 } from './schemas'
 import { emit } from './emit'
 import * as store from './project-store'
@@ -94,6 +95,14 @@ import { audioWithinRoots, type ChangeSet, type CommandResult } from '@shared/pr
 import { setupImportedProject, setupOpenedProject } from './project-import'
 import { isInsideDir, normalizePath, PROJECT_SUFFIX, uniqueProjectName } from '@shared/project-summary'
 import { TAKE_FILE_EXTENSIONS } from '@shared/take-import'
+import { AGENT_FLAG } from '@shared/agent-endpoint'
+import { sanitizeAgentAccess } from '@shared/ipc'
+import type { McpServer, McpSession } from '@shared/mcp'
+import { needsGuardVersion } from '@shared/versions'
+import { startAgentServer, type AgentServerHandle } from './agent/server'
+import { AGENT_INSTRUCTIONS, agentTools } from './agent/tools'
+import { diagnostics, watchDiagnostics } from './agent/diagnostics'
+import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
 
 const primaryInstance = app.requestSingleInstanceLock()
 if (!primaryInstance) app.quit()
@@ -153,6 +162,7 @@ function createWindow(): void {
     },
   })
 
+  watchDiagnostics(win.webContents)
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   win.webContents.on('will-navigate', (e) => e.preventDefault())
 
@@ -427,6 +437,8 @@ function announceProject(from?: WebContents): void {
 
 function announcedLifecycle<T>(from: WebContents | undefined, fn: () => Promise<T>): Promise<T> {
   return serialLifecycle(async () => {
+    await requestUi({ kind: 'flush' }, from)
+    await requestUi({ kind: 'leave' }, from)
     const before = projectRepository
     try {
       return await fn()
@@ -480,7 +492,7 @@ function closeProject(from?: WebContents) {
 
 function importTemplate(dir: string, from?: WebContents) {
   return announcedLifecycle(from, async () => {
-    const fresh = await validateTemplate(pickedTemplateDir(dir))
+    const fresh = await validateTemplate(dir)
     const snapshot = await setupImportedProject({
       stageImport: () => Promise.resolve(fresh),
       detachCurrent: detachCurrentRepository,
@@ -550,7 +562,7 @@ function registerHandlers(): void {
     return toPreview(await validateTemplate(picked.filePaths[0]))
   })
 
-  typedHandleFrom('project:importTemplate', (sender, dir) => importTemplate(dir, sender))
+  typedHandleFrom('project:importTemplate', (sender, dir) => importTemplate(pickedTemplateDir(dir), sender))
 
   typedHandle('import:pick', async (kind) => {
     const parsed = z.enum(['files', 'folder', 'table', 'audio']).parse(kind)
@@ -668,6 +680,8 @@ function registerHandlers(): void {
   typedHandleFrom('project:restoreVersion', (sender, req) => restoreVersion(req, sender))
 
   typedHandle('ui:save', (ui: UiSessionState) => store.saveUi(ui))
+
+  typedHandle('bridge:reply', async (reply) => settleUi(bridgeReplySchema.parse(reply)))
 
   typedHandle('suggestions:load', async () => {
     const r = await consumeSuggestionsFile(true, requireRepository())
@@ -991,10 +1005,70 @@ function registerHandlers(): void {
   typedHandle('settings:get', () => store.getSettings())
   typedHandle('settings:set', async (s: AppSettings) => {
     await store.setSettings(appSettingsSchema.parse(s))
+    void syncAgentServer()
   })
   typedHandle('updater:getStatus', async () => getUpdateStatus())
   typedHandle('updater:check', () => checkForUpdates())
   typedHandle('updater:restart', async () => restartToUpdate())
+}
+
+const guardedSessions = new WeakMap<McpSession, string>()
+
+async function guardAgentWrite(session: McpSession): Promise<void> {
+  await requestUi({ kind: 'flush' })
+  const dir = store.getProjectDir()
+  if (!projectRepository || !dir || guardedSessions.get(session) === dir) return
+  await serialLifecycle(async () => {
+    if (!needsGuardVersion(requireRepository().projectForMain().versions ?? [], Date.now())) return
+    await recordVersions((previous) => store.saveVersion(previous, 'Before agent'))
+  })
+  guardedSessions.set(session, dir)
+}
+
+function agentServerSpec(): McpServer {
+  return {
+    info: { name: 'vo-studio', version: app.getVersion() },
+    instructions: AGENT_INSTRUCTIONS,
+    beforeWrite: guardAgentWrite,
+    tools: agentTools({
+      version: app.getVersion(),
+      repository: () => projectRepository,
+      projectDir: store.getProjectDir,
+      listProjects: store.listProjects,
+      openProject: (dir) => openProject(dir),
+      createProject: (name) => createProject(name),
+      importTemplate: (dir) => importTemplate(templateDirSchema.parse(dir)),
+      closeProject: () => closeProject(),
+      saveVersion: (name) => serialLifecycle(() => recordVersions((previous) => store.saveVersion(previous, name))),
+      restoreVersion: (n) => restoreVersion({ n }),
+      flushUi: () => requestUi({ kind: 'flush' }),
+      checkRemovable: (cueIds) => requestUi({ kind: 'removable', cueIds }),
+      emit: emitChange,
+      audioRoots: trustedAudioRoots,
+      provider: voiceProvider,
+      diagnostics,
+      screenshot: async () => {
+        const win = uiWindow()
+        return win ? (await win.webContents.capturePage()).toPNG() : null
+      },
+    }),
+  }
+}
+
+let agentForced = process.argv.includes(AGENT_FLAG)
+let agentServer: AgentServerHandle | null = null
+let agentSync: Promise<void> = Promise.resolve()
+
+function syncAgentServer(): Promise<void> {
+  agentSync = agentSync.then(async () => {
+    const wanted = agentForced || sanitizeAgentAccess((await store.getSettings()).agentAccess) === true
+    if (wanted && !agentServer) agentServer = await startAgentServer(app.getPath('userData'), agentServerSpec())
+    else if (!wanted && agentServer) {
+      await agentServer.stop()
+      agentServer = null
+    }
+  }).catch((e: unknown) => console.error('agent server:', e))
+  return agentSync
 }
 
 const AUDIO_MIME: Record<string, string> = {
@@ -1078,17 +1152,26 @@ if (primaryInstance) void app.whenReady().then(() => {
   registerHandlers()
   createWindow()
   initializeUpdater((next) => emit('updater:status', next))
+  void syncAgentServer()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    if (argv.includes(AGENT_FLAG) && !agentForced) {
+      agentForced = true
+      void syncAgentServer()
+    }
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return createWindow()
     if (win.isMinimized()) win.restore()
     win.focus()
   })
+})
+
+app.on('will-quit', () => {
+  void agentServer?.stop()
 })
 
 function quitIfNoWindows(): void {

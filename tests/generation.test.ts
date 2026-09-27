@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   clampSpeed,
+  clampVoiceSettings,
   clipTargetText,
   deriveGenTarget,
   findWholeWord,
@@ -258,5 +259,17 @@ describe('groupByCharacter', () => {
       { name: 'No character', count: 1 },
     ])
     expect(grouped.cues.map((c) => c.id)).toEqual(['a', 'c', 'b', 'd'])
+  })
+})
+
+describe('voice settings clamp', () => {
+  it('keeps values inside the provider ranges at slider precision', () => {
+    expect(clampVoiceSettings({ stability: 1.7, similarity: -1, style: 0.333, speed: 0.5, boost: false })).toEqual({
+      stability: 1,
+      similarity: 0,
+      style: 0.33,
+      speed: 0.7,
+      boost: false,
+    })
   })
 })
