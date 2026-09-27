@@ -171,6 +171,25 @@ describe('assignColumn', () => {
   })
 })
 
+describe('lines from a table', () => {
+  it('marks the project once a table creates lines and mirrors the mark to the renderer', () => {
+    const p = project([])
+    const before = structuredClone(p)
+    const { changes } = commitTable(p, csv('EventName,Text', 'A,Alpha').rows, options({ id: 0, translation: 1 }))
+    expect(p.linesFromTable).toBe(true)
+    expect(changes?.linesFromTable).toBe(true)
+    expect(applyChangeSet(before, changes!).linesFromTable).toBe(true)
+  })
+
+  it('leaves the project unmarked when a table only updates existing lines', () => {
+    const p = project([cue('A', { key: 'A' })])
+    const { changes } = commitTable(p, csv('EventName,Text', 'A,Alpha').rows, options({ id: 0, translation: 1 }))
+    expect(p.cues.map((c) => c.text)).toEqual(['Alpha'])
+    expect('linesFromTable' in p).toBe(false)
+    expect(changes && 'linesFromTable' in changes).toBe(false)
+  })
+})
+
 describe('keyless import', () => {
   it('continues the Line N numbering after existing lines', () => {
     const p = project([newLineCue('a', 1, 'one'), newLineCue('b', 4, 'four')])

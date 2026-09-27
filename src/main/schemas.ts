@@ -130,6 +130,7 @@ export const projectFileSchema = z
     terms: z.array(z.unknown()).optional(),
     languages: z.object({ source: z.string(), target: z.string() }).optional(),
     template: z.object({ name: z.string() }).optional(),
+    linesFromTable: z.boolean().optional(),
     provider: z.unknown().optional(),
     alienMigrated: z.literal(true).optional(),
   })

@@ -212,6 +212,7 @@ export interface AudioImportResult {
   added: number
   updated: number
   files: number
+  unmatched?: number
 }
 
 export interface TableRequest {

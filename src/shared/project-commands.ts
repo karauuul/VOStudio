@@ -117,6 +117,7 @@ export interface ChangeSet {
   characters?: Project['characters']
   charactersReplace?: boolean
   pronunciationRules?: string
+  linesFromTable?: true
 }
 
 export interface CommandResult { revision: number; changes: ChangeSet }
@@ -626,5 +627,6 @@ export function applyChangeSet(project: Project, changes: ChangeSet): Project {
   }
   if (changes.exportTemplate !== undefined) next = { ...next, exportTemplate: changes.exportTemplate }
   if (changes.pronunciationRules !== undefined) next = { ...next, pronunciationRules: changes.pronunciationRules }
+  if (changes.linesFromTable) next = { ...next, linesFromTable: true }
   return next
 }

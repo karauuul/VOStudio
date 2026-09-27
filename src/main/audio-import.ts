@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
-import { matchAudioFiles, type MatchRule } from '@shared/import-table'
+import { attachesOnly, matchAudioFiles, type MatchRule } from '@shared/import-table'
 import type { AudioRef, Cue, Project } from '@shared/domain'
 import type { ChangeSet } from '@shared/project-commands'
 import { pendingTakeDurations, type TakeDurationEntry } from '@shared/library'
@@ -113,12 +113,14 @@ export async function importAudio(
   const files = await collectAudio(paths)
   const referenceRoot = path.join(projectDir, 'audio', 'reference')
   const { update, create } = matchAudioFiles(project.cues, files, rule)
+  const attach = attachesOnly(project)
+  const kept = attach ? update.map(({ file }) => file) : files
 
-  for (const dir of new Set(files.map((f) => path.dirname(path.join(referenceRoot, f.rel))))) {
+  for (const dir of new Set(kept.map((f) => path.dirname(path.join(referenceRoot, f.rel))))) {
     await fs.mkdir(dir, { recursive: true })
   }
 
-  const probed = await mapLimited(files, async (file) => {
+  const probed = await mapLimited(kept, async (file) => {
     const abs = path.join(referenceRoot, file.rel)
     if (path.resolve(abs).toLowerCase() !== path.resolve(file.src).toLowerCase()) {
       await fs.copyFile(file.src, abs)
@@ -136,7 +138,7 @@ export async function importAudio(
     changed.push(cue)
   }
   const added: Cue[] = []
-  for (const file of create) {
+  for (const file of attach ? [] : create) {
     const row = byName.get(file.name)
     if (!row) continue
     const cue = buildCue(file, row.abs, row.duration)
@@ -145,7 +147,12 @@ export async function importAudio(
   }
 
   return {
-    result: { added: added.length, updated: changed.length, files: files.length },
+    result: {
+      added: added.length,
+      updated: changed.length,
+      files: files.length,
+      ...(attach ? { unmatched: create.length } : {}),
+    },
     changes: { cues: structuredClone([...changed, ...added]) },
   }
 }

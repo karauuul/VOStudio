@@ -214,7 +214,7 @@ export function coalesceRows(rows: string[][], keyColumn: number): string[][] {
 }
 
 export function applyTable(
-  project: Pick<Project, 'cues' | 'characters'>,
+  project: Pick<Project, 'cues' | 'characters' | 'linesFromTable'>,
   rows: string[][],
   mapping: TableMapping,
   rule: MatchRule,
@@ -284,6 +284,7 @@ export function applyTable(
     if (touched || suggested) changed.set(cue.id, cue)
     summary[created ? 'added' : suggested ? 'suggested' : touched ? 'updated' : 'unchanged']++
   }
+  if (unmatched.length > 0) project.linesFromTable = true
 
   return {
     changed: [...changed.values()],
@@ -327,7 +328,11 @@ export function previewTable(project: Pick<Project, 'cues' | 'characters'>, rows
   return applyTable(copy, rows, options.mapping, options.rule, options.replaceTranslations, options.keepOriginal).summary
 }
 
-export function commitTable(project: Pick<Project, 'cues' | 'characters'>, rows: string[][], options: TableOptions): TableCommit {
+export function commitTable(
+  project: Pick<Project, 'cues' | 'characters' | 'linesFromTable'>,
+  rows: string[][],
+  options: TableOptions
+): TableCommit {
   const before = new Map(project.cues.map((cue) => [cue.id, lineFields(cue)]))
   const applied = applyTable(project, rows, options.mapping, options.rule, options.replaceTranslations, options.keepOriginal)
   const fields: FieldStep[] = []
@@ -344,6 +349,7 @@ export function commitTable(project: Pick<Project, 'cues' | 'characters'>, rows:
     })
   }
   const createdCharacters = applied.createdCharacters.length > 0
+  const createdLines = applied.unmatched.length > 0
   return {
     summary: applied.summary,
     undo: {
@@ -357,6 +363,7 @@ export function commitTable(project: Pick<Project, 'cues' | 'characters'>, rows:
         : {
             cues: structuredClone(applied.changed),
             ...(createdCharacters ? { characters: structuredClone(project.characters), charactersReplace: true } : {}),
+            ...(createdLines ? { linesFromTable: true } : {}),
           },
   }
 }
@@ -383,6 +390,15 @@ export function matchAudioFiles<T extends { name: string }>(
     else create.push(file)
   }
   return { update, create }
+}
+
+export function attachesOnly(project: Pick<Project, 'template' | 'csvBinding' | 'linesFromTable' | 'cues'>): boolean {
+  return (
+    project.template !== undefined ||
+    project.csvBinding !== undefined ||
+    project.linesFromTable === true ||
+    project.cues.some((cue) => Object.keys(cue.fields).some((field) => field !== 'EventName'))
+  )
 }
 
 export type ImportTab = 'all' | 'notranscript' | 'notranslation' | 'unmatched'
