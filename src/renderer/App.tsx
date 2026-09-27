@@ -272,6 +272,8 @@ export default function App() {
     saveUi,
     onText: sessionText,
     replace: replaceProject,
+    enter: enterSession,
+    abandon: abandonSession,
   } = session
 
   const restoringRef = useRef(false)
@@ -339,10 +341,10 @@ export default function App() {
       setRoute('work')
       setReviewIds(null)
       clearTerminalJobs()
-      session.enter(snapshot)
+      enterSession(snapshot)
       refreshExported()
     },
-    [session, refreshExported, resetHistory]
+    [enterSession, refreshExported, resetHistory]
   )
 
   useEffect(() => {
@@ -1038,8 +1040,7 @@ export default function App() {
     [selectCue]
   )
 
-  const leaveProject = useCallback(async () => {
-    if (!(await session.close())) return
+  const leftProject = useCallback(() => {
     resetHistory()
     setActiveCueId(undefined)
     setSelection(null)
@@ -1048,7 +1049,29 @@ export default function App() {
     setExported(new Set())
     setRoute('work')
     setReviewIds(null)
-  }, [session, resetHistory])
+  }, [resetHistory])
+
+  const leaveProject = useCallback(async () => {
+    if (!(await session.close())) return
+    leftProject()
+  }, [session, leftProject])
+
+  useEffect(() => {
+    const offOpened = api.on('project:opened', (snapshot) => {
+      abandonSession()
+      leftProject()
+      enterProject(parseSnapshot(snapshot))
+    })
+    const offClosed = api.on('project:closed', () => {
+      abandonSession()
+      setProject(null)
+      leftProject()
+    })
+    return () => {
+      offOpened()
+      offClosed()
+    }
+  }, [abandonSession, enterProject, setProject, leftProject])
 
   const goHome = useCallback(() => {
     if (refuseWhileExporting()) return

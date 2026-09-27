@@ -1,10 +1,10 @@
-import { app, BrowserWindow, dialog, Menu, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, protocol, session, shell, type WebContents } from 'electron'
 import path from 'path'
 import { createReadStream, promises as fs } from 'fs'
 import { Readable } from 'stream'
 import { randomUUID } from 'crypto'
 import { z } from 'zod'
-import { typedHandle } from './typed-ipc'
+import { typedHandle, typedHandleFrom } from './typed-ipc'
 import {
   autoSelectsOutput,
   exportSummarySchema,
@@ -93,6 +93,9 @@ import { audioWithinRoots, type ChangeSet, type CommandResult } from '@shared/pr
 import { setupImportedProject, setupOpenedProject } from './project-import'
 import { isInsideDir, normalizePath, PROJECT_SUFFIX, uniqueProjectName } from '@shared/project-summary'
 import { TAKE_FILE_EXTENSIONS } from '@shared/take-import'
+
+const primaryInstance = app.requestSingleInstanceLock()
+if (!primaryInstance) app.quit()
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'vostudio', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
@@ -413,42 +416,110 @@ const emptyProjectBase = (name: string): Omit<Project, 'id' | 'schemaVersion' | 
 
 let restoringVersion = false
 
+function announceProject(from?: WebContents): void {
+  if (projectRepository) emit('project:opened', projectRepository.snapshot(), from)
+  else emit('project:closed', null, from)
+}
+
+function announcedLifecycle<T>(from: WebContents | undefined, fn: () => Promise<T>): Promise<T> {
+  return serialLifecycle(async () => {
+    const before = projectRepository
+    try {
+      return await fn()
+    } finally {
+      if (projectRepository !== before) announceProject(from)
+    }
+  })
+}
+
+function openProject(dir: string, from?: WebContents) {
+  return announcedLifecycle(from, async () => {
+    const target = projectDirSchema(store.defaultProjectsRoot()).parse(dir)
+    if (!(await store.exists(target))) return null
+    const snapshot = await setupOpenedProject({
+      detachCurrent: detachCurrentRepository,
+      prepareProject: (project) => prepareOpened(project, target),
+      openProject: () => store.openProjectDir(target),
+      resetRepository,
+      abandonProject,
+      finishOpen: async (repository) => {
+        await recoverOnOpen(repository)
+        if (repository.projectForMain().csvBinding) await autoAdopt(repository)
+        await consumeSuggestionsFile(false, repository)
+        void repairTakeDurations(repository).catch((e: unknown) =>
+          console.warn('duration repair skipped:', e)
+        )
+      },
+    })
+    if (!snapshot) throw new Error('Project could not be opened')
+    return snapshot
+  })
+}
+
+function createProject(name?: string, from?: WebContents) {
+  return announcedLifecycle(from, async () => {
+    const projectName = name === undefined ? uniqueProjectName(await store.projectFolderNames()) : projectNameSchema.parse(name)
+    const dir = path.join(store.defaultProjectsRoot(), `${projectName}${PROJECT_SUFFIX}`)
+    if (await store.exists(dir)) throw new Error(`Project "${projectName}" already exists`)
+    await detachCurrentRepository()
+    return resetRepository(await store.createProject(projectName, emptyProjectBase(projectName))).snapshot()
+  })
+}
+
+function closeProject(from?: WebContents) {
+  return announcedLifecycle(from, async () => {
+    await detachCurrentRepository()
+    await store.dropUnusedStems()
+    store.closeProject()
+  })
+}
+
+function importTemplate(dir: string, from?: WebContents) {
+  return announcedLifecycle(from, async () => {
+    const fresh = await validateTemplate(pickedTemplateDir(dir))
+    const snapshot = await setupImportedProject({
+      stageImport: () => Promise.resolve(fresh),
+      detachCurrent: detachCurrentRepository,
+      importProject: createProjectFromTemplate,
+      currentProject: store.getProject,
+      resetRepository,
+      finishImport: async () => undefined,
+    })
+    return { snapshot, warnings: fresh.warnings }
+  })
+}
+
+function restoreVersion(req: { n: number }, from?: WebContents) {
+  return announcedLifecycle(from, async () => {
+    const { n } = restoreVersionSchema.parse(req)
+    const { repository, dir } = requireSession()
+    restoringVersion = true
+    try {
+      const version = await store.readVersion(n)
+      await upgradeLoaded(version, dir)
+      await detachCurrentRepository()
+      const current = repository.projectForMain()
+      const revision = repository.currentRevision()
+      let restored: Project
+      try {
+        restored = await store.restoreVersion(current, version, n)
+      } catch (error) {
+        resetRepository(current, revision)
+        throw error
+      }
+      return resetRepository(restored, revision).snapshot()
+    } finally {
+      restoringVersion = false
+    }
+  })
+}
+
 function registerHandlers(): void {
   typedHandle('project:list', () => store.listProjects())
 
-  typedHandle('project:open', (dir: string) =>
-    serialLifecycle(async () => {
-      const target = projectDirSchema(store.defaultProjectsRoot()).parse(dir)
-      if (!(await store.exists(target))) return null
-      const snapshot = await setupOpenedProject({
-        detachCurrent: detachCurrentRepository,
-        prepareProject: (project) => prepareOpened(project, target),
-        openProject: () => store.openProjectDir(target),
-        resetRepository,
-        abandonProject,
-        finishOpen: async (repository) => {
-          await recoverOnOpen(repository)
-          if (repository.projectForMain().csvBinding) await autoAdopt(repository)
-          await consumeSuggestionsFile(false, repository)
-          void repairTakeDurations(repository).catch((e: unknown) =>
-            console.warn('duration repair skipped:', e)
-          )
-        },
-      })
-      if (!snapshot) throw new Error('Project could not be opened')
-      return snapshot
-    })
-  )
+  typedHandleFrom('project:open', (sender, dir) => openProject(dir, sender))
 
-  typedHandle('project:create', (name?: string) =>
-    serialLifecycle(async () => {
-      const projectName = name === undefined ? uniqueProjectName(await store.projectFolderNames()) : projectNameSchema.parse(name)
-      const dir = path.join(store.defaultProjectsRoot(), `${projectName}${PROJECT_SUFFIX}`)
-      if (await store.exists(dir)) throw new Error(`Project "${projectName}" already exists`)
-      await detachCurrentRepository()
-      return resetRepository(await store.createProject(projectName, emptyProjectBase(projectName))).snapshot()
-    })
-  )
+  typedHandleFrom('project:create', (sender, name) => createProject(name, sender))
 
   typedHandle('project:delete', (dir: string) =>
     serialLifecycle(async () => {
@@ -461,13 +532,7 @@ function registerHandlers(): void {
     })
   )
 
-  typedHandle('project:close', () =>
-    serialLifecycle(async () => {
-      await detachCurrentRepository()
-      await store.dropUnusedStems()
-      store.closeProject()
-    })
-  )
+  typedHandleFrom('project:close', (sender) => closeProject(sender))
 
   typedHandle('project:pickTemplate', async () => {
     const options: Electron.OpenDialogOptions = {
@@ -481,20 +546,7 @@ function registerHandlers(): void {
     return toPreview(await validateTemplate(picked.filePaths[0]))
   })
 
-  typedHandle('project:importTemplate', (dir: string) =>
-    serialLifecycle(async () => {
-      const fresh = await validateTemplate(pickedTemplateDir(dir))
-      const snapshot = await setupImportedProject({
-        stageImport: () => Promise.resolve(fresh),
-        detachCurrent: detachCurrentRepository,
-        importProject: createProjectFromTemplate,
-        currentProject: store.getProject,
-        resetRepository,
-        finishImport: async () => undefined,
-      })
-      return { snapshot, warnings: fresh.warnings }
-    })
-  )
+  typedHandleFrom('project:importTemplate', (sender, dir) => importTemplate(dir, sender))
 
   typedHandle('import:pick', async (kind) => {
     const parsed = z.enum(['files', 'folder', 'table', 'audio']).parse(kind)
@@ -609,30 +661,7 @@ function registerHandlers(): void {
     })
   )
 
-  typedHandle('project:restoreVersion', (req) =>
-    serialLifecycle(async () => {
-      const { n } = restoreVersionSchema.parse(req)
-      const { repository, dir } = requireSession()
-      restoringVersion = true
-      try {
-        const version = await store.readVersion(n)
-        await upgradeLoaded(version, dir)
-        await detachCurrentRepository()
-        const current = repository.projectForMain()
-        const revision = repository.currentRevision()
-        let restored: Project
-        try {
-          restored = await store.restoreVersion(current, version, n)
-        } catch (error) {
-          resetRepository(current, revision)
-          throw error
-        }
-        return resetRepository(restored, revision).snapshot()
-      } finally {
-        restoringVersion = false
-      }
-    })
-  )
+  typedHandleFrom('project:restoreVersion', (sender, req) => restoreVersion(req, sender))
 
   typedHandle('ui:save', (ui: UiSessionState) => store.saveUi(ui))
 
@@ -974,7 +1003,7 @@ const AUDIO_MIME: Record<string, string> = {
   '.mkv': 'video/x-matroska',
 }
 
-void app.whenReady().then(() => {
+if (primaryInstance) void app.whenReady().then(() => {
   protocol.handle('vostudio', async (req) => {
     const url = new URL(req.url)
     if (url.host !== 'audio') return new Response('Not found', { status: 404 })
@@ -1045,6 +1074,13 @@ void app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+
+  app.on('second-instance', () => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) return createWindow()
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  })
 })
 
 app.on('window-all-closed', () => {
@@ -1054,7 +1090,7 @@ app.on('window-all-closed', () => {
   )
 })
 
-void app.whenReady().then(async () => {
+if (primaryInstance) void app.whenReady().then(async () => {
   try {
     await runFfmpeg(['-version'])
   } catch (e) {

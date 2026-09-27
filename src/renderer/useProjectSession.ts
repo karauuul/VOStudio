@@ -54,6 +54,7 @@ export interface ProjectSession {
   dispatch: (command: ProjectCommand, replay?: boolean) => Promise<ChangeSet>
   enter: (snapshot: ProjectSnapshot) => void
   replace: (snapshot: ProjectSnapshot) => void
+  abandon: () => void
   close: () => Promise<boolean>
   onText: (cueId: string, text: string) => void
   flushText: () => Promise<boolean>
@@ -267,6 +268,21 @@ export function useProjectSession(o: {
     return api['ui:save'](next).catch(() => {})
   }, [])
 
+  const abandon = useCallback(() => {
+    for (const timer of [textTimer, voiceTimer, uiTimer]) {
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = null
+    }
+    pendingText.current = null
+    pendingVoice.current = null
+    pendingUi.current = null
+    textGenRef.current++
+    useTextDraft.setState({ draft: null })
+    playback.stop()
+    durationQueue.reset()
+    revisionRef.current = 0
+  }, [])
+
   const close = useCallback(async (): Promise<boolean> => {
     try {
       const saved = await flushText()
@@ -280,11 +296,10 @@ export function useProjectSession(o: {
       statusRef.current('err', String(e))
       return false
     }
-    durationQueue.reset()
-    revisionRef.current = 0
+    abandon()
     setProject(null)
     return true
-  }, [flushText, flushVoice, flushUi])
+  }, [flushText, flushVoice, flushUi, abandon])
 
   return {
     project,
@@ -295,6 +310,7 @@ export function useProjectSession(o: {
     dispatch,
     enter,
     replace,
+    abandon,
     close,
     onText,
     flushText,
