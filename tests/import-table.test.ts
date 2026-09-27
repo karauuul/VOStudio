@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { parseCsv } from '../src/shared/csv'
 import {
   applyTable,
+  attachesOnly,
+  commitTable,
   detectMapping,
   hasSourceMaterial,
   importCounts,
@@ -21,7 +23,7 @@ import {
   type Project,
 } from '../src/shared/domain'
 import { applyChangeSet, applyProjectCommand } from '../src/shared/project-commands'
-import { isManualProject } from '../src/shared/lines'
+import { isManualProject, newLineCue } from '../src/shared/lines'
 
 const cue = (over: Partial<Cue> & { key: string }): Cue => ({
   id: `id-${over.key}`,
@@ -223,6 +225,44 @@ describe('matchAudioFiles', () => {
     const r = matchAudioFiles(cues, [{ name: 'A' }, { name: 'C' }, { name: 'C' }], 'id')
     expect(r.update.map((u) => u.cue.key)).toEqual(['A'])
     expect(r.create.map((f) => f.name)).toEqual(['C'])
+  })
+})
+
+describe('attachesOnly', () => {
+  const ref = (name: string) => ({ fileId: name, relPath: `/p/audio/reference/${name}.wav`, format: 'wav' as const })
+  const audioLine = (key: string) => cue({ key, fields: { EventName: key }, referenceAudio: ref(key), referenceDuration: 1 })
+  const owner = (over: Partial<Project> = {}): Pick<Project, 'template' | 'csvBinding' | 'linesFromTable' | 'cues'> => ({
+    cues: [],
+    ...over,
+  })
+
+  it('attaches only in a project that came from a template', () => {
+    expect(attachesOnly(owner({ template: { name: 'Demo' }, cues: [audioLine('VO_ADA_001')] }))).toBe(true)
+  })
+
+  it('attaches only in a project bound to a CSV', () => {
+    const csvBinding = { csvPath: 'x.csv', encoding: 'utf-8-sig' as const, columnOrder: [], mapping: { key: 'WemId' } }
+    expect(attachesOnly(owner({ csvBinding }))).toBe(true)
+  })
+
+  it('attaches only once a table created lines, also after every line got its audio', () => {
+    const p = { ...owner(), characters: [] }
+    commitTable(p, [['A', 'Alpha'], ['B', 'Beta']], { mapping: { id: 0, translation: 1 }, rule: 'id', replaceTranslations: false, keepOriginal: false })
+    expect(p.linesFromTable).toBe(true)
+    expect(attachesOnly(p)).toBe(true)
+    for (const line of p.cues) line.referenceAudio = ref(line.key)
+    expect(attachesOnly(p)).toBe(true)
+  })
+
+  it('attaches only in a template project saved before the template identity existed', () => {
+    const fields = { cueId: 'VO_ADA_001', exportName: 'VO_ADA_001', EventName: 'VO_ADA_001' }
+    expect(attachesOnly(owner({ cues: [cue({ key: 'VO_ADA_001', fields, referenceAudio: ref('VO_ADA_001') })] }))).toBe(true)
+  })
+
+  it('keeps creating lines in audio-first, empty and manual projects', () => {
+    expect(attachesOnly(owner({ cues: [audioLine('LINE_A'), audioLine('LINE_B')] }))).toBe(false)
+    expect(attachesOnly(owner())).toBe(false)
+    expect(attachesOnly(owner({ cues: [newLineCue('c1', 1, 'Hello'), newLineCue('c2', 2)] }))).toBe(false)
   })
 })
 

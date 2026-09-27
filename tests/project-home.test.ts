@@ -1,7 +1,9 @@
 import { mkdirSync, promises as fs } from 'fs'
 import path from 'path'
 import { describe, expect, it, vi } from 'vitest'
-import type { Cue, Project } from '../src/shared/domain'
+import { sanitizeLinesFromTable, type Cue, type Project } from '../src/shared/domain'
+import { projectFile } from '../src/shared/project-file'
+import { projectFileSchema } from '../src/main/schemas'
 import {
   isProjectDirIn,
   isValidProjectName,
@@ -253,6 +255,48 @@ describe('openProjectDir', () => {
     expect(opened.name).toBe('Passthrough')
     expect((opened as unknown as { someFutureField: unknown }).someFutureField).toEqual({ keep: 'me' })
     store.closeProject()
+  })
+})
+
+describe('Project.linesFromTable', () => {
+  const full = (name: string): Project => ({ ...base(name), id: name, schemaVersion: 1, createdAt: '2026-01-01T00:00:00.000Z' })
+  const write = async (name: string, json: string): Promise<string> => {
+    const dir = path.join(ROOT, `${name}.vostudio`)
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(path.join(dir, 'project.json'), json)
+    return dir
+  }
+
+  it('sanitizes the stored mark', () => {
+    expect(sanitizeLinesFromTable(true)).toBe(true)
+    expect(sanitizeLinesFromTable(false)).toBeUndefined()
+    expect(sanitizeLinesFromTable('true')).toBeUndefined()
+    expect(sanitizeLinesFromTable(undefined)).toBeUndefined()
+  })
+
+  it('survives save and reopen byte-identical', async () => {
+    const json = projectFile({ ...full('tabled'), linesFromTable: true }).json
+    const opened = await store.openProjectDir(await write('tabled', json))
+    expect(opened.linesFromTable).toBe(true)
+    expect(projectFile(opened).json).toBe(json)
+    store.closeProject()
+  })
+
+  it('keeps a project without the mark byte-identical and drops a false mark', async () => {
+    const json = projectFile(full('plain')).json
+    const opened = await store.openProjectDir(await write('plain', json))
+    expect('linesFromTable' in opened).toBe(false)
+    expect(projectFile(opened).json).toBe(json)
+    expect(projectFileSchema.parse(JSON.parse(json))).toEqual(JSON.parse(json))
+    store.closeProject()
+
+    const unmarked = await store.openProjectDir(await write('unmarked', projectFile({ ...full('unmarked'), linesFromTable: false as unknown as true }).json))
+    expect('linesFromTable' in unmarked).toBe(false)
+    store.closeProject()
+  })
+
+  it('rejects a forged mark', () => {
+    expect(() => projectFileSchema.parse({ ...full('forged'), linesFromTable: 'yes' })).toThrow()
   })
 })
 

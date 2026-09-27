@@ -619,9 +619,14 @@ export interface Project {
   terms?: Term[]
   languages?: ProjectLanguages
   template?: ProjectTemplate
+  linesFromTable?: true
   provider?: ProviderSettings
   alienMigrated?: true
   ui: UiSessionState
+}
+
+export function sanitizeLinesFromTable(value: unknown): true | undefined {
+  return value === true ? true : undefined
 }
 
 export function sanitizeAlienMigrated(value: unknown): true | undefined {

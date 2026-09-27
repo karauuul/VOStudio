@@ -102,7 +102,12 @@ export const ImportRoom = memo(function ImportRoom({
       }
       if (audio.length === 0) return
       const r = await api['import:audio']({ paths: audio, rule: matchBy })
-      onStatus('ok', `${r.files} files · ${r.added} lines added, ${r.updated} updated`)
+      onStatus(
+        'ok',
+        r.unmatched === undefined
+          ? `${r.files} files · ${r.added} lines added, ${r.updated} updated`
+          : `${r.files} files · ${r.updated} updated${r.unmatched > 0 ? ` · ${r.unmatched} unmatched` : ''}`
+      )
     },
     [onTable, matchBy, onStatus]
   )

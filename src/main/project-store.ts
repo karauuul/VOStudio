@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto'
 import {
   sanitizeGenMode,
   sanitizeLanguages,
+  sanitizeLinesFromTable,
   sanitizeMatchRule,
   sanitizeProjectSources,
   sanitizeProjectTemplate,
@@ -320,6 +321,7 @@ async function readProjectFile(file: string): Promise<Project> {
     if (template) p.template = template
     else delete p.template
   }
+  if (p.linesFromTable !== undefined && !sanitizeLinesFromTable(p.linesFromTable)) delete p.linesFromTable
   return p
 }
 
