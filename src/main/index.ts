@@ -55,6 +55,7 @@ import type {
   AudioImportResult,
   ReimportResult,
   TableImportResult,
+  AssetAddResult,
   TablePreview,
   TableRequest,
 } from '@shared/ipc'
@@ -85,6 +86,7 @@ import {
   exportInfo,
 } from './export'
 import { detectLines, importSources, splitMediaPaths } from './sources'
+import { addAssets, assetAudioLines, loadAsset, type AudioLinesResult } from './assets'
 import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
@@ -245,6 +247,8 @@ const audioImportSchema = z.object({
   paths: z.array(filePath).min(1).max(200),
   rule: matchRuleSchema,
 })
+
+const assetAddSchema = z.object({ paths: z.array(filePath).min(1).max(200) })
 
 const takeImportSchema = z.object({
   cueId: z.string().min(1).max(200),
@@ -562,6 +566,34 @@ function importAudioPaths(req: { paths: string[]; rule: MatchRule }): Promise<Au
   })
 }
 
+function addAssetPaths(req: { paths: string[] }): Promise<AssetAddResult> {
+  return serialLifecycle(async () => {
+    const parsed = assetAddSchema.parse(req)
+    const repository = requireRepository()
+    const projectDir = store.getProjectDir()
+    if (!projectDir) throw new Error('No project is open')
+    const result = await addAssets(repository.projectForMain().assets ?? [], projectDir, parsed.paths)
+    if (result.added.length > 0) {
+      await publish(repository, (project) => {
+        project.assets = [...(project.assets ?? []), ...result.added]
+        return { assets: structuredClone(project.assets) }
+      })
+    }
+    return result
+  })
+}
+
+function buildAudioLines(assetIds: string[]): Promise<AudioLinesResult> {
+  return serialLifecycle(async () => {
+    const repository = requireRepository()
+    const projectDir = store.getProjectDir()
+    if (!projectDir) throw new Error('No project is open')
+    const { result, changes } = await assetAudioLines(repository.projectForMain(), projectDir, assetIds)
+    emit('project:changed', await repository.commit(changes))
+    return result
+  })
+}
+
 async function previewTableImport(req: TableRequest): Promise<TablePreview> {
   const parsed = tableImportSchema.parse(req)
   const table = await readTable(parsed.path)
@@ -692,6 +724,8 @@ function registerHandlers(): void {
   )
 
   typedHandle('import:template', reimportTemplateDir)
+
+  typedHandle('assets:add', addAssetPaths)
 
   typedHandle('project:command', (command) => {
     if (!projectRepository) throw new Error('No project is open')
@@ -1064,6 +1098,9 @@ function agentServerSpec(): McpServer {
       previewTable: previewTableImport,
       importTable,
       reimportTemplate: reimportTemplateDir,
+      addAssets: (paths) => addAssetPaths({ paths }),
+      loadAsset,
+      buildAudioLines,
       transcribe,
       provider: voiceProvider,
       diagnostics,

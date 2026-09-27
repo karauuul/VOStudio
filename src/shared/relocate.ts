@@ -1,4 +1,4 @@
-import type { AudioRef, Project } from './domain'
+import type { AssetFile, Project } from './domain'
 import { PROJECT_SUFFIX } from './project-summary'
 
 const isProjectFolder = (part: string): boolean =>
@@ -6,7 +6,7 @@ const isProjectFolder = (part: string): boolean =>
 
 const unifySeparators = (p: string): string => p.replace(/[\\/]+/g, '/')
 
-const PROJECT_DIRS = new Set(['audio', 'export', 'versions', 'autosave'])
+const PROJECT_DIRS = new Set(['audio', 'assets', 'export', 'versions', 'autosave'])
 
 function projectFolderAt(parts: string[]): number {
   let innermost = -1
@@ -59,7 +59,7 @@ export function relocatedPath(projectDir: string, stored: string): string | null
 }
 
 function mapPaths(project: Project, map: (stored: string) => string): void {
-  const ref = (file: AudioRef): void => {
+  const ref = (file: AssetFile): void => {
     file.relPath = map(file.relPath)
   }
   for (const cue of project.cues) {
@@ -71,6 +71,7 @@ function mapPaths(project: Project, map: (stored: string) => string): void {
     ref(source.file)
     if (source.media !== undefined) source.media = map(source.media)
   }
+  for (const asset of project.assets ?? []) ref(asset.file)
   for (const session of project.sessions) {
     for (const track of session.tracks ?? []) {
       for (const clip of track.clips ?? []) if (clip.source && 'fileRef' in clip.source) ref(clip.source.fileRef)

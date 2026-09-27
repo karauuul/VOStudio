@@ -5,10 +5,7 @@ import { matchRowsByText, type TextMatchReport } from './agent-text'
 import { PATH_FIELD } from './export-plan'
 import type { ChangeSet, FieldStep, LineFields } from './project-commands'
 import {
-  characterColor,
-  DEFAULT_VOICE_SETTINGS,
-  ELEVENLABS_STS_MODEL,
-  ELEVENLABS_TTS_MODEL,
+  blankCharacter,
   type Character,
   type Cue,
   type MatchRule,
@@ -159,7 +156,13 @@ export interface TableApplyResult {
   unmatched: Cue[]
   createdCharacters: Character[]
   summary: TableSummary
+  rows: TableRowLine[]
   textMatch?: TextMatchReport
+}
+
+export interface TableRowLine {
+  row: number
+  cueId: string
 }
 
 function ensureCharacter(project: Pick<Project, 'characters'>, name: string): string {
@@ -168,18 +171,7 @@ function ensureCharacter(project: Pick<Project, 'characters'>, name: string): st
     (character) => character.id === name || character.name.trim().toLowerCase() === lower
   )
   if (found) return found.id
-  project.characters.push({
-    id: name,
-    name,
-    color: characterColor(project.characters.length),
-    provider: {
-      providerId: 'elevenlabs',
-      voiceId: '',
-      ttsModel: ELEVENLABS_TTS_MODEL,
-      stsModel: ELEVENLABS_STS_MODEL,
-    },
-    voiceSettings: { ...DEFAULT_VOICE_SETTINGS },
-  })
+  project.characters.push(blankCharacter(name, name, project.characters.length))
   return name
 }
 
@@ -198,16 +190,16 @@ const keyedCue = (key: string): Cue => ({
   takes: [],
 })
 
-export function coalesceRows(rows: string[][], keyColumn: number): string[][] {
+export function coalesceRows(rows: string[][], keyColumn: number): { cells: string[]; row: number }[] {
   const merged = new Map<string, string[]>()
-  const out: string[][] = []
-  for (const cells of rows) {
+  const out: { cells: string[]; row: number }[] = []
+  for (const [row, cells] of rows.entries()) {
     const key = (cells[keyColumn] ?? '').trim()
     const seen = key ? merged.get(key) : undefined
     if (!seen) {
       const copy = [...cells]
       if (key) merged.set(key, copy)
-      out.push(copy)
+      out.push({ cells: copy, row })
       continue
     }
     cells.forEach((cell, i) => {
@@ -236,12 +228,13 @@ export function applyTable(
   const summary: TableSummary = { added: 0, updated: 0, suggested: 0, unchanged: 0, skipped: 0 }
   let matched = 0
   let line = nextLineNumber(project.cues)
+  const lines: TableRowLine[] = []
   const entries = textMatch
-    ? textMatch.matched.map((m) => ({ cells: rows[m.index], cue: byId.get(m.cueId) }))
-    : (idColumn === undefined ? rows : coalesceRows(rows, idColumn)).map((cells) => ({ cells, cue: undefined }))
+    ? textMatch.matched.map((m) => ({ cells: rows[m.index], row: m.index, cue: byId.get(m.cueId) }))
+    : (idColumn === undefined ? rows.map((cells, row) => ({ cells, row })) : coalesceRows(rows, idColumn)).map((entry) => ({ ...entry, cue: undefined }))
   if (textMatch) summary.skipped += rows.length - entries.length
 
-  for (const { cells, cue: textCue } of entries) {
+  for (const { cells, row, cue: textCue } of entries) {
     const id = cellAt(cells, idColumn)
     const source = cellAt(cells, mapping.text)
     const translation = cellAt(cells, mapping.translation)
@@ -297,6 +290,7 @@ export function applyTable(
       }
     }
     if (touched || suggested) changed.set(cue.id, cue)
+    lines.push({ row, cueId: cue.id })
     summary[created ? 'added' : suggested ? 'suggested' : touched ? 'updated' : 'unchanged']++
   }
   if (unmatched.length > 0) project.linesFromTable = true
@@ -307,6 +301,7 @@ export function applyTable(
     unmatched,
     createdCharacters: project.characters.slice(before),
     summary,
+    rows: lines,
     ...(textMatch ? { textMatch } : {}),
   }
 }
@@ -332,6 +327,7 @@ export interface TableUndo {
 
 export interface TableCommit {
   summary: TableSummary
+  rows: TableRowLine[]
   textMatch?: TextMatchReport
   undo: TableUndo
   changes: ChangeSet | null
@@ -375,6 +371,7 @@ export function commitTable(
   const createdLines = applied.unmatched.length > 0
   return {
     summary: applied.summary,
+    rows: applied.rows,
     ...(applied.textMatch ? { textMatch: applied.textMatch } : {}),
     undo: {
       ids: applied.unmatched.map((cue) => cue.id),

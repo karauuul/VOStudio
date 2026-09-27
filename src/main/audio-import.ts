@@ -2,7 +2,7 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
 import { attachesOnly, matchAudioFiles, type MatchRule } from '@shared/import-table'
-import type { AudioRef, Cue, Project } from '@shared/domain'
+import { withOrigin, type AudioRef, type Cue, type Project } from '@shared/domain'
 import { PATH_FIELD } from '@shared/export-plan'
 import type { ChangeSet } from '@shared/project-commands'
 import { pendingTakeDurations, type TakeDurationEntry } from '@shared/library'
@@ -45,49 +45,57 @@ export async function probeTakeDurations(project: Project): Promise<TakeDuration
   return probed.filter((row): row is TakeDurationEntry => (row.duration ?? 0) > 0)
 }
 
-export interface PickedAudio {
-  name: string
+export interface PickedFile {
+  src: string
   rel: string
   dir: string
-  src: string
-  format: AudioRef['format']
 }
 
-async function walk(dir: string, root: string, out: PickedAudio[]): Promise<void> {
+export interface PickedAudio extends PickedFile {
+  name: string
+  format: AudioRef['format']
+  assetId?: string
+}
+
+async function walk(dir: string, root: string, out: PickedFile[], accept: (abs: string) => boolean): Promise<void> {
   if (out.length >= MAX_FILES) return
   const entries = await fs.readdir(dir, { withFileTypes: true })
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const abs = path.join(dir, entry.name)
     if (entry.isDirectory()) {
-      await walk(abs, root, out)
+      await walk(abs, root, out, accept)
       continue
     }
     if (!entry.isFile()) continue
-    push(out, abs, path.join(path.basename(root), path.relative(root, abs)), path.relative(root, dir))
+    push(out, abs, path.join(path.basename(root), path.relative(root, abs)), accept, path.relative(root, dir))
   }
 }
 
-function push(out: PickedAudio[], abs: string, rel: string, dir = ''): void {
-  const format = FORMATS[path.extname(abs).toLowerCase()]
-  if (!format || out.length >= MAX_FILES) return
-  out.push({
-    name: path.basename(abs, path.extname(abs)),
-    rel: rel.replace(/\\/g, '/'),
-    dir: dir.replace(/\\/g, '/'),
-    src: abs,
-    format,
-  })
+function push(out: PickedFile[], abs: string, rel: string, accept: (abs: string) => boolean, dir = ''): void {
+  if (!accept(abs) || out.length >= MAX_FILES) return
+  out.push({ rel: rel.replace(/\\/g, '/'), dir: dir.replace(/\\/g, '/'), src: abs })
 }
 
-export async function collectAudio(paths: string[]): Promise<PickedAudio[]> {
-  const out: PickedAudio[] = []
+export async function collectFiles(paths: string[], accept: (abs: string) => boolean): Promise<PickedFile[]> {
+  const out: PickedFile[] = []
   for (const target of paths) {
     const stat = await fs.stat(target).catch(() => null)
     if (!stat) continue
-    if (stat.isDirectory()) await walk(target, target, out)
-    else push(out, target, path.basename(target))
+    if (stat.isDirectory()) await walk(target, target, out, accept)
+    else push(out, target, path.basename(target), accept)
   }
   return out
+}
+
+export const audioFormat = (file: string): AudioRef['format'] | undefined => FORMATS[path.extname(file).toLowerCase()]
+
+export function pickedAudio(file: PickedFile): PickedAudio | null {
+  const format = audioFormat(file.src)
+  return format ? { ...file, name: path.basename(file.src, path.extname(file.src)), format } : null
+}
+
+export async function collectAudio(paths: string[]): Promise<PickedAudio[]> {
+  return (await collectFiles(paths, (abs) => audioFormat(abs) !== undefined)).flatMap((file) => pickedAudio(file) ?? [])
 }
 
 function buildCue(file: PickedAudio, abs: string, duration: number | undefined): Cue {
@@ -104,6 +112,7 @@ function buildCue(file: PickedAudio, abs: string, duration: number | undefined):
     referenceAudio: { fileId: file.name, relPath: abs, format: file.format },
   }
   if (duration !== undefined) cue.referenceDuration = duration
+  if (file.assetId) cue.origins = [{ assetId: file.assetId }]
   return cue
 }
 
@@ -113,7 +122,15 @@ export async function importAudio(
   paths: string[],
   rule: MatchRule
 ): Promise<{ result: AudioImportResult; changes: ChangeSet }> {
-  const files = await collectAudio(paths)
+  return importPickedAudio(project, projectDir, await collectAudio(paths), rule)
+}
+
+export async function importPickedAudio(
+  project: Project,
+  projectDir: string,
+  files: PickedAudio[],
+  rule: MatchRule
+): Promise<{ result: AudioImportResult; changes: ChangeSet }> {
   const referenceRoot = path.join(projectDir, 'audio', 'reference')
   const { update, create, duplicates } = matchAudioFiles(project.cues, files, rule)
   const attach = attachesOnly(project)
@@ -138,6 +155,7 @@ export async function importAudio(
     if (!row) continue
     cue.referenceAudio = { fileId: cue.key, relPath: row.abs, format: file.format }
     if (row.duration !== undefined) cue.referenceDuration = row.duration
+    if (file.assetId) cue.origins = withOrigin(cue.origins, { assetId: file.assetId })
     changed.push(cue)
   }
   const added: Cue[] = []

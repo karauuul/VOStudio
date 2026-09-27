@@ -3,7 +3,8 @@ import { SerialProjectRepository } from '../src/main/project-repository'
 import { agentTools, AGENT_INSTRUCTIONS, type AgentDeps } from '../src/main/agent/tools'
 import type { VoiceProvider } from '../src/main/providers/voice-provider'
 import { projectDirSchema, projectNameSchema } from '../src/main/schemas'
-import { emptyEdits, type Cue, type Project } from '../src/shared/domain'
+import { emptyEdits, type Cue, type Project, type ProjectAsset } from '../src/shared/domain'
+import type { AssetContent } from '../src/main/assets'
 import { createSession, handleMessage, type McpServer, type RpcMessage } from '../src/shared/mcp'
 import type { CommandResult } from '../src/shared/project-commands'
 import { transcribeCues } from '../src/main/transcribe'
@@ -38,6 +39,28 @@ const provider: VoiceProvider = {
   models: async () => [],
 } as unknown as VoiceProvider
 
+const contents: Record<string, AssetContent> = {
+  srt: {
+    format: 'srt',
+    columns: ['index', 'start', 'end', 'speaker', 'text'],
+    rows: [
+      ['1', '1', '2', 'Ada', 'Hello there, friend'],
+      ['2', '3', '4', 'Queen', 'Play for us'],
+      ['3', '5', '6', '', 'x'.repeat(600)],
+    ],
+  },
+  csv: { format: 'csv', columns: ['cueId', 'sourceText', 'translation'], rows: [['l1', 'Hello there', 'Привіт'], ['L6', 'Sixth', ''], ['ZZ', 'none', '']] },
+  txt: { format: 'txt', lines: ['one', 'two', 'three'] },
+  wav: { format: 'audio', duration: 1.5 },
+}
+
+const binAssets = (): ProjectAsset[] => [
+  { id: 'srt', name: 'subs/demo.srt', kind: 'subtitles', file: { fileId: 'demo.srt', relPath: '/root/Demo.vostudio/assets/demo.srt' }, size: 10, addedAt: 'now', rows: 3 },
+  { id: 'csv', name: 'keys.csv', kind: 'table', file: { fileId: 'keys.csv', relPath: '/root/Demo.vostudio/assets/keys.csv' }, size: 10, addedAt: 'now', rows: 3 },
+  { id: 'txt', name: 'notes.locres', kind: 'other', file: { fileId: 'notes.locres', relPath: '/root/Demo.vostudio/assets/notes.locres' }, size: 10, addedAt: 'now' },
+  { id: 'wav', name: 'vo/a/hit.wav', kind: 'audio', file: { fileId: 'hit.wav', relPath: '/data/vo/a/hit.wav' }, size: 10, addedAt: 'now', duration: 1.5 },
+]
+
 function setup(open = true) {
   const repo = open ? new SerialProjectRepository(project(), vi.fn(), 60_000) : null
   const emitted: CommandResult[] = []
@@ -71,6 +94,18 @@ function setup(open = true) {
         if (ref.relPath.includes('broken')) throw new Error('Provider refused the audio.')
         return ref.relPath.includes('silent') ? '' : `heard ${ref.fileId}`
       }, (result) => emitted.push(result)),
+    addAssets: vi.fn(async (paths: string[]) => {
+      const added = paths.map((p, i) => ({ id: `new${i}`, name: p.split('/').pop() as string, kind: 'other' as const, file: { fileId: 'f', relPath: p }, size: 1, addedAt: 'now' }))
+      const current = repo!.projectForMain()
+      current.assets = [...(current.assets ?? []), ...added]
+      return { added, skipped: [{ name: 'dup.csv', reason: 'already in the bin' }] }
+    }),
+    loadAsset: vi.fn(async (asset: ProjectAsset) => {
+      const content = contents[asset.id]
+      if (!content) throw new Error('unreadable')
+      return content
+    }),
+    buildAudioLines: vi.fn(async (ids: string[]) => ({ added: ids.length, updated: 0, files: ids.length, skipped: [] })),
     provider: () => provider,
     diagnostics: () => [
       { at: '2026-01-01T00:00:00.000Z', source: 'renderer', message: 'old' },
@@ -96,7 +131,7 @@ describe('agent tool registry', () => {
     const tools = (sent[0].result as { tools: { name: string; inputSchema: { type: string }; annotations: Record<string, unknown> }[] }).tools
     expect(tools.map((t) => t.name)).toEqual([
       'status', 'projects', 'project_open', 'project_close', 'lines', 'line', 'lines_edit', 'characters', 'character_set', 'voices', 'versions', 'command',
-      'import', 'transcribe', 'translate_context', 'translations_suggest', 'glossary', 'glossary_check', 'rules', 'diagnostics', 'screenshot',
+      'import', 'asset_add', 'assets', 'asset_read', 'lines_build', 'link', 'characters_assign', 'proposals', 'transcribe', 'translate_context', 'translations_suggest', 'glossary', 'glossary_check', 'rules', 'diagnostics', 'screenshot',
     ])
     for (const tool of tools) {
       expect(tool.inputSchema.type).toBe('object')
@@ -452,5 +487,138 @@ describe('glossary and rules', () => {
     expect((await call('rules', { get: true })).data).toEqual({ rules: '' })
     expect((await call('rules', { set: 'GIF = jif' })).data).toEqual({ rules: 'GIF = jif' })
     expect(repo!.projectForMain().pronunciationRules).toBe('GIF = jif')
+  })
+})
+
+describe('bin tools', () => {
+  const withBin = () => {
+    const ctx = setup()
+    ctx.repo!.projectForMain().assets = binAssets()
+    return ctx
+  }
+
+  it('adds paths, lists assets with derived link counts and filters by kind and unlinked', async () => {
+    const { call, deps, repo } = withBin()
+    const added = await call('asset_add', { paths: ['/data/strings.locres'] })
+    expect(deps.addAssets).toHaveBeenCalledWith(['/data/strings.locres'])
+    expect(added.data).toMatchObject({ added: 1, assets: [{ id: 'new0', name: 'strings.locres', kind: 'other', lines: 0 }], skipped: [{ name: 'dup.csv', reason: 'already in the bin' }] })
+    repo!.projectForMain().cues[0].origins = [{ assetId: 'wav' }]
+    repo!.projectForMain().cues[1].proposals = { link: { assetId: 'srt', row: 0, confidence: 0.9, reason: 'r' } }
+    const all = await call('assets', {})
+    expect(all.data.total).toBe(5)
+    expect((all.data.assets as Record<string, unknown>[]).find((a) => a.id === 'srt')).toMatchObject({ lines: 0, proposedLinks: 1, rows: 3 })
+    expect(((await call('assets', { kind: 'audio' })).data.assets as { id: string; lines: number }[]).map((a) => [a.id, a.lines])).toEqual([['wav', 1]])
+    expect(((await call('assets', { unlinked: true, limit: 2 })).data as { nextCursor: string }).nextCursor).toBe('2')
+    expect((await call('asset_add', { paths: ['rel.txt'] })).error).toBe('Invalid arguments at "paths.0": must be an absolute path.')
+  })
+
+  it('reads tables, raw text and audio in pages and cuts long cells', async () => {
+    const { call } = withBin()
+    const table = await call('asset_read', { asset: 'demo.srt', from: 1, count: 1 })
+    expect(table.data).toEqual({ asset: 'subs/demo.srt', kind: 'subtitles', format: 'srt', columns: ['index', 'start', 'end', 'speaker', 'text'], total: 3, from: 1, nextFrom: 2, rows: [['2', '3', '4', 'Queen', 'Play for us']] })
+    const long = ((await call('asset_read', { asset: 'srt', from: 2 })).data.rows as string[][])[0][4]
+    expect(long).toBe(`${'x'.repeat(500)}… [600 chars]`)
+    expect((await call('asset_read', { asset: 'txt', count: 2 })).data).toMatchObject({ format: 'txt', total: 3, lines: ['one', 'two'], nextFrom: 2 })
+    expect((await call('asset_read', { asset: 'hit.wav' })).data).toEqual({ asset: 'vo/a/hit.wav', kind: 'audio', format: 'audio', duration: 1.5 })
+    expect((await call('asset_read', { asset: 'nope' })).error).toBe('No asset has id or name "nope"; call assets to list them.')
+    expect((await call('asset_read', { asset: 'srt', count: 500 })).error).toMatch(/^Invalid arguments at "count"/)
+  })
+
+  it('builds lines from rows once, with speaker proposals, and audio lines per file', async () => {
+    const { call, repo, emitted, deps } = withBin()
+    const built = await call('lines_build', { asset: 'srt' })
+    expect(built.data).toMatchObject({ rows: 3, mapping: { text: 'text', character: 'speaker', start: 'start', end: 'end' }, created: 3, alreadyBuilt: 0, characterProposals: 2 })
+    const cues = repo!.projectForMain().cues.slice(6)
+    expect(cues.map((c) => [c.sourceText.slice(0, 11), c.origins?.[0].row, c.fields.start])).toEqual([['Hello there', 0, '1'], ['Play for us', 1, '3'], ['xxxxxxxxxxx', 2, '5']])
+    expect(cues[0].proposals?.character?.characterId).toBe('ada')
+    expect(repo!.projectForMain().characters.map((c) => c.name)).toContain('Queen')
+    expect(emitted).toHaveLength(1)
+    expect((await call('lines_build', { asset: 'srt' })).data).toMatchObject({ created: 0, alreadyBuilt: 3 })
+    expect((await call('lines_build', { asset: 'txt' })).error).toBe('notes.locres reads as plain txt.')
+    expect((await call('lines_build', { asset: 'wav' })).error).toBe('vo/a/hit.wav is audio; build lines from it with strategy perFile.')
+    expect((await call('lines_build', { strategy: 'perFile' })).data).toMatchObject({ created: 1 })
+    expect(deps.buildAudioLines).toHaveBeenCalledWith(['wav'])
+    expect((await call('lines_build', { asset: 'srt', strategy: 'perFile' })).error).toMatch(/pass asset \(with mapping\) or strategy perFile/)
+    expect((await call('lines_build', { asset: 'csv', mapping: { key: 'nope' } })).error).toBe('No column "nope"; columns are "cueId", "sourceText", "translation".')
+  })
+
+  it('reports links without writing, then applies them as proposals once', async () => {
+    const { call, repo, emitted, spec } = withBin()
+    const beforeWrite = vi.fn(async () => undefined)
+    spec.beforeWrite = beforeWrite
+    const report = await call('link', { asset: 'csv' })
+    expect(report.data).toMatchObject({
+      rows: 3,
+      mapping: { key: 'cueId', text: 'sourceText', translation: 'translation' },
+      linked: 2,
+      links: [
+        { row: 0, line: 'L1', confidence: 0.95, reason: 'key "l1" matches ignoring case, separators and zero padding' },
+        { row: 1, line: 'L6', confidence: 1, reason: 'key "L6" equals the line key' },
+      ],
+      unmatched: { count: 1, rows: [2] },
+    })
+    expect(emitted).toHaveLength(0)
+    expect(beforeWrite).not.toHaveBeenCalled()
+    const applied = await call('link', { asset: 'csv', apply: true })
+    expect(beforeWrite).toHaveBeenCalledTimes(1)
+    expect(applied.data).toMatchObject({ applied: 2, originalTexts: 2, suggestions: 1, characterProposals: 0 })
+    const [l1, , , , , l6] = repo!.projectForMain().cues
+    expect([l1.sourceText, l1.suggestedText, l1.proposals?.link]).toEqual(['Hello there', 'Привіт', { assetId: 'csv', row: 0, confidence: 0.95, reason: 'key "l1" matches ignoring case, separators and zero padding' }])
+    expect(l6.sourceText).toBe('Sixth')
+    await call('proposals', { accept: [{ kind: 'link', line: 'L1' }, { kind: 'link', line: 'L6' }] })
+    expect((await call('link', { asset: 'csv', apply: true })).data).toMatchObject({ applied: 0 })
+    expect((await call('link', { asset: 'srt', strategy: 'key' })).error).toBe('Linking by key needs a key column; pass mapping.key.')
+  })
+
+  it('assigns characters as proposals by default, sets them on request and creates missing ones', async () => {
+    const { call, repo } = withBin()
+    const proposed = await call('characters_assign', {
+      items: [
+        { line: 'L1', character: 'Bob', confidence: 0.8, reason: 'answers Bob' },
+        { line: 'L6', character: 'Ada', confidence: 0.9, reason: 'same' },
+        { line: 'nope', character: 'Ada', confidence: 0.9, reason: '' },
+        { line: 'L2', character: 'Zed', confidence: 0.6, reason: 'new voice' },
+      ],
+    })
+    expect(proposed.data.outcomes).toEqual([
+      { line: 'L1', outcome: 'proposed' },
+      { line: 'L6', outcome: 'unchanged' },
+      { line: 'nope', outcome: 'error', reason: 'No line has key or id "nope"; call lines to list them' },
+      { line: 'L2', outcome: 'error', reason: 'No character "Zed"; call characters to list them' },
+    ])
+    const project = repo!.projectForMain()
+    expect(project.cues[0]).toMatchObject({ characterId: 'ada', proposals: { character: { characterId: 'bob', confidence: 0.8, reason: 'answers Bob' } } })
+    const set = await call('characters_assign', { items: [{ line: 'L1', character: 'Zed', confidence: 1, reason: 'script' }], create: true, apply: 'set' })
+    expect(set.data).toEqual({ outcomes: [{ line: 'L1', outcome: 'set' }], createdCharacters: ['Zed'] })
+    expect(project.characters.find((c) => c.id === project.cues[0].characterId)?.name).toBe('Zed')
+    expect(project.cues[0]).not.toHaveProperty('proposals')
+  })
+
+  it('lists, accepts, rejects and bulk-accepts proposals including glossary terms', async () => {
+    const { call, repo } = withBin()
+    const project = repo!.projectForMain()
+    project.cues[0].proposals = { character: { characterId: 'bob', confidence: 0.9, reason: 'speaker in subs/demo.srt' } }
+    project.cues[1].proposals = { character: { characterId: 'bob', confidence: 0.4, reason: 'guess' }, link: { assetId: 'srt', row: 1, confidence: 0.7, reason: 'text similarity 0.7' } }
+    project.cues[3].suggestedText = 'Краще'
+    await call('glossary', { upsert: [{ term: 'node', translation: 'вузол', proposed: true }, { term: 'pioneer', translation: 'піонер' }] })
+    const listed = await call('proposals', { list: {} })
+    expect(listed.data.total).toBe(5)
+    expect(listed.data.items).toEqual([
+      { kind: 'character', line: 'L1', id: 'c1', proposed: 'Bob', current: 'Ada', confidence: 0.9, reason: 'speaker in subs/demo.srt' },
+      { kind: 'character', line: 'L2', id: 'c2', proposed: 'Bob', current: 'Ada', confidence: 0.4, reason: 'guess' },
+      { kind: 'link', line: 'L2', id: 'c2', asset: 'subs/demo.srt', row: 1, sourceText: 'src c2', confidence: 0.7, reason: 'text similarity 0.7' },
+      { kind: 'text', line: 'DUP', id: 'c4', proposed: 'Краще', current: 'one' },
+      { kind: 'term', term: 'node', translation: 'вузол' },
+    ])
+    expect((await call('proposals', { list: { kind: 'character', minConfidence: 0.5 } })).data.total).toBe(1)
+    const bulk = await call('proposals', { acceptAll: { kind: 'character', minConfidence: 0.5 } })
+    expect(bulk.data).toEqual({ accepted: 1, lines: ['L1'] })
+    expect(project.cues[0].characterId).toBe('bob')
+    const rejected = await call('proposals', { reject: [{ kind: 'link', line: 'L2' }, { kind: 'text', line: 'L1' }, { kind: 'term', term: 'NODE' }] })
+    expect(rejected.data).toEqual({ rejected: 2, lines: ['L2'], terms: ['node'], errors: [{ line: 'L1', reason: 'no pending text proposal' }] })
+    expect(project.terms).toEqual([{ term: 'pioneer', translation: 'піонер' }])
+    expect((await call('proposals', { accept: [{ kind: 'text', line: 'c4' }] })).data).toEqual({ accepted: 1, lines: ['DUP'] })
+    expect(project.cues[3].text).toBe('Краще')
+    expect((await call('proposals', { list: {}, acceptAll: { kind: 'text' } })).error).toBe('Invalid arguments: pass exactly one of list, accept, reject or acceptAll.')
   })
 })

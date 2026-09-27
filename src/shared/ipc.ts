@@ -2,6 +2,7 @@ import type {
   ClipEdits,
   CompTrack,
   MatchRule,
+  ProjectAsset,
   ProjectVersion,
   Stem,
   Take,
@@ -220,6 +221,11 @@ export interface AudioImportResult {
   duplicates?: string[]
 }
 
+export interface AssetAddResult {
+  added: ProjectAsset[]
+  skipped: { name: string; reason: string }[]
+}
+
 export interface TableRequest {
   path: string
   rule: MatchRule
@@ -305,6 +311,7 @@ export interface IpcApi {
   'import:tablePreview': (req: TableRequest) => Promise<TablePreview>
   'import:table': (req: TableRequest) => Promise<TableImportResult>
   'import:template': (dir: string) => Promise<ReimportResult>
+  'assets:add': (req: { paths: string[] }) => Promise<AssetAddResult>
   'source:detect': (req: { sourceId: string; mode: 'silence' | 'transcribe' }) => Promise<DetectResult>
   'project:command': (command: ProjectCommand) => Promise<CommandResult>
   'project:saveVersion': (req: { name?: string }) => Promise<ProjectVersion[]>
