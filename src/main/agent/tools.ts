@@ -5,7 +5,7 @@ import type { Cue, ProjectAsset, ProjectVersion, Take, Term, WordTiming } from '
 import { ASSET_KINDS, PROPOSAL_REASON_MAX, resolveVoiceSettings, speakerCharacters, TERM_TEXT_MAX, TERMS_MAX } from '@shared/domain'
 import { clampVoiceSettings, placeOnTrack, type TakePlacement } from '@shared/generation'
 import { LINE_TEXT_MAX } from '@shared/lines'
-import { defineTool, errorText, issueText, type McpSession, type McpTool, type ToolAnnotations, type ToolImage, type ToolOutput } from '@shared/mcp'
+import { defineTool, errorText, issueText, quitWhenIdle, type McpSession, type McpTool, type ToolAnnotations, type ToolImage, type ToolOutput } from '@shared/mcp'
 import {
   audioWithinRoots,
   type CommandResult,
@@ -127,6 +127,8 @@ export interface AgentDeps {
   settings: () => Promise<AppSettings>
   diagnostics: () => DiagnosticEntry[]
   screenshot: () => Promise<Buffer | null>
+  windowOpen: () => boolean
+  quit: () => Promise<void>
 }
 
 export const AGENT_INSTRUCTIONS = [
@@ -142,8 +144,12 @@ export const AGENT_INSTRUCTIONS = [
   'generate queues jobs in the app queue shared with the user; pass wait, or call jobs with wait, until they finish.',
   'Check lines with render (exact export audio and its metrics) or verify (speech-to-text against the line text, costs money) before export; call export with dryRun first to see readiness and file names.',
   'You cannot listen: analyze gives a line\'s intonation, rhythm and emphasis as numbers and a prosody transcript; after each generation call compare to check timing and intonation against the original, apply its suggestions (speed, pauses, delivery) and compare again until the scores stop improving.',
-  'Use screenshot and diagnostics to check what the user sees.',
+  'Use screenshot and diagnostics to check what the user sees; status mode headless means no window is open and app_quit ends the app.',
+  'Prompts localize, voice_lines and smoke_test are step-by-step workflows over these tools.',
 ].join(' ')
+
+export const WINDOW_OPEN_QUIT = 'VO Studio has a window open; the user quits it from the app.'
+const QUIT_IDLE_MS = 30_000
 
 const READ: ToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
 const WRITE: ToolAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
@@ -548,7 +554,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         const active = project?.cues.find((c) => c.id === project.ui.activeCueId)
         return structured({
           version: deps.version,
-          mode: 'live',
+          mode: deps.windowOpen() ? 'live' : 'headless',
           provider: provider.id,
           hasApiKey: await provider.hasApiKey(),
           project: currentOverview(deps),
@@ -1510,7 +1516,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
             outDir: info.outDir,
             summary: summarize(project, rows),
             ready: ready.length,
-            files: page.map((r) => ({ line: r.cueKey, name: r.name, changed: r.changed, duration: r.outputLength ?? null })),
+            files: page.map((r) => ({ line: r.cueKey, name: `audio/${r.name}`, changed: r.changed, duration: r.outputLength ?? null })),
             ...skipped,
             collisions: findCollisions(planBatch(project)).filter((c) => c.cueKeys.some((k) => scoped.has(k))).slice(0, REPORT_LIST_MAX).map((c) => ({ name: c.name, lines: c.cueKeys })),
             ...(nextCursor === undefined ? {} : { nextCursor }),
@@ -1696,6 +1702,26 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         const png = await deps.screenshot()
         if (!png) throw new Error('The app has no open window to capture.')
         return { image: { data: png.toString('base64'), mimeType: 'image/png' } }
+      },
+    }),
+    defineTool({
+      name: 'app_quit',
+      title: 'Quit app',
+      description: `Save and quit VO Studio when it runs headless (started with --headless, no window open). New tool calls from every connection are refused while it waits up to ${QUIT_IDLE_MS / 1000} s for running calls to finish. Refused while a window is open, generation jobs are unfinished, an export runs or other calls keep running.`,
+      input: z.object({}),
+      annotations: WRITE,
+      writes: () => false,
+      async run(ctx) {
+        const refuseRunning = (): void => {
+          if (deps.windowOpen()) throw new Error(WINDOW_OPEN_QUIT)
+          if (deps.generation.list().some((j) => !isTerminal(j))) throw new Error('Generation jobs are unfinished; wait for them with jobs, then retry.')
+        }
+        refuseRunning()
+        await quitWhenIdle(ctx, QUIT_IDLE_MS, async () => {
+          refuseRunning()
+          await deps.quit()
+        })
+        return structured({ quitting: true })
       },
     }),
   ]

@@ -5,7 +5,7 @@ import type { VoiceProvider } from '../src/main/providers/voice-provider'
 import { projectDirSchema, projectNameSchema, renderReplySchema } from '../src/main/schemas'
 import { emptyEdits, type Cue, type Project, type ProjectAsset, type WordTiming } from '../src/shared/domain'
 import type { AssetContent } from '../src/main/assets'
-import { createSession, handleMessage, type McpServer, type RpcMessage } from '../src/shared/mcp'
+import { createHub, createSession, handleMessage, type McpServer, type RpcMessage } from '../src/shared/mcp'
 import type { CommandResult } from '../src/shared/project-commands'
 import { transcribeCues } from '../src/main/transcribe'
 import { LINE_CHANGED } from '../src/shared/agent-render'
@@ -197,6 +197,8 @@ function setup(open = true) {
       { at: '2026-01-02T00:00:00.000Z', source: 'crash', message: 'new' },
     ],
     screenshot: async () => null,
+    windowOpen: () => true,
+    quit: vi.fn(async () => undefined),
     decodeAudio: vi.fn(async (file: string) => (file.endsWith('.original.wav') ? tones([[0.1, 0], [0.9, 150], [0.2, 0]]) : tones([[0.1, 0], [0.5, 170], [0.3, 0], [0.6, 170], [0.2, 0]]))),
     analyzeAudio: vi.fn(async (pcm: Float32Array, rate: number, words: WordTiming[], duration: number) => prosody.analyzeProsody(pcm, rate, words, duration)),
     drawFigure: vi.fn(async () => Buffer.from('png')),
@@ -224,7 +226,7 @@ describe('agent tool registry', () => {
     expect(tools.map((t) => t.name)).toEqual([
       'status', 'projects', 'project_open', 'project_close', 'lines', 'line', 'lines_edit', 'characters', 'character_set', 'voices', 'versions', 'command',
       'import', 'asset_add', 'assets', 'asset_read', 'lines_build', 'link', 'characters_assign', 'proposals', 'transcribe', 'translate_context', 'translations_suggest', 'glossary', 'glossary_check', 'rules', 'render', 'verify', 'analyze', 'compare', 'export', 'generate', 'jobs', 'take_use',
-      'diagnostics', 'screenshot',
+      'diagnostics', 'screenshot', 'app_quit',
     ])
     for (const tool of tools) {
       expect(tool.inputSchema.type).toBe('object')
@@ -292,6 +294,68 @@ describe('status and reads', () => {
     expect(((await call('diagnostics', { since: '2026-01-01T12:00:00Z' })).data.entries as { message: string }[]).map((e) => e.message)).toEqual(['new'])
     expect((await call('diagnostics', { since: 'yesterday' })).error).toMatch(/^since must be an ISO/)
     expect((await call('screenshot')).error).toBe('The app has no open window to capture.')
+  })
+
+  it('reports headless mode when no window is open', async () => {
+    const { call, deps } = setup()
+    deps.windowOpen = () => false
+    expect((await call('status')).data.mode).toBe('headless')
+  })
+})
+
+describe('app_quit', () => {
+  it('quits through the app without a guard version', async () => {
+    const { deps, spec } = setup()
+    deps.windowOpen = () => false
+    const beforeWrite = vi.fn(async () => undefined)
+    spec.beforeWrite = beforeWrite
+    const sent: RpcMessage[] = []
+    await handleMessage(spec, createSession(), { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'app_quit', arguments: {} } }, (m) => sent.push(m))
+    expect((sent[0].result as { structuredContent: unknown }).structuredContent).toEqual({ quitting: true })
+    expect(deps.quit).toHaveBeenCalledTimes(1)
+    expect(beforeWrite).not.toHaveBeenCalled()
+  })
+
+  it('refuses without waiting while a window is open', async () => {
+    const { call, deps } = setup()
+    const hub = createHub()
+    expect((await call('app_quit', {}, createSession(hub))).error).toBe('VO Studio has a window open; the user quits it from the app.')
+    expect(hub.quitting).toBe(false)
+    expect(deps.quit).not.toHaveBeenCalled()
+  })
+
+  it('refuses when a call running during the wait queues generation', async () => {
+    const { call, deps, gen } = setup()
+    deps.windowOpen = () => false
+    expect((await call('character_set', { character: 'Ada', voiceId: 'va' })).error).toBeUndefined()
+    gen.hold = new Promise(() => undefined)
+    let release!: () => void
+    deps.flushUi = vi.fn(() => new Promise<void>((resolve) => (release = resolve)))
+    const hub = createHub()
+    const generating = call('generate', { lines: ['L1'] }, createSession(hub))
+    await vi.waitFor(() => expect(deps.flushUi).toHaveBeenCalled())
+    const quitting = call('app_quit', {}, createSession(hub))
+    await vi.waitFor(() => expect(hub.quitting).toBe(true))
+    expect((await call('status', {}, createSession(hub))).error).toMatch(/^VO Studio is quitting/)
+    release()
+    expect((await generating).data.jobs).toEqual([expect.objectContaining({ line: 'L1', state: 'running' })])
+    expect((await quitting).error).toBe('Generation jobs are unfinished; wait for them with jobs, then retry.')
+    expect(hub.quitting).toBe(false)
+    expect(deps.quit).not.toHaveBeenCalled()
+  })
+
+  it('passes on the app refusal and refuses while generation jobs are unfinished', async () => {
+    const { call, deps, gen } = setup()
+    deps.windowOpen = () => false
+    deps.quit = vi.fn(async () => {
+      throw new Error('VO Studio has a window open; the user quits it from the app.')
+    })
+    expect((await call('app_quit')).error).toBe('VO Studio has a window open; the user quits it from the app.')
+    expect((await call('character_set', { character: 'Ada', voiceId: 'va' })).error).toBeUndefined()
+    gen.hold = new Promise(() => undefined)
+    await call('generate', { lines: ['L1'] })
+    expect((await call('app_quit')).error).toBe('Generation jobs are unfinished; wait for them with jobs, then retry.')
+    expect(deps.quit).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -752,7 +816,7 @@ describe('render, verify and export', () => {
       dryRun: true,
       outDir: '/root/Demo.vostudio/export',
       ready: 1,
-      files: [{ line: 'L3', name: '{key}.mp3', changed: false, duration: 2 }],
+      files: [{ line: 'L3', name: 'audio/{key}.mp3', changed: false, duration: 2 }],
       skippedTotal: 5,
       collisions: [],
     })
