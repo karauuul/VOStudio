@@ -210,7 +210,12 @@ export async function planBatchExport(req: BatchExportRequest, owner = 0, revisi
     ...(revision === undefined ? {} : { revision }),
   }
   planned = new Map(jobs.map((j) => [j.outPath, j]))
-  await fs.rm(stagingDir, { recursive: true, force: true })
+  try {
+    await fs.rm(stagingDir, { recursive: true, force: true })
+  } catch (error) {
+    abortBatchExport(token)
+    throw error
+  }
   return { token, jobs, outDir }
 }
 
@@ -391,6 +396,7 @@ export async function finishExport(
     return await publishExport(current, summary, stamp, revision, hold)
   } finally {
     current.running = false
+    if (batchPlan === current) batchPlan = null
   }
 }
 
@@ -522,6 +528,10 @@ async function closeVideoRun(): Promise<void> {
   const run = videoRun
   videoRun = null
   if (run) await releaseVideoRun(run)
+}
+
+export function abortBatchExport(token: string): void {
+  if (batchPlan?.token === token) batchPlan = null
 }
 
 export function cancelExports(): void {

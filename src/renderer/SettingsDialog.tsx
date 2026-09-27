@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { UsageInfo } from '@shared/domain'
-import type { AppSettings } from '@shared/ipc'
+import { AGENT_BUDGET_MAX, agentBudget, type AppSettings } from '@shared/ipc'
 import type { UpdateStatus } from '@shared/updater'
 import {
   PUNCH_PREROLL_DEFAULT,
@@ -261,6 +261,20 @@ export function SettingsDialog({
           />
           Agent access
         </label>
+        <div className="set-row">
+          <span className="set-l">Agent budget</span>
+          <DragNumber
+            label=""
+            unit="chars"
+            value={agentBudget(settings.agentCharacterBudget)}
+            min={0}
+            max={AGENT_BUDGET_MAX}
+            perPx={100}
+            decimals={0}
+            onInput={idle}
+            onCommit={(v) => onSettings({ ...settings, agentCharacterBudget: Math.round(v) })}
+          />
+        </div>
 
         <div className="sec-h">Version</div>
         <div className="set-row">

@@ -33,11 +33,12 @@ import {
   cancelQueuedJobs,
   clearTerminalJobs,
   isCueBusyNow,
+  mirrorJobs,
+  runGeneration,
   useBusyCount,
   useCueBusy,
   useJobCount,
   useJobFailed,
-  useJobsStore,
 } from './jobs/store'
 import { ALL_CHARACTERS, DEFAULT_FILTER, filterCues, groupLines, REVIEW_FILTER } from '@shared/cue-filter'
 import { proposalRefs } from '@shared/linking'
@@ -106,6 +107,8 @@ import {
   clipTargetText,
   deriveGenTarget,
   placeTake,
+  hasClip,
+  TARGET_CLIP_GONE,
   targetText,
   toPercent,
   type GenTarget,
@@ -209,11 +212,16 @@ export default function App() {
   const targetTrackRef = useRef<Record<string, string>>({})
   targetTrackRef.current = targetTrack
 
-  const submitJob = useJobsStore((s) => s.submit)
   const jobCount = useJobCount()
   const jobFailed = useJobFailed()
   const busyCount = useBusyCount()
   const activeCueBusy = useCueBusy(activeCueId ?? '')
+
+  useEffect(() => {
+    const off = api.on('jobs:changed', mirrorJobs)
+    void api['gen:list']().then(mirrorJobs)
+    return off
+  }, [])
 
   useEffect(() => {
     activeCueIdRef.current = activeCueId
@@ -813,10 +821,7 @@ export default function App() {
       const recent = lastPlacedRef.current.get(cueId)
       const stored = recent && recent.base === cue.comp ? recent.comp : cue.comp
       let comp = isActiveCue(cueId) && compRef.current ? compRef.current.current() : stored
-      const replace =
-        replaceClipId && comp?.clips.some((c) => c.id === replaceClipId)
-          ? replaceClipId
-          : undefined
+      if (replaceClipId && !hasClip(comp, replaceClipId)) throw new Error(TARGET_CLIP_GONE)
       let trackId = drop?.trackId ?? targetTrackRef.current[cueId]
       let playhead =
         drop?.at ??
@@ -851,7 +856,7 @@ export default function App() {
             duration: durations[i],
             targetTrackId: trackId,
             playhead,
-            ...(replace ? { replaceClipId: replace } : {}),
+            ...(replaceClipId ? { replaceClipId } : {}),
           })
           comp = placed.comp
           trackId = placed.trackId
@@ -908,17 +913,17 @@ export default function App() {
       override?: VoiceSettings,
       model?: string
     ) => {
-      submitJob({
-        kind: 'tts',
+      runGeneration(
         cueId,
-        run: async (live) => {
+        async (live) => {
           if (announce) pushStatus('info', 'Generating TTS…')
           const project = projectRef.current
           const cue = project?.cues.find((c) => c.id === cueId)
           if (!project || !cue) throw new Error('Cue is no longer in the project')
           const character = project.characters.find((c) => c.id === cue.characterId)
           const voiceSettings = override ?? resolveVoiceSettings(character, cue)
-          const take = await api['provider:tts']({
+          const take = await api['gen:run']({
+            kind: 'tts',
             cueId,
             text,
             voiceSettings,
@@ -931,10 +936,10 @@ export default function App() {
           await placeOnComp(cueId, take, target.kind === 'clip' ? target.clipId : undefined)
           if (announce) pushStatus('ok', 'Take placed')
         },
-        onError: (e) => pushStatus('err', String(e)),
-      })
+        (e) => pushStatus('err', String(e))
+      )
     },
-    [submitJob, onTakeAdded, pushStatus, projectRef, placeOnComp]
+    [onTakeAdded, pushStatus, projectRef, placeOnComp]
   )
 
   const refuseWithoutKey = useCallback((): boolean => {
@@ -1636,6 +1641,7 @@ export default function App() {
         const plan = await api['export:planBatch']({ cueIds: [cueId] })
         const job = plan.jobs[0]
         if (!job) {
+          await api['export:abort'](plan.token)
           pushStatus('err', 'Nothing to export')
           return
         }

@@ -20,9 +20,9 @@ import {
   saveVersionSchema,
   restoreVersionSchema,
   stemsSchema,
-  stsSchema,
   templateDirSchema,
-  ttsSchema,
+  genRunSchema,
+  jobIdsSchema,
   recAbortSchema,
   recBeginSchema,
   recChunkSchema,
@@ -35,18 +35,14 @@ import { emit } from './emit'
 import * as store from './project-store'
 import { voiceProvider } from './providers/voice-provider'
 import { setApiKey } from './secrets'
-import { runFfmpeg } from './ffmpeg'
+import { decodedDuration, runFfmpeg } from './ffmpeg'
 import { parseCsv } from '@shared/csv'
-import { applyRules } from '@shared/pronunciation'
-import { NO_LANGUAGE_CODE_MODEL } from '@shared/provider-models'
 import { DEFAULT_EXPORT_TEMPLATE } from '@shared/export-plan'
 import { ASSET_EXTENSIONS, inPlaceKind } from '@shared/asset-readers'
 import {
   ASSET_ROW_MAX,
-  emptyEdits,
   singleFlight,
   serialQueue,
-  MAX_STS_SECONDS,
   type Cue,
   type ProjectVersion,
   type Stem,
@@ -57,6 +53,7 @@ import type { Project } from '@shared/domain'
 import type {
   AppSettings,
   AudioImportResult,
+  GenJob,
   ReimportResult,
   TableImportResult,
   AssetAddResult,
@@ -78,6 +75,7 @@ import { importAudio, probeTakeDurations } from './audio-import'
 import { applyTakeDurations, pendingTakeDurations, type TakeDurationEntry } from '@shared/library'
 import { importTableFile, previewTableFile, readTable } from './table-import'
 import {
+  abortBatchExport,
   abortVideoExport,
   appendVideoChunk,
   copyJob,
@@ -103,7 +101,7 @@ import { applyAlienMigration } from './satisfactory-preset'
 import { checkForUpdates, getUpdateStatus, initializeUpdater, restartToUpdate } from './updater'
 import { SerialProjectRepository } from './project-repository'
 import { transcribeCues } from './transcribe'
-import { appendTake, importTakeFile, takeBase, type TakeSession } from './take-append'
+import { importTakeFile, takeBase, type TakeSession } from './take-append'
 import {
   abortRecording,
   appendRecording,
@@ -111,6 +109,7 @@ import {
   closeRecordings,
   finishPasses,
   finishRecording,
+  recordingActive,
   recoverRecordings,
 } from './recording-session'
 import { audioWithinRoots, type ChangeSet, type CommandResult } from '@shared/project-commands'
@@ -129,6 +128,10 @@ import { closeRenderWorker, renderExportPlan, renderLineWav, renderWorker, settl
 import { hardenedWindow, loadRenderer, uiWindows } from './windows'
 import { renderFileName, requireRevision } from '@shared/agent-render'
 import type { BatchExportResult } from '@shared/ipc'
+import { createGenerationQueue, type QueuedGeneration } from './gen-queue'
+import { createStsTake, createTtsTake } from './generate'
+import { exportRefusal, recordingRefusal, type JobOrigin } from '@shared/jobs'
+import { jobChars } from '@shared/provider-models'
 
 const primaryInstance = app.requestSingleInstanceLock()
 if (!primaryInstance) app.quit()
@@ -279,9 +282,22 @@ const transcribeSchema = z.object({
 })
 
 let projectRepository: SerialProjectRepository | null = null
+let restoringVersion = false
+
+const generations = createGenerationQueue({
+  guard: (cueId) => ({ exporting: exportBusy(), restoring: restoringVersion, recording: recordingActive(cueId) }),
+  changed: (snapshot) => emit('jobs:changed', snapshot),
+})
+
+function refuseExportWhileGenerating(): void {
+  const refusal = exportRefusal(generations.owned(projectRepository))
+  if (refusal) throw new Error(refusal)
+}
+
 function resetRepository(project: Project, revision = 0): SerialProjectRepository {
   cancelExports()
   projectRepository = new SerialProjectRepository(project, store.persistProjectFile, undefined, revision)
+  generations.retire(projectRepository)
   store.adoptProject(projectRepository.projectForMain())
   return projectRepository
 }
@@ -289,6 +305,7 @@ function resetRepository(project: Project, revision = 0): SerialProjectRepositor
 async function detachCurrentRepository(): Promise<void> {
   cancelExports()
   closeRenderWorker()
+  generations.retire(null)
   const repository = projectRepository
   await repository?.detach()
   if (repository) await closeRecordings(repository)
@@ -299,6 +316,7 @@ async function detachCurrentRepository(): Promise<void> {
 function abandonProject(): void {
   cancelExports()
   closeRenderWorker()
+  generations.retire(null)
   if (projectRepository) void closeRecordings(projectRepository)
   projectRepository = null
   clearAssetCache()
@@ -453,8 +471,6 @@ const emptyProjectBase = (name: string): Omit<Project, 'id' | 'schemaVersion' | 
   exportTemplate: DEFAULT_EXPORT_TEMPLATE,
   ui: { filter: '', search: '' },
 })
-
-let restoringVersion = false
 
 function announceProject(from?: WebContents): void {
   if (projectRepository) emit('project:opened', projectRepository.snapshot(), from)
@@ -652,6 +668,53 @@ function reimportTemplateDir(dir: string, expected?: SerialProjectRepository): P
   })
 }
 
+function queueGeneration(
+  req: GenJob,
+  origin: JobOrigin,
+  expected?: SerialProjectRepository,
+  after?: (take: Take) => Promise<void>
+): QueuedGeneration {
+  const repository = liveRepository(expected)
+  const session = requireSession()
+  const chars = jobChars(req, repository.projectForMain().pronunciationRules)
+  return generations.submit({
+    kind: req.kind,
+    cueId: req.cueId,
+    origin,
+    chars,
+    owner: repository,
+    run: async () => {
+      const provider = voiceProvider()
+      try {
+        const take =
+          req.kind === 'tts'
+            ? await createTtsTake(session, req, provider, emitChange)
+            : await createStsTake(session, req, provider, emitChange)
+        pushUsage()
+        await after?.(take)
+        return take
+      } catch (error) {
+        throw repository.isLive() ? error : new Error('The project was closed or switched during generation.')
+      }
+    },
+  })
+}
+
+async function measureTake(cueId: string, take: Take, expected: SerialProjectRepository, admit?: () => void): Promise<number> {
+  const duration = await decodedDuration(take.file.relPath)
+  if (!duration) throw new Error('The new take could not be measured.')
+  const entry = { cueId, takeId: take.id, duration }
+  let applied: TakeDurationEntry[] = []
+  await publish(liveRepository(expected), (project) => {
+    admit?.()
+    const result = applyTakeDurations(project, [entry])
+    applied = result.applied
+    return result.cues.length > 0 ? { cues: result.cues } : null
+  })
+  if (applied.length > 0) emit('takes:durations', applied)
+  return duration
+}
+
 function transcribe(
   req: { cueIds: string[]; overwrite?: boolean },
   expected?: SerialProjectRepository
@@ -807,9 +870,11 @@ function registerHandlers(): void {
   })
 
   typedHandle('rec:begin', (req) => {
-    if (restoringVersion) throw new Error('Restoring version')
     const parsed = recBeginSchema.parse(req)
-    return beginRecording(requireSession(), parsed.cueId, parsed.sampleRate, parsed.bitDepth)
+    const session = requireSession()
+    const refusal = recordingRefusal(generations.check(parsed.cueId))
+    if (refusal) throw new Error(refusal)
+    return beginRecording(session, parsed.cueId, parsed.sampleRate, parsed.bitDepth)
   })
 
   typedHandle('rec:chunk', (req) => {
@@ -885,125 +950,9 @@ function registerHandlers(): void {
     return stemsSchema.parse(stems) as Stem[]
   })
 
-  typedHandle('provider:tts', async (req) => {
-    const parsed = ttsSchema.parse(req)
-    const session = requireSession()
-    const project = session.repository.projectForMain()
-    const cue = project.cues.find((c) => c.id === parsed.cueId)
-    if (!cue) throw new Error('Cue not found')
-    const character = project.characters.find((c) => c.id === cue.characterId)
-    if (!character) throw new Error('Line has no character')
-    if (!character.provider.voiceId) {
-      throw new Error(`No voice configured for character "${character.name}"`)
-    }
-    const voiceId = character.provider.voiceId
-    const processed = applyRules(parsed.text, project.pronunciationRules)
-    const mode = project.provider?.tts
-    const projectModel = mode?.model ?? character.provider.ttsModel
-    const model = parsed.model ?? projectModel
-    const provider = voiceProvider()
-    const { audio, words } = await provider.ttsWithTimestamps({
-      text: processed,
-      voiceId,
-      model,
-      ...(mode?.language && model === projectModel && model !== NO_LANGUAGE_CODE_MODEL
-        ? { language: mode.language }
-        : {}),
-      settings: parsed.voiceSettings,
-    })
-    const fileName = `${takeBase()}_tts.mp3`
-    const take = await appendTake(
-      session,
-      parsed.cueId,
-      fileName,
-      audio,
-      emitChange,
-      (target, abs) => ({
-        take: {
-          id: randomUUID(),
-          kind: 'tts',
-          createdAt: new Date().toISOString(),
-          file: { fileId: `${target.id}/${fileName}`, relPath: abs, format: 'mp3' },
-          duration: 0,
-          meta: { text: processed, voiceSettings: parsed.voiceSettings, provider: provider.id, model },
-          edits: emptyEdits(),
-          ...(words ? { words } : {}),
-          ...(parsed.fragment ? { fragment: true as const } : {}),
-        },
-        select: autoSelectsOutput(parsed, false),
-      }),
-      { characterId: character.id, voiceId }
-    )
-    pushUsage()
-    return take
-  })
-
-  typedHandle('provider:sts', async (req) => {
-    const parsed = stsSchema.parse(req)
-    const session = requireSession()
-    const project = session.repository.projectForMain()
-    const cue = project.cues.find((c) => c.id === parsed.cueId)
-    if (!cue) throw new Error('Cue not found')
-    const source = cue.takes.find((t) => t.id === parsed.sourceTakeId)
-    if (!source) throw new Error('Source recording not found in this cue')
-    if (source.kind !== 'recording') {
-      throw new Error('Only a raw voice recording can be converted (take kind "recording")')
-    }
-    if (source.duration > MAX_STS_SECONDS) {
-      throw new Error(
-        `Recording is ${source.duration.toFixed(1)}s — ElevenLabs accepts at most ${MAX_STS_SECONDS / 60} min per request`
-      )
-    }
-
-    const character = project.characters.find((c) => c.id === cue.characterId)
-    if (!character) throw new Error('Line has no character')
-    if (!character.provider.voiceId) {
-      throw new Error(`No voice configured for character "${character.name}"`)
-    }
-
-    const audio = await fs.readFile(source.file.relPath)
-    const model = project.provider?.sts?.model ?? character.provider.stsModel
-    const voiceId = character.provider.voiceId
-    const provider = voiceProvider()
-    const mp3 = await provider.sts({
-      audio,
-      filename: path.basename(source.file.relPath),
-      voiceId,
-      model,
-      settings: parsed.voiceSettings,
-    })
-
-    const fileName = `${takeBase()}_sts.mp3`
-    const take = await appendTake(
-      session,
-      parsed.cueId,
-      fileName,
-      mp3,
-      emitChange,
-      (target, abs) => ({
-        take: {
-          id: randomUUID(),
-          kind: 'sts',
-          createdAt: new Date().toISOString(),
-          file: { fileId: `${target.id}/${fileName}`, relPath: abs, format: 'mp3' },
-          duration: source.duration,
-          meta: {
-            text: target.text,
-            voiceSettings: parsed.voiceSettings,
-            sourceTakeId: source.id,
-            provider: provider.id,
-            model,
-          },
-          edits: emptyEdits(),
-          ...(parsed.fragment ? { fragment: true as const } : {}),
-        },
-        select: autoSelectsOutput(parsed, target.status === 'approved'),
-      }),
-      { characterId: character.id, voiceId }
-    )
-    pushUsage()
-    return take
-  })
+  typedHandle('gen:run', (req) => queueGeneration(genRunSchema.parse(req), 'ui').done)
+  typedHandle('gen:cancel', async (ids) => generations.cancel(jobIdsSchema.parse(ids)))
+  typedHandle('gen:list', async () => generations.snapshot())
 
   typedHandle('provider:transcribe', (req) => transcribe(req))
 
@@ -1051,7 +1000,11 @@ function registerHandlers(): void {
 
   typedHandle('csv:sync', () => syncCsv())
 
-  typedHandleFrom('export:planBatch', async (sender, req) => planBatchExport(batchExportSchema.parse(req), sender.id))
+  typedHandleFrom('export:planBatch', async (sender, req) => {
+    const parsed = batchExportSchema.parse(req)
+    refuseExportWhileGenerating()
+    return planBatchExport(parsed, sender.id)
+  })
   typedHandle('export:info', () => exportInfo())
   typedHandle('export:pickDir', async () => {
     const options: Electron.OpenDialogOptions = {
@@ -1064,6 +1017,7 @@ function registerHandlers(): void {
   })
   typedHandle('export:copy', (outPath: string) => copyJob(z.string().min(1).parse(outPath)))
   typedHandle('export:encode', (outPath, wav) => encodeJob(z.string().min(1).parse(outPath), wav))
+  typedHandle('export:abort', async (token: string) => abortBatchExport(z.string().uuid().parse(token)))
   typedHandle('export:finish', (token, summary) => {
     const parsed = exportSummarySchema.parse(summary)
     const planToken = z.string().uuid().parse(token)
@@ -1078,9 +1032,11 @@ function registerHandlers(): void {
     )
   })
 
-  typedHandle('export:videoPlan', (sourceId: string) =>
-    planVideoExport(z.string().min(1).max(200).parse(sourceId))
-  )
+  typedHandle('export:videoPlan', (sourceId: string) => {
+    const parsed = z.string().min(1).max(200).parse(sourceId)
+    refuseExportWhileGenerating()
+    return planVideoExport(parsed)
+  })
   typedHandle('export:videoChunk', (token, pcm, sampleRate, channels) =>
     appendVideoChunk(
       z.string().uuid().parse(token),
@@ -1130,6 +1086,7 @@ const serialAgentExport = serialQueue()
 function requireExportIdle(expected?: SerialProjectRepository): void {
   liveRepository(expected)
   if (exportBusy()) throw new Error('The app is exporting; wait for that export to finish, then retry.')
+  refuseExportWhileGenerating()
 }
 
 function exportForAgent(cueIds: string[], expected?: SerialProjectRepository): Promise<BatchExportResult> {
@@ -1198,6 +1155,10 @@ function agentServerSpec(): McpServer {
       exportLines: exportForAgent,
       transcribeFile,
       provider: voiceProvider,
+      generation: generations,
+      queueGeneration: (req, expected, after) => queueGeneration(req, 'agent', expected, after),
+      measureTake,
+      settings: store.getSettings,
       diagnostics,
       screenshot: async () => {
         const win = uiWindow()
