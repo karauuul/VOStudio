@@ -52,7 +52,7 @@ export const agentPrompts: McpPrompt[] = [
     text: () =>
       steps('Self-check VO Studio through its tools. Stop at the first failure and report it.', [
         '`status`: provider is mock; otherwise stop, because generation would cost money.',
-        '`project_open` with create "Smoke test".',
+        '`projects`, then `project_open` with create "Smoke test N" using the lowest N not already taken.',
         '`lines_edit` add three lines with short text; `voices`; `character_set` create a character with the first voice; `characters_assign` with apply set for every line.',
         '`generate` with filter all and dryRun true, then with wait; `jobs`: every job done without error.',
         '`render` one line: duration above 0 and finite LUFS.',
