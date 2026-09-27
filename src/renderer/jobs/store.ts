@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import {
   cueHasPending,
+  dropQueued,
   enqueue,
   isTerminal,
   fail,
@@ -15,7 +16,7 @@ import {
 export interface JobSpec {
   kind: JobKind
   cueId: string
-  run: () => Promise<void>
+  run: (live: () => boolean) => Promise<void>
   onError?: (error: unknown) => void
 }
 
@@ -28,6 +29,7 @@ interface JobsState {
 }
 
 const runners = new Map<string, JobSpec>()
+let generation = 0
 
 const newId = (): string =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -58,21 +60,31 @@ function pump(): void {
     pump()
     return
   }
+  const started = generation
+  const live = (): boolean => generation === started
   const done = (): void => {
     runners.delete(next.id)
     pump()
   }
-  void spec.run().then(
+  void spec.run(live).then(
     () => {
       useJobsStore.setState((s) => ({ jobs: finish(s.jobs, next.id) }))
       done()
     },
     (e: unknown) => {
       useJobsStore.setState((s) => ({ jobs: fail(s.jobs, next.id, String(e)) }))
-      spec.onError?.(e)
+      if (live()) spec.onError?.(e)
       done()
     }
   )
+}
+
+export const cancelQueuedJobs = (): void => {
+  generation++
+  const { jobs } = useJobsStore.getState()
+  const kept = dropQueued(jobs)
+  for (const j of jobs) if (!kept.includes(j)) runners.delete(j.id)
+  useJobsStore.setState({ jobs: kept })
 }
 
 export const clearTerminalJobs = (): void =>

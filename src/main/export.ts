@@ -57,6 +57,7 @@ import { ffmpegStderr, runFfmpeg } from './ffmpeg'
 import { muxVideo } from './sources'
 
 const MAX_ENCODE_BYTES = 600 * 1024 * 1024
+const PROJECT_CHANGED = 'Export cancelled: the project changed'
 const VIDEO_CHUNK_SECONDS = 60
 
 function ctx(): { project: Project; dir: string } {
@@ -78,6 +79,7 @@ interface BatchPlan {
   project: Project
   outDir: string
   stagingDir: string
+  live: boolean
 }
 
 let batchPlan: BatchPlan | null = null
@@ -157,15 +159,16 @@ export async function planBatchExport(req: BatchExportRequest): Promise<ExportPl
   const token = randomUUID()
   const stagingDir = path.join(dir, STAGING_DIR)
   const jobs = toJobs(items, path.join(stagingDir, 'audio'), project)
-  await fs.rm(stagingDir, { recursive: true, force: true })
-  batchPlan = { token, project: structuredClone(project), outDir, stagingDir }
+  batchPlan = { token, project: structuredClone(project), outDir, stagingDir, live: true }
   planned = new Map(jobs.map((j) => [j.outPath, j]))
+  await fs.rm(stagingDir, { recursive: true, force: true })
   return { token, jobs, outDir }
 }
 
 function jobFor(outPath: string): ExportJob {
   const job = planned.get(outPath)
   if (!job) throw new Error(`"${outPath}" is not part of the current export plan`)
+  if (!batchPlan?.live) throw new Error(PROJECT_CHANGED)
   return job
 }
 
@@ -265,10 +268,12 @@ async function copyTree(from: string, to: string): Promise<void> {
 export async function finishExport(
   token: string,
   summary: ExportSummary,
-  version?: number
+  stamp: () => Promise<number | undefined>
 ): Promise<DeliverPaths> {
   if (!batchPlan || token !== batchPlan.token) throw new Error('This batch export plan is no longer current')
+  if (!batchPlan.live) throw new Error(PROJECT_CHANGED)
   if (ctx().project.id !== batchPlan.project.id) throw new Error('The exported project is no longer open')
+  const version = await stamp()
   const { project, outDir, stagingDir } = batchPlan
   for (const f of summary.failed) {
     const outPath = path.join(stagingDir, 'audio', f.name)
@@ -323,6 +328,7 @@ interface VideoRun {
   handle: FileHandle | null
   sampleRate: number
   channels: number
+  live: boolean
 }
 
 let videoRun: VideoRun | null = null
@@ -337,7 +343,7 @@ export async function planVideoExport(sourceId: string): Promise<VideoExportPlan
   const mode = videoMode(project.export)
   const name = videoName(project.export, source.name, project.languages?.target ?? '', mode)
   const plan = videoTimelinePlan(source.file.relPath, source.duration, lines)
-  await closeVideoRun()
+  const previous = videoRun
   const token = randomUUID()
   const raw = path.join(os.tmpdir(), `vostudio-video-${token}.f32`)
   videoRun = {
@@ -348,7 +354,9 @@ export async function planVideoExport(sourceId: string): Promise<VideoExportPlan
     handle: null,
     sampleRate: 0,
     channels: 0,
+    live: true,
   }
+  if (previous) await releaseVideoRun(previous)
   return {
     token,
     sourceId,
@@ -363,16 +371,29 @@ export async function planVideoExport(sourceId: string): Promise<VideoExportPlan
   }
 }
 
+async function releaseVideoRun(run: VideoRun): Promise<void> {
+  const handle = run.handle
+  run.handle = null
+  await handle?.close().catch(() => undefined)
+  await fs.rm(run.raw, { force: true }).catch(() => undefined)
+}
+
 async function closeVideoRun(): Promise<void> {
   const run = videoRun
   videoRun = null
-  if (!run) return
-  await run.handle?.close().catch(() => undefined)
-  await fs.rm(run.raw, { force: true }).catch(() => undefined)
+  if (run) await releaseVideoRun(run)
+}
+
+export function cancelExports(): void {
+  if (batchPlan) batchPlan.live = false
+  if (!videoRun?.live) return
+  videoRun.live = false
+  void releaseVideoRun(videoRun)
 }
 
 function videoFor(token: string): VideoRun {
   if (!videoRun || videoRun.token !== token) throw new Error('This video export is no longer current')
+  if (!videoRun.live) throw new Error(PROJECT_CHANGED)
   return videoRun
 }
 

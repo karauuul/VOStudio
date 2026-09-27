@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cueHasPending,
+  dropQueued,
   enqueue,
   fail,
   finish,
@@ -141,5 +142,27 @@ describe('trimming the tail of finished jobs', () => {
     }
     expect(jobs[0].id).toBe('j3')
     expect(jobs[jobs.length - 1].id).toBe(`j${KEEP_TERMINAL + 2}`)
+  })
+})
+
+describe('dropQueued — a project switch cancels what has not started', () => {
+  it('removes queued jobs and keeps running and finished ones in order', () => {
+    let jobs = add(add(add(add([], 'a'), 'b'), 'c'), 'd')
+    jobs = finish(start(jobs, 'a'), 'a')
+    jobs = start(jobs, 'b')
+    const kept = dropQueued(jobs)
+    expect(kept.map((j) => [j.id, j.state])).toEqual([
+      ['a', 'done'],
+      ['b', 'running'],
+    ])
+    expect(pendingCount(kept)).toBe(1)
+    expect(nextQueued(kept)).toBeNull()
+  })
+
+  it('does not mutate the input and keeps untouched jobs by identity', () => {
+    const jobs = start(add(add([], 'a'), 'b'), 'a')
+    const kept = dropQueued(jobs)
+    expect(jobs).toHaveLength(2)
+    expect(kept[0]).toBe(jobs[0])
   })
 })

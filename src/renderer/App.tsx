@@ -30,6 +30,7 @@ import { clipId, setOutputDevice, transport } from './audio/transport'
 import { playback } from './playback'
 import {
   busyCountNow,
+  cancelQueuedJobs,
   clearTerminalJobs,
   isCueBusyNow,
   useBusyCount,
@@ -199,6 +200,7 @@ export default function App() {
   const afterSelectRef = useRef<{ cueId: string; then: 'focus' | 'record' | StepDir } | null>(null)
   const creatingRef = useRef(false)
   const exportingRef = useRef(false)
+  const exportAbortRef = useRef<AbortController | null>(null)
   const targetTrackRef = useRef<Record<string, string>>({})
   targetTrackRef.current = targetTrack
 
@@ -309,24 +311,28 @@ export default function App() {
     [execute]
   )
 
-  const beginExport = useCallback(async (): Promise<boolean> => {
-    if (refuseWhileExporting()) return false
+  const beginExport = useCallback(async (): Promise<AbortSignal | null> => {
+    if (refuseWhileExporting()) return null
     if (busyCountNow() > 0) {
       pushStatus('info', 'Generation is still running')
-      return false
+      return null
     }
     exportingRef.current = true
+    const controller = new AbortController()
+    exportAbortRef.current = controller
     const saved = await flushText()
     await flushVoice()
-    if (!saved) {
+    if (!saved || controller.signal.aborted) {
+      exportAbortRef.current = null
       exportingRef.current = false
-      return false
+      return null
     }
     setExporting(true)
-    return true
+    return controller.signal
   }, [flushText, flushVoice, pushStatus])
 
   const endExport = useCallback(() => {
+    exportAbortRef.current = null
     exportingRef.current = false
     setExporting(false)
     refreshExported()
@@ -879,7 +885,7 @@ export default function App() {
       submitJob({
         kind: 'tts',
         cueId,
-        run: async () => {
+        run: async (live) => {
           if (announce) pushStatus('info', 'Generating TTS…')
           const project = projectRef.current
           const cue = project?.cues.find((c) => c.id === cueId)
@@ -894,6 +900,7 @@ export default function App() {
             ...(model ? { model } : {}),
             ...(target.kind === 'all' ? {} : { fragment: true }),
           })
+          if (!live()) return
           onTakeAdded(cueId, take)
           await placeOnComp(cueId, take, target.kind === 'clip' ? target.clipId : undefined)
           if (announce) pushStatus('ok', 'Take placed')
@@ -1064,22 +1071,31 @@ export default function App() {
     leftProject()
   }, [session, leftProject])
 
+  const stopProjectWork = useCallback(() => {
+    cancelQueuedJobs()
+    const running = exportAbortRef.current
+    if (running && !running.signal.aborted) {
+      running.abort()
+      pushStatus('info', 'Export cancelled: the project changed')
+    }
+    abandonSession()
+    leftProject()
+  }, [abandonSession, leftProject, pushStatus])
+
   useEffect(() => {
     const offOpened = api.on('project:opened', (snapshot) => {
-      abandonSession()
-      leftProject()
+      stopProjectWork()
       enterProject(parseSnapshot(snapshot))
     })
     const offClosed = api.on('project:closed', () => {
-      abandonSession()
+      stopProjectWork()
       setProject(null)
-      leftProject()
     })
     return () => {
       offOpened()
       offClosed()
     }
-  }, [abandonSession, enterProject, setProject, leftProject])
+  }, [stopProjectWork, enterProject, setProject])
 
   const goHome = useCallback(() => {
     if (refuseWhileExporting()) return
@@ -1562,7 +1578,8 @@ export default function App() {
 
   const exportLine = useCallback(
     async (cueId: string): Promise<void> => {
-      if (!(await beginExport())) return
+      const signal = await beginExport()
+      if (!signal) return
       try {
         const plan = await api['export:planBatch']({ cueIds: [cueId] })
         const job = plan.jobs[0]
@@ -1570,7 +1587,7 @@ export default function App() {
           pushStatus('err', 'Nothing to export')
           return
         }
-        const result = await runPlan(plan)
+        const result = await runPlan(plan, undefined, signal)
         const failure = result.failed[0]
         if (failure) {
           pushStatus('err', failure.error)
@@ -1579,7 +1596,7 @@ export default function App() {
         pushStatus('ok', `Exported ${job.name}`)
         void api['shell:reveal'](`${plan.outDir}/audio/${job.name}`).catch(() => undefined)
       } catch (e) {
-        pushStatus('err', String(e))
+        if (!signal.aborted) pushStatus('err', String(e))
       } finally {
         endExport()
       }
