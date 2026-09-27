@@ -12,6 +12,7 @@ import {
   start,
   type Job,
   type JobKind,
+  type JobsSnapshot,
 } from '@shared/jobs'
 
 export interface JobSpec {
@@ -24,6 +25,7 @@ export interface JobSpec {
 interface JobsState {
   local: Job[]
   remote: Job[]
+  remoteSeq: number
   jobs: Job[]
   placing: Record<string, number>
   submit: (spec: JobSpec) => string
@@ -49,6 +51,7 @@ const setLocal = (fn: (local: Job[]) => Job[]): void =>
 export const useJobsStore = create<JobsState>((set) => ({
   local: [],
   remote: [],
+  remoteSeq: 0,
   jobs: [],
   placing: {},
   submit: (spec) => {
@@ -91,8 +94,8 @@ function pump(): void {
   )
 }
 
-export const mirrorJobs = (remote: Job[]): void =>
-  useJobsStore.setState((s) => ({ remote, jobs: [...remote, ...s.local] }))
+export const mirrorJobs = ({ seq, jobs: remote }: JobsSnapshot): void =>
+  useJobsStore.setState((s) => (seq > s.remoteSeq ? { remote, remoteSeq: seq, jobs: [...remote, ...s.local] } : {}))
 
 const mark = (cueId: string, delta: number): void =>
   useJobsStore.setState((s) => {

@@ -13,6 +13,11 @@ export interface Job {
   takeId?: string
 }
 
+export interface JobsSnapshot {
+  seq: number
+  jobs: Job[]
+}
+
 export const KEEP_TERMINAL = 100
 
 export const JOB_CANCELLED = 'The job was cancelled before it ran.'

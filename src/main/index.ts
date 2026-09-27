@@ -265,7 +265,7 @@ let restoringVersion = false
 
 const generations = createGenerationQueue({
   guard: (cueId) => ({ exporting: exportActive(), restoring: restoringVersion, recording: recordingActive(cueId) }),
-  changed: (jobs) => emit('jobs:changed', jobs),
+  changed: (snapshot) => emit('jobs:changed', snapshot),
 })
 
 function resetRepository(project: Project, revision = 0): SerialProjectRepository {
@@ -885,6 +885,7 @@ function registerHandlers(): void {
 
   typedHandle('gen:run', (req) => queueGeneration(genRunSchema.parse(req), 'ui').done)
   typedHandle('gen:cancel', async (ids) => generations.cancel(jobIdsSchema.parse(ids)))
+  typedHandle('gen:list', async () => generations.snapshot())
 
   typedHandle('provider:transcribe', (req) => transcribe(req))
 

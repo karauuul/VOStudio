@@ -21,7 +21,7 @@ import type { ProjectSummary } from './project-summary'
 import type { PcmBitDepth } from './wav-header'
 import type { LatencySetting } from './punch'
 import type { PassRange } from './loop-record'
-import type { Job } from './jobs'
+import type { JobsSnapshot } from './jobs'
 
 export interface CsvPreview {
   headers: string[]
@@ -349,6 +349,7 @@ export interface IpcApi {
 
   'gen:run': (req: GenRequest) => Promise<Take>
   'gen:cancel': (ids: string[]) => Promise<string[]>
+  'gen:list': () => Promise<JobsSnapshot>
   'provider:transcribe': (req: { cueIds: string[]; overwrite?: boolean }) => Promise<TranscribeResult>
   'provider:voices': () => Promise<ProviderVoice[]>
   'provider:models': () => Promise<ProviderModel[]>
@@ -398,7 +399,7 @@ export interface IpcEvents {
   'project:opened': SerializedSnapshot
   'project:closed': null
   'bridge:request': BridgeRequest
-  'jobs:changed': Job[]
+  'jobs:changed': JobsSnapshot
 }
 
 export type EventChannel = keyof IpcEvents

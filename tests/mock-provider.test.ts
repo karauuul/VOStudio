@@ -45,8 +45,56 @@ describe('voice provider accessor', () => {
     process.env.VOSTUDIO_PROVIDER = 'elevenlabs'
     expect(voiceProvider().id).toBe('elevenlabs')
     process.env.VOSTUDIO_PROVIDER = 'mock'
-    expect(voiceProvider()).toBe(mockProvider)
+    expect(voiceProvider().id).toBe('mock')
+    expect(voiceProvider()).toBe(voiceProvider())
     expect(await voiceProvider().hasApiKey()).toBe(true)
+  })
+
+  it('serializes every audio call across callers and leaves metadata calls free', async () => {
+    process.env.VOSTUDIO_PROVIDER = 'mock'
+    const provider = voiceProvider()
+    const started: string[] = []
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    const audio = Buffer.from('x')
+    const spies = [
+      vi.spyOn(mockProvider, 'stt').mockImplementation(async () => {
+        started.push('stt')
+        await held
+        return 'text'
+      }),
+      ...(['tts', 'sts', 'audioIsolation'] as const).map((name) =>
+        vi.spyOn(mockProvider, name).mockImplementation(async () => {
+          started.push(name)
+          return audio
+        })
+      ),
+      vi.spyOn(mockProvider, 'ttsWithTimestamps').mockImplementation(async () => {
+        started.push('ttsWithTimestamps')
+        return { audio }
+      }),
+      vi.spyOn(mockProvider, 'sttWords').mockImplementation(async () => {
+        started.push('sttWords')
+        return []
+      }),
+    ]
+    const file = { audio, filename: 'a.wav' }
+    const calls = Promise.all([
+      provider.stt(file),
+      provider.tts(request()),
+      provider.ttsWithTimestamps(request()),
+      provider.sts({ ...file, voiceId: 'mock-alto', model: 'm', settings: DEFAULT_VOICE_SETTINGS }),
+      provider.audioIsolation(file),
+      provider.sttWords(file),
+    ])
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(started).toEqual(['stt'])
+    expect((await provider.voices()).length).toBeGreaterThan(0)
+    expect(await provider.usage()).not.toBeNull()
+    release()
+    await calls
+    expect(started).toEqual(['stt', 'tts', 'ttsWithTimestamps', 'sts', 'audioIsolation', 'sttWords'])
+    for (const spy of spies) spy.mockRestore()
   })
 })
 

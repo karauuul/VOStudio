@@ -211,7 +211,11 @@ export default function App() {
   const busyCount = useBusyCount()
   const activeCueBusy = useCueBusy(activeCueId ?? '')
 
-  useEffect(() => api.on('jobs:changed', mirrorJobs), [])
+  useEffect(() => {
+    const off = api.on('jobs:changed', mirrorJobs)
+    void api['gen:list']().then(mirrorJobs)
+    return off
+  }, [])
 
   useEffect(() => {
     activeCueIdRef.current = activeCueId

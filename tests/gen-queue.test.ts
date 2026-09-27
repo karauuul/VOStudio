@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createGenerationQueue, type GenerationSpec } from '../src/main/gen-queue'
 import { emptyEdits, type Take } from '../src/shared/domain'
-import { JOB_CANCELLED, JOB_RETIRED, type Job } from '../src/shared/jobs'
+import { JOB_CANCELLED, JOB_RETIRED, type JobsSnapshot } from '../src/shared/jobs'
 
 const take = (id: string): Take => ({
   id,
@@ -24,8 +24,8 @@ function deferred(): { promise: Promise<Take>; resolve: (t: Take) => void; rejec
 }
 
 function setup(guard = { exporting: false, restoring: false, recording: false }) {
-  const published: Job[][] = []
-  const queue = createGenerationQueue({ guard: () => guard, changed: (jobs) => published.push(jobs) })
+  const published: JobsSnapshot[] = []
+  const queue = createGenerationQueue({ guard: () => guard, changed: (snapshot) => published.push(snapshot) })
   const owner = {}
   const spec = (cueId: string, run: () => Promise<Take>, extra: Partial<GenerationSpec> = {}): GenerationSpec => ({
     kind: 'tts',
@@ -140,9 +140,18 @@ describe('main generation queue', () => {
     await aborted
   })
 
-  it('publishes every change', () => {
+  it('publishes every change with a rising sequence that the snapshot repeats', async () => {
     const { queue, spec, published } = setup()
-    queue.submit(spec('c1', () => deferred().promise))
-    expect(published.at(-1)?.map((j) => j.state)).toEqual(['running'])
+    expect(queue.snapshot()).toEqual({ seq: 0, jobs: [] })
+    const first = deferred()
+    const a = queue.submit(spec('c1', () => first.promise))
+    expect(published.at(-1)?.jobs.map((j) => j.state)).toEqual(['running'])
+    first.resolve(take('t1'))
+    await a.done
+    await flush()
+    const seqs = published.map((p) => p.seq)
+    expect(seqs).toEqual(seqs.map((_, i) => i + 1))
+    expect(queue.snapshot()).toEqual(published.at(-1))
+    expect(queue.snapshot().jobs.map((j) => j.state)).toEqual(['done'])
   })
 })

@@ -42,6 +42,7 @@ const channelMap: Record<IpcChannel, true> = {
 
   'gen:run': true,
   'gen:cancel': true,
+  'gen:list': true,
   'provider:transcribe': true,
   'provider:voices': true,
   'provider:models': true,

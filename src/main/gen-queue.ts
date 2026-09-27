@@ -15,8 +15,8 @@ import {
   type GenerationGuard,
   type Job,
   type JobOrigin,
+  type JobsSnapshot,
 } from '@shared/jobs'
-
 
 export interface GenerationSpec {
   kind: 'tts' | 'sts'
@@ -37,6 +37,7 @@ export interface GenerationQueue {
   cancel: (ids: readonly string[]) => string[]
   retire: (owner: object | null) => void
   list: () => Job[]
+  snapshot: () => JobsSnapshot
   check: (cueId: string) => GenerationGuard
   settle: (ids: readonly string[], ms: number, signal: AbortSignal, progress: (done: number, total: number) => void) => Promise<void>
 }
@@ -51,18 +52,20 @@ const asError = (error: unknown): Error => (error instanceof Error ? error : new
 
 export function createGenerationQueue(options: {
   guard: (cueId: string) => Omit<GenerationGuard, 'lineBusy'>
-  changed: (jobs: Job[]) => void
+  changed: (snapshot: JobsSnapshot) => void
 }): GenerationQueue {
   let jobs: Job[] = []
+  let seq = 0
   const entries = new Map<string, Entry>()
   const owners = new Map<string, object>()
   const listeners = new Set<() => void>()
 
   const publish = (next: Job[]): void => {
     jobs = next
+    seq++
     const kept = new Set(jobs.map((j) => j.id))
     for (const id of owners.keys()) if (!kept.has(id)) owners.delete(id)
-    options.changed(jobs)
+    options.changed({ seq, jobs })
     for (const listener of [...listeners]) listener()
   }
 
@@ -129,6 +132,7 @@ export function createGenerationQueue(options: {
       for (const j of dropped) settleEntry(j.id, new Error(JOB_RETIRED))
     },
     list: () => jobs,
+    snapshot: () => ({ seq, jobs }),
     check,
     settle(ids, ms, signal, progress) {
       return new Promise((resolve) => {
