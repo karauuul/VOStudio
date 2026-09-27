@@ -1,4 +1,4 @@
-import { clipSpeed, emptyEdits, type Cue, type CueComp } from './domain'
+import { clipSpeed, emptyEdits, type Cue, type CueComp, type VoiceSettings } from './domain'
 import { clipText, placeClip, resolveTake, resolveTargetTrack, type TakeLookup } from './library'
 
 export type GenTarget =
@@ -124,3 +124,11 @@ export const fromPercent = (n: number): number =>
 
 export const clampSpeed = (v: number): number =>
   Number.isFinite(v) ? Math.round(clamp(v, SPEED_MIN, SPEED_MAX) * 100) / 100 : 1
+
+export const clampVoiceSettings = (settings: VoiceSettings): VoiceSettings => ({
+  stability: fromPercent(toPercent(settings.stability)),
+  similarity: fromPercent(toPercent(settings.similarity)),
+  style: fromPercent(toPercent(settings.style)),
+  speed: clampSpeed(settings.speed),
+  boost: settings.boost,
+})

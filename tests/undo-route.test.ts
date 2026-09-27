@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { pickHistory, redoStale } from '../src/shared/undo-route'
+import { emptyEdits, type Cue, type CueComp } from '../src/shared/domain'
+import { externalChanges, pickHistory, redoStale, takeKey } from '../src/shared/undo-route'
 
 describe('undo routing between comp and take-effect histories', () => {
   it('undoes the newer entry first', () => {
@@ -50,5 +51,33 @@ describe('undo routing between comp and take-effect histories', () => {
       else if (side === 'fx') order.push(`fx${fx.pop()}`)
     }
     expect(order).toEqual(['comp3', 'fx2', 'comp1'])
+  })
+})
+
+describe('external changes that invalidate local undo', () => {
+  const comp = (start: number): CueComp => ({ clips: [{ id: 'k', sourceTakeId: 't', srcIn: 0, srcOut: 1, start, edits: emptyEdits() }] })
+  const line = (id: string, extra: Partial<Cue> = {}): Cue => ({
+    id, characterId: '', key: id, fields: {}, sourceText: '', text: '', status: 'empty', notes: '',
+    takes: [{ id: 't', kind: 'tts', createdAt: 'now', file: { fileId: 't', relPath: 't.mp3', format: 'mp3' }, duration: 1, meta: {}, edits: emptyEdits() }],
+    ...extra,
+  })
+
+  it('flags cues whose composition differs from what the renderer holds', () => {
+    const before = { cues: [line('a', { comp: comp(0) }), line('b', { comp: comp(0) }), line('c')] }
+    const changes = { cues: [line('a', { comp: comp(2) }), line('b', { comp: comp(0), text: 'typed' }), line('c', { comp: { clips: [] } })] }
+    expect([...externalChanges(before, changes).comps]).toEqual(['a'])
+  })
+
+  it('flags takes whose effects changed', () => {
+    const before = { cues: [line('a')] }
+    const changed = line('a')
+    changed.takes[0].edits = { ...emptyEdits(), effects: { reverb: { mix: 0.3, size: 0.5, decay: 1 } } }
+    expect([...externalChanges(before, { cues: [changed] }).effects]).toEqual([takeKey('a', 't')])
+    expect(externalChanges(before, { cues: [line('a')] }).effects.size).toBe(0)
+  })
+
+  it('ignores change sets without cues', () => {
+    const none = externalChanges(null, { name: 'x' })
+    expect(none.comps.size + none.effects.size).toBe(0)
   })
 })

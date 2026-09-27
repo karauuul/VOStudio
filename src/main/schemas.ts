@@ -605,4 +605,11 @@ export const appSettingsSchema = z.object({
   punchPrerollSeconds: z.number().min(0).max(PUNCH_PREROLL_MAX).multipleOf(PUNCH_PREROLL_STEP).optional(),
   countIn: z.boolean(),
   autoReference: z.boolean(),
+  agentAccess: z.literal(true).optional(),
+})
+
+export const bridgeReplySchema = z.object({
+  id: z.string().uuid(),
+  ok: z.boolean(),
+  error: z.string().max(2000).optional(),
 })

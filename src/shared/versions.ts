@@ -10,3 +10,10 @@ export function restoreBlock(state: {
   if (state.busy) return 'Generation is still running'
   return null
 }
+
+export const GUARD_VERSION_MS = 10 * 60 * 1000
+
+export function needsGuardVersion(versions: readonly { createdAt: string }[], now: number): boolean {
+  const last = Date.parse(versions[versions.length - 1]?.createdAt ?? '')
+  return !(Number.isFinite(last) && now - last < GUARD_VERSION_MS)
+}

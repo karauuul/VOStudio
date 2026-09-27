@@ -19,7 +19,7 @@ import {
   type VoiceSettings,
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '@shared/ipc'
-import { pickHistory, redoStale, type UndoSide } from '@shared/undo-route'
+import { externalChanges, pickHistory, redoStale, takeKey, type UndoSide } from '@shared/undo-route'
 import { dropCompRedo, nextCompEdit, pruneCompHistory, recordCompEdit, type CompHistory } from '@shared/comp-history'
 import { PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
 import { hasSourceMaterial, TABLE_FILE } from '@shared/import-table'
@@ -258,7 +258,15 @@ export default function App() {
     dropCompRedo(compHistRef.current)
   }, [])
 
-  const session = useProjectSession({ onStatus: pushStatus, onBootstrap, onEdit })
+  const onExternal = useCallback((before: Project | null, changes: ChangeSet) => {
+    const external = externalChanges(before, changes)
+    for (const cueId of external.comps) compHistRef.current.delete(cueId)
+    const kept = (entry: TakeEffectsEdit): boolean => !external.effects.has(takeKey(entry.cueId, entry.takeId))
+    fxUndoRef.current = fxUndoRef.current.filter(kept)
+    fxRedoRef.current = fxRedoRef.current.filter(kept)
+  }, [])
+
+  const session = useProjectSession({ onStatus: pushStatus, onBootstrap, onEdit, onExternal })
   const {
     project,
     projectRef,

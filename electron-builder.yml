@@ -15,6 +15,10 @@ files:
   - '!tsconfig.json'
 asarUnpack:
   - node_modules/ffmpeg-static/**
+  - out/main/bridge.js
+extraFiles:
+  - from: build/vostudio-mcp.cmd
+    to: vostudio-mcp.cmd
 win:
   target: nsis
   signAndEditExecutable: false

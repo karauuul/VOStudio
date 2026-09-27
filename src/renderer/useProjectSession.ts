@@ -68,6 +68,7 @@ export function useProjectSession(o: {
   onStatus: (kind: StatusKind, text: string) => void
   onBootstrap: (project: Project) => void
   onEdit: () => void
+  onExternal: (before: Project | null, changes: ChangeSet) => void
 }): ProjectSession {
   const [project, setProject] = useState<Project | null>(null)
   const [, setDraftSeen] = useState(0)
@@ -87,6 +88,8 @@ export function useProjectSession(o: {
   bootstrapRef.current = o.onBootstrap
   const editRef = useRef(o.onEdit)
   editRef.current = o.onEdit
+  const externalRef = useRef(o.onExternal)
+  externalRef.current = o.onExternal
 
   const dispatch = useCallback(async (command: ProjectCommand, replay = false): Promise<ChangeSet> => {
     const result = await api['project:command'](command)
@@ -118,6 +121,7 @@ export function useProjectSession(o: {
         editRef.current()
         if (result.revision <= revisionRef.current) return
         revisionRef.current = result.revision
+        externalRef.current(projectRef.current, result.changes)
         setProject((current) => (current ? applyChangeSet(current, result.changes) : current))
       }),
     []
@@ -283,13 +287,29 @@ export function useProjectSession(o: {
     revisionRef.current = 0
   }, [])
 
+  const flushAll = useCallback(async (): Promise<boolean> => {
+    const saved = await flushText()
+    await flushVoice()
+    if (!saved) return false
+    await flushUi()
+    await durationQueue.flushNow()
+    return true
+  }, [flushText, flushVoice, flushUi])
+
+  useEffect(
+    () =>
+      api.on('bridge:request', ({ id }) => {
+        void flushAll().then(
+          (ok) => api['bridge:reply']({ id, ok, ...(ok ? {} : { error: 'the line text could not be saved' }) }),
+          (e: unknown) => api['bridge:reply']({ id, ok: false, error: String(e) })
+        )
+      }),
+    [flushAll]
+  )
+
   const close = useCallback(async (): Promise<boolean> => {
     try {
-      const saved = await flushText()
-      await flushVoice()
-      if (!saved) return false
-      await flushUi()
-      await durationQueue.flushNow()
+      if (!(await flushAll())) return false
       playback.stop()
       await api['project:close']()
     } catch (e) {
@@ -299,7 +319,7 @@ export function useProjectSession(o: {
     abandon()
     setProject(null)
     return true
-  }, [flushText, flushVoice, flushUi, abandon])
+  }, [flushAll, abandon])
 
   return {
     project,
