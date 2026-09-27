@@ -18,9 +18,22 @@ export interface ToolAnnotations {
   openWorldHint: boolean
 }
 
+export interface McpCall {
+  signal: AbortSignal
+  done: Promise<void>
+}
+
+export interface McpHub {
+  quitting: boolean
+  calls: Set<McpCall>
+}
+
 export interface McpSession {
   inflight: Map<RpcId, AbortController>
+  hub: McpHub
 }
+
+export const APP_QUITTING = 'VO Studio is quitting; retry if app_quit is refused, otherwise start the app again and reconnect.'
 
 export interface ToolContext {
   session: McpSession
@@ -45,10 +58,26 @@ export interface McpTool<I extends z.ZodType = z.ZodType> {
   run(ctx: ToolContext, args: z.output<I>): Promise<ToolOutput>
 }
 
+export interface McpPromptArgument {
+  name: string
+  description: string
+  required: boolean
+  values?: readonly string[]
+}
+
+export interface McpPrompt {
+  name: string
+  title: string
+  description: string
+  arguments: McpPromptArgument[]
+  text(args: Record<string, string>): string
+}
+
 export interface McpServer {
   info: { name: string; version: string }
   instructions: string
   tools: McpTool[]
+  prompts?: McpPrompt[]
   beforeWrite?: (session: McpSession) => Promise<void>
 }
 
@@ -65,7 +94,29 @@ class RpcError extends Error {
 
 export const defineTool = <I extends z.ZodType>(tool: McpTool<I>): McpTool<I> => tool
 
-export const createSession = (): McpSession => ({ inflight: new Map() })
+export const createHub = (): McpHub => ({ quitting: false, calls: new Set() })
+
+export const createSession = (hub: McpHub = createHub()): McpSession => ({ inflight: new Map(), hub })
+
+export async function quitWhenIdle<T>(ctx: ToolContext, timeoutMs: number, quit: () => Promise<T>): Promise<T> {
+  const hub = ctx.session.hub
+  hub.quitting = true
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const others = [...hub.calls].filter((call) => call.signal !== ctx.signal).map((call) => call.done)
+    const idle = await Promise.race([
+      Promise.all(others).then(() => true),
+      new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), timeoutMs))),
+    ])
+    if (!idle) throw new Error(`Other agent calls are still running after ${Math.round(timeoutMs / 1000)} s; wait for them to finish, then retry.`)
+    return await quit()
+  } catch (error) {
+    hub.quitting = false
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 export function endSession(session: McpSession): void {
   for (const controller of session.inflight.values()) controller.abort()
@@ -112,6 +163,37 @@ export function listedTool(tool: McpTool): RpcMessage {
   }
 }
 
+function listedPrompt(prompt: McpPrompt): RpcMessage {
+  return {
+    name: prompt.name,
+    title: prompt.title,
+    description: prompt.description,
+    arguments: prompt.arguments.map(({ name, description, required }) => ({ name, description, required })),
+  }
+}
+
+function getPrompt(prompts: McpPrompt[], params: unknown): RpcMessage {
+  const p = record(params)
+  const prompt = prompts.find((item) => item.name === p.name)
+  if (!prompt) throw new RpcError(RPC_INVALID_PARAMS, `Unknown prompt: ${String(p.name)}`)
+  const given = record(p.arguments)
+  const args: Record<string, string> = {}
+  for (const arg of prompt.arguments) {
+    const value = given[arg.name]
+    if (value !== undefined && typeof value !== 'string') throw new RpcError(RPC_INVALID_PARAMS, `Argument ${arg.name} must be a string`)
+    const text = value?.trim() ?? ''
+    if (!text && arg.required) throw new RpcError(RPC_INVALID_PARAMS, `Missing required argument: ${arg.name}`)
+    if (text && arg.values && !arg.values.includes(text)) {
+      throw new RpcError(RPC_INVALID_PARAMS, `Argument ${arg.name} must be one of ${arg.values.join(', ')}`)
+    }
+    if (text) args[arg.name] = text
+  }
+  return {
+    description: prompt.description,
+    messages: [{ role: 'user', content: { type: 'text', text: prompt.text(args) } }],
+  }
+}
+
 const errorResult = (text: string): RpcMessage => ({ content: [{ type: 'text', text }], isError: true })
 
 function toolResult(output: ToolOutput): RpcMessage {
@@ -134,7 +216,11 @@ async function callTool(server: McpServer, session: McpSession, id: RpcId, param
   if (!tool) throw new RpcError(RPC_INVALID_PARAMS, `Unknown tool: ${String(p.name)}`)
   const parsed = tool.input.safeParse(p.arguments ?? {})
   if (!parsed.success) return errorResult(issueText(parsed.error.issues))
+  if (session.hub.quitting) return errorResult(APP_QUITTING)
   const controller = new AbortController()
+  let finish!: () => void
+  const call: McpCall = { signal: controller.signal, done: new Promise<void>((resolve) => (finish = resolve)) }
+  session.hub.calls.add(call)
   session.inflight.set(id, controller)
   const token = record(p._meta).progressToken
   const progress = (value: number, total?: number, message?: string): void => {
@@ -154,6 +240,8 @@ async function callTool(server: McpServer, session: McpSession, id: RpcId, param
     return controller.signal.aborted ? null : errorResult(errorText(error))
   } finally {
     if (session.inflight.get(id) === controller) session.inflight.delete(id)
+    session.hub.calls.delete(call)
+    finish()
   }
 }
 
@@ -162,7 +250,7 @@ async function request(server: McpServer, session: McpSession, id: RpcId, method
     case 'initialize':
       return {
         protocolVersion: negotiateVersion(record(params).protocolVersion),
-        capabilities: { tools: {} },
+        capabilities: { tools: {}, ...(server.prompts ? { prompts: {} } : {}) },
         serverInfo: server.info,
         instructions: server.instructions,
       }
@@ -172,9 +260,14 @@ async function request(server: McpServer, session: McpSession, id: RpcId, method
       return { tools: server.tools.map(listedTool) }
     case 'tools/call':
       return callTool(server, session, id, params, send)
-    default:
-      throw new RpcError(RPC_METHOD_NOT_FOUND, `Method not found: ${method}`)
+    case 'prompts/list':
+      if (server.prompts) return { prompts: server.prompts.map(listedPrompt) }
+      break
+    case 'prompts/get':
+      if (server.prompts) return getPrompt(server.prompts, params)
+      break
   }
+  throw new RpcError(RPC_METHOD_NOT_FOUND, `Method not found: ${method}`)
 }
 
 export async function handleMessage(server: McpServer, session: McpSession, message: unknown, send: Send): Promise<void> {

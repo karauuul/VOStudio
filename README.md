@@ -45,4 +45,5 @@ A project is a folder `<name>.vostudio/` containing `project.json` (cues, takes,
 
 - [docs/design/README.md](docs/design/README.md) — design spec: mocks, rules, hotkeys; [docs/design/model.md](docs/design/model.md) — data model behind the screens
 - [docs/template-format.md](docs/template-format.md) — project template import/export format
+- [docs/agent.md](docs/agent.md) — agent API: in-app MCP server, connecting clients, CLI, headless mode, tools and prompts
 - [AGENTS.md](AGENTS.md) — contributor and agent rules, including the invariants any change must preserve

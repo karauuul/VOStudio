@@ -11,7 +11,9 @@ const SOCKET_FILE = 'agent.sock'
 const APP_NAMES = ['VO Studio', 'vo-studio']
 const LAUNCH_WAIT_MS = 20_000
 const RETRY_MS = 500
+const CLOSED = 'VO Studio closed the connection'
 const USER_DATA_FLAG = '--user-data-dir'
+const HEADLESS_FLAG = '--headless'
 
 type Message = Record<string, unknown>
 
@@ -27,16 +29,18 @@ function appDataDir(): string {
   return process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config')
 }
 
-function splitArgs(argv: string[]): { userData?: string; rest: string[] } {
+export function splitArgs(argv: string[]): { userData?: string; headless: boolean; rest: string[] } {
   const rest: string[] = []
   let userData: string | undefined
+  let headless = false
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
-    if (arg === USER_DATA_FLAG) userData = argv[++i]
+    if (arg === HEADLESS_FLAG) headless = true
+    else if (arg === USER_DATA_FLAG) userData = argv[++i]
     else if (arg.startsWith(`${USER_DATA_FLAG}=`)) userData = arg.slice(USER_DATA_FLAG.length + 1)
     else rest.push(arg)
   }
-  return { userData, rest }
+  return { userData, headless, rest }
 }
 
 export function endpointFor(platform: string, userData: string): string {
@@ -81,10 +85,10 @@ function electronBinary(root: string): string {
   return path.join(dir, 'dist', readFileSync(path.join(dir, 'path.txt'), 'utf8').trim())
 }
 
-function launchApp(userData: string | undefined): void {
+function launchApp(userData: string | undefined, headless: boolean): void {
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
-  const flags = [...(userData ? [`${USER_DATA_FLAG}=${userData}`] : []), '--agent']
+  const flags = [...(userData ? [`${USER_DATA_FLAG}=${userData}`] : []), headless ? HEADLESS_FLAG : '--agent']
   const packaged = __dirname.includes('app.asar')
   const root = path.resolve(__dirname, '..', '..')
   const command = packaged || process.versions.electron ? process.execPath : electronBinary(root)
@@ -92,11 +96,11 @@ function launchApp(userData: string | undefined): void {
   spawn(command, args, { detached: true, stdio: 'ignore', env }).unref()
 }
 
-async function reach(candidates: string[], userData: string | undefined): Promise<net.Socket> {
+async function reach(candidates: string[], userData: string | undefined, headless: boolean): Promise<net.Socket> {
   const running = await tryConnect(candidates)
   if (running) return running
   log('VO Studio is not reachable, starting it')
-  launchApp(userData)
+  launchApp(userData, headless)
   const deadline = Date.now() + LAUNCH_WAIT_MS
   while (Date.now() < deadline) {
     await sleep(RETRY_MS)
@@ -121,7 +125,7 @@ function rpc(socket: net.Socket): (method: string, params: Message, notify?: boo
     if (typeof message.id === 'number') waiting.get(message.id)?.(message)
   })
   socket.on('close', () => {
-    for (const settle of waiting.values()) settle({ error: { message: 'VO Studio closed the connection' } })
+    for (const settle of waiting.values()) settle({ error: { message: CLOSED } })
   })
   return (method, params, notify = false) => {
     if (notify) {
@@ -134,9 +138,26 @@ function rpc(socket: net.Socket): (method: string, params: Message, notify?: boo
   }
 }
 
-async function call(socket: net.Socket, tool: string | undefined, json: string | undefined): Promise<number> {
-  if (!tool) throw new Error('usage: vostudio-mcp call <tool> [json-arguments]')
-  const args = json ? (JSON.parse(json) as Message) : {}
+async function stop(candidates: string[]): Promise<number> {
+  const socket = await tryConnect(candidates)
+  if (!socket) {
+    log('VO Studio is not running')
+    return 0
+  }
+  const reply = await startCall(socket, 'app_quit', {})
+  socket.destroy()
+  const closed = (reply.error as Message | undefined)?.message === CLOSED
+  if (reply.error && !closed) throw new Error(String((reply.error as Message).message))
+  const result = reply.result as { content: Message[]; isError?: boolean } | undefined
+  if (result?.isError) {
+    log(result.content.map((c) => String(c.text ?? '')).join('\n'))
+    return 1
+  }
+  log('VO Studio is quitting')
+  return 0
+}
+
+async function startCall(socket: net.Socket, tool: string, args: Message): Promise<Message> {
   const send = rpc(socket)
   const init = await send('initialize', {
     protocolVersion: '2025-11-25',
@@ -145,7 +166,12 @@ async function call(socket: net.Socket, tool: string | undefined, json: string |
   })
   if (init.error) throw new Error(String((init.error as Message).message))
   await send('notifications/initialized', {}, true)
-  const reply = await send('tools/call', { name: tool, arguments: args })
+  return send('tools/call', { name: tool, arguments: args })
+}
+
+async function call(socket: net.Socket, tool: string | undefined, json: string | undefined): Promise<number> {
+  if (!tool) throw new Error('usage: vostudio-mcp call <tool> [json-arguments]')
+  const reply = await startCall(socket, tool, json ? (JSON.parse(json) as Message) : {})
   socket.destroy()
   if (reply.error) throw new Error(String((reply.error as Message).message))
   const result = reply.result as { content: Message[]; structuredContent?: unknown; isError?: boolean }
@@ -165,10 +191,14 @@ async function call(socket: net.Socket, tool: string | undefined, json: string |
 }
 
 async function main(): Promise<void> {
-  const { userData, rest } = splitArgs(process.argv.slice(2))
+  const { userData, headless, rest } = splitArgs(process.argv.slice(2))
   const explicit = userData ?? process.env.VOSTUDIO_USER_DATA
   const candidates = explicit ? [path.resolve(explicit)] : APP_NAMES.map((name) => path.join(appDataDir(), name))
-  const socket = await reach(candidates, explicit && path.resolve(explicit))
+  if (rest[0] === 'stop') {
+    process.exitCode = await stop(candidates)
+    return
+  }
+  const socket = await reach(candidates, explicit && path.resolve(explicit), headless)
   if (rest[0] === 'call') process.exitCode = await call(socket, rest[1], rest[2])
   else proxy(socket)
 }

@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod/v4'
 import {
+  APP_QUITTING,
+  createHub,
   createSession,
   defineTool,
   endSession,
@@ -8,6 +10,7 @@ import {
   handleMessage,
   MCP_PROTOCOL_VERSIONS,
   negotiateVersion,
+  quitWhenIdle,
   RPC_INVALID_PARAMS,
   RPC_INVALID_REQUEST,
   RPC_METHOD_NOT_FOUND,
@@ -311,6 +314,116 @@ describe('MCP tools/call', () => {
   })
 })
 
+describe('MCP quitting', () => {
+  function quitting(timeoutMs = 10_000, work: () => Promise<void> = async () => undefined) {
+    const base = server()
+    const quit = vi.fn(work)
+    const spec: McpServer = {
+      ...base.spec,
+      tools: [
+        ...base.spec.tools,
+        defineTool({
+          name: 'quit',
+          title: 'Quit',
+          description: 'Quits once idle.',
+          input: z.object({}),
+          annotations: WRITE,
+          async run(ctx) {
+            await quitWhenIdle(ctx, timeoutMs, quit)
+            return { structured: { quitting: true } }
+          },
+        }),
+      ],
+    }
+    const hub = createHub()
+    const call = (name: string, session = createSession(hub), id = 1): Promise<RpcMessage[]> => exchange(spec, req(id, 'tools/call', { name, arguments: name === 'echo' ? { word: 'hi' } : {} }), session)
+    return { ...base, spec, hub, quit, call }
+  }
+  const text = (sent: RpcMessage[]): string => ((sent[0].result as { content: { text: string }[] }).content[0].text)
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+  }
+
+  it('refuses new calls on every session and waits for running calls before quitting', async () => {
+    const { hub, gate, quit, call } = quitting()
+    const slow = call('slow')
+    await settle()
+    const quitCall = call('quit')
+    await settle()
+    expect(hub.quitting).toBe(true)
+    expect(quit).not.toHaveBeenCalled()
+    expect(text(await call('echo'))).toBe(APP_QUITTING)
+    expect(text(await call('quit'))).toBe(APP_QUITTING)
+    gate.resolve()
+    expect((await slow)[0].result).toMatchObject({ structuredContent: { done: true } })
+    expect((await quitCall)[0].result).toMatchObject({ structuredContent: { quitting: true } })
+    expect(quit).toHaveBeenCalledTimes(1)
+    expect(hub.quitting).toBe(true)
+    expect(text(await call('echo'))).toBe(APP_QUITTING)
+  })
+
+  it('waits for calls whose session already ended', async () => {
+    const { hub, gate, quit, call } = quitting()
+    const session = createSession(hub)
+    const slow = call('slow', session)
+    await settle()
+    endSession(session)
+    const quitCall = call('quit')
+    await settle()
+    expect(quit).not.toHaveBeenCalled()
+    gate.resolve()
+    await slow
+    await quitCall
+    expect(quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not wait for itself or for calls on another hub', async () => {
+    const { gate, quit, call } = quitting()
+    const other = call('slow', createSession())
+    await settle()
+    expect((await call('quit'))[0].result).toMatchObject({ structuredContent: { quitting: true } })
+    expect(quit).toHaveBeenCalledTimes(1)
+    gate.resolve()
+    await other
+  })
+
+  it('refuses the quit and accepts calls again when running calls outlast the timeout', async () => {
+    const { hub, gate, quit, call } = quitting(20)
+    const slow = call('slow')
+    await settle()
+    expect(text(await call('quit'))).toBe('Other agent calls are still running after 0 s; wait for them to finish, then retry.')
+    expect(quit).not.toHaveBeenCalled()
+    expect(hub.quitting).toBe(false)
+    expect((await call('echo'))[0].result).toMatchObject({ structuredContent: { said: 'hi' } })
+    gate.resolve()
+    await slow
+  })
+
+  it('leaves the quitting state when the quit itself is refused', async () => {
+    const { hub, call } = quitting(10_000, async () => {
+      throw new Error('The app is exporting; wait for that export to finish, then retry.')
+    })
+    expect(text(await call('quit'))).toBe('The app is exporting; wait for that export to finish, then retry.')
+    expect(hub.quitting).toBe(false)
+    expect(hub.calls.size).toBe(0)
+    expect((await call('echo'))[0].result).toMatchObject({ structuredContent: { said: 'hi' } })
+  })
+
+  it('keeps the rest of the protocol answering while quitting', async () => {
+    const { spec, hub, gate, call } = quitting()
+    const slow = call('slow')
+    await settle()
+    const quitCall = call('quit')
+    await settle()
+    const session = createSession(hub)
+    expect((await exchange(spec, req(2, 'ping'), session))[0].result).toEqual({})
+    expect(((await exchange(spec, req(3, 'tools/list'), session))[0].result as { tools: unknown[] }).tools.length).toBe(spec.tools.length)
+    gate.resolve()
+    await slow
+    await quitCall
+  })
+})
+
 describe('MCP framing errors', () => {
   it('rejects unknown methods', async () => {
     const { spec } = server()
@@ -341,5 +454,68 @@ describe('MCP framing errors', () => {
     const sent: RpcMessage[] = []
     await handleLine(spec, createSession(), '{"jsonrpc":', (m) => sent.push(m))
     expect(sent).toEqual([{ jsonrpc: '2.0', id: null, error: { code: RPC_PARSE_ERROR, message: 'Parse error' } }])
+  })
+})
+
+describe('MCP prompts', () => {
+  const prompts = [
+    {
+      name: 'greet',
+      title: 'Greet',
+      description: 'Greets someone.',
+      arguments: [
+        { name: 'who', description: 'Who to greet', required: true },
+        { name: 'tone', description: 'Tone', required: false, values: ['warm', 'dry'] },
+      ],
+      text: (a: Record<string, string>) => `Greet ${a.who} ${a.tone ?? 'warm'}ly.`,
+    },
+  ]
+
+  it('advertises prompts only when the server has them', async () => {
+    const plain = (await exchange(server().spec, req(1, 'initialize', {})))[0].result as { capabilities: unknown }
+    expect(plain.capabilities).toEqual({ tools: {} })
+    const withPrompts = (await exchange(server({ prompts }).spec, req(1, 'initialize', {})))[0].result as { capabilities: unknown }
+    expect(withPrompts.capabilities).toEqual({ tools: {}, prompts: {} })
+    expect((await exchange(server().spec, req(2, 'prompts/list')))[0]).toMatchObject({ error: { code: RPC_METHOD_NOT_FOUND } })
+  })
+
+  it('lists prompts with their arguments', async () => {
+    const [reply] = await exchange(server({ prompts }).spec, req(1, 'prompts/list'))
+    expect(reply.result).toEqual({
+      prompts: [
+        {
+          name: 'greet',
+          title: 'Greet',
+          description: 'Greets someone.',
+          arguments: [
+            { name: 'who', description: 'Who to greet', required: true },
+            { name: 'tone', description: 'Tone', required: false },
+          ],
+        },
+      ],
+    })
+  })
+
+  it('renders a prompt as one user message with trimmed arguments', async () => {
+    const [reply] = await exchange(server({ prompts }).spec, req(1, 'prompts/get', { name: 'greet', arguments: { who: ' Ann ', tone: 'dry' } }))
+    expect(reply.result).toEqual({
+      description: 'Greets someone.',
+      messages: [{ role: 'user', content: { type: 'text', text: 'Greet Ann dryly.' } }],
+    })
+    const [fallback] = await exchange(server({ prompts }).spec, req(2, 'prompts/get', { name: 'greet', arguments: { who: 'Bob', tone: '' } }))
+    expect(fallback.result).toMatchObject({ messages: [{ content: { text: 'Greet Bob warmly.' } }] })
+  })
+
+  it('rejects unknown prompts and invalid arguments with invalid params', async () => {
+    const { spec } = server({ prompts })
+    const error = async (params: unknown) => (await exchange(spec, req(1, 'prompts/get', params)))[0].error
+    expect(await error({ name: 'nope' })).toEqual({ code: RPC_INVALID_PARAMS, message: 'Unknown prompt: nope' })
+    expect(await error({ name: 'greet' })).toEqual({ code: RPC_INVALID_PARAMS, message: 'Missing required argument: who' })
+    expect(await error({ name: 'greet', arguments: { who: '  ' } })).toEqual({ code: RPC_INVALID_PARAMS, message: 'Missing required argument: who' })
+    expect(await error({ name: 'greet', arguments: { who: 3 } })).toEqual({ code: RPC_INVALID_PARAMS, message: 'Argument who must be a string' })
+    expect(await error({ name: 'greet', arguments: { who: 'Ann', tone: 'loud' } })).toEqual({
+      code: RPC_INVALID_PARAMS,
+      message: 'Argument tone must be one of warm, dry',
+    })
   })
 })
