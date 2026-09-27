@@ -2,6 +2,7 @@ import type { BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
 import type { z } from 'zod'
 import type { BatchExportResult, ExportJob, ExportPlan, RenderLineRequest, RenderPlanRequest } from '@shared/ipc'
+import { planTimeoutMs } from '@shared/agent-render'
 import { errorText } from '@shared/mcp'
 import type { renderReplySchema } from '../schemas'
 import { hardenedWindow, loadRenderer, markWorker } from '../windows'
@@ -11,8 +12,6 @@ type RenderReply = z.infer<typeof renderReplySchema>
 
 export const RENDER_IDLE_MS = 60_000
 export const LINE_TIMEOUT_MS = 120_000
-export const PLAN_TIMEOUT_MS = 60_000
-export const PLAN_JOB_TIMEOUT_MS = 60_000
 
 const CLOSED = 'The render window closed before it finished; retry.'
 const CRASHED = 'The render window crashed; it restarts on the next call, retry.'
@@ -119,8 +118,7 @@ export async function renderLineWav(job: ExportJob): Promise<ArrayBuffer | Uint8
 }
 
 export async function renderExportPlan(plan: ExportPlan): Promise<BatchExportResult> {
-  const timeout = PLAN_TIMEOUT_MS + PLAN_JOB_TIMEOUT_MS * plan.jobs.length
-  const reply = await request((win, id) => win.webContents.send('render:plan', { id, plan } satisfies RenderPlanRequest), timeout)
+  const reply = await request((win, id) => win.webContents.send('render:plan', { id, plan } satisfies RenderPlanRequest), planTimeoutMs(plan.jobs.length))
   if (!reply.ok || !reply.result) throw failed('Export', reply, 'no result came back')
   return reply.result
 }

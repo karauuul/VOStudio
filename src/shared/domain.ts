@@ -647,6 +647,18 @@ export function singleFlight<T>(
   return fn().finally(() => keys.delete(key))
 }
 
+export function serialQueue(): <T>(fn: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve()
+  return <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = tail.then(fn, fn)
+    tail = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+}
+
 export function cueVoiceUnchanged(
   project: Pick<Project, 'cues' | 'characters'>,
   cueId: string,

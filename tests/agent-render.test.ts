@@ -2,8 +2,8 @@ import { mkdtempSync, promises as fs } from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
-import { renderFileName, transcriptMatch } from '../src/shared/agent-render'
+import { emptyEdits, serialQueue, type Cue, type Project, type Take } from '../src/shared/domain'
+import { MAX_TIMER_MS, PLAN_JOB_TIMEOUT_MS, PLAN_TIMEOUT_MS, planTimeoutMs, renderFileName, transcriptMatch } from '../src/shared/agent-render'
 import { edgeSilence, loudnessFilter, METRICS_FILTER, parseMetrics, silenceFilter } from '../src/shared/audio-metrics'
 import { originalOnlyPlan, planBatch, planLine } from '../src/shared/export-plan'
 
@@ -52,12 +52,59 @@ describe('transcript match', () => {
 })
 
 describe('render file names', () => {
-  it('keeps keys readable and never escapes the renders folder', () => {
-    expect(renderFileName('Line 1')).toBe('Line 1.wav')
-    expect(renderFileName('vo/a:b', '.original')).toBe('vo_a_b.original.wav')
-    expect(renderFileName('../..')).toBe('.._.wav')
-    expect(renderFileName('..')).toBe('line.wav')
-    expect(renderFileName('x'.repeat(300))).toBe(`${'x'.repeat(120)}.wav`)
+  it('keeps keys readable, tags the cue id and never escapes the renders folder', () => {
+    expect(renderFileName('Line 1', 'c-Line 1')).toBe('Line 1-c-Line_1.wav')
+    expect(renderFileName('vo/a:b', '3fa85f64-5717', '.original')).toBe('vo_a_b-3fa85f64.original.wav')
+    expect(renderFileName('../..', '../../x')).toBe('.._-______x.wav')
+    expect(renderFileName('..', 'abc')).toBe('line-abc.wav')
+    expect(renderFileName('x'.repeat(300), 'id')).toBe(`${'x'.repeat(120)}-id.wav`)
+  })
+
+  it('gives distinct files to lines whose keys collide', () => {
+    const names = [
+      renderFileName('dup', '11111111-a'),
+      renderFileName('dup', '22222222-a'),
+      renderFileName('a/b', '33333333'),
+      renderFileName('a:b', '44444444'),
+      renderFileName(`${'k'.repeat(300)}1`, '55555555'),
+      renderFileName(`${'k'.repeat(300)}2`, '66666666'),
+    ]
+    expect(new Set(names).size).toBe(names.length)
+  })
+})
+
+describe('export plan deadline', () => {
+  it('grows per job but never exceeds the largest timer Node honours', () => {
+    expect(planTimeoutMs(0)).toBe(PLAN_TIMEOUT_MS)
+    expect(planTimeoutMs(1)).toBe(PLAN_TIMEOUT_MS + PLAN_JOB_TIMEOUT_MS)
+    expect(planTimeoutMs(35_790)).toBeLessThan(MAX_TIMER_MS)
+    expect(planTimeoutMs(35_791)).toBe(MAX_TIMER_MS)
+    expect(planTimeoutMs(1_000_000)).toBe(MAX_TIMER_MS)
+  })
+})
+
+describe('serial queue', () => {
+  it('starts the next task only after the previous one settles, even when it fails', async () => {
+    const serial = serialQueue()
+    const log: string[] = []
+    let failFirst!: (error: Error) => void
+    const first = serial(() => {
+      log.push('first')
+      return new Promise<string>((_, reject) => {
+        failFirst = reject
+      })
+    })
+    const second = serial(async () => {
+      log.push('second')
+      return 'done'
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(log).toEqual(['first'])
+    failFirst(new Error('boom'))
+    await expect(first).rejects.toThrow('boom')
+    await expect(second).resolves.toBe('done')
+    expect(log).toEqual(['first', 'second'])
   })
 })
 

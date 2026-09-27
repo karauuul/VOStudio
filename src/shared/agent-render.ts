@@ -27,12 +27,20 @@ export function transcriptMatch(expected: string, heard: string): TranscriptMatc
 }
 
 export const RENDER_NAME_MAX = 120
+export const RENDER_ID_CHARS = 8
+export const PLAN_TIMEOUT_MS = 60_000
+export const PLAN_JOB_TIMEOUT_MS = 60_000
+export const MAX_TIMER_MS = 2_147_483_647
 
-export function renderFileName(key: string, suffix = ''): string {
+export function renderFileName(key: string, id: string, suffix = ''): string {
   const safe = key
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
     .slice(0, RENDER_NAME_MAX)
     .replace(/[. ]+$/, '')
     .trim()
-  return `${safe || 'line'}${suffix}.wav`
+  const tag = id.slice(0, RENDER_ID_CHARS).replace(/[^A-Za-z0-9_-]/g, '_')
+  return `${safe || 'line'}-${tag}${suffix}.wav`
 }
+
+export const planTimeoutMs = (jobs: number): number =>
+  Math.min(PLAN_TIMEOUT_MS + PLAN_JOB_TIMEOUT_MS * jobs, MAX_TIMER_MS)
