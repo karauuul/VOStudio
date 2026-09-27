@@ -911,6 +911,8 @@ describe('analyze and compare', () => {
     const id = '00000000-0000-4000-8000-000000000000'
     expect(renderReplySchema.parse({ id, ok: true, prosody: heard }).prosody).toEqual(heard)
     expect(renderReplySchema.parse({ id, ok: true, prosody: { ...heard, truncated: true } }).prosody).toEqual({ ...heard, truncated: true })
+    const longWord = { ...heard, words: heard.words.map((w, i) => (i === 0 ? { ...w, text: 'x'.repeat(5000) } : w)) }
+    expect(renderReplySchema.safeParse({ id, ok: true, prosody: longWord }).success).toBe(true)
     const tooLong = { ...heard, track: { ...heard.track, db: new Float32Array(prosody.ANALYSIS_FRAMES_MAX + 1) } }
     expect(renderReplySchema.safeParse({ id, ok: true, prosody: tooLong }).success).toBe(false)
   })

@@ -691,7 +691,7 @@ export const bridgeReplySchema = z.object({
   error: z.string().max(2000).optional(),
 })
 
-const shortText = z.string().max(4096)
+const shortText = z.string().max(LINE_TEXT_MAX)
 
 const bytes = z.union([z.instanceof(ArrayBuffer), z.instanceof(Uint8Array)])
 
