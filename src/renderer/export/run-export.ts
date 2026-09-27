@@ -127,26 +127,32 @@ export async function runPlan(
 ): Promise<BatchExportResult> {
   const failed: BatchExportFailure[] = []
   const summary: ExportSummary = { exported: [], failed: [] }
-  for (let i = 0; i < plan.jobs.length; i++) {
-    signal?.throwIfAborted()
-    const job = plan.jobs[i]
-    onProgress?.({ done: i, total: plan.jobs.length, current: job.name })
-    try {
-      const result = await runJob(job)
-      summary.exported.push({
-        cueKey: job.cueKey,
-        name: job.name,
-        bytes: result.bytes,
-        sha256: result.parityHash,
-      })
-    } catch (e) {
+  let finishing = false
+  try {
+    for (let i = 0; i < plan.jobs.length; i++) {
       signal?.throwIfAborted()
-      failed.push({ cueKey: job.cueKey, name: job.name, error: message(e) })
-      summary.failed.push({ cueKey: job.cueKey, name: job.name, reason: message(e) })
+      const job = plan.jobs[i]
+      onProgress?.({ done: i, total: plan.jobs.length, current: job.name })
+      try {
+        const result = await runJob(job)
+        summary.exported.push({
+          cueKey: job.cueKey,
+          name: job.name,
+          bytes: result.bytes,
+          sha256: result.parityHash,
+        })
+      } catch (e) {
+        signal?.throwIfAborted()
+        failed.push({ cueKey: job.cueKey, name: job.name, error: message(e) })
+        summary.failed.push({ cueKey: job.cueKey, name: job.name, reason: message(e) })
+      }
     }
+    signal?.throwIfAborted()
+    onProgress?.({ done: plan.jobs.length, total: plan.jobs.length, current: '' })
+    finishing = true
+    const paths = await api['export:finish'](plan.token, summary)
+    return { written: summary.exported.length, failed, outDir: plan.outDir, ...paths }
+  } finally {
+    if (!finishing) await api['export:abort'](plan.token).catch(() => undefined)
   }
-  signal?.throwIfAborted()
-  onProgress?.({ done: plan.jobs.length, total: plan.jobs.length, current: '' })
-  const paths = await api['export:finish'](plan.token, summary)
-  return { written: summary.exported.length, failed, outDir: plan.outDir, ...paths }
 }

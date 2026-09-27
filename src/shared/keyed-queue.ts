@@ -15,3 +15,18 @@ export function keyedQueue(): KeyedQueue {
     return run
   }
 }
+
+export function queuedMethods<T extends object, K extends keyof T>(
+  target: T,
+  methods: readonly K[],
+  queue: KeyedQueue,
+  key: string
+): T {
+  const wrapped = { ...target }
+  for (const name of methods) {
+    const call = (...args: unknown[]): Promise<unknown> =>
+      queue(key, () => (target[name] as unknown as (...a: unknown[]) => Promise<unknown>)(...args))
+    wrapped[name] = call as T[K]
+  }
+  return wrapped
+}

@@ -12,7 +12,7 @@ mkdirSync(H.root, { recursive: true })
 
 const store = await import('../src/main/project-store')
 const { appSettingsSchema } = await import('../src/main/schemas')
-const { DEFAULT_APP_SETTINGS, sanitizeAgentAccess } = await import('../src/shared/ipc')
+const { AGENT_BUDGET_DEFAULT, DEFAULT_APP_SETTINGS, agentBudget, sanitizeAgentAccess, sanitizeAgentBudget } = await import('../src/shared/ipc')
 
 const writeState = (settings: unknown): Promise<void> =>
   fs.writeFile(path.join(H.root, 'app.json'), JSON.stringify({ settings }))
@@ -58,5 +58,34 @@ describe('stored settings', () => {
     expect(await store.getSettings()).toEqual({ countIn: true, autoReference: false })
     await writeState({ countIn: true, autoReference: false, agentAccess: false })
     expect(await store.getSettings()).toEqual({ countIn: true, autoReference: false })
+  })
+
+  it('keeps the agent budget absent by default and reads it as 20000 characters', async () => {
+    await writeState({ countIn: true, autoReference: false })
+    const settings = await store.getSettings()
+    expect('agentCharacterBudget' in settings).toBe(false)
+    expect(agentBudget(settings.agentCharacterBudget)).toBe(AGENT_BUDGET_DEFAULT)
+    expect(AGENT_BUDGET_DEFAULT).toBe(20_000)
+    await store.setSettings(settings)
+    const raw = JSON.parse(await fs.readFile(path.join(H.root, 'app.json'), 'utf-8'))
+    expect(raw).toEqual({ settings: { countIn: true, autoReference: false } })
+    expect(DEFAULT_APP_SETTINGS).not.toHaveProperty('agentCharacterBudget')
+  })
+
+  it('round-trips the agent budget, including 0 for unlimited', async () => {
+    for (const budget of [0, 10, 10_000_000]) {
+      await store.setSettings(appSettingsSchema.parse({ countIn: true, autoReference: false, agentCharacterBudget: budget }))
+      expect(await store.getSettings()).toEqual({ countIn: true, autoReference: false, agentCharacterBudget: budget })
+      expect(agentBudget((await store.getSettings()).agentCharacterBudget)).toBe(budget)
+    }
+  })
+
+  it('drops a hand-edited agent budget that is not an integer from 0 to 10000000', async () => {
+    for (const bad of [-1, 1.5, 10_000_001, '100', null]) {
+      await writeState({ countIn: true, autoReference: false, agentCharacterBudget: bad })
+      expect(await store.getSettings()).toEqual({ countIn: true, autoReference: false })
+      expect(sanitizeAgentBudget(bad)).toBeUndefined()
+      expect(agentBudget(bad)).toBe(AGENT_BUDGET_DEFAULT)
+    }
   })
 })

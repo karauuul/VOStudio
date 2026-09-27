@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { keyedQueue } from '../src/shared/keyed-queue'
+import { keyedQueue, queuedMethods } from '../src/shared/keyed-queue'
 import { placeTake } from '../src/shared/generation'
 import type { CueComp } from '../src/shared/domain'
 
@@ -43,5 +43,55 @@ describe('per-line placement queue', () => {
     expect(results.map((r) => r.status)).toEqual(['rejected', 'fulfilled', 'fulfilled'])
     expect(order.indexOf('end a1')).toBeLessThan(order.indexOf('start a2'))
     expect(order.indexOf('start b1')).toBeLessThan(order.indexOf('end a1'))
+  })
+})
+
+describe('queued methods', () => {
+  function gate() {
+    let open!: () => void
+    let fail!: (e: Error) => void
+    const promise = new Promise<void>((resolve, reject) => {
+      open = resolve
+      fail = reject
+    })
+    return { promise, open, fail }
+  }
+
+  it('runs the listed calls one at a time in call order, releases on failure, and leaves the rest free', async () => {
+    const order: string[] = []
+    const gates = { a: gate(), b: gate(), c: gate() }
+    const target = {
+      id: 'p',
+      run: async (name: 'a' | 'b' | 'c'): Promise<string> => {
+        order.push(`start ${name}`)
+        await gates[name].promise
+        order.push(`end ${name}`)
+        return name
+      },
+      convert: async (name: 'a' | 'b' | 'c'): Promise<string> => target.run(name),
+      meta: async (): Promise<string> => {
+        order.push('meta')
+        return 'meta'
+      },
+    }
+    const wrapped = queuedMethods(target, ['run', 'convert'], keyedQueue(), 'provider')
+    expect(wrapped.id).toBe('p')
+    const a = wrapped.run('a')
+    const b = wrapped.convert('b')
+    const c = wrapped.run('c')
+    await tick()
+    expect(order).toEqual(['start a'])
+    expect(await wrapped.meta()).toBe('meta')
+    gates.a.fail(new Error('a'))
+    await expect(a).rejects.toThrow('a')
+    await tick()
+    expect(order).toEqual(['start a', 'meta', 'start b'])
+    gates.c.open()
+    await tick()
+    expect(order).toEqual(['start a', 'meta', 'start b'])
+    gates.b.open()
+    expect(await b).toBe('b')
+    expect(await c).toBe('c')
+    expect(order).toEqual(['start a', 'meta', 'start b', 'end b', 'start c', 'end c'])
   })
 })

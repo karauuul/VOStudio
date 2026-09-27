@@ -117,6 +117,19 @@ export function parseProbe(stderr: string): MediaProbe {
   return out
 }
 
+const DECODED_TIME_RE = /time=(\d+):(\d+):(\d+(?:\.\d+)?)/g
+
+export function decodedSeconds(stderr: string): number | undefined {
+  const last = [...stderr.matchAll(DECODED_TIME_RE)].at(-1)
+  if (!last) return undefined
+  const seconds = Number(last[1]) * 3600 + Number(last[2]) * 60 + Number(last[3])
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined
+}
+
+export async function decodedDuration(file: string): Promise<number | undefined> {
+  return decodedSeconds(await ffmpegStderr(['-hide_banner', '-i', file, '-f', 'null', '-']))
+}
+
 export async function probeMedia(file: string): Promise<MediaProbe> {
   return parseProbe(await ffmpegInfo(file))
 }

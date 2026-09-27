@@ -22,6 +22,7 @@ import type { ProjectSummary } from './project-summary'
 import type { PcmBitDepth } from './wav-header'
 import type { LatencySetting } from './punch'
 import type { PassRange } from './loop-record'
+import type { JobsSnapshot } from './jobs'
 
 export interface CsvPreview {
   headers: string[]
@@ -45,6 +46,22 @@ export interface StsRequest {
   selectOutput?: boolean
 }
 
+export type GenRequest = ({ kind: 'tts' } & TtsRequest) | ({ kind: 'sts' } & StsRequest)
+
+export interface PlannedVoice {
+  characterId: string
+  voiceId: string
+  model: string
+  language?: string
+}
+
+export interface JobPlan {
+  providerText?: string
+  planned?: PlannedVoice
+}
+
+export type GenJob = GenRequest & JobPlan
+
 export interface AppSettings {
   micDeviceId?: string
   micDeviceLabel?: string
@@ -55,9 +72,18 @@ export interface AppSettings {
   countIn: boolean
   autoReference: boolean
   agentAccess?: true
+  agentCharacterBudget?: number
 }
 
 export const sanitizeAgentAccess = (value: unknown): true | undefined => (value === true ? true : undefined)
+
+export const AGENT_BUDGET_DEFAULT = 20_000
+export const AGENT_BUDGET_MAX = 10_000_000
+
+export const sanitizeAgentBudget = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= AGENT_BUDGET_MAX ? value : undefined
+
+export const agentBudget = (value: unknown): number => sanitizeAgentBudget(value) ?? AGENT_BUDGET_DEFAULT
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   countIn: true,
@@ -353,8 +379,9 @@ export interface IpcApi {
   'stems:isolate': (cueId: string, wav: ArrayBuffer) => Promise<ArrayBuffer>
   'stems:save': (cueId: string, voiceWav: ArrayBuffer, restWav: ArrayBuffer) => Promise<Stem[]>
 
-  'provider:tts': (req: TtsRequest) => Promise<Take>
-  'provider:sts': (req: StsRequest) => Promise<Take>
+  'gen:run': (req: GenRequest) => Promise<Take>
+  'gen:cancel': (ids: string[]) => Promise<string[]>
+  'gen:list': () => Promise<JobsSnapshot>
   'provider:transcribe': (req: { cueIds: string[]; overwrite?: boolean }) => Promise<TranscribeResult>
   'provider:voices': () => Promise<ProviderVoice[]>
   'provider:models': () => Promise<ProviderModel[]>
@@ -375,6 +402,7 @@ export interface IpcApi {
   'export:copy': (outPath: string) => Promise<ExportResult>
   'export:encode': (outPath: string, wav: ArrayBuffer) => Promise<ExportResult>
   'export:finish': (token: string, summary: ExportSummary) => Promise<DeliverPaths>
+  'export:abort': (token: string) => Promise<void>
   'export:videoPlan': (sourceId: string) => Promise<VideoExportPlan | null>
   'export:videoChunk': (
     token: string,
@@ -403,6 +431,7 @@ export interface IpcEvents {
   'project:opened': SerializedSnapshot
   'project:closed': null
   'bridge:request': BridgeRequest
+  'jobs:changed': JobsSnapshot
 }
 
 export type EventChannel = keyof IpcEvents

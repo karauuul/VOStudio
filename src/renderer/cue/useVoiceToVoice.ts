@@ -8,7 +8,7 @@ import { pcmBitDepth } from '@shared/wav-header'
 import { api, audioUrl } from '../api'
 import { useRecorder, type PrerollStart, type RecordedClip, type RecorderApi } from '../audio/recorder'
 import { clipId, transport } from '../audio/transport'
-import { useCueBusy, useJobsStore } from '../jobs/store'
+import { runGeneration, useCueBusy, useJobsStore } from '../jobs/store'
 import { credits } from './shared'
 import type { ClipSelection } from '../work/TimelinePanel'
 
@@ -87,7 +87,6 @@ export function useVoiceToVoice({
   const rec = useRecorder(keepMicWarm)
   const [saving, setSaving] = useState(false)
   const [loopPass, setLoopPass] = useState(0)
-  const submitJob = useJobsStore((s) => s.submit)
   const cueBusy = useCueBusy(cue.id)
   const converting = saving || cueBusy
 
@@ -272,11 +271,11 @@ export function useVoiceToVoice({
 
   const submitSts = useCallback(
     (cueId: string, sourceTakeId: string, voiceSettings: VoiceSettings, fragment: boolean) => {
-      submitJob({
-        kind: 'sts',
+      runGeneration(
         cueId,
-        run: async (live) => {
-          const take = await api['provider:sts']({
+        async (live) => {
+          const take = await api['gen:run']({
+            kind: 'sts',
             cueId,
             sourceTakeId,
             voiceSettings,
@@ -294,10 +293,10 @@ export function useVoiceToVoice({
           }
           onStatus('ok', 'Voice converted')
         },
-        onError: (e) => onStatus('err', String(e)),
-      })
+        (e) => onStatus('err', String(e))
+      )
     },
-    [submitJob, onTakeAdded, onStatus, isActiveCue, onPlace]
+    [onTakeAdded, onStatus, isActiveCue, onPlace]
   )
 
   const guard = useCallback(

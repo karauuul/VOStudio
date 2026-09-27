@@ -162,7 +162,12 @@ export async function planBatchExport(req: BatchExportRequest): Promise<ExportPl
   const jobs = toJobs(items, path.join(stagingDir, 'audio'), project)
   batchPlan = { token, project: structuredClone(project), outDir, stagingDir, live: true }
   planned = new Map(jobs.map((j) => [j.outPath, j]))
-  await fs.rm(stagingDir, { recursive: true, force: true })
+  try {
+    await fs.rm(stagingDir, { recursive: true, force: true })
+  } catch (error) {
+    abortBatchExport(token)
+    throw error
+  }
   return { token, jobs, outDir }
 }
 
@@ -292,51 +297,56 @@ export async function finishExport(
   summary: ExportSummary,
   stamp: () => Promise<number | undefined>
 ): Promise<DeliverPaths> {
-  if (!batchPlan || token !== batchPlan.token) throw new Error('This batch export plan is no longer current')
-  if (!batchPlan.live) throw new Error(PROJECT_CHANGED)
-  if (ctx().project.id !== batchPlan.project.id) throw new Error('The exported project is no longer open')
-  const version = await stamp()
-  const { project, outDir, stagingDir } = batchPlan
-  for (const f of summary.failed) {
-    const outPath = path.join(stagingDir, 'audio', f.name)
-    if (planned.has(outPath)) await fs.rm(outPath, { force: true })
-  }
-  const revisions = new Map(project.cues.map((c) => [c.key, sanitizeRevision(c.output?.revision)]))
-  const signature = exportSignature(project.export, project.exportTemplate)
-  const exported: DeliverExported[] = summary.exported.map((e) => ({
-    cueId: e.cueKey,
-    exportName: path.parse(e.name).name,
-    file: `audio/${e.name}`,
-    bytes: e.bytes,
-    sha256: e.sha256,
-    revision: revisions.get(e.cueKey) ?? 0,
-    ...(version === undefined ? {} : { version }),
-    signature,
-  }))
-  const previous = await readReport(outDir)
-  const deliver: DeliverSummary = {
-    exported: mergeExported(previous?.exported ?? [], exported),
-    failed: summary.failed.map((f) => ({
-      cueId: f.cueKey,
-      exportName: path.parse(f.name).name,
-      file: `audio/${f.name}`,
-      reason: f.reason,
-    })),
-    skipped: [],
-  }
+  const plan = batchPlan
+  if (!plan || token !== plan.token) throw new Error('This batch export plan is no longer current')
+  try {
+    if (!plan.live) throw new Error(PROJECT_CHANGED)
+    if (ctx().project.id !== plan.project.id) throw new Error('The exported project is no longer open')
+    const version = await stamp()
+    const { project, outDir, stagingDir } = plan
+    for (const f of summary.failed) {
+      const outPath = path.join(stagingDir, 'audio', f.name)
+      if (planned.has(outPath)) await fs.rm(outPath, { force: true })
+    }
+    const revisions = new Map(project.cues.map((c) => [c.key, sanitizeRevision(c.output?.revision)]))
+    const signature = exportSignature(project.export, project.exportTemplate)
+    const exported: DeliverExported[] = summary.exported.map((e) => ({
+      cueId: e.cueKey,
+      exportName: path.parse(e.name).name,
+      file: `audio/${e.name}`,
+      bytes: e.bytes,
+      sha256: e.sha256,
+      revision: revisions.get(e.cueKey) ?? 0,
+      ...(version === undefined ? {} : { version }),
+      signature,
+    }))
+    const previous = await readReport(outDir)
+    const deliver: DeliverSummary = {
+      exported: mergeExported(previous?.exported ?? [], exported),
+      failed: summary.failed.map((f) => ({
+        cueId: f.cueKey,
+        exportName: path.parse(f.name).name,
+        file: `audio/${f.name}`,
+        reason: f.reason,
+      })),
+      skipped: [],
+    }
 
-  await fs.mkdir(path.join(stagingDir, 'audio'), { recursive: true })
-  const index = buildUpdatedIndex(project)
-  if (index !== null) await fs.writeFile(path.join(stagingDir, 'index.updated.csv'), index)
-  const report = buildReport(project.name, deliver, version)
-  await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
-  await removeSuperseded(outDir, supersededFiles(previous?.exported ?? [], exported))
-  await copyTree(stagingDir, outDir)
-  await fs.rm(stagingDir, { recursive: true, force: true })
-  return {
-    ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }),
-    reportPath: path.join(outDir, 'report.json'),
-    ...(version === undefined ? {} : { version }),
+    await fs.mkdir(path.join(stagingDir, 'audio'), { recursive: true })
+    const index = buildUpdatedIndex(project)
+    if (index !== null) await fs.writeFile(path.join(stagingDir, 'index.updated.csv'), index)
+    const report = buildReport(project.name, deliver, version)
+    await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
+    await removeSuperseded(outDir, supersededFiles(previous?.exported ?? [], exported))
+    await copyTree(stagingDir, outDir)
+    await fs.rm(stagingDir, { recursive: true, force: true })
+    return {
+      ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }),
+      reportPath: path.join(outDir, 'report.json'),
+      ...(version === undefined ? {} : { version }),
+    }
+  } finally {
+    if (batchPlan === plan) batchPlan = null
   }
 }
 
@@ -403,6 +413,12 @@ async function closeVideoRun(): Promise<void> {
   videoRun = null
   if (run) await releaseVideoRun(run)
 }
+
+export function abortBatchExport(token: string): void {
+  if (batchPlan?.token === token) batchPlan = null
+}
+
+export const exportActive = (): boolean => batchPlan?.live === true || videoRun?.live === true
 
 export function cancelExports(): void {
   if (batchPlan) batchPlan.live = false
