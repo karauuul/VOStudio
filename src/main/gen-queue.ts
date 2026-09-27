@@ -1,0 +1,154 @@
+import { randomUUID } from 'crypto'
+import type { Take } from '@shared/domain'
+import {
+  cancelQueued,
+  cueHasPending,
+  enqueue,
+  fail,
+  finish,
+  generationRefusal,
+  isTerminal,
+  nextQueued,
+  start,
+  type GenerationGuard,
+  type Job,
+  type JobOrigin,
+} from '@shared/jobs'
+
+export const JOB_CANCELLED = 'The job was cancelled before it ran.'
+export const JOB_RETIRED = 'The project was closed or switched before this job ran.'
+
+export interface GenerationSpec {
+  kind: 'tts' | 'sts'
+  cueId: string
+  origin: JobOrigin
+  chars: number
+  owner: object
+  run: () => Promise<Take>
+}
+
+export interface QueuedGeneration {
+  id: string
+  done: Promise<Take>
+}
+
+export interface GenerationQueue {
+  submit: (spec: GenerationSpec) => QueuedGeneration
+  cancel: (ids: readonly string[]) => string[]
+  retire: (owner: object | null) => void
+  list: () => Job[]
+  busy: (cueId: string) => boolean
+  settle: (ids: readonly string[], ms: number, signal: AbortSignal, progress: (done: number, total: number) => void) => Promise<void>
+}
+
+interface Entry {
+  spec: GenerationSpec
+  resolve: (take: Take) => void
+  reject: (error: Error) => void
+}
+
+const asError = (error: unknown): Error => (error instanceof Error ? error : new Error(String(error)))
+
+export function createGenerationQueue(options: {
+  guard: (cueId: string) => Omit<GenerationGuard, 'lineBusy'>
+  changed: (jobs: Job[]) => void
+}): GenerationQueue {
+  let jobs: Job[] = []
+  const entries = new Map<string, Entry>()
+  const owners = new Map<string, object>()
+  const listeners = new Set<() => void>()
+
+  const publish = (next: Job[]): void => {
+    jobs = next
+    const kept = new Set(jobs.map((j) => j.id))
+    for (const id of owners.keys()) if (!kept.has(id)) owners.delete(id)
+    options.changed(jobs)
+    for (const listener of [...listeners]) listener()
+  }
+
+  const settleEntry = (id: string, error: Error): void => {
+    entries.get(id)?.reject(error)
+    entries.delete(id)
+  }
+
+  const pump = (): void => {
+    const next = nextQueued(jobs)
+    if (!next) return
+    const entry = entries.get(next.id)
+    if (!entry) {
+      publish(fail(jobs, next.id, 'The job lost its runner.'))
+      pump()
+      return
+    }
+    publish(start(jobs, next.id))
+    void entry.spec
+      .run()
+      .then(
+        (take) => {
+          publish(finish(jobs, next.id, take.id))
+          entry.resolve(take)
+        },
+        (error: unknown) => {
+          const failure = asError(error)
+          publish(fail(jobs, next.id, failure.message))
+          entry.reject(failure)
+        }
+      )
+      .finally(() => {
+        entries.delete(next.id)
+        pump()
+      })
+  }
+
+  return {
+    submit(spec) {
+      const refusal = generationRefusal({ lineBusy: cueHasPending(jobs, spec.cueId), ...options.guard(spec.cueId) })
+      if (refusal) throw new Error(refusal)
+      const id = randomUUID()
+      const done = new Promise<Take>((resolve, reject) => entries.set(id, { spec, resolve, reject }))
+      done.catch(() => undefined)
+      owners.set(id, spec.owner)
+      publish(enqueue(jobs, { id, kind: spec.kind, cueId: spec.cueId, origin: spec.origin, chars: spec.chars }))
+      pump()
+      return { id, done }
+    },
+    cancel(ids) {
+      const cancelled = jobs.filter((j) => ids.includes(j.id) && j.state === 'queued').map((j) => j.id)
+      if (cancelled.length === 0) return []
+      publish(cancelQueued(jobs, cancelled))
+      for (const id of cancelled) settleEntry(id, new Error(JOB_CANCELLED))
+      return cancelled
+    },
+    retire(owner) {
+      const stale = (j: Job): boolean => owners.get(j.id) !== owner && j.state !== 'running'
+      const dropped = jobs.filter(stale)
+      if (dropped.length === 0) return
+      publish(jobs.filter((j) => !stale(j)))
+      for (const j of dropped) settleEntry(j.id, new Error(JOB_RETIRED))
+    },
+    list: () => jobs,
+    busy: (cueId) => cueHasPending(jobs, cueId),
+    settle(ids, ms, signal, progress) {
+      return new Promise((resolve) => {
+        let reported = -1
+        const check = (): void => {
+          const tracked = jobs.filter((j) => ids.includes(j.id))
+          const done = tracked.filter(isTerminal).length
+          if (done !== reported) progress(done, tracked.length)
+          reported = done
+          if (done === tracked.length || signal.aborted) stop()
+        }
+        const timer = setTimeout(() => stop(), ms)
+        const stop = (): void => {
+          clearTimeout(timer)
+          listeners.delete(check)
+          signal.removeEventListener('abort', stop)
+          resolve()
+        }
+        signal.addEventListener('abort', stop)
+        listeners.add(check)
+        check()
+      })
+    },
+  }
+}

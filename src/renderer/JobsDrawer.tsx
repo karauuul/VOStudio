@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import type { Cue } from '@shared/domain'
+import type { Job, JobState } from '@shared/jobs'
+import { api } from './api'
 import { useJobsStore } from './jobs/store'
-import type { Job, JobState } from './jobs/queue'
 import { Overlay } from './Overlay'
 
 const STATE_LABEL: Record<JobState, string> = {
@@ -9,6 +10,7 @@ const STATE_LABEL: Record<JobState, string> = {
   running: 'Running',
   done: 'Finished',
   error: 'Failed',
+  cancelled: 'Cancelled',
 }
 
 const STATE_CLASS: Record<JobState, string> = {
@@ -16,6 +18,7 @@ const STATE_CLASS: Record<JobState, string> = {
   running: 'pb',
   done: 'pb ok',
   error: 'pb err',
+  cancelled: 'pb',
 }
 
 interface Props {
@@ -37,6 +40,10 @@ export function JobsDrawer({ cues, onOpenCue, onStatus, onClose }: Props) {
 
   const rows = useMemo(() => [...jobs].reverse(), [jobs])
 
+  const cancel = (job: Job): void => {
+    void api['gen:cancel']([job.id]).catch((e: unknown) => onStatus('err', String(e)))
+  }
+
   const copy = (job: Job): void => {
     void navigator.clipboard.writeText(job.error ?? '').then(
       () => onStatus('ok', 'Copied'),
@@ -53,8 +60,14 @@ export function JobsDrawer({ cues, onOpenCue, onStatus, onClose }: Props) {
             <div className="jobs-line">
               <span className={STATE_CLASS[job.state]}>{STATE_LABEL[job.state]}</span>
               <span className="pb mono">{job.kind}</span>
+              {job.origin === 'agent' && <span className="pb">agent</span>}
               <span className="jobs-cue">{names.get(job.cueId) ?? job.cueId}</span>
               <span className="sp" />
+              {job.state === 'queued' && job.kind !== 'stt' && (
+                <button className="btn ghost" onClick={() => cancel(job)}>
+                  Cancel
+                </button>
+              )}
               {job.error && (
                 <button
                   className="btn ghost"

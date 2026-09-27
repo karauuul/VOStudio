@@ -246,6 +246,9 @@ export async function abortRecording(id: string): Promise<void> {
   await discard(rec.abs)
 }
 
+export const recordingActive = (cueId: string): boolean =>
+  [...recordings.values()].some((rec) => rec.cueId === cueId && rec.session.repository.isLive())
+
 export async function closeRecordings(repository: SerialProjectRepository): Promise<void> {
   const closing: Promise<unknown>[] = []
   for (const [id, rec] of recordings) {

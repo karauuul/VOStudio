@@ -1,5 +1,8 @@
 import {
   sanitizeProviderSettings,
+  type Character,
+  type Cue,
+  type Project,
   type ProviderModeSettings,
   type ProviderSettings,
 } from './domain'
@@ -110,6 +113,32 @@ export function estimateChars(
   const text = applyRules(targetText(cueText, target), rules)
   if (!text) return 0
   return Math.ceil(text.length * (model?.costMultiplier ?? 1))
+}
+
+export interface TtsPlan {
+  character: Character
+  voiceId: string
+  text: string
+  model: string
+  language?: string
+}
+
+export function ttsPlan(project: Project, cue: Cue, text: string, model?: string): TtsPlan {
+  const character = project.characters.find((c) => c.id === cue.characterId)
+  if (!character) throw new Error('Line has no character')
+  if (!character.provider.voiceId) {
+    throw new Error(`No voice configured for character "${character.name}"`)
+  }
+  const mode = project.provider?.tts
+  const projectModel = mode?.model ?? character.provider.ttsModel
+  const chosen = model ?? projectModel
+  return {
+    character,
+    voiceId: character.provider.voiceId,
+    text: applyRules(text, project.pronunciationRules),
+    model: chosen,
+    ...(mode?.language && chosen === projectModel && chosen !== NO_LANGUAGE_CODE_MODEL ? { language: mode.language } : {}),
+  }
 }
 
 export const AUDIO_TAGS = [

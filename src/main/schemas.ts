@@ -433,6 +433,13 @@ export const stsSchema = z.object({
   selectOutput: z.boolean().optional(),
 })
 
+export const genRunSchema = z.discriminatedUnion('kind', [
+  ttsSchema.extend({ kind: z.literal('tts') }),
+  stsSchema.extend({ kind: z.literal('sts') }),
+])
+
+export const jobIdsSchema = z.array(z.string().min(1).max(200)).max(1000)
+
 export function autoSelectsOutput(
   req: { fragment?: boolean; selectOutput?: boolean },
   approved: boolean

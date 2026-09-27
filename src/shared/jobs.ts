@@ -1,17 +1,21 @@
 export type JobKind = 'tts' | 'sts' | 'stt'
-export type JobState = 'queued' | 'running' | 'done' | 'error'
+export type JobState = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+export type JobOrigin = 'ui' | 'agent'
 
 export interface Job {
   id: string
   kind: JobKind
   cueId: string
   state: JobState
+  origin: JobOrigin
+  chars: number
   error?: string
+  takeId?: string
 }
 
-export const KEEP_TERMINAL = 20
+export const KEEP_TERMINAL = 100
 
-export const isTerminal = (j: Job): boolean => j.state === 'done' || j.state === 'error'
+export const isTerminal = (j: Job): boolean => j.state === 'done' || j.state === 'error' || j.state === 'cancelled'
 
 function prune(jobs: Job[]): Job[] {
   const terminal = jobs.filter(isTerminal)
@@ -33,12 +37,23 @@ export function start(jobs: Job[], id: string): Job[] {
   return jobs.map((j) => (j.id === id && j.state === 'queued' ? { ...j, state: 'running' } : j))
 }
 
-export function finish(jobs: Job[], id: string): Job[] {
-  return prune(jobs.map((j) => (j.id === id ? { ...j, state: 'done', error: undefined } : j)))
+export function finish(jobs: Job[], id: string, takeId?: string): Job[] {
+  return prune(
+    jobs.map((j) => {
+      if (j.id !== id) return j
+      const { error: _error, ...rest } = j
+      return { ...rest, state: 'done', ...(takeId === undefined ? {} : { takeId }) }
+    })
+  )
 }
 
 export function fail(jobs: Job[], id: string, error: string): Job[] {
   return prune(jobs.map((j) => (j.id === id ? { ...j, state: 'error', error } : j)))
+}
+
+export function cancelQueued(jobs: Job[], ids: readonly string[]): Job[] {
+  const wanted = new Set(ids)
+  return prune(jobs.map((j) => (wanted.has(j.id) && j.state === 'queued' ? { ...j, state: 'cancelled' } : j)))
 }
 
 export function dropQueued(jobs: Job[]): Job[] {
@@ -51,4 +66,19 @@ export function pendingCount(jobs: Job[]): number {
 
 export function cueHasPending(jobs: Job[], cueId: string): boolean {
   return jobs.some((j) => j.cueId === cueId && !isTerminal(j))
+}
+
+export interface GenerationGuard {
+  lineBusy: boolean
+  exporting: boolean
+  restoring: boolean
+  recording: boolean
+}
+
+export function generationRefusal(guard: GenerationGuard): string | null {
+  if (guard.exporting) return 'Export in progress'
+  if (guard.restoring) return 'Restoring version'
+  if (guard.recording) return 'The line is being recorded'
+  if (guard.lineBusy) return 'The line is already generating'
+  return null
 }

@@ -1,19 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cancelQueued,
   cueHasPending,
   dropQueued,
   enqueue,
   fail,
   finish,
+  generationRefusal,
+  isTerminal,
   KEEP_TERMINAL,
   nextQueued,
   pendingCount,
   start,
   type Job,
-} from '../src/renderer/jobs/queue'
+} from '../src/shared/jobs'
 
 const add = (jobs: Job[], id: string, cueId = 'c1', kind: 'tts' | 'sts' = 'tts'): Job[] =>
-  enqueue(jobs, { id, kind, cueId })
+  enqueue(jobs, { id, kind, cueId, origin: 'ui', chars: 0 })
 
 describe('enqueue', () => {
   it('appends the job at the end with state queued', () => {
@@ -164,5 +167,52 @@ describe('dropQueued — a project switch cancels what has not started', () => {
     const kept = dropQueued(jobs)
     expect(jobs).toHaveLength(2)
     expect(kept[0]).toBe(jobs[0])
+  })
+})
+
+describe('finish records the take', () => {
+  it('stores the take id and drops a previous error', () => {
+    const jobs = finish(fail(start(add([], 'a'), 'a'), 'a', 'boom'), 'a', 'take-1')
+    expect(jobs[0]).toEqual({ id: 'a', kind: 'tts', cueId: 'c1', origin: 'ui', chars: 0, state: 'done', takeId: 'take-1' })
+  })
+})
+
+describe('cancelQueued — only jobs that have not started', () => {
+  it('cancels queued jobs, leaves running and finished ones, and frees the cue', () => {
+    let jobs = add(add(add([], 'a', 'c1'), 'b', 'c2'), 'c', 'c3')
+    jobs = start(jobs, 'a')
+    jobs = cancelQueued(jobs, ['a', 'b'])
+    expect(jobs.map((j) => [j.id, j.state])).toEqual([
+      ['a', 'running'],
+      ['b', 'cancelled'],
+      ['c', 'queued'],
+    ])
+    expect(isTerminal(jobs[1])).toBe(true)
+    expect(cueHasPending(jobs, 'c2')).toBe(false)
+    expect(pendingCount(jobs)).toBe(2)
+  })
+
+  it('a cancelled job is never handed out', () => {
+    const jobs = cancelQueued(add(add([], 'a'), 'b'), ['a'])
+    expect(nextQueued(jobs)?.id).toBe('b')
+  })
+})
+
+describe('generationRefusal — one decision for every submitter', () => {
+  const free = { lineBusy: false, exporting: false, restoring: false, recording: false }
+
+  it('allows a free line', () => {
+    expect(generationRefusal(free)).toBeNull()
+  })
+
+  it('refuses a busy line, an export, a restore and a recording of the line', () => {
+    expect(generationRefusal({ ...free, lineBusy: true })).toBe('The line is already generating')
+    expect(generationRefusal({ ...free, exporting: true })).toBe('Export in progress')
+    expect(generationRefusal({ ...free, restoring: true })).toBe('Restoring version')
+    expect(generationRefusal({ ...free, recording: true })).toBe('The line is being recorded')
+  })
+
+  it('names the project-wide reason before the line reason', () => {
+    expect(generationRefusal({ lineBusy: true, exporting: true, restoring: true, recording: true })).toBe('Export in progress')
   })
 })
