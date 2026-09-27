@@ -43,6 +43,7 @@ import { DEFAULT_EXPORT_TEMPLATE } from '@shared/export-plan'
 import {
   emptyEdits,
   singleFlight,
+  serialQueue,
   MAX_STS_SECONDS,
   type Cue,
   type ProjectVersion,
@@ -300,15 +301,7 @@ function pickedTemplateDir(dir: string): string {
   return target
 }
 
-let lifecycle: Promise<unknown> = Promise.resolve()
-function serialLifecycle<T>(fn: () => Promise<T>): Promise<T> {
-  const run = lifecycle.then(fn, fn)
-  lifecycle = run.then(
-    () => undefined,
-    () => undefined
-  )
-  return run
-}
+const serialLifecycle = serialQueue()
 
 function requireRepository(): SerialProjectRepository {
   if (!projectRepository) throw new Error('No project is open')
@@ -1012,7 +1005,12 @@ function registerHandlers(): void {
     const parsed = exportSummarySchema.parse(summary)
     const planToken = z.string().uuid().parse(token)
     return serialLifecycle(() =>
-      finishExport(planToken, parsed, () => (parsed.exported.length > 0 ? stampVersion() : Promise.resolve(undefined)))
+      finishExport(
+        planToken,
+        parsed,
+        () => (parsed.exported.length > 0 ? stampVersion() : Promise.resolve(undefined)),
+        projectRepository?.currentRevision()
+      )
     )
   })
 
@@ -1051,7 +1049,7 @@ async function renderForAgent(cueId: string, source: 'output' | 'original', expe
   const project = repository.projectForMain()
   const cue = project.cues.find((c) => c.id === cueId)
   if (!cue) throw new Error('The line was removed meanwhile; call lines, then retry.')
-  const outPath = path.join(dir, 'agent', 'renders', renderFileName(cue.key, source === 'original' ? '.original' : ''))
+  const outPath = path.join(dir, 'agent', 'renders', renderFileName(cue.key, cue.id, source === 'original' ? '.original' : ''))
   const job = lineJob(project, cue, outPath, source)
   if (!job) return null
   const wav = await renderLineWav(job)
@@ -1061,16 +1059,25 @@ async function renderForAgent(cueId: string, source: 'output' | 'original', expe
   return { path: outPath, name: job.name, metrics: await measureAudio(outPath) }
 }
 
-async function exportForAgent(cueIds: string[], expected?: SerialProjectRepository): Promise<BatchExportResult> {
+const serialAgentExport = serialQueue()
+
+function requireExportIdle(expected?: SerialProjectRepository): void {
   liveRepository(expected)
   if (exportBusy()) throw new Error('The app is exporting; wait for that export to finish, then retry.')
-  const owner = await renderWorker()
-  const plan = await planBatchExport(batchExportSchema.parse({ cueIds }), owner)
-  try {
-    return await renderExportPlan(plan)
-  } finally {
-    releaseExports(owner, plan.token)
-  }
+}
+
+function exportForAgent(cueIds: string[], expected?: SerialProjectRepository): Promise<BatchExportResult> {
+  return serialAgentExport(async () => {
+    requireExportIdle(expected)
+    const owner = await renderWorker()
+    requireExportIdle(expected)
+    const plan = await planBatchExport(batchExportSchema.parse({ cueIds }), owner, liveRepository(expected).currentRevision())
+    try {
+      return await renderExportPlan(plan)
+    } finally {
+      releaseExports(owner, plan.token)
+    }
+  })
 }
 
 async function transcribeFile(file: string): Promise<string> {
