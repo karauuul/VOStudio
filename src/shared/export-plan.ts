@@ -208,6 +208,13 @@ export function findCollisions(planned: PlannedTake[]): NameCollision[] {
   for (const list of byName.values()) {
     if (list.length > 1) collisions.push({ name: list[0].name, cueKeys: list.map((p) => p.cue.key) })
   }
+  for (const [key, list] of byName) {
+    const parts = key.split('/')
+    for (let depth = 1; depth < parts.length; depth++) {
+      const folder = byName.get(parts.slice(0, depth).join('/'))
+      if (folder) collisions.push({ name: list[0].name, cueKeys: [...folder, ...list].map((p) => p.cue.key) })
+    }
+  }
   return collisions
 }
 

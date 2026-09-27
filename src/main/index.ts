@@ -538,12 +538,18 @@ function restoreVersion(req: { n: number }, from?: WebContents) {
   })
 }
 
-function importAudioPaths(req: { paths: string[]; rule: MatchRule }): Promise<AudioImportResult> {
+function liveRepository(expected?: SerialProjectRepository): SerialProjectRepository {
+  const repository = requireRepository()
+  if (expected && expected !== repository) throw new Error('The project was closed or switched during this call; call status, then retry.')
+  return repository
+}
+
+function importAudioPaths(req: { paths: string[]; rule: MatchRule }, expected?: SerialProjectRepository): Promise<AudioImportResult> {
   return serialLifecycle(async () => {
     const parsed = audioImportSchema.parse(req)
-    const repository = projectRepository
+    const repository = liveRepository(expected)
     const projectDir = store.getProjectDir()
-    if (!repository || !projectDir) throw new Error('No project is open')
+    if (!projectDir) throw new Error('No project is open')
     const { media, rest } = await splitMediaPaths(parsed.paths)
     const sources = await importSources(repository.projectForMain(), projectDir, media)
     if (sources.added.length > 0) {
@@ -569,23 +575,23 @@ async function previewTableImport(req: TableRequest): Promise<TablePreview> {
   return previewTableFile(requireRepository().projectForMain(), table, parsed)
 }
 
-function importTable(req: TableRequest): Promise<TableImportResult> {
+function importTable(req: TableRequest, expected?: SerialProjectRepository): Promise<TableImportResult> {
   return serialLifecycle(async () => {
     const parsed = tableImportSchema.parse(req)
     const table = await readTable(parsed.path)
     let imported: ReturnType<typeof importTableFile> | undefined
-    await publish(requireRepository(), (project) => (imported = importTableFile(project, table, parsed)).changes)
+    await publish(liveRepository(expected), (project) => (imported = importTableFile(project, table, parsed)).changes)
     if (!imported) throw new Error('Table import did not run')
     return imported.result
   })
 }
 
-function reimportTemplateDir(dir: string): Promise<ReimportResult> {
+function reimportTemplateDir(dir: string, expected?: SerialProjectRepository): Promise<ReimportResult> {
   return serialLifecycle(async () => {
     const target = templateDirSchema.parse(dir)
-    const repository = projectRepository
+    const repository = liveRepository(expected)
     const projectDir = store.getProjectDir()
-    if (!repository || !projectDir) throw new Error('No project is open')
+    if (!projectDir) throw new Error('No project is open')
     const validation = await validateTemplate(target)
     const { result, changes } = await reimportTemplate(validation, repository.projectForMain(), projectDir)
     emit('project:changed', await repository.commit(changes))
@@ -599,8 +605,7 @@ function transcribe(
 ): Promise<{ updated: number; skipped: number }> {
   return serialLifecycle(async () => {
     const parsed = transcribeSchema.parse(req)
-    const repository = requireRepository()
-    if (expected && expected !== repository) throw new Error('The project was closed or switched during this call; call status, then retry')
+    const repository = liveRepository(expected)
     const result = await transcribeCues(
       repository,
       parsed.cueIds,
@@ -676,11 +681,11 @@ function registerHandlers(): void {
     return picked.canceled ? [] : picked.filePaths
   })
 
-  typedHandle('import:audio', importAudioPaths)
+  typedHandle('import:audio', (req) => importAudioPaths(req))
 
   typedHandle('import:tablePreview', previewTableImport)
 
-  typedHandle('import:table', importTable)
+  typedHandle('import:table', (req) => importTable(req))
 
   typedHandle('source:detect', (req) =>
     serialLifecycle(async () => {
@@ -697,7 +702,7 @@ function registerHandlers(): void {
     })
   )
 
-  typedHandle('import:template', reimportTemplateDir)
+  typedHandle('import:template', (dir) => reimportTemplateDir(dir))
 
   typedHandle('project:command', (command) => {
     if (!projectRepository) throw new Error('No project is open')

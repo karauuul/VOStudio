@@ -50,10 +50,10 @@ export interface AgentDeps {
   checkRemovable: (cueIds: string[]) => Promise<void>
   emit: (result: CommandResult) => void
   audioRoots: () => string[]
-  importAudio: (req: { paths: string[]; rule: MatchRule }) => Promise<AudioImportResult>
+  importAudio: (req: { paths: string[]; rule: MatchRule }, expected?: SerialProjectRepository) => Promise<AudioImportResult>
   previewTable: (req: TableRequest) => Promise<TablePreview>
-  importTable: (req: TableRequest) => Promise<TableImportResult>
-  reimportTemplate: (dir: string) => Promise<ReimportResult>
+  importTable: (req: TableRequest, expected?: SerialProjectRepository) => Promise<TableImportResult>
+  reimportTemplate: (dir: string, expected?: SerialProjectRepository) => Promise<ReimportResult>
   transcribe: (req: { cueIds: string[]; overwrite?: boolean }, expected?: SerialProjectRepository) => Promise<{ updated: number; skipped: number }>
   provider: () => VoiceProvider
   diagnostics: () => DiagnosticEntry[]
@@ -491,12 +491,12 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       annotations: DESTRUCTIVE,
       writes: (args) => !args.table || args.table.preview === false,
       async run(_ctx, args) {
-        requireRepository(deps)
+        const repository = requireRepository(deps)
         await deps.flushUi()
         if (args.audio) {
-          return structured({ ...(await deps.importAudio({ paths: args.audio.paths, rule: args.audio.rule ?? DEFAULT_MATCH_RULE })) })
+          return structured({ ...(await deps.importAudio({ paths: args.audio.paths, rule: args.audio.rule ?? DEFAULT_MATCH_RULE }, repository)) })
         }
-        if (args.templateReimport !== undefined) return structured({ ...(await deps.reimportTemplate(args.templateReimport)) })
+        if (args.templateReimport !== undefined) return structured({ ...(await deps.reimportTemplate(args.templateReimport, repository)) })
         const table = args.table
         if (!table) throw new Error('pass exactly one of audio, table or templateReimport.')
         const req: TableRequest = {
@@ -508,7 +508,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           ...(table.keepOriginal === undefined ? {} : { keepOriginal: table.keepOriginal }),
         }
         if (table.preview === false) {
-          const done = await deps.importTable(req)
+          const done = await deps.importTable(req, repository)
           return structured({ applied: true, rows: done.rows, mapping: done.mapping, summary: done.summary, ...textMatchView(done.textMatch) })
         }
         const preview = await deps.previewTable(req)

@@ -107,13 +107,18 @@ export function mergeExported(
   return [...previous.filter((e) => !replaced(e)), ...current]
 }
 
+function isDeliveredAudio(file: string): boolean {
+  const parts = file.split('/')
+  return parts.length >= 2 && parts[0] === 'audio' && parts.slice(1).every((part) => part !== '' && part !== '.' && part !== '..' && !/[\\:]/.test(part))
+}
+
 export function supersededFiles(previous: DeliverExported[], current: DeliverExported[]): string[] {
   const fresh = new Set(current.map((e) => e.file.toLowerCase()))
   const replaced = replacedBy(current)
   return previous
     .filter((e) => replaced(e) && !fresh.has(e.file.toLowerCase()))
     .map((e) => e.file)
-    .filter((file) => /^audio\/[^/\\]+$/.test(file) && !/^audio\/\.\.?$/.test(file))
+    .filter(isDeliveredAudio)
 }
 
 export function exportedLines(report: Pick<DeliverReport, 'exported'>): ExportedLines {

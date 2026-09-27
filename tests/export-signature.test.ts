@@ -316,9 +316,13 @@ describe('superseded files', () => {
   })
 
   it('never point outside the audio folder', () => {
-    const previous = ['../a.wav', 'audio/../../a.wav', 'audio/sub/a.wav', 'audio/..', 'audio\\..\\a.wav', '/etc/a.wav'].map((file) =>
+    const previous = ['../a.wav', 'audio/../../a.wav', 'audio/sub/../../a.wav', 'audio/..', 'audio\\..\\a.wav', '/etc/a.wav', 'audio/c:/a.wav'].map((file) =>
       entry('a', file)
     )
     expect(supersededFiles(previous, [entry('a', 'audio/a.mp3')])).toEqual([])
+  })
+
+  it('cleans superseded files inside nested export folders', () => {
+    expect(supersededFiles([entry('a', 'audio/sfx/old.wav')], [entry('a', 'audio/voice/new.wav')])).toEqual(['audio/sfx/old.wav'])
   })
 })
