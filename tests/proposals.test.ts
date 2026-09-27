@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   emptyEdits,
+  safeRelPath,
   sanitizeAssets,
   sanitizeOrigins,
   sanitizeProposals,
@@ -169,10 +170,23 @@ describe('rule 2: the new fields', () => {
       { id: 'b', name: 'b', kind: 'other', file: { fileId: 'f', relPath: '/f' }, size: 0, addedAt: 'now' },
     ])
     expect(sanitizeAssets([])).toBeUndefined()
+    expect(sanitizeAssets([{ ...asset, name: '../../..' }, { ...asset, id: 'a2', name: '/etc/../passwd.csv' }])).toEqual([
+      { ...asset, name: 'a1' },
+      { ...asset, id: 'a2', name: 'etc/passwd.csv' },
+    ])
     expect(sanitizeTerms([{ term: 'a', translation: 'б', proposed: true }, { term: 'c', translation: 'д', proposed: 'yes' }])).toEqual([
       { term: 'a', translation: 'б', proposed: true },
       { term: 'c', translation: 'д' },
     ])
+  })
+
+  it('a relative asset path keeps only segments that stay where they are', () => {
+    expect(safeRelPath('drop/vo/ada_001.wav')).toBe('drop/vo/ada_001.wav')
+    expect(safeRelPath('../../x.wav')).toBe('x.wav')
+    expect(safeRelPath('/abs/./x.wav')).toBe('abs/x.wav')
+    expect(safeRelPath('C:\\a\\...\\x.wav')).toBe('a/x.wav')
+    expect(safeRelPath('a/.. /b\u0001c/x.wav')).toBe('a/x.wav')
+    expect(safeRelPath('..')).toBe('')
   })
 
   it('origins stay within the cap on write, keeping the newest and evicting the oldest', () => {

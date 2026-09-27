@@ -119,7 +119,12 @@ describe('addAssets', () => {
     const ids = added.filter((a) => a.kind === 'audio').map((a) => a.id)
     const { result } = await assetAudioLines(project, PROJECT_DIR, [...ids, added.find((a) => a.kind === 'table')!.id])
     expect(result).toMatchObject({ added: 2, updated: 0 })
-    expect(result.skipped.map((s) => s.reason).sort()).toEqual(['a table asset, not audio', 'lines take wav, mp3 or ogg'])
+    expect(result.skipped).toEqual([
+      { asset: 'drop/lines.csv', reason: 'a table asset, not audio' },
+      { asset: 'drop/vo/music.flac', reason: 'could not be converted to wav' },
+    ])
+    expect(result).not.toHaveProperty('failed')
+    await expect(fs.stat(path.join(PROJECT_DIR, 'audio', 'reference', 'drop', 'vo', 'music.wav'))).rejects.toThrow()
     const ada = project.cues.find((c) => c.key === 'ada_001')!
     expect(ada.fields).toEqual({ EventName: 'ada_001', path: 'vo/ada' })
     expect(ada.origins).toEqual([{ assetId: added.find((a) => a.name === 'drop/vo/ada/ada_001.wav')!.id }])
@@ -127,7 +132,56 @@ describe('addAssets', () => {
   })
 })
 
+describe('audio assets of every audio format become lines', () => {
+  it('converts a flac asset to wav, so the default selection finds it built afterwards', async () => {
+    const dir = path.join(H.root, 'flacs')
+    await fs.mkdir(dir, { recursive: true })
+    await tone(path.join(dir, 'bark_001.flac'))
+    await tone(path.join(dir, 'bark_002.wav'))
+    await run(ffmpegStatic, ['-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', path.join(dir, 'bark_002.flac')])
+    const target = path.join(H.root, 'VOStudio', 'flacs.vostudio')
+    const { added } = await addAssets([], target, [dir])
+    expect(added.every((a) => a.kind === 'audio')).toBe(true)
+    const project = { ...base(), id: 'p', schemaVersion: 1, createdAt: '', assets: added } as Project
+    const { result } = await assetAudioLines(project, target, added.map((a) => a.id))
+    expect(result).toMatchObject({ added: 2, updated: 0, skipped: [], duplicates: ['flacs/bark_002.wav'] })
+    const bark = project.cues.find((c) => c.key === 'bark_001')!
+    expect(bark.referenceAudio).toMatchObject({ format: 'wav', relPath: path.join(target, 'audio', 'reference', 'flacs', 'bark_001.wav') })
+    expect(bark.referenceDuration).toBeCloseTo(1, 1)
+    expect(bark.origins).toEqual([{ assetId: added.find((a) => a.name === 'flacs/bark_001.flac')!.id }])
+  })
+
+  it('refuses an asset whose name climbs out of the project and writes nothing', async () => {
+    const target = path.join(H.root, 'VOStudio', 'crafted.vostudio')
+    await fs.mkdir(target, { recursive: true })
+    const src = path.join(DROP, 'vo', 'hit.wav')
+    const project = {
+      ...base(), id: 'p', schemaVersion: 1, createdAt: '',
+      assets: [{ id: 'evil', name: '../../../../victim.wav', kind: 'audio', file: { fileId: 'hit.wav', relPath: src }, size: 1, addedAt: 'now' }],
+    } as Project
+    await expect(assetAudioLines(project, target, ['evil'])).rejects.toThrow(/leaves the project/)
+    expect(project.cues).toEqual([])
+    expect(await fs.readdir(target)).toEqual([])
+    await expect(fs.stat(path.join(H.root, 'victim.wav'))).rejects.toThrow()
+  })
+})
+
 describe('project.json keeps the new fields across a reopen', () => {
+  it('an asset name that climbs out of the project reopens as a safe relative name', async () => {
+    const dir = path.join(H.root, 'crafted-open.vostudio')
+    await fs.mkdir(dir, { recursive: true })
+    const { ui: _ui, ...stored } = { ...base(), id: 'p', schemaVersion: 1, createdAt: 'now' }
+    const file = { fileId: 'x.wav', relPath: '/x/x.wav' }
+    const assets = [
+      { id: 'a1', name: '../../../victim.wav', kind: 'audio', file, size: 1, addedAt: 'now' },
+      { id: 'a2', name: 'C:\\Windows\\..\\evil.csv', kind: 'table', file, size: 1, addedAt: 'now' },
+      { id: 'a3', name: 'drop/vo/ok.wav', kind: 'audio', file, size: 1, addedAt: 'now' },
+    ]
+    await fs.writeFile(path.join(dir, 'project.json'), JSON.stringify({ ...stored, assets }))
+    const reopened = await store.openProjectDir(dir)
+    expect(reopened.assets?.map((a) => a.name)).toEqual(['victim.wav', 'Windows/evil.csv', 'drop/vo/ok.wav'])
+  })
+
   it('assets, proposals, origins and proposed terms survive save and open', async () => {
     const dir = path.join(H.root, 'roundtrip.vostudio')
     await fs.mkdir(dir, { recursive: true })

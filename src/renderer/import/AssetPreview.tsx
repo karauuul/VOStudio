@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
 import type { ProjectAsset } from '@shared/domain'
 import type { AssetPage } from '@shared/ipc'
@@ -19,14 +19,22 @@ function columnTemplate(page: AssetPage, count: number): string {
 
 export function AssetPreview({ asset, onClose }: { asset: ProjectAsset; onClose: () => void }) {
   const [page, setPage] = useState<AssetPage | null>(null)
+  const [rows, setRows] = useState<string[][]>([])
   const [error, setError] = useState('')
+  const loading = useRef<object | null>(null)
 
   useEffect(() => {
     let live = true
     setPage(null)
+    setRows([])
     setError('')
+    loading.current = null
     void api['assets:read']({ id: asset.id }).then(
-      (next) => live && setPage(next),
+      (next) => {
+        if (!live) return
+        setPage(next)
+        setRows(next.rows)
+      },
       (e: unknown) => live && setError(String(e))
     )
     return () => {
@@ -34,9 +42,27 @@ export function AssetPreview({ asset, onClose }: { asset: ProjectAsset; onClose:
     }
   }, [asset.id])
 
+  const loadMore = useCallback(() => {
+    if (!page || rows.length >= page.total || loading.current !== null) return
+    const request = {}
+    loading.current = request
+    void api['assets:read']({ id: asset.id, from: rows.length }).then(
+      (next) => {
+        if (loading.current !== request) return
+        loading.current = null
+        setRows((prev) => [...prev, ...next.rows])
+      },
+      (e: unknown) => {
+        if (loading.current !== request) return
+        loading.current = null
+        setError(String(e))
+      }
+    )
+  }, [asset.id, page, rows.length])
+
   const count = page ? Math.max(1, page.columns.length, ...page.rows.slice(0, SAMPLE_ROWS).map((cells) => cells.length)) : 0
   const columns = useMemo(() => (page ? columnTemplate(page, count) : ''), [page, count])
-  const total = page ? (page.total > page.rows.length ? `${nnn(page.rows.length)} / ${nnn(page.total)}` : nnn(page.total)) : ''
+  const total = page ? (page.total > rows.length ? `${nnn(rows.length)} / ${nnn(page.total)}` : nnn(page.total)) : ''
 
   return (
     <section className="panel asset-prev">
@@ -66,8 +92,9 @@ export function AssetPreview({ asset, onClose }: { asset: ProjectAsset; onClose:
           </div>
           <Virtuoso
             className="imp-scroll"
-            data={page.rows}
+            data={rows}
             fixedItemHeight={ROW_H}
+            endReached={loadMore}
             itemContent={(index, cells) => (
               <div className="imp-row" style={{ gridTemplateColumns: columns }}>
                 <span className="imp-n">{index + 1}</span>

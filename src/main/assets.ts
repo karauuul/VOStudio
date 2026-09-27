@@ -208,8 +208,9 @@ export async function assetAudioLines(
     const parts = asset.name.split('/')
     const picked = pickedAudio({ src: asset.file.relPath, rel: asset.name, dir: parts.slice(1, -1).join('/') })
     if (picked) files.push({ ...picked, assetId: asset.id })
-    else skipped.push({ asset: asset.name, reason: 'lines take wav, mp3 or ogg' })
+    else skipped.push({ asset: asset.name, reason: 'not an audio file' })
   }
   const { result, changes } = await importPickedAudio(project, projectDir, files, DEFAULT_MATCH_RULE)
-  return { result: { ...result, skipped }, changes }
+  const { failed = [], ...imported } = result
+  return { result: { ...imported, skipped: [...skipped, ...failed.map((name) => ({ asset: name, reason: 'could not be converted to wav' }))] }, changes }
 }

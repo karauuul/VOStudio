@@ -104,9 +104,10 @@ export const ImportRoom = memo(function ImportRoom({
         const r = await api['import:audio']({ paths: route.lines, rule: matchBy })
         if (r.files > 0 || parts.length === 0) {
           parts.push(
-            r.unmatched === undefined
+            (r.unmatched === undefined
               ? `${r.files} files · ${r.added} lines added, ${r.updated} updated`
-              : `${r.files} files · ${r.updated} updated${r.unmatched > 0 ? ` · ${r.unmatched} unmatched` : ''}`
+              : `${r.files} files · ${r.updated} updated${r.unmatched > 0 ? ` · ${r.unmatched} unmatched` : ''}`) +
+              (r.failed ? ` · ${r.failed.length} unreadable` : '')
           )
         }
       }

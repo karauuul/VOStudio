@@ -2,18 +2,14 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
 import { attachesOnly, matchAudioFiles, type MatchRule } from '@shared/import-table'
-import { withOrigin, type AudioRef, type Cue, type Project } from '@shared/domain'
+import { safeRelPath, withOrigin, type AudioRef, type Cue, type Project } from '@shared/domain'
 import { PATH_FIELD } from '@shared/export-plan'
 import type { ChangeSet } from '@shared/project-commands'
 import { pendingTakeDurations, type TakeDurationEntry } from '@shared/library'
 import type { AudioImportResult } from '@shared/ipc'
-import { probeMedia } from './ffmpeg'
-
-const FORMATS: Record<string, AudioRef['format']> = {
-  '.wav': 'wav',
-  '.mp3': 'mp3',
-  '.ogg': 'ogg',
-}
+import { isInsideDir } from '@shared/project-summary'
+import { takeFileKind } from '@shared/take-import'
+import { probeMedia, transcodeToWav } from './ffmpeg'
 
 const CONCURRENCY = 8
 const MAX_FILES = 20_000
@@ -87,7 +83,14 @@ export async function collectFiles(paths: string[], accept: (abs: string) => boo
   return out
 }
 
-export const audioFormat = (file: string): AudioRef['format'] | undefined => FORMATS[path.extname(file).toLowerCase()]
+export function audioFormat(file: string): AudioRef['format'] | undefined {
+  const kind = takeFileKind(file)
+  if (kind === 'transcode') return 'wav'
+  return kind === 'keep' ? (path.extname(file).slice(1).toLowerCase() as AudioRef['format']) : undefined
+}
+
+const referenceRel = (file: PickedAudio): string =>
+  takeFileKind(file.src) === 'transcode' ? `${file.rel.slice(0, file.rel.length - path.extname(file.rel).length)}.wav` : file.rel
 
 export function pickedAudio(file: PickedFile): PickedAudio | null {
   const format = audioFormat(file.src)
@@ -132,22 +135,33 @@ export async function importPickedAudio(
   rule: MatchRule
 ): Promise<{ result: AudioImportResult; changes: ChangeSet }> {
   const referenceRoot = path.join(projectDir, 'audio', 'reference')
+  const unsafe = files.find((file) => safeRelPath(file.rel) !== file.rel || !isInsideDir(path.resolve(referenceRoot, referenceRel(file)), referenceRoot))
+  if (unsafe) throw new Error(`Audio path leaves the project: ${unsafe.rel}`)
   const { update, create, duplicates } = matchAudioFiles(project.cues, files, rule)
   const attach = attachesOnly(project)
   const kept = [...update.map(({ file }) => file), ...(attach ? [] : create)]
 
-  for (const dir of new Set(kept.map((f) => path.dirname(path.join(referenceRoot, f.rel))))) {
+  for (const dir of new Set(kept.map((f) => path.dirname(path.join(referenceRoot, referenceRel(f)))))) {
     await fs.mkdir(dir, { recursive: true })
   }
 
+  const failed: string[] = []
   const probed = await mapLimited(kept, async (file) => {
-    const abs = path.join(referenceRoot, file.rel)
-    if (path.resolve(abs).toLowerCase() !== path.resolve(file.src).toLowerCase()) {
+    const abs = path.join(referenceRoot, referenceRel(file))
+    if (takeFileKind(file.src) === 'transcode') {
+      try {
+        await transcodeToWav(file.src, abs)
+      } catch {
+        await fs.rm(abs, { force: true }).catch(() => undefined)
+        failed.push(file.rel)
+        return null
+      }
+    } else if (path.resolve(abs).toLowerCase() !== path.resolve(file.src).toLowerCase()) {
       await fs.copyFile(file.src, abs)
     }
     return { file, abs, duration: await probeDuration(abs) }
   })
-  const byFile = new Map(probed.map((row) => [row.file, row]))
+  const byFile = new Map(probed.flatMap((row) => (row ? [[row.file, row] as const] : [])))
 
   const changed: Cue[] = []
   for (const { cue, file } of update) {
@@ -178,6 +192,7 @@ export async function importPickedAudio(
       files: files.length,
       ...(attach ? { unmatched: create.length } : {}),
       ...(duplicates.length > 0 ? { duplicates: duplicates.map((file) => file.rel) } : {}),
+      ...(failed.length > 0 ? { failed } : {}),
     },
     changes: { cues: structuredClone([...changed, ...added]) },
   }

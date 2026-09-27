@@ -378,6 +378,10 @@ export interface ProjectAsset {
   rows?: number
 }
 
+const unsafeSegment = (part: string): boolean => /^[. ]*$/.test(part) || part.includes(':') || [...part].some((ch) => ch < ' ')
+
+export const safeRelPath = (rel: string): string => rel.split(/[\\/]/).filter((part) => !unsafeSegment(part)).join('/')
+
 export function sanitizeAssets(rows: unknown): ProjectAsset[] | undefined {
   if (!Array.isArray(rows)) return undefined
   const out: ProjectAsset[] = []
@@ -396,7 +400,7 @@ export function sanitizeAssets(rows: unknown): ProjectAsset[] | undefined {
     const count = rowOf(row.rows)
     out.push({
       id,
-      name: nonEmptyString(row.name) ?? id,
+      name: safeRelPath(nonEmptyString(row.name) ?? '') || id,
       kind: ASSET_KINDS.includes(row.kind as AssetKind) ? (row.kind as AssetKind) : 'other',
       file: { fileId, relPath },
       size: Math.max(0, Math.round(finiteOr(row.size, 0))),
