@@ -924,7 +924,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           line: cue.key,
           dub: side(dub),
           original: side(original),
-          ...comparisonView(compareProsody(dub.prosody, original.prosody, speed)),
+          ...comparisonView(compareProsody(dub.prosody, original.prosody, speed, { dub: dubRender.metrics.duration, original: originalRender.metrics.duration })),
         }
         if (args.image !== true) return structured(view)
         return figureOutput(pinned, view, cue.key, [prosodyPanel('original', original.prosody), prosodyPanel('dub', dub.prosody)])

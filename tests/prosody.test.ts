@@ -252,4 +252,28 @@ describe('comparison with the original', () => {
     expect(c.suggestions.some((s) => /^phrase 1 is 0\.\d\d s longer: speed 1\.2\d?/.test(s))).toBe(true)
     expect(c.suggestions.some((s) => s.startsWith('phrase 2 starts 0.') && s.includes('late: move it'))).toBe(true)
   })
+
+  it('measures overall length from the full renders and keeps timing advice inside a cut analysis', () => {
+    const original = analyzeProsody(signal([gap(0.1), tone(0.6, 140, 210), gap(0.3), tone(0.5, 150), gap(0.3), tone(0.5, 150)]), RATE)
+    const dub = analyzeProsody(signal([gap(0.1), tone(0.6, 210, 140), gap(0.3), tone(0.5, 150), gap(0.3), tone(1.0, 150), gap(0.2)]), RATE)
+    const rising = 'original phrase 1 ends rising (question-like), dub ends falling: regenerate with a questioning delivery'
+    const whole = compareProsody(dub, original, 1)
+    expect(whole.pairs).toHaveLength(3)
+    expect(whole.analyzedSeconds).toBeUndefined()
+    expect(whole.lengthDiff).toBeCloseTo(dub.duration - original.duration, 5)
+    expect(whole.suggestions.some((s) => s.startsWith('dub speech is '))).toBe(true)
+    expect(whole.suggestions.some((s) => s.startsWith('phrase 3 is '))).toBe(true)
+    expect(whole.suggestions).toContain(rising)
+    expect(comparisonView(whole)).not.toHaveProperty('note')
+    const cut = { ...original, truncated: true }
+    const c = compareProsody(dub, cut, 1, { dub: 70, original: 95 })
+    expect(c.pairs).toHaveLength(3)
+    expect(c.lengthDiff).toBe(-25)
+    expect(c.analyzedSeconds).toBe(cut.duration)
+    expect(c.suggestions.some((s) => s.startsWith('dub speech is '))).toBe(false)
+    expect(c.suggestions.some((s) => s.startsWith('phrase 3 '))).toBe(false)
+    expect(c.suggestions).toContain(rising)
+    expect(comparisonView(c)).toMatchObject({ lengthDiff: -25, analyzedSeconds: Math.round(cut.duration * 100) / 100, note: expect.stringMatching(/^Analysis stops at \d+\.\d\d s/) })
+    expect(compareProsody(dub, cut, 1, { dub: 0 }).lengthDiff).toBeCloseTo(dub.duration - cut.duration, 5)
+  })
 })

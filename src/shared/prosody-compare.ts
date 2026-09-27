@@ -39,6 +39,7 @@ export interface ProsodyComparison {
   rhythm: number | null
   intonation: number | null
   suggestions: string[]
+  analyzedSeconds?: number
 }
 
 const spanOf = (phrases: PhraseProsody[], from: number, to: number): Span => ({ start: phrases[from].start, end: phrases[to].end })
@@ -186,7 +187,13 @@ const weighted = (items: { w: number; s: number }[]): number | null => {
   return total > 0 ? r2(items.reduce((sum, x) => sum + x.w * x.s, 0) / total) : null
 }
 
-export function compareProsody(dub: Prosody, original: Prosody, speed = 1): ProsodyComparison {
+const analyzedUntil = (p: Prosody): number => (p.truncated ? p.duration : Infinity)
+const fullLength = (measured: number | undefined, p: Prosody): number => (measured !== undefined && measured > 0 ? measured : p.duration)
+
+export function compareProsody(dub: Prosody, original: Prosody, speed = 1, lengths: { dub?: number; original?: number } = {}): ProsodyComparison {
+  const limit = Math.min(analyzedUntil(dub), analyzedUntil(original))
+  const cut = Number.isFinite(limit)
+  const analyzed = (...spans: Span[]): boolean => spans.every((s) => s.end < limit - TIMING_TOLERANCE)
   const dubSpans = dub.phrases.map((p) => ({ start: p.start, end: p.end }))
   const originalSpans = original.phrases.map((p) => ({ start: p.start, end: p.end }))
   const aligned = alignPhrases(dubSpans, originalSpans)
@@ -236,7 +243,7 @@ export function compareProsody(dub: Prosody, original: Prosody, speed = 1): Pros
     })
   )
   const suggestions: string[] = []
-  if (dubSpeech && originalSpeech && Math.abs(speechDiff) >= TIMING_TOLERANCE) {
+  if (!cut && dubSpeech && originalSpeech && Math.abs(speechDiff) >= TIMING_TOLERANCE) {
     const longer = speechDiff > 0
     const pause = longer ? longestPause(dub, 0, dub.phrases.length - 1) : null
     const cut = pause ? ` or remove the ${pause.pause.toFixed(2)} s pause after "${pause.after}"` : ''
@@ -250,24 +257,26 @@ export function compareProsody(dub: Prosody, original: Prosody, speed = 1): Pros
   const multi = pairs.length > 1
   for (const [index, pair] of pairs.entries()) {
     const label = multi ? `phrase ${index + 1}` : 'phrase'
-    suggestions.push(...pairSuggestions(dub, pair, label, speed, multi))
+    const timing = multi && analyzed(spanOf(dub.phrases, pair.dub[0], pair.dub[1]), spanOf(original.phrases, pair.original[0], pair.original[1]))
+    suggestions.push(...pairSuggestions(dub, pair, label, speed, timing))
   }
-  for (const i of aligned.extraDub) {
+  for (const i of aligned.extraDub.filter((i) => analyzed(dubSpans[i]))) {
     suggestions.push(`dub has an extra phrase at ${dubSpans[i].start.toFixed(2)} s (${length(dubSpans[i]).toFixed(2)} s) with no counterpart in the original`)
   }
-  for (const j of aligned.missingOriginal) {
+  for (const j of aligned.missingOriginal.filter((j) => analyzed(originalSpans[j]))) {
     suggestions.push(`original phrase at ${originalSpans[j].start.toFixed(2)} s (${length(originalSpans[j]).toFixed(2)} s) has no counterpart in the dub`)
   }
   return {
     pairs,
     extraDub: aligned.extraDub,
     missingOriginal: aligned.missingOriginal,
-    lengthDiff: dub.duration - original.duration,
+    lengthDiff: fullLength(lengths.dub, dub) - fullLength(lengths.original, original),
     speechDiff,
     onsetDiff,
     rhythm,
     intonation,
     suggestions: suggestions.slice(0, SUGGESTIONS_MAX),
+    ...(cut ? { analyzedSeconds: limit } : {}),
   }
 }
 
@@ -292,5 +301,8 @@ export function comparisonView(c: ProsodyComparison): Record<string, unknown> {
     ...(c.extraDub.length > 0 ? { extraDubPhrases: c.extraDub.map((i) => i + 1) } : {}),
     ...(c.missingOriginal.length > 0 ? { unmatchedOriginalPhrases: c.missingOriginal.map((j) => j + 1) } : {}),
     suggestions: c.suggestions,
+    ...(c.analyzedSeconds === undefined
+      ? {}
+      : { analyzedSeconds: r2(c.analyzedSeconds), note: `Analysis stops at ${c.analyzedSeconds.toFixed(2)} s; overall speech length and timing past it are not compared` }),
   }
 }
