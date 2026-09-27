@@ -114,7 +114,7 @@ import { diagnostics, watchDiagnostics } from './agent/diagnostics'
 import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
 import { createGenerationQueue, type QueuedGeneration } from './gen-queue'
 import { createStsTake, createTtsTake } from './generate'
-import { exportRefusal, type JobOrigin } from '@shared/jobs'
+import { exportRefusal, recordingRefusal, type JobOrigin } from '@shared/jobs'
 
 const primaryInstance = app.requestSingleInstanceLock()
 if (!primaryInstance) app.quit()
@@ -810,9 +810,11 @@ function registerHandlers(): void {
   })
 
   typedHandle('rec:begin', (req) => {
-    if (restoringVersion) throw new Error('Restoring version')
     const parsed = recBeginSchema.parse(req)
-    return beginRecording(requireSession(), parsed.cueId, parsed.sampleRate, parsed.bitDepth)
+    const session = requireSession()
+    const refusal = recordingRefusal(generations.check(parsed.cueId))
+    if (refusal) throw new Error(refusal)
+    return beginRecording(session, parsed.cueId, parsed.sampleRate, parsed.bitDepth)
   })
 
   typedHandle('rec:chunk', (req) => {

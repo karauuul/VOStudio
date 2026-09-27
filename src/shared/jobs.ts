@@ -91,6 +91,12 @@ export function generationRefusal(guard: GenerationGuard): string | null {
   return null
 }
 
+export function recordingRefusal(guard: GenerationGuard): string | null {
+  if (guard.restoring) return 'Restoring version'
+  if (guard.lineBusy) return 'The line is generating; wait until its jobs finish, then record.'
+  return null
+}
+
 export function exportRefusal(jobs: Job[]): string | null {
   return pendingCount(jobs) > 0 ? 'Generation in progress; wait until the queued and running jobs finish, then export.' : null
 }

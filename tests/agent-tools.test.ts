@@ -727,6 +727,24 @@ describe('generation tools', () => {
     expect((await call('take_use', { line: 'L3', take: 'zz' })).error).toBe('Line L3 has no take "zz"; call line to list its takes.')
   })
 
+  it('take_use refuses during an export, a restore, a recording or a generation of the line', async () => {
+    const { call, repo, guard, gen } = setup()
+    const before = comp(repo, 'L3')?.clips
+    guard.exporting = true
+    expect((await call('take_use', { line: 'L3', take: 't1' })).error).toBe('Line L3: Export in progress; wait until it finishes, then retry.')
+    guard.exporting = false
+    guard.restoring = true
+    expect((await call('take_use', { line: 'L3', take: 't1' })).error).toBe('Line L3: Restoring version; wait until it finishes, then retry.')
+    guard.restoring = false
+    guard.recording = true
+    expect((await call('take_use', { line: 'L3', take: 't1' })).error).toBe('Line L3: The line is being recorded; wait until it finishes, then retry.')
+    guard.recording = false
+    gen.hold = new Promise(() => undefined)
+    await call('generate', { lines: ['L3'] })
+    expect((await call('take_use', { line: 'L3', take: 't1' })).error).toBe('Line L3: The line is already generating; wait until it finishes, then retry.')
+    expect(comp(repo, 'L3')?.clips).toEqual(before)
+  })
+
   it('tells the agent about cost, dry runs, the budget and waiting', () => {
     expect(AGENT_INSTRUCTIONS).toMatch(/costs money/)
     expect(AGENT_INSTRUCTIONS).toMatch(/dryRun true first/)

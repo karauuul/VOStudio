@@ -12,6 +12,7 @@ import {
   KEEP_TERMINAL,
   nextQueued,
   pendingCount,
+  recordingRefusal,
   start,
   type Job,
 } from '../src/shared/jobs'
@@ -215,6 +216,22 @@ describe('generationRefusal — one decision for every submitter', () => {
 
   it('names the project-wide reason before the line reason', () => {
     expect(generationRefusal({ lineBusy: true, exporting: true, restoring: true, recording: true })).toBe('Export in progress')
+  })
+})
+
+describe('recordingRefusal — recording waits for the line generation', () => {
+  const free = { lineBusy: false, exporting: false, restoring: false, recording: false }
+
+  it('allows a free line, an export and another recording of the line', () => {
+    expect(recordingRefusal(free)).toBeNull()
+    expect(recordingRefusal({ ...free, exporting: true })).toBeNull()
+    expect(recordingRefusal({ ...free, recording: true })).toBeNull()
+  })
+
+  it('refuses a restore and a line with queued or running generation', () => {
+    expect(recordingRefusal({ ...free, restoring: true })).toBe('Restoring version')
+    expect(recordingRefusal({ ...free, lineBusy: true })).toBe('The line is generating; wait until its jobs finish, then record.')
+    expect(recordingRefusal({ ...free, lineBusy: true, restoring: true })).toBe('Restoring version')
   })
 })
 
