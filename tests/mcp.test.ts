@@ -73,10 +73,11 @@ function server(extra: Partial<McpServer> = {}): { spec: McpServer; gate: Return
         name: 'picture',
         title: 'Picture',
         description: 'Returns an image.',
-        input: z.object({}),
+        input: z.object({ described: z.boolean().optional() }),
         annotations: READ,
-        async run() {
-          return { image: { data: 'iVBOR', mimeType: 'image/png' } }
+        async run(_ctx, args) {
+          const image = { data: 'iVBOR', mimeType: 'image/png' }
+          return args.described ? { structured: { size: 5 }, image } : { image }
         },
       }),
     ],
@@ -162,6 +163,18 @@ describe('MCP tools/call', () => {
     const { spec } = server()
     const [reply] = await exchange(spec, req(3, 'tools/call', { name: 'picture' }))
     expect(reply.result).toEqual({ content: [{ type: 'image', data: 'iVBOR', mimeType: 'image/png' }] })
+  })
+
+  it('returns structured content followed by an image when a tool gives both', async () => {
+    const { spec } = server()
+    const [reply] = await exchange(spec, req(3, 'tools/call', { name: 'picture', arguments: { described: true } }))
+    expect(reply.result).toEqual({
+      content: [
+        { type: 'text', text: '{"size":5}' },
+        { type: 'image', data: 'iVBOR', mimeType: 'image/png' },
+      ],
+      structuredContent: { size: 5 },
+    })
   })
 
   it('reports invalid arguments as a tool error, not a protocol error', async () => {

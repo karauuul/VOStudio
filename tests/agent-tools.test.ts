@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { SerialProjectRepository } from '../src/main/project-repository'
-import { agentTools, AGENT_INSTRUCTIONS, type AgentDeps } from '../src/main/agent/tools'
+import { agentTools, AGENT_INSTRUCTIONS, PROJECT_SWITCHED, type AgentDeps } from '../src/main/agent/tools'
 import type { VoiceProvider } from '../src/main/providers/voice-provider'
-import { projectDirSchema, projectNameSchema } from '../src/main/schemas'
-import { emptyEdits, type Cue, type Project, type ProjectAsset } from '../src/shared/domain'
+import { projectDirSchema, projectNameSchema, renderReplySchema } from '../src/main/schemas'
+import { emptyEdits, type Cue, type Project, type ProjectAsset, type WordTiming } from '../src/shared/domain'
 import type { AssetContent } from '../src/main/assets'
 import { createSession, handleMessage, type McpServer, type RpcMessage } from '../src/shared/mcp'
 import type { CommandResult } from '../src/shared/project-commands'
@@ -15,6 +15,14 @@ import type { AppSettings } from '../src/shared/ipc'
 import type { Take } from '../src/shared/domain'
 import { jobChars, jobTtsPlan, stsPlan, VOICE_CHANGED } from '../src/shared/provider-models'
 import { TARGET_CLIP_GONE } from '../src/shared/generation'
+import { analyzeProsody } from '../src/shared/prosody'
+
+const prosody = await vi.importActual<typeof import('../src/shared/prosody')>('../src/shared/prosody')
+
+vi.mock('../src/shared/prosody', async (original) => {
+  const actual = await original<typeof import('../src/shared/prosody')>()
+  return { ...actual, analyzeProsody: vi.fn(actual.analyzeProsody) }
+})
 
 const voice = { stability: 0.5, similarity: 0.5, style: 0, speed: 1, boost: true }
 
@@ -41,6 +49,18 @@ function project(): Project {
 
 const metrics = {
   duration: 2.25, lufs: -20.1, truePeakDb: -6.2, samplePeakDb: -6.3, rmsDb: -21, leadingSilence: 0.05, trailingSilence: 0.1, clipped: false,
+}
+
+function tones(parts: [number, number][]): Float32Array {
+  const rate = 16000
+  const out = new Float32Array(Math.round(parts.reduce((sum, [seconds]) => sum + seconds, 0) * rate))
+  let at = 0
+  for (const [seconds, hz] of parts) {
+    const n = Math.round(seconds * rate)
+    for (let i = 0; i < n && hz > 0; i++) out[at + i] = 0.4 * Math.min(1, i / 160, (n - 1 - i) / 160) * Math.sin((2 * Math.PI * hz * i) / rate)
+    at += n
+  }
+  return out
 }
 
 const provider: VoiceProvider = {
@@ -179,6 +199,9 @@ function setup(open = true) {
     screenshot: async () => null,
     windowOpen: () => true,
     quit: vi.fn(async () => undefined),
+    decodeAudio: vi.fn(async (file: string) => (file.endsWith('.original.wav') ? tones([[0.1, 0], [0.9, 150], [0.2, 0]]) : tones([[0.1, 0], [0.5, 170], [0.3, 0], [0.6, 170], [0.2, 0]]))),
+    analyzeAudio: vi.fn(async (pcm: Float32Array, rate: number, words: WordTiming[], duration: number) => prosody.analyzeProsody(pcm, rate, words, duration)),
+    drawFigure: vi.fn(async () => Buffer.from('png')),
   }
   const spec: McpServer = { info: { name: 'vo-studio', version: '1.2.3' }, instructions: AGENT_INSTRUCTIONS, tools: agentTools(deps) }
   const call = async (
@@ -202,7 +225,7 @@ describe('agent tool registry', () => {
     const tools = (sent[0].result as { tools: { name: string; inputSchema: { type: string }; annotations: Record<string, unknown> }[] }).tools
     expect(tools.map((t) => t.name)).toEqual([
       'status', 'projects', 'project_open', 'project_close', 'lines', 'line', 'lines_edit', 'characters', 'character_set', 'voices', 'versions', 'command',
-      'import', 'asset_add', 'assets', 'asset_read', 'lines_build', 'link', 'characters_assign', 'proposals', 'transcribe', 'translate_context', 'translations_suggest', 'glossary', 'glossary_check', 'rules', 'render', 'verify', 'export', 'generate', 'jobs', 'take_use',
+      'import', 'asset_add', 'assets', 'asset_read', 'lines_build', 'link', 'characters_assign', 'proposals', 'transcribe', 'translate_context', 'translations_suggest', 'glossary', 'glossary_check', 'rules', 'render', 'verify', 'analyze', 'compare', 'export', 'generate', 'jobs', 'take_use',
       'diagnostics', 'screenshot', 'app_quit',
     ])
     for (const tool of tools) {
@@ -806,6 +829,169 @@ describe('render, verify and export', () => {
     expect(beforeWrite).toHaveBeenCalledTimes(1)
     expect((await call('export', { changed: true })).error).toBe('None of the selected lines is ready to export; call export with dryRun to see why.')
     expect((await call('export', { changed: true, filter: 'all' })).error).toBe('Invalid arguments: pass at most one of lines, filter or changed.')
+  })
+})
+
+describe('analyze and compare', () => {
+  const withWords = (repo: SerialProjectRepository) => {
+    repo.projectForMain().cues[2].takes[0].words = [
+      { text: 'Voiced', start: 0.1, end: 0.6 },
+      { text: 'line', start: 0.9, end: 1.5 },
+    ]
+  }
+
+  it('analyzes the original of a line without voiced output as phrases only, without the write guard', async () => {
+    const { spec, deps } = setup()
+    const beforeWrite = vi.fn(async () => undefined)
+    const sent: RpcMessage[] = []
+    const guardedSpec: McpServer = { ...spec, beforeWrite }
+    await handleMessage(guardedSpec, createSession(), { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'analyze', arguments: { line: 'L1' } } }, (m) => sent.push(m))
+    const data = (sent[0].result as { structuredContent: Record<string, unknown> }).structuredContent
+    expect(data).toMatchObject({ line: 'L1', source: 'original', path: '/root/Demo.vostudio/agent/renders/c1.original.wav', duration: 1.2 })
+    expect(data.transcript).toMatch(/^0\.1\d-(0\.9\d|1\.0\d) 150Hz 0st -\d+dB \| flat, voiced \d+%$/)
+    expect(data).not.toHaveProperty('words')
+    expect(deps.decodeAudio).toHaveBeenCalledWith('/root/Demo.vostudio/agent/renders/c1.original.wav')
+    expect(deps.flushUi).toHaveBeenCalled()
+    expect(beforeWrite).not.toHaveBeenCalled()
+  })
+
+  it('analyzes the voiced output per word from the take timings and says when a source is missing', async () => {
+    const { call, repo } = setup()
+    withWords(repo!)
+    const { data } = await call('analyze', { line: 'L3' })
+    expect(data).toMatchObject({ line: 'L3', source: 'output' })
+    expect((data.words as { text: string; f0: { mean: number } }[]).map((w) => [w.text, Math.round(w.f0.mean / 10) * 10])).toEqual([
+      ['Voiced', 170],
+      ['line', 170],
+    ])
+    expect(data.transcript).toMatch(/^0\.10 Voiced .170Hz -\d+dB \| flat, \d(\.\d)? w\/s · \[pause 0\.\d\d\] · 0\.90 line .170Hz -\d+dB \| flat, \d(\.\d)? w\/s$/)
+    expect((await call('analyze', { line: 'L3', source: 'original' })).data).toMatchObject({ source: 'original' })
+    expect((await call('analyze', { line: 'L1', source: 'output' })).error).toBe('Line L1 has no voiced output to analyze; generate a take, or pass source "original".')
+    expect((await call('analyze', { line: 'L6', source: 'original' })).error).toBe('Line L6 has no original audio to analyze.')
+  })
+
+  it('flags a voiced output without word timings', async () => {
+    const { call } = setup()
+    expect((await call('analyze', { line: 'L3' })).data).toMatchObject({ wordTimings: false })
+  })
+
+  it('returns the figure as image content next to the analysis', async () => {
+    const { spec, deps, repo } = setup()
+    withWords(repo!)
+    const sent: RpcMessage[] = []
+    await handleMessage(spec, createSession(), { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'compare', arguments: { line: 'L3', image: true } } }, (m) => sent.push(m))
+    const result = sent[0].result as { content: { type: string; data?: string }[]; structuredContent: Record<string, unknown> }
+    expect(result.content.map((c) => c.type)).toEqual(['text', 'image'])
+    expect(result.content[1]).toEqual({ type: 'image', data: Buffer.from('png').toString('base64'), mimeType: 'image/png' })
+    const figure = vi.mocked(deps.drawFigure).mock.calls[0][0]
+    expect(figure.title).toBe('L3')
+    expect(figure.panels.map((p) => p.kind)).toEqual(['original', 'dub'])
+    expect(figure.panels[1].words.map((w) => w.text)).toEqual(['Voiced', 'line'])
+    expect(result.structuredContent.line).toBe('L3')
+  })
+
+  it('keeps the analysis when the figure cannot be drawn', async () => {
+    const { call, deps } = setup()
+    deps.drawFigure = vi.fn(async () => {
+      throw new Error('The render window crashed; it restarts on the next call, retry.')
+    })
+    const { data } = await call('analyze', { line: 'L1', image: true })
+    expect(data).toMatchObject({ source: 'original', imageError: 'The render window crashed; it restarts on the next call, retry' })
+  })
+
+  it('compares the dub with the original: alignment, scores and suggestions from the numbers', async () => {
+    const { call, repo } = setup()
+    withWords(repo!)
+    const { data } = await call('compare', { line: 'L3' })
+    expect(data).toMatchObject({
+      line: 'L3',
+      dub: { path: '/root/Demo.vostudio/agent/renders/c3.wav', metrics: { duration: 2.25 } },
+      original: { path: '/root/Demo.vostudio/agent/renders/c3.original.wav', metrics: { duration: 1.5 } },
+      pairs: [{ dub: [1, 2], original: 1 }],
+    })
+    expect(data.speechDiff).toBeCloseTo(0.5, 1)
+    expect(data.rhythm).toBeLessThan(0.6)
+    const suggestions = data.suggestions as string[]
+    expect(suggestions[0]).toMatch(/^dub speech is 0\.\d\d s longer than the original \(1\.4\d vs 0\.9\d s\): speed 1\.20 \(the speed limit; also shorten the text\) or remove the 0\.\d\d s pause after "Voiced"$/)
+  })
+
+  it('runs the analysis in the render worker, never in the main process', async () => {
+    const { call, deps, repo } = setup()
+    withWords(repo!)
+    vi.mocked(analyzeProsody).mockClear()
+    expect((await call('analyze', { line: 'L3' })).data).toMatchObject({ source: 'output' })
+    expect(deps.analyzeAudio).toHaveBeenCalledTimes(1)
+    expect(deps.analyzeAudio).toHaveBeenCalledWith(expect.any(Float32Array), prosody.ANALYSIS_RATE, repo!.projectForMain().cues[2].takes[0].words, 2.25)
+    expect((await call('compare', { line: 'L3' })).data).toMatchObject({ line: 'L3' })
+    expect(deps.analyzeAudio).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(deps.analyzeAudio).mock.calls[2][2]).toEqual([])
+    expect(analyzeProsody).not.toHaveBeenCalled()
+  })
+
+  it('reports a failed worker analysis as the tool error', async () => {
+    const { call, deps } = setup()
+    deps.analyzeAudio = vi.fn(async () => {
+      throw new Error('The render window crashed; it restarts on the next call, retry.')
+    })
+    expect((await call('analyze', { line: 'L1' })).error).toBe('The render window crashed; it restarts on the next call, retry.')
+  })
+
+  it('keeps every prosody field through the worker reply schema', () => {
+    const words = [
+      { text: 'Voiced', start: 0.1, end: 0.6 },
+      { text: 'line', start: 0.9, end: 1.5 },
+    ]
+    const heard = prosody.analyzeProsody(tones([[0.1, 0], [0.5, 170], [0.3, 0], [0.6, 170], [0.2, 0]]), prosody.ANALYSIS_RATE, words)
+    const id = '00000000-0000-4000-8000-000000000000'
+    expect(renderReplySchema.parse({ id, ok: true, prosody: heard }).prosody).toEqual(heard)
+    expect(renderReplySchema.parse({ id, ok: true, prosody: { ...heard, truncated: true } }).prosody).toEqual({ ...heard, truncated: true })
+    const longWord = { ...heard, words: heard.words.map((w, i) => (i === 0 ? { ...w, text: 'x'.repeat(5000) } : w)) }
+    expect(renderReplySchema.safeParse({ id, ok: true, prosody: longWord }).success).toBe(true)
+    const tooLong = { ...heard, track: { ...heard.track, db: new Float32Array(prosody.ANALYSIS_FRAMES_MAX + 1) } }
+    expect(renderReplySchema.safeParse({ id, ok: true, prosody: tooLong }).success).toBe(false)
+  })
+
+  it('refuses an analysis or comparison when the project changes while it runs', async () => {
+    const { call, repo, deps } = setup()
+    const analyze = deps.analyzeAudio
+    let edits = 0
+    deps.analyzeAudio = vi.fn(async (pcm: Float32Array, rate: number, words: WordTiming[], duration: number) => {
+      await repo!.execute({ type: 'cue.saveText', cueId: 'c3', text: `Edited line ${++edits}` })
+      return analyze(pcm, rate, words, duration)
+    })
+    expect((await call('analyze', { line: 'L3' })).error).toBe(LINE_CHANGED)
+    expect((await call('analyze', { line: 'L3', source: 'original' })).error).toBe(LINE_CHANGED)
+    expect((await call('compare', { line: 'L3' })).error).toBe(LINE_CHANGED)
+    const render = deps.renderLine
+    deps.analyzeAudio = analyze
+    deps.renderLine = vi.fn(async (cueId: string, source: 'output' | 'original') => {
+      if (source === 'original') await repo!.execute({ type: 'cue.saveText', cueId: 'c3', text: `Edited line ${++edits}` })
+      return render(cueId, source)
+    })
+    expect((await call('compare', { line: 'L3' })).error).toBe(LINE_CHANGED)
+    deps.renderLine = render
+    expect((await call('compare', { line: 'L3' })).data).toMatchObject({ line: 'L3' })
+    deps.drawFigure = vi.fn(async () => {
+      await repo!.execute({ type: 'cue.saveText', cueId: 'c3', text: `Edited line ${++edits}` })
+      return Buffer.from('png')
+    })
+    expect((await call('analyze', { line: 'L3', image: true })).error).toBe(LINE_CHANGED)
+    expect((await call('compare', { line: 'L3', image: true })).error).toBe(LINE_CHANGED)
+    deps.drawFigure = vi.fn(async () => {
+      await repo!.execute({ type: 'cue.saveText', cueId: 'c3', text: `Edited line ${++edits}` })
+      throw new Error('The render window crashed')
+    })
+    expect((await call('analyze', { line: 'L3', image: true })).error).toBe(LINE_CHANGED)
+    deps.drawFigure = vi.fn(async () => {
+      await repo!.detach()
+      throw new Error('The render window closed before it finished; retry.')
+    })
+    expect((await call('analyze', { line: 'L3', image: true })).error).toBe(PROJECT_SWITCHED)
+  })
+
+  it('explains what is missing for a comparison', async () => {
+    const { call } = setup()
+    expect((await call('compare', { line: 'L1' })).error).toBe('Line L1 has no voiced output to compare; generate a take first, or analyze the original with source "original".')
   })
 })
 

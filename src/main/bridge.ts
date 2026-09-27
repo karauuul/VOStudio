@@ -180,13 +180,13 @@ async function call(socket: net.Socket, tool: string | undefined, json: string |
     return 1
   }
   const image = result.content.find((c) => c.type === 'image')
+  let saved = ''
   if (image) {
-    const file = path.join(mkdtempSync(path.join(os.tmpdir(), 'vostudio-mcp-')), `${tool}.png`)
-    writeFileSync(file, Buffer.from(String(image.data), 'base64'))
-    process.stdout.write(`${file}\n`)
-    return 0
+    saved = path.join(mkdtempSync(path.join(os.tmpdir(), 'vostudio-mcp-')), `${tool}.png`)
+    writeFileSync(saved, Buffer.from(String(image.data), 'base64'))
   }
-  process.stdout.write(`${JSON.stringify(result.structuredContent ?? null, null, 2)}\n`)
+  const text = image && result.structuredContent === undefined ? '' : `${JSON.stringify(result.structuredContent ?? null, null, 2)}\n`
+  process.stdout.write(`${saved ? `${saved}\n` : ''}${text}`)
   return 0
 }
 

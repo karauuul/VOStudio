@@ -1,11 +1,11 @@
 import { randomUUID } from 'crypto'
 import path from 'path'
 import { z } from 'zod/v4'
-import type { Cue, ProjectAsset, ProjectVersion, Take, Term } from '@shared/domain'
+import type { Cue, ProjectAsset, ProjectVersion, Take, Term, WordTiming } from '@shared/domain'
 import { ASSET_KINDS, PROPOSAL_REASON_MAX, resolveVoiceSettings, speakerCharacters, TERM_TEXT_MAX, TERMS_MAX } from '@shared/domain'
 import { clampVoiceSettings, placeOnTrack, type TakePlacement } from '@shared/generation'
 import { LINE_TEXT_MAX } from '@shared/lines'
-import { defineTool, errorText, issueText, type McpSession, type McpTool, type ToolAnnotations, type ToolOutput } from '@shared/mcp'
+import { defineTool, errorText, issueText, type McpSession, type McpTool, type ToolAnnotations, type ToolImage, type ToolOutput } from '@shared/mcp'
 import {
   audioWithinRoots,
   type CommandResult,
@@ -34,7 +34,17 @@ import { DEFAULT_MATCH_RULE, TABLE_COLUMNS_MAX } from '@shared/import-table'
 import { ALL_CHARACTERS, filterCues } from '@shared/cue-filter'
 import { requireRevision, TRANSCRIPT_WORDS_MAX, transcriptMatch } from '@shared/agent-render'
 import type { AudioMetrics } from '@shared/audio-metrics'
-import { findCollisions, originalLength, planBatch } from '@shared/export-plan'
+import { findCollisions, originalLength, planBatch, planLine as planExportLine, renderedWords } from '@shared/export-plan'
+import {
+  ANALYSIS_MAX_SECONDS,
+  ANALYSIS_RATE,
+  prosodyPanel,
+  prosodyView,
+  type Prosody,
+  type ProsodyFigure,
+  type ProsodyPanel,
+} from '@shared/prosody'
+import { compareProsody, comparisonView } from '@shared/prosody-compare'
 import { readinessRows, statusWords, summarize } from '@shared/readiness'
 import { glossaryIssues, removeTerms, TEXT_MATCH_MIN, translationContext, upsertTerms, type TextMatchReport } from '@shared/agent-text'
 import {
@@ -104,6 +114,9 @@ export interface AgentDeps {
   exportInfo: () => Promise<ExportInfo>
   exportLines: (cueIds: string[], expected?: SerialProjectRepository) => Promise<BatchExportResult>
   transcribeFile: (file: string) => Promise<string>
+  decodeAudio: (file: string) => Promise<Float32Array>
+  analyzeAudio: (pcm: Float32Array, rate: number, words: WordTiming[], duration: number) => Promise<Prosody>
+  drawFigure: (figure: ProsodyFigure) => Promise<Buffer>
   addAssets: (paths: string[], expected?: SerialProjectRepository) => Promise<AssetAddResult>
   loadAsset: (asset: ProjectAsset, options: AssetReadOptions) => Promise<AssetContent>
   buildAudioLines: (assetIds: string[], expected?: SerialProjectRepository) => Promise<AudioLinesResult>
@@ -130,6 +143,7 @@ export const AGENT_INSTRUCTIONS = [
   'Agent generation is capped by a per-connection character budget the user sets in Settings; generate refuses a batch that would exceed it.',
   'generate queues jobs in the app queue shared with the user; pass wait, or call jobs with wait, until they finish.',
   'Check lines with render (exact export audio and its metrics) or verify (speech-to-text against the line text, costs money) before export; call export with dryRun first to see readiness and file names.',
+  'You cannot listen: analyze gives a line\'s intonation, rhythm and emphasis as numbers and a prosody transcript; after each generation call compare to check timing and intonation against the original, apply its suggestions (speed, pauses, delivery) and compare again until the scores stop improving.',
   'Use screenshot and diagnostics to check what the user sees; status mode headless means no window is open and app_quit ends the app.',
   'Prompts localize, voice_lines and smoke_test are step-by-step workflows over these tools.',
 ].join(' ')
@@ -188,7 +202,7 @@ export const PROPOSALS_PAGE_MAX = 200
 export const CELL_MAX = 500
 export const ASSIGN_MAX = 2000
 
-const PROJECT_SWITCHED = 'The project was closed or switched during this call; call status, then retry.'
+export const PROJECT_SWITCHED = 'The project was closed or switched during this call; call status, then retry.'
 
 const exactlyOne = (values: unknown[]): boolean => values.filter((v) => v !== undefined).length === 1
 
@@ -261,6 +275,39 @@ async function renderCue(deps: AgentDeps, cue: Cue, withOriginal: boolean): Prom
       ...(original ? { original: { path: original.path, metrics: original.metrics } } : {}),
     },
   }
+}
+
+interface HeardLine {
+  source: RenderSource
+  render: LineRender
+  prosody: Prosody
+}
+
+async function hear(deps: AgentDeps, source: RenderSource, render: LineRender, words: ReturnType<typeof renderedWords>): Promise<HeardLine> {
+  const repository = requireRepository(deps)
+  const prosody = await liveCall(repository, async () => deps.analyzeAudio(await deps.decodeAudio(render.path), ANALYSIS_RATE, source === 'output' ? words : [], render.metrics.duration))
+  return { source, render, prosody }
+}
+
+const heardSummary = (heard: HeardLine): Record<string, unknown> => ({
+  path: heard.render.path,
+  metrics: heard.render.metrics,
+  ...(heard.render.metrics.duration > ANALYSIS_MAX_SECONDS ? { analyzedSeconds: ANALYSIS_MAX_SECONDS } : {}),
+  ...(heard.source === 'output' && heard.prosody.words.length === 0 ? { wordTimings: false } : {}),
+})
+
+async function figureOutput(deps: AgentDeps, revision: number, view: Record<string, unknown>, title: string, panels: ProsodyPanel[]): Promise<ToolOutput> {
+  let output: ToolOutput
+  try {
+    const image: ToolImage = { data: (await deps.drawFigure({ title, panels })).toString('base64'), mimeType: 'image/png' }
+    output = { structured: view, image }
+  } catch (error) {
+    output = structured({ ...view, imageError: reason(error) })
+  }
+  const repository = requireRepository(deps)
+  if (!repository.isLive()) throw new Error(PROJECT_SWITCHED)
+  requireRevision(revision, repository.currentRevision())
+  return output
 }
 
 const clip = (text: string, max = CELL_MAX): string => (text.length > max ? `${text.slice(0, max)}… [${text.length} chars]` : text)
@@ -1347,6 +1394,82 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         }
         requireRevision(rendered.revision, repository.currentRevision())
         return structured({ ...rendered.view, expected, heard, ...transcriptMatch(expected, heard) })
+      },
+    }),
+    defineTool({
+      name: 'analyze',
+      title: 'Analyze line',
+      description:
+        'Render one line like render does and measure its prosody: phrases split at pauses of 150 ms or more (timing, speaking rate, final contour rising, flat or falling over the last 300 ms voiced, F0 mean and range in semitones, stress position), per word when the take has word timings (pitch, contour, loudness, pause before, emphasis), a compact prosody transcript and the render metrics. source defaults to the voiced output, falling back to the original. image adds a PNG: waveform, F0 on a semitone scale, energy, words, phrases and pauses.',
+      input: z.object({ line: lineRef, source: z.enum(['output', 'original']).optional(), image: z.boolean().optional() }),
+      annotations: { ...WRITE, idempotentHint: true },
+      writes: () => false,
+      async run(_ctx, args) {
+        await deps.flushUi()
+        const pinned = pin(deps)
+        const repository = requireRepository(pinned)
+        const revision = repository.currentRevision()
+        const project = repository.projectForMain()
+        const cue = findLine(project, args.line)
+        const words = renderedWords(project, cue)
+        let heard: HeardLine
+        if (args.source === undefined) {
+          const rendered = await renderCue(pinned, cue, false)
+          heard = await hear(pinned, rendered.source, rendered.render, words)
+        } else {
+          const source = args.source
+          const render = await liveCall(repository, () => deps.renderLine(cue.id, source, repository))
+          if (!render) {
+            throw new Error(
+              source === 'output'
+                ? `Line ${cue.key} has no voiced output to analyze; generate a take, or pass source "original".`
+                : `Line ${cue.key} has no original audio to analyze.`
+            )
+          }
+          heard = await hear(pinned, source, render, words)
+        }
+        requireRevision(revision, repository.currentRevision())
+        const view = { line: cue.key, source: heard.source, ...heardSummary(heard), ...prosodyView(heard.prosody) }
+        if (args.image !== true) return structured(view)
+        return figureOutput(pinned, revision, view, cue.key, [prosodyPanel(heard.source === 'output' ? 'dub' : 'original', heard.prosody)])
+      },
+    }),
+    defineTool({
+      name: 'compare',
+      title: 'Compare with original',
+      description:
+        'Render and analyze the line\'s voiced output and its original like analyze does, align their phrases by timing (languages differ, so words are not matched), and compare each aligned pair: duration difference, start offset, final contour, pitch contour correlation (-1 to 1) and stress position. Overall length, speech and onset differences, rhythm and intonation scores from 0 to 1, and edit suggestions derived from these numbers. image adds a PNG with the original on top and the dub below on one time axis.',
+      input: z.object({ line: lineRef, image: z.boolean().optional() }),
+      annotations: { ...WRITE, idempotentHint: true },
+      writes: () => false,
+      async run(_ctx, args) {
+        await deps.flushUi()
+        const pinned = pin(deps)
+        const repository = requireRepository(pinned)
+        const revision = repository.currentRevision()
+        const project = repository.projectForMain()
+        const cue = findLine(project, args.line)
+        const words = renderedWords(project, cue)
+        const speed = planExportLine(project, cue)?.take.meta.voiceSettings?.speed ?? resolveVoiceSettings(project.characters.find((c) => c.id === cue.characterId), cue).speed
+        const dubRender = await liveCall(repository, () => deps.renderLine(cue.id, 'output', repository))
+        if (!dubRender) throw new Error(`Line ${cue.key} has no voiced output to compare; generate a take first, or analyze the original with source "original".`)
+        const originalRender = await liveCall(repository, () => deps.renderLine(cue.id, 'original', repository))
+        if (!originalRender) throw new Error(`Line ${cue.key} has no original audio to compare with; analyze describes the dub alone.`)
+        const dub = await hear(pinned, 'output', dubRender, words)
+        const original = await hear(pinned, 'original', originalRender, words)
+        requireRevision(revision, repository.currentRevision())
+        const side = (heard: HeardLine): Record<string, unknown> => {
+          const { transcript, phrases, phrasesTotal } = prosodyView(heard.prosody)
+          return { ...heardSummary(heard), transcript, phrases, ...(phrasesTotal === undefined ? {} : { phrasesTotal }) }
+        }
+        const view = {
+          line: cue.key,
+          dub: side(dub),
+          original: side(original),
+          ...comparisonView(compareProsody(dub.prosody, original.prosody, speed, { dub: dubRender.metrics.duration, original: originalRender.metrics.duration })),
+        }
+        if (args.image !== true) return structured(view)
+        return figureOutput(pinned, revision, view, cue.key, [prosodyPanel('original', original.prosody), prosodyPanel('dub', dub.prosody)])
       },
     }),
     defineTool({

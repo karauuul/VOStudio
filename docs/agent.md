@@ -135,6 +135,8 @@ Check and export
 
 - `render` — render a line exactly like export and measure it
 - `verify` — render, transcribe and compare with the line text
+- `analyze` — intonation, rhythm and emphasis of a line as numbers and a prosody transcript
+- `compare` — timing and intonation of the voiced line against the original, with edit suggestions
 - `export` — export ready lines, with `dryRun` for the plan
 
 App
@@ -153,7 +155,7 @@ App
 
 `VOSTUDIO_PROVIDER=mock` swaps the voice provider for an offline one: voices `mock-alto`, `mock-bass`, `mock-tenor`, synthetic speech whose length follows the text, and transcription that reads back text the mock generated. Nothing leaves the machine and nothing costs money.
 
-`scripts/agent-e2e.mjs` runs the whole flow against a headless app with the mock provider (bin, lines, linking, proposals, characters, generation, render, export, diagnostics, quit); CI runs it as the `agent-e2e` job:
+`scripts/agent-e2e.mjs` runs the whole flow against a headless app with the mock provider (bin, lines, linking, proposals, characters, generation, render, compare, export, diagnostics, quit); CI runs it as the `agent-e2e` job:
 
 ```
 npx electron-vite build

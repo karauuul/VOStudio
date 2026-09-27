@@ -5,6 +5,7 @@ import { CREATE_LINES_MAX, LINE_TEXT_MAX } from '@shared/lines'
 import { CHARACTER_ID_MAX, CUE_KEY_MAX, TABLE_COLUMNS_MAX, TABLE_ROWS_MAX } from '@shared/import-table'
 import { PUNCH_PREROLL_MAX, PUNCH_PREROLL_STEP, RECORD_LATENCY_MAX_MS } from '@shared/punch'
 import { LOOP_PASS_MAX } from '@shared/loop-record'
+import { ANALYSIS_FRAMES_MAX } from '@shared/prosody'
 import { AGENT_BUDGET_MAX } from '@shared/ipc'
 import { TTS_TEXT_MAX } from '@shared/agent-generate'
 import { LUFS_TARGET_MAX, LUFS_TARGET_MIN, PEAK_TARGET_MAX, PEAK_TARGET_MIN } from '@shared/export-settings'
@@ -690,10 +691,57 @@ export const bridgeReplySchema = z.object({
   error: z.string().max(2000).optional(),
 })
 
-const shortText = z.string().max(4096)
+const shortText = z.string().max(LINE_TEXT_MAX)
+
+const bytes = z.union([z.instanceof(ArrayBuffer), z.instanceof(Uint8Array)])
+
+const PROSODY_ROWS_MAX = 100_000
+const finiteNumber = z.number().finite()
+const frames = z.instanceof(Float32Array).refine((a) => a.length <= ANALYSIS_FRAMES_MAX)
+const contour = z.enum(['rising', 'flat', 'falling']).nullable()
+
+const prosodySchema = z.object({
+  duration: finiteNumber,
+  silenceDb: finiteNumber,
+  track: z.object({ hop: finiteNumber, db: frames, f0: frames, peak: frames }),
+  words: z
+    .array(
+      z.object({
+        text: shortText,
+        start: finiteNumber,
+        end: finiteNumber,
+        pauseBefore: finiteNumber,
+        f0: z.object({ mean: finiteNumber, min: finiteNumber, max: finiteNumber }).nullable(),
+        contour,
+        db: finiteNumber,
+        emphasis: z.boolean(),
+        phrase: z.number().int(),
+      })
+    )
+    .max(PROSODY_ROWS_MAX),
+  phrases: z
+    .array(
+      z.object({
+        start: finiteNumber,
+        end: finiteNumber,
+        words: z.number().int().min(0),
+        rate: finiteNumber,
+        rateUnit: z.enum(['words/s', 'voiced']),
+        finalContour: contour,
+        f0Mean: finiteNumber.nullable(),
+        f0RangeSt: finiteNumber.nullable(),
+        db: finiteNumber,
+        peakAt: finiteNumber.nullable(),
+      })
+    )
+    .max(PROSODY_ROWS_MAX),
+  truncated: z.boolean().optional(),
+})
 
 export const renderReplySchema = bridgeReplySchema.extend({
-  wav: z.union([z.instanceof(ArrayBuffer), z.instanceof(Uint8Array)]).optional(),
+  wav: bytes.optional(),
+  png: bytes.optional(),
+  prosody: prosodySchema.optional(),
   result: z
     .object({
       written: z.number().int().min(0),

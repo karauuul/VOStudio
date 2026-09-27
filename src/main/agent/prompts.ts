@@ -23,7 +23,7 @@ export const agentPrompts: McpPrompt[] = [
         '`glossary` upsert recurring names and terms with proposed true; `glossary_check` the translations.',
         '`voices`, then `character_set` a voice for each character.',
         '`generate` with dryRun true; show the user the characters, quota and budget and wait for approval; then `generate` with wait and `jobs` until every job finishes.',
-        '`render` with withOriginal to compare each length with the original; `verify` a sample to compare the words (costs money); fix with `lines_edit` and `generate` again.',
+        '`render` with withOriginal to compare each length with the original; `compare` each line for timing and intonation and apply its suggestions; `verify` a sample to compare the words (costs money); fix with `lines_edit` and `generate` again.',
         '`export` with dryRun true, then `export`.',
       ]),
   },
@@ -39,7 +39,7 @@ export const agentPrompts: McpPrompt[] = [
         `\`generate\` with filter ${filter} and dryRun true: text, characters and skip reason per line, provider quota and agent budget. Show the user the total and wait for approval.`,
         'If the batch exceeds the budget, pass fewer lines or ask the user to raise Agent budget in Settings.',
         '`generate` with the same selection and wait, following nextCursor; `jobs` with wait until every job finishes.',
-        'Check each line with `render`: length against the original, loudness, clipping, silence; `verify` doubtful ones.',
+        'Check each line with `render`: length against the original, loudness, clipping, silence; `compare` timing and intonation against the original; `verify` doubtful ones.',
         'Fix: text with `lines_edit` or `rules`, voice settings with `character_set`, then `generate` again; `take_use` returns to an earlier take.',
       ])
     },

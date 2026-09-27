@@ -22,7 +22,8 @@ import {
   transcriptMatch,
 } from '../src/shared/agent-render'
 import { edgeSilence, loudnessFilter, METRICS_FILTER, parseMetrics, silenceFilter } from '../src/shared/audio-metrics'
-import { originalOnlyPlan, planBatch, planLine } from '../src/shared/export-plan'
+import { originalOnlyPlan, planBatch, planLine, renderedWords } from '../src/shared/export-plan'
+import { trackAudible } from '../src/shared/comp'
 
 vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }))
 
@@ -434,5 +435,81 @@ describe('analysis renders and export state in main', () => {
     await expect(finishing).rejects.toThrow(EXPORT_STALE)
     expect(await fs.readFile(audio, 'utf8')).toBe('first')
     expect(exportBusy()).toBe(false)
+  })
+})
+
+describe('word timings of the rendered output', () => {
+  const words = [
+    { text: 'Welcome', start: 0.1, end: 0.5 },
+    { text: 'back', start: 0.6, end: 0.9 },
+    { text: 'pioneer', start: 1.0, end: 1.6 },
+  ]
+
+  it('maps take words through trims and speed and has none without timings', () => {
+    const c = cue('a', '/a/a.wav')
+    c.takes[0].duration = 2
+    expect(renderedWords(project([c]), c)).toEqual([])
+    c.takes[0].words = words
+    c.takes[0].edits = { ...emptyEdits(), trimStart: 0.5, trimEnd: 0.2, timeStretch: 2 }
+    const got = renderedWords(project([c]), c)
+    expect(got.map((w) => w.text)).toEqual(['back', 'pioneer'])
+    expect(got[0].start).toBeCloseTo(0.05, 6)
+    expect(got[0].end).toBeCloseTo(0.2, 6)
+    expect(got[1].end).toBeCloseTo(0.55, 6)
+  })
+
+  it('follows audible comp clips and the render window, and a line without output has none', () => {
+    const c = cue('a', '/a/a.wav')
+    c.takes[0].words = words
+    c.takes[0].duration = 2
+    const second = { ...take('t2', '/a/b.wav'), words: [{ text: 'muted', start: 0, end: 0.4 }] }
+    c.takes.push(second)
+    c.output = { kind: 'comp', revision: 1 }
+    c.comp = {
+      clips: [
+        { id: 'k1', sourceTakeId: c.takes[0].id, srcIn: 0.6, srcOut: 1.6, start: 0.3, edits: emptyEdits() },
+        { id: 'k2', sourceTakeId: 't2', srcIn: 0, srcOut: 0.5, start: 0, edits: emptyEdits(), trackId: 'track-2' },
+      ],
+      tracks: [
+        { id: 'track-1', name: 'A', gainDb: 0, muted: false, solo: false },
+        { id: 'track-2', name: 'B', gainDb: 0, muted: true, solo: false },
+      ],
+      region: { in: 0.2, out: 1.2 },
+    }
+    const got = renderedWords(project([c]), c)
+    expect(got.map((w) => [w.text, Math.round(w.start * 100) / 100, Math.round(w.end * 100) / 100])).toEqual([
+      ['back', 0.1, 0.4],
+      ['pioneer', 0.5, 1.1],
+    ])
+    expect(renderedWords(project([cue('b')]), cue('b'))).toEqual([])
+  })
+
+  it('places words of a crossfaded clip where the scheduler plays its handle', () => {
+    const c = cue('a', '/a/a.wav')
+    c.takes[0].words = words
+    c.takes[0].duration = 2
+    c.takes.push(take('t2', '/a/b.wav'))
+    c.output = { kind: 'comp', revision: 1 }
+    c.comp = {
+      clips: [
+        { id: 'k1', sourceTakeId: 't2', srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits(), crossfade: 0.4 },
+        { id: 'k2', sourceTakeId: c.takes[0].id, srcIn: 0.8, srcOut: 1.6, start: 1, edits: emptyEdits() },
+      ],
+    }
+    const got = renderedWords(project([c]), c)
+    expect(got.map((w) => [w.text, Math.round(w.start * 100) / 100, Math.round(w.end * 100) / 100])).toEqual([
+      ['Welcome', 0.6, 0.7],
+      ['back', 0.8, 1.1],
+      ['pioneer', 1.2, 1.8],
+    ])
+  })
+
+  it('a track is audible unless muted or another track is soloed', () => {
+    const t = (id: string, muted = false, solo = false) => ({ id, name: id, gainDb: 0, muted, solo })
+    expect(trackAudible([t('a'), t('b', true)], 'a')).toBe(true)
+    expect(trackAudible([t('a'), t('b', true)], 'b')).toBe(false)
+    expect(trackAudible([t('a'), t('b', false, true)], 'a')).toBe(false)
+    expect(trackAudible([t('a'), t('b', false, true)], 'b')).toBe(true)
+    expect(trackAudible([], 'track-1')).toBe(true)
   })
 })

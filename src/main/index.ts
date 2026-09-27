@@ -35,7 +35,7 @@ import { emit } from './emit'
 import * as store from './project-store'
 import { voiceProvider } from './providers/voice-provider'
 import { setApiKey } from './secrets'
-import { decodedDuration, runFfmpeg } from './ffmpeg'
+import { decodedDuration, ffmpegPcm, runFfmpeg } from './ffmpeg'
 import { parseCsv } from '@shared/csv'
 import { DEFAULT_EXPORT_TEMPLATE } from '@shared/export-plan'
 import { ASSET_EXTENSIONS, inPlaceKind } from '@shared/asset-readers'
@@ -125,9 +125,10 @@ import { AGENT_INSTRUCTIONS, agentTools, ASSET_READ_MAX } from './agent/tools'
 import { diagnostics, watchDiagnostics } from './agent/diagnostics'
 import { agentPrompts } from './agent/prompts'
 import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
-import { closeRenderWorker, renderExportPlan, renderLineWav, renderWorker, settleRender } from './agent/render-worker'
+import { analyzeInWorker, closeRenderWorker, renderExportPlan, renderLineWav, renderProsodyImage, renderWorker, settleRender } from './agent/render-worker'
 import { hardenedWindow, loadRenderer, uiWindows } from './windows'
 import { renderFileName, requireRevision } from '@shared/agent-render'
+import { ANALYSIS_MAX_SECONDS, ANALYSIS_RATE } from '@shared/prosody'
 import type { BatchExportResult } from '@shared/ipc'
 import { createGenerationQueue, type QueuedGeneration } from './gen-queue'
 import { createStsTake, createTtsTake } from './generate'
@@ -1156,6 +1157,9 @@ function agentServerSpec(): McpServer {
       exportInfo,
       exportLines: exportForAgent,
       transcribeFile,
+      decodeAudio: (file) => ffmpegPcm(file, ANALYSIS_RATE, ANALYSIS_MAX_SECONDS),
+      analyzeAudio: analyzeInWorker,
+      drawFigure: renderProsodyImage,
       provider: voiceProvider,
       generation: generations,
       queueGeneration: (req, expected, after) => queueGeneration(req, 'agent', expected, after),

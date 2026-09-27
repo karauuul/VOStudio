@@ -27,6 +27,11 @@ export function clipTrackId(clip: CompClip): string {
   return clip.trackId ?? DEFAULT_TRACK_ID
 }
 
+export function trackAudible(tracks: readonly CompTrack[], trackId: string): boolean {
+  const track = tracks.find((t) => t.id === trackId)
+  return !track || (!track.muted && (!tracks.some((t) => t.solo) || track.solo))
+}
+
 export function trackClips(comp: CueComp, trackId: string): CompClip[] {
   return comp.clips
     .filter((c) => clipTrackId(c) === trackId)

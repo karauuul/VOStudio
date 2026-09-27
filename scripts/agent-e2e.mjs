@@ -149,6 +149,10 @@ async function run() {
   check(existsSync(render.path), `render file missing: ${render.path}`)
   step(`render ok: ${render.line} ${metrics.duration.toFixed(2)} s, ${metrics.lufs.toFixed(1)} LUFS, original ${render.original?.metrics.duration.toFixed(2)} s`)
 
+  const compared = tool('compare', { line: lines[0].key })
+  check(Number.isFinite(compared.rhythm) && Number.isFinite(compared.intonation) && Array.isArray(compared.suggestions), `compare: ${JSON.stringify(compared)}`)
+  step(`compare ok: rhythm ${compared.rhythm}, intonation ${compared.intonation}, ${compared.suggestions.length} suggestions`)
+
   const dry = tool('export', { filter: 'all', dryRun: true })
   check(dry.ready === n && dry.skippedTotal === 0, `export dryRun: ${JSON.stringify(dry)}`)
   const exported = tool('export', { filter: 'all' })

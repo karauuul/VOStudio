@@ -92,6 +92,8 @@ const eventMap: Record<EventChannel, true> = {
   'bridge:request': true,
   'render:line': true,
   'render:plan': true,
+  'render:image': true,
+  'render:prosody': true,
   'jobs:changed': true,
 }
 
