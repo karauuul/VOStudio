@@ -38,6 +38,15 @@ export interface AgentEffectsEdit {
   next: ClipEffects | undefined
 }
 
+export interface TakeEffectsEdit extends AgentEffectsEdit {
+  at: number
+}
+
+export interface EffectsHistory {
+  undo: TakeEffectsEdit[]
+  redo: TakeEffectsEdit[]
+}
+
 export interface ExternalChanges {
   comps: Set<string>
   effects: Set<string>
@@ -78,4 +87,13 @@ export function externalChanges(before: Pick<Project, 'cues'> | null, changes: C
     }
   }
   return out
+}
+
+export function recordExternalEffects(history: EffectsHistory, external: ExternalChanges, at: number, limit: number): EffectsHistory {
+  const kept = (entry: TakeEffectsEdit): boolean => !external.effects.has(takeKey(entry.cueId, entry.takeId))
+  const recorded = external.effectEdits.map((edit) => ({ ...edit, at }))
+  return {
+    undo: [...history.undo, ...recorded].slice(-limit).filter(kept),
+    redo: recorded.length > 0 ? [] : history.redo.filter(kept),
+  }
 }

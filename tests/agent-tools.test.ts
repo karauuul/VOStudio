@@ -1087,6 +1087,13 @@ describe('timeline, edit, effects and align', () => {
     expect(repo!.projectForMain().cues[2].takes).toEqual(takes)
   })
 
+  it('clears the timeline when a cut removes the last clip', async () => {
+    const { call, repo } = await placed()
+    const { data } = await call('edit', { line: 'L3', ops: [{ op: 'cut', range: { start: 0, end: 2 } }] })
+    expect(data).toMatchObject({ output: 'none', clips: [] })
+    expect(repo!.projectForMain().cues[2]).not.toHaveProperty('comp')
+  })
+
   it('refuses the whole batch when one op fails', async () => {
     const { call, repo } = await placed()
     const comp = structuredClone(repo!.projectForMain().cues[2].comp)

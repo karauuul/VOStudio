@@ -1,5 +1,5 @@
 import { approveCue, sanitizeRevision, changeCompOutput, changeCueSourceText, changeCueText, changeTakeOutput, invalidateVoicedOutput, outputUsesTake, removeApproval, sanitizeApproval, sanitizeCueOutput, setExcluded } from './approval'
-import { compProblem, normalizeComp } from './comp'
+import { committedComp, compProblem } from './comp'
 import { sanitizeEffects } from './effects'
 import {
   blankCharacter,
@@ -529,17 +529,18 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
       break
     }
     case 'cue.setComp': {
-      if (command.comp === null) {
+      const problem = command.comp && compProblem(command.comp)
+      if (problem) throw new Error(`Invalid composition: ${problem}`)
+      const comp = committedComp(command.comp)
+      if (comp === null) {
         delete cue.comp
         Object.assign(cue, changeCompOutput(cue, null, project))
         break
       }
-      const problem = compProblem(command.comp)
-      if (problem) throw new Error(`Invalid composition: ${problem}`)
-      for (const clip of command.comp.clips) {
+      for (const clip of comp.clips) {
         if (!resolveTake(project, cue, clip.sourceTakeId)) throw new Error(`Composition clip "${clip.id}": take ${clip.sourceTakeId} is not in this cue`)
       }
-      Object.assign(cue, changeCompOutput(cue, normalizeComp(command.comp), project))
+      Object.assign(cue, changeCompOutput(cue, comp, project))
       break
     }
     case 'cue.setOriginal': {
