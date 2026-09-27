@@ -121,7 +121,7 @@ import { sanitizeAgentAccess } from '@shared/ipc'
 import type { McpServer, McpSession } from '@shared/mcp'
 import { needsGuardVersion } from '@shared/versions'
 import { sha256Hex, startAgentServer, type AgentServerHandle } from './agent/server'
-import { AGENT_INSTRUCTIONS, agentTools, ASSET_READ_MAX } from './agent/tools'
+import { AGENT_INSTRUCTIONS, agentTools, ASSET_READ_MAX, WINDOW_OPEN_QUIT } from './agent/tools'
 import { diagnostics, watchDiagnostics } from './agent/diagnostics'
 import { agentPrompts } from './agent/prompts'
 import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
@@ -1310,7 +1310,7 @@ function quitIfNoWindows(): void {
 
 async function quitHeadless(): Promise<void> {
   if (!headless) throw new Error('VO Studio was not started with --headless; the user quits it from the app.')
-  if (uiWindows().length > 0) throw new Error('VO Studio has a window open; the user quits it from the app.')
+  if (uiWindows().length > 0) throw new Error(WINDOW_OPEN_QUIT)
   if (exportBusy()) throw new Error('The app is exporting; wait for that export to finish, then retry.')
   await flushPersist()
   setImmediate(() => app.quit())

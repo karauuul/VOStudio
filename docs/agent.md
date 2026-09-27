@@ -143,7 +143,7 @@ App
 
 - `diagnostics` — recent renderer and main process errors
 - `screenshot` — PNG of the app window
-- `app_quit` — save and quit a headless app
+- `app_quit` — save and quit a headless app once running calls finish
 
 ## Prompts
 

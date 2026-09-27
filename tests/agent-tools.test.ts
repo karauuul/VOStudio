@@ -5,7 +5,7 @@ import type { VoiceProvider } from '../src/main/providers/voice-provider'
 import { projectDirSchema, projectNameSchema, renderReplySchema } from '../src/main/schemas'
 import { emptyEdits, type Cue, type Project, type ProjectAsset, type WordTiming } from '../src/shared/domain'
 import type { AssetContent } from '../src/main/assets'
-import { createSession, handleMessage, type McpServer, type RpcMessage } from '../src/shared/mcp'
+import { createHub, createSession, handleMessage, type McpServer, type RpcMessage } from '../src/shared/mcp'
 import type { CommandResult } from '../src/shared/project-commands'
 import { transcribeCues } from '../src/main/transcribe'
 import { LINE_CHANGED } from '../src/shared/agent-render'
@@ -306,6 +306,7 @@ describe('status and reads', () => {
 describe('app_quit', () => {
   it('quits through the app without a guard version', async () => {
     const { deps, spec } = setup()
+    deps.windowOpen = () => false
     const beforeWrite = vi.fn(async () => undefined)
     spec.beforeWrite = beforeWrite
     const sent: RpcMessage[] = []
@@ -315,8 +316,37 @@ describe('app_quit', () => {
     expect(beforeWrite).not.toHaveBeenCalled()
   })
 
+  it('refuses without waiting while a window is open', async () => {
+    const { call, deps } = setup()
+    const hub = createHub()
+    expect((await call('app_quit', {}, createSession(hub))).error).toBe('VO Studio has a window open; the user quits it from the app.')
+    expect(hub.quitting).toBe(false)
+    expect(deps.quit).not.toHaveBeenCalled()
+  })
+
+  it('refuses when a call running during the wait queues generation', async () => {
+    const { call, deps, gen } = setup()
+    deps.windowOpen = () => false
+    expect((await call('character_set', { character: 'Ada', voiceId: 'va' })).error).toBeUndefined()
+    gen.hold = new Promise(() => undefined)
+    let release!: () => void
+    deps.flushUi = vi.fn(() => new Promise<void>((resolve) => (release = resolve)))
+    const hub = createHub()
+    const generating = call('generate', { lines: ['L1'] }, createSession(hub))
+    await vi.waitFor(() => expect(deps.flushUi).toHaveBeenCalled())
+    const quitting = call('app_quit', {}, createSession(hub))
+    await vi.waitFor(() => expect(hub.quitting).toBe(true))
+    expect((await call('status', {}, createSession(hub))).error).toMatch(/^VO Studio is quitting/)
+    release()
+    expect((await generating).data.jobs).toEqual([expect.objectContaining({ line: 'L1', state: 'running' })])
+    expect((await quitting).error).toBe('Generation jobs are unfinished; wait for them with jobs, then retry.')
+    expect(hub.quitting).toBe(false)
+    expect(deps.quit).not.toHaveBeenCalled()
+  })
+
   it('passes on the app refusal and refuses while generation jobs are unfinished', async () => {
     const { call, deps, gen } = setup()
+    deps.windowOpen = () => false
     deps.quit = vi.fn(async () => {
       throw new Error('VO Studio has a window open; the user quits it from the app.')
     })

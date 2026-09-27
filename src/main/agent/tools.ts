@@ -5,7 +5,7 @@ import type { Cue, ProjectAsset, ProjectVersion, Take, Term, WordTiming } from '
 import { ASSET_KINDS, PROPOSAL_REASON_MAX, resolveVoiceSettings, speakerCharacters, TERM_TEXT_MAX, TERMS_MAX } from '@shared/domain'
 import { clampVoiceSettings, placeOnTrack, type TakePlacement } from '@shared/generation'
 import { LINE_TEXT_MAX } from '@shared/lines'
-import { defineTool, errorText, issueText, type McpSession, type McpTool, type ToolAnnotations, type ToolImage, type ToolOutput } from '@shared/mcp'
+import { defineTool, errorText, issueText, quitWhenIdle, type McpSession, type McpTool, type ToolAnnotations, type ToolImage, type ToolOutput } from '@shared/mcp'
 import {
   audioWithinRoots,
   type CommandResult,
@@ -147,6 +147,9 @@ export const AGENT_INSTRUCTIONS = [
   'Use screenshot and diagnostics to check what the user sees; status mode headless means no window is open and app_quit ends the app.',
   'Prompts localize, voice_lines and smoke_test are step-by-step workflows over these tools.',
 ].join(' ')
+
+export const WINDOW_OPEN_QUIT = 'VO Studio has a window open; the user quits it from the app.'
+const QUIT_IDLE_MS = 30_000
 
 const READ: ToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
 const WRITE: ToolAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
@@ -1704,13 +1707,20 @@ export function agentTools(deps: AgentDeps): McpTool[] {
     defineTool({
       name: 'app_quit',
       title: 'Quit app',
-      description: 'Save and quit VO Studio when it runs headless (started with --headless, no window open). Refused while a window is open, generation jobs are unfinished or an export runs.',
+      description: `Save and quit VO Studio when it runs headless (started with --headless, no window open). New tool calls from every connection are refused while it waits up to ${QUIT_IDLE_MS / 1000} s for running calls to finish. Refused while a window is open, generation jobs are unfinished, an export runs or other calls keep running.`,
       input: z.object({}),
       annotations: WRITE,
       writes: () => false,
-      async run() {
-        if (deps.generation.list().some((j) => !isTerminal(j))) throw new Error('Generation jobs are unfinished; wait for them with jobs, then retry.')
-        await deps.quit()
+      async run(ctx) {
+        const refuseRunning = (): void => {
+          if (deps.windowOpen()) throw new Error(WINDOW_OPEN_QUIT)
+          if (deps.generation.list().some((j) => !isTerminal(j))) throw new Error('Generation jobs are unfinished; wait for them with jobs, then retry.')
+        }
+        refuseRunning()
+        await quitWhenIdle(ctx, QUIT_IDLE_MS, async () => {
+          refuseRunning()
+          await deps.quit()
+        })
         return structured({ quitting: true })
       },
     }),

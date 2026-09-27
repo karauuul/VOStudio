@@ -3,7 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'crypto'
 import { promises as fs, rmSync } from 'fs'
 import path from 'path'
 import { agentEndpoint, AGENT_TOKEN_FILE } from '@shared/agent-endpoint'
-import { createSession, endSession, handleLine, type McpServer, type RpcMessage } from '@shared/mcp'
+import { createHub, createSession, endSession, handleLine, type McpHub, type McpServer, type RpcMessage } from '@shared/mcp'
 
 const TOKEN_LINE_MAX = 256
 const AUTH_TIMEOUT_MS = 5000
@@ -37,9 +37,9 @@ async function clearStaleSocket(endpoint: string): Promise<void> {
   if (present && !(await reachable(endpoint))) await fs.rm(endpoint, { force: true })
 }
 
-function serve(socket: net.Socket, token: string, server: McpServer): void {
+function serve(socket: net.Socket, token: string, server: McpServer, hub: McpHub): void {
   socket.setEncoding('utf8')
-  const session = createSession()
+  const session = createSession(hub)
   let authed = false
   let buffer = ''
   const timer = setTimeout(() => socket.destroy(), AUTH_TIMEOUT_MS)
@@ -74,10 +74,11 @@ export async function startAgentServer(userData: string, server: McpServer): Pro
   const tokenFile = path.join(userData, AGENT_TOKEN_FILE)
   const token = randomBytes(32).toString('hex')
   const sockets = new Set<net.Socket>()
+  const hub = createHub()
   const listener = net.createServer((socket) => {
     sockets.add(socket)
     socket.on('close', () => sockets.delete(socket))
-    serve(socket, token, server)
+    serve(socket, token, server, hub)
   })
   await clearStaleSocket(endpoint)
   await new Promise<void>((resolve, reject) => {
