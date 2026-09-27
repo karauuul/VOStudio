@@ -52,6 +52,12 @@ export function usesCompOutput(cue: Cue, project?: TakeLookup): boolean {
   return cue.output?.kind === 'comp' || (cue.output === undefined && usableComp(cue, project))
 }
 
+export function outputUsesTake(cue: Cue, takeId: string, project?: TakeLookup): boolean {
+  if (cue.output === null) return false
+  if (usesCompOutput(cue, project)) return (cue.comp?.clips ?? []).some((clip) => clip.sourceTakeId === takeId)
+  return (cue.output?.kind === 'take' ? cue.output.takeId : cue.finalTakeId) === takeId
+}
+
 function nextOutputRevision(cue: Cue): number {
   return Math.min(MAX_REVISION, sanitizeRevision(cue.output?.revision) + 1)
 }

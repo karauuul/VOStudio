@@ -298,6 +298,25 @@ describe('cue.setTakeEffects', () => {
     expect(p.cues[2]).toEqual(untouched)
   })
 
+  it('leaves lines alone whose active output does not use the take', () => {
+    const p = project()
+    p.cues[0].takes[0].pinned = true
+    p.cues[0].takes.push(take({ id: 't0' }))
+    p.cues[0].output = { kind: 'take', takeId: 't0', revision: 1 }
+    const approved = { textRevision: 0, outputRevision: 1, approvedAt: '2026-01-01T00:00:00.000Z' }
+    const keeper = cue({ id: 'cue2', key: 'K2', takes: [take({ id: 't2' })], comp: { clips: [clip({ id: 'k2' })] }, output: { kind: 'take', takeId: 't2', revision: 1 }, status: 'approved', approval: approved })
+    const legacy = cue({ id: 'cue3', key: 'K3', takes: [take({ id: 't3' })], finalTakeId: 't1', comp: { clips: [clip({ id: 'k3' })] }, status: 'approved', approval: approved })
+    p.cues.push(keeper, legacy)
+    const owner = structuredClone(p.cues[0].output)
+    const untouched = structuredClone(keeper)
+    const changes = applyProjectCommand(p, { type: 'cue.setTakeEffects', cueId: 'cue1', takeId: 't1', effects: { reverb: DEFAULT_REVERB } })
+    expect(changes.cues?.map((c) => c.id)).toEqual(['cue1', 'cue3'])
+    expect(p.cues[0].output).toEqual(owner)
+    expect(p.cues[1]).toEqual(untouched)
+    expect(p.cues[2].output).toEqual({ kind: 'comp', revision: 2 })
+    expect(p.cues[2].status).toBe('generated')
+  })
+
   it('refuses a take that is not in the cue', () => {
     expect(() =>
       applyProjectCommand(project(), {

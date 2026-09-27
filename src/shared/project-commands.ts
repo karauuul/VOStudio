@@ -1,4 +1,4 @@
-import { approveCue, sanitizeRevision, changeCompOutput, changeCueSourceText, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval, sanitizeApproval, sanitizeCueOutput, setExcluded } from './approval'
+import { approveCue, sanitizeRevision, changeCompOutput, changeCueSourceText, changeCueText, changeTakeOutput, invalidateVoicedOutput, outputUsesTake, removeApproval, sanitizeApproval, sanitizeCueOutput, setExcluded } from './approval'
 import { compProblem, normalizeComp } from './comp'
 import { sanitizeEffects } from './effects'
 import {
@@ -38,7 +38,7 @@ import {
   type Term,
   type VoiceSettings,
 } from './domain'
-import { compsUsingTake, referencedByOtherComp, resolveTake, type TakeLookup } from './library'
+import { referencedByOtherComp, resolveTake, type TakeLookup } from './library'
 import { sanitizeExportSettings, type ExportSettings } from './export-settings'
 import { mixesOriginal } from './export-plan'
 import { newLineCue, nextLineNumber } from './lines'
@@ -584,10 +584,10 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
         const { effects: _dropped, ...edits } = take.edits
         take.edits = edits
       }
-      Object.assign(cue, invalidateVoicedOutput(cue, project))
+      if (outputUsesTake(cue, take.id, project)) Object.assign(cue, invalidateVoicedOutput(cue, project))
       const others: Cue[] = []
-      for (const other of compsUsingTake(project, take.id)) {
-        if (other.id === cue.id) continue
+      for (const other of project.cues) {
+        if (other.id === cue.id || !outputUsesTake(other, take.id, project)) continue
         const next = invalidateVoicedOutput(other, project)
         if (next === other) continue
         Object.assign(other, next)

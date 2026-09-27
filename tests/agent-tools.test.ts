@@ -1152,6 +1152,23 @@ describe('timeline, edit, effects and align', () => {
     expect((repo!.projectForMain().cues[2].comp?.clips ?? []).map((c) => c.edits.timeStretch ?? 1)).toEqual([1.2, 1])
   })
 
+  it('refuses to align a line whose output mixes the original', async () => {
+    const { repo, deps, call } = await placed()
+    const live = repo!.projectForMain().cues[2]
+    live.referenceAudio = { fileId: 'o3', relPath: '/p/o3.wav', format: 'wav' }
+    live.original = { exportMode: 'on' }
+    const comp = structuredClone(live.comp)
+    const refusal = 'Line L3 mixes the original into its output; align needs a voice-only output, so turn off Export on the original lane or stems, or edit manually.'
+    expect((await call('align', { line: 'L3', apply: true })).error).toBe(refusal)
+    live.original = { exportMode: 'off' }
+    live.stems = [{ id: 's1', name: 'Music', file: { fileId: 's1', relPath: '/p/s1.wav', format: 'wav' }, exportMode: 'on' }]
+    expect((await call('align', { line: 'L3' })).error).toBe(refusal)
+    expect(deps.renderLine).not.toHaveBeenCalled()
+    expect(repo!.projectForMain().cues[2].comp).toEqual(comp)
+    live.stems = [{ id: 's1', name: 'Music', file: { fileId: 's1', relPath: '/p/s1.wav', format: 'wav' }, exportMode: 'off' }]
+    expect((await call('align', { line: 'L3' })).data).toMatchObject({ applied: false })
+  })
+
   it('refuses to apply an alignment planned against a timeline that changed meanwhile', async () => {
     const { repo, deps, call } = await placed()
     const analyze = deps.analyzeAudio

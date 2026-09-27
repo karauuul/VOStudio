@@ -92,16 +92,14 @@ export function applyTakeDurations(
   return { cues: [...changed], applied }
 }
 
-export function compsUsingTake(project: TakeLookup, takeId: string): Cue[] {
-  return project.cues.filter((c) => (c.comp?.clips ?? []).some((clip) => clip.sourceTakeId === takeId))
-}
-
 export function referencedByOtherComp(
   project: TakeLookup,
   cueId: string,
   takeId: string
 ): boolean {
-  return compsUsingTake(project, takeId).some((c) => c.id !== cueId)
+  return project.cues.some(
+    (c) => c.id !== cueId && (c.comp?.clips ?? []).some((clip) => clip.sourceTakeId === takeId)
+  )
 }
 
 export interface LibraryRow {
