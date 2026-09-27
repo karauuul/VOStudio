@@ -644,6 +644,33 @@ describe('generation tools', () => {
     expect((await call('generate', { lines: ['L3'], wait: 5 }, session)).data.budget).toEqual({ unlimited: true, used: 22 })
   })
 
+  it('reserves the whole batch before concurrent calls on one connection read the budget', async () => {
+    const { call, settings, generation, gen } = setup()
+    await voiced(call)
+    settings.agentCharacterBudget = 15
+    gen.hold = new Promise(() => undefined)
+    const session = createSession()
+    const results = await Promise.all([call('generate', { lines: ['L1'] }, session), call('generate', { lines: ['L3'] }, session)])
+    expect(results.filter((r) => r.error !== undefined).map((r) => r.error)).toEqual([expect.stringMatching(/needs 11 characters but only 4 remain of the 15-character/)])
+    expect(generation.list()).toHaveLength(1)
+    expect((await call('generate', { lines: ['L3'], dryRun: true }, session)).data.budget).toEqual({ limit: 15, used: 11, remaining: 4 })
+  })
+
+  it('releases the reservation of lines the queue refuses', async () => {
+    const { call, settings, deps, gen } = setup()
+    await voiced(call)
+    settings.agentCharacterBudget = 100
+    gen.hold = new Promise(() => undefined)
+    const queue = deps.queueGeneration
+    deps.queueGeneration = (req, expected, after) => {
+      if (req.cueId === 'c1') throw new Error('Line refused')
+      return queue(req, expected, after)
+    }
+    const { data } = await call('generate', { lines: ['L1', 'L3'] })
+    expect(data.skipped).toEqual([{ line: 'L1', reason: 'Line refused' }])
+    expect(data.budget).toEqual({ limit: 100, used: 11, remaining: 89 })
+  })
+
   it('replaces the target track with the new take by default and waits for the result', async () => {
     const { call, repo, emitted } = setup()
     await call('command', {

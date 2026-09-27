@@ -59,7 +59,7 @@ export function createGenerationQueue(options: {
   let seq = 0
   const entries = new Map<string, Entry>()
   const owners = new Map<string, object>()
-  const orphans = new Set<string>()
+  let inFlight: string | null = null
   const listeners = new Set<() => void>()
 
   const publish = (next: Job[]): void => {
@@ -79,6 +79,7 @@ export function createGenerationQueue(options: {
   }
 
   const pump = (): void => {
+    if (inFlight) return
     const next = nextQueued(jobs)
     if (!next) return
     const entry = entries.get(next.id)
@@ -87,8 +88,11 @@ export function createGenerationQueue(options: {
       pump()
       return
     }
+    inFlight = next.id
     publish(start(jobs, next.id))
-    const settle = (settled: Job[]): void => publish(orphans.delete(next.id) ? jobs.filter((j) => j.id !== next.id) : settled)
+    const settle = (settled: Job[]): void => {
+      if (jobs.some((j) => j.id === next.id)) publish(settled)
+    }
     void entry.spec
       .run()
       .then(
@@ -103,6 +107,7 @@ export function createGenerationQueue(options: {
         }
       )
       .finally(() => {
+        inFlight = null
         entries.delete(next.id)
         pump()
       })
@@ -128,12 +133,11 @@ export function createGenerationQueue(options: {
       return cancelled
     },
     retire(owner) {
-      for (const j of jobs) if (j.state === 'running' && owners.get(j.id) !== owner) orphans.add(j.id)
-      const stale = (j: Job): boolean => owners.get(j.id) !== owner && j.state !== 'running'
+      const stale = (j: Job): boolean => owners.get(j.id) !== owner
       const dropped = jobs.filter(stale)
       if (dropped.length === 0) return
       publish(jobs.filter((j) => !stale(j)))
-      for (const j of dropped) settleEntry(j.id, new Error(JOB_RETIRED))
+      for (const j of dropped) if (j.state !== 'running') settleEntry(j.id, new Error(JOB_RETIRED))
     },
     list: () => jobs,
     owned: (owner) => jobs.filter((j) => owners.get(j.id) === owner),

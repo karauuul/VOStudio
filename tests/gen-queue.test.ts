@@ -97,8 +97,8 @@ describe('main generation queue', () => {
     expect(queue.check('c2').lineBusy).toBe(false)
   })
 
-  it('a project switch drops the old project queued and finished jobs and keeps the running one', async () => {
-    const { queue, spec, owner } = setup()
+  it('a project switch drops every old project job at once, the running one included', async () => {
+    const { queue, spec, owner, published } = setup()
     const running = deferred()
     const done = queue.submit(spec('c0', () => Promise.resolve(take('t0'))))
     await done.done
@@ -107,10 +107,13 @@ describe('main generation queue', () => {
     const b = queue.submit(spec('c2', () => deferred().promise))
     queue.retire({})
     await expect(b.done).rejects.toThrow(JOB_RETIRED)
-    expect(queue.list().map((j) => [j.cueId, j.state])).toEqual([['c1', 'running']])
+    expect(queue.list()).toEqual([])
+    expect(published.at(-1)?.jobs).toEqual([])
+    expect(queue.check('c1').lineBusy).toBe(false)
     running.resolve(take('t1'))
     await a.done
     await flush()
+    expect(queue.list()).toEqual([])
     const fresh = {}
     const c = queue.submit(spec('c2', () => Promise.resolve(take('t2')), { owner: fresh }))
     queue.retire(fresh)
@@ -118,26 +121,27 @@ describe('main generation queue', () => {
     expect(owner).not.toBe(fresh)
   })
 
-  it('a running job of a switched-away project leaves the list when it settles, with an error or a take', async () => {
-    const { queue, spec, owner } = setup()
+  it('a retired running job settles privately and holds the next run until it does', async () => {
+    const { queue, spec, owner, published } = setup()
     const failing = deferred()
     const a = queue.submit(spec('c1', () => failing.promise))
     const fresh = {}
     queue.retire(fresh)
-    const b = queue.submit(spec('c2', () => Promise.resolve(take('t2')), { owner: fresh }))
-    expect(queue.owned(fresh).map((j) => j.id)).toEqual([b.id])
-    expect(queue.owned(owner).map((j) => [j.id, j.state])).toEqual([[a.id, 'running']])
+    expect(queue.owned(owner)).toEqual([])
+    const b = queue.submit(spec('c1', () => Promise.resolve(take('t2')), { owner: fresh }))
+    expect(queue.list().map((j) => [j.id, j.state])).toEqual([[b.id, 'queued']])
+    const count = published.length
     failing.reject(new Error('The project was closed or switched during generation.'))
     await expect(a.done).rejects.toThrow('closed or switched')
     await b.done
     await flush()
+    expect(published.slice(count).map((s) => s.jobs.map((j) => j.state))).toEqual([['running'], ['done']])
     expect(queue.list().map((j) => [j.id, j.state])).toEqual([[b.id, 'done']])
-    expect(queue.list().some((j) => j.error !== undefined)).toBe(false)
     const succeeding = deferred()
     const c = queue.submit(spec('c3', () => succeeding.promise, { owner: fresh }))
-    const newest = {}
-    queue.retire(newest)
-    expect(queue.list().map((j) => j.id)).toEqual([c.id])
+    queue.retire({})
+    expect(queue.list()).toEqual([])
+    expect(queue.check('c3').lineBusy).toBe(false)
     succeeding.resolve(take('t3'))
     await c.done
     await flush()

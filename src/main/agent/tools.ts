@@ -852,7 +852,6 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         const eligible = plans.filter((p) => !p.skip)
         const chars = eligible.reduce((n, p) => n + p.chars, 0)
         const limit = agentBudget((await deps.settings()).agentCharacterBudget)
-        const used = spent.get(ctx.session) ?? 0
         const totals = { lines: eligible.length, chars, skipped: plans.length - eligible.length }
         const more = nextCursor === undefined ? {} : { nextCursor }
         if (args.dryRun === true) {
@@ -861,16 +860,21 @@ export function agentTools(deps: AgentDeps): McpTool[] {
             lines: plans.map(planView),
             totals,
             quota: quota ? { remaining: quota.remaining, limit: quota.limit, unit: quota.unit } : null,
-            budget: budgetView(limit, used),
+            budget: budgetView(limit, spent.get(ctx.session) ?? 0),
             ...more,
           })
         }
         const blocked = guards.map((g) => generationRefusal({ ...g, lineBusy: false, recording: false })).find(Boolean)
         if (blocked) throw new Error(`${blocked} in the app; wait until it finishes, then retry.`)
+        const used = spent.get(ctx.session) ?? 0
         if (limit > 0 && chars > limit - used) {
           throw new Error(
             `This batch needs ${chars} characters but only ${Math.max(0, limit - used)} remain of the ${limit}-character agent budget; generate fewer lines or ask the user to raise Agent budget in Settings.`
           )
+        }
+        spent.set(ctx.session, used + chars)
+        const release = (n: number): void => {
+          spent.set(ctx.session, Math.max(0, (spent.get(ctx.session) ?? 0) - n))
         }
         const placement = args.placement ?? 'replace'
         const queued: { line: string; job: string }[] = []
@@ -881,12 +885,12 @@ export function agentTools(deps: AgentDeps): McpTool[] {
             job = deps.queueGeneration(request(plan), repository, (take) => placeAgentTake(pinned, plan.cue.id, take, placement, plan.replaceClipId))
           } catch (error) {
             skipped.push({ line: plan.cue.key, reason: reason(error) })
+            release(plan.chars)
             continue
           }
-          spent.set(ctx.session, (spent.get(ctx.session) ?? 0) + plan.chars)
           job.done.catch((error: unknown) => {
             const message = errorText(error)
-            if (message === JOB_CANCELLED || message === JOB_RETIRED) spent.set(ctx.session, Math.max(0, (spent.get(ctx.session) ?? 0) - plan.chars))
+            if (message === JOB_CANCELLED || message === JOB_RETIRED) release(plan.chars)
           })
           queued.push({ line: plan.cue.key, job: job.id })
         }
