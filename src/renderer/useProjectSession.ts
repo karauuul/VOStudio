@@ -222,7 +222,10 @@ export function useProjectSession(o: {
     pendingVoice.current = null
     return p.fn().then(
       () => true,
-      () => false
+      () => {
+        if (!pendingVoice.current) pendingVoice.current = p
+        return false
+      }
     )
   }, [])
 
@@ -289,8 +292,8 @@ export function useProjectSession(o: {
 
   const flushAll = useCallback(async (): Promise<boolean> => {
     const saved = await flushText()
-    await flushVoice()
-    if (!saved) return false
+    const voiced = await flushVoice()
+    if (!saved || !voiced) return false
     await flushUi()
     await durationQueue.flushNow()
     return true
@@ -301,7 +304,7 @@ export function useProjectSession(o: {
       api.on('bridge:request', ({ id, kind }) => {
         if (kind !== 'flush') return
         void flushAll().then(
-          (ok) => api['bridge:reply']({ id, ok, ...(ok ? {} : { error: 'the line text could not be saved' }) }),
+          (ok) => api['bridge:reply']({ id, ok, ...(ok ? {} : { error: 'the line text or voice settings could not be saved' }) }),
           (e: unknown) => api['bridge:reply']({ id, ok: false, error: String(e) })
         )
       }),
