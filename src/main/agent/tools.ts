@@ -1398,6 +1398,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       annotations: { ...WRITE, idempotentHint: true },
       writes: () => false,
       async run(_ctx, args) {
+        await deps.flushUi()
         const pinned = pin(deps)
         const repository = requireRepository(pinned)
         const project = repository.projectForMain()
@@ -1433,6 +1434,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       annotations: { ...WRITE, idempotentHint: true },
       writes: () => false,
       async run(_ctx, args) {
+        await deps.flushUi()
         const pinned = pin(deps)
         const repository = requireRepository(pinned)
         const project = repository.projectForMain()

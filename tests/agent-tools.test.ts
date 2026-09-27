@@ -817,6 +817,7 @@ describe('analyze and compare', () => {
     expect(data.transcript).toMatch(/^0\.1\d-(0\.9\d|1\.0\d) 150Hz 0st -\d+dB \| flat, voiced \d+%$/)
     expect(data).not.toHaveProperty('words')
     expect(deps.decodeAudio).toHaveBeenCalledWith('/root/Demo.vostudio/agent/renders/c1.original.wav')
+    expect(deps.flushUi).toHaveBeenCalled()
     expect(beforeWrite).not.toHaveBeenCalled()
   })
 
