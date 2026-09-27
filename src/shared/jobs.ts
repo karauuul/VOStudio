@@ -15,6 +15,9 @@ export interface Job {
 
 export const KEEP_TERMINAL = 100
 
+export const JOB_CANCELLED = 'The job was cancelled before it ran.'
+export const JOB_RETIRED = 'The project was closed or switched before this job ran.'
+
 export const isTerminal = (j: Job): boolean => j.state === 'done' || j.state === 'error' || j.state === 'cancelled'
 
 function prune(jobs: Job[]): Job[] {

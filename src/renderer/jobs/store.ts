@@ -4,6 +4,7 @@ import {
   dropQueued,
   enqueue,
   isTerminal,
+  JOB_CANCELLED,
   fail,
   finish,
   nextQueued,
@@ -110,7 +111,7 @@ export function runGeneration(
   mark(cueId, 1)
   void work(live)
     .catch((e: unknown) => {
-      if (live()) onError(e)
+      if (live() && !String(e).endsWith(JOB_CANCELLED)) onError(e)
     })
     .finally(() => {
       if (live()) mark(cueId, -1)

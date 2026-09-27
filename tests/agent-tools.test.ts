@@ -7,6 +7,10 @@ import { emptyEdits, type Cue, type Project } from '../src/shared/domain'
 import { createSession, handleMessage, type McpServer, type RpcMessage } from '../src/shared/mcp'
 import type { CommandResult } from '../src/shared/project-commands'
 import { transcribeCues } from '../src/main/transcribe'
+import { createGenerationQueue } from '../src/main/gen-queue'
+import type { McpSession } from '../src/shared/mcp'
+import type { AppSettings } from '../src/shared/ipc'
+import type { Take } from '../src/shared/domain'
 
 const voice = { stability: 0.5, similarity: 0.5, style: 0, speed: 1, boost: true }
 
@@ -36,11 +40,16 @@ const provider: VoiceProvider = {
   hasApiKey: async () => true,
   voices: async () => [{ id: 'mock-alto', name: 'Mock Alto' }],
   models: async () => [],
+  usage: async () => ({ used: 100, limit: 10_000, remaining: 9_900, unit: 'chars' }),
 } as unknown as VoiceProvider
 
 function setup(open = true) {
   const repo = open ? new SerialProjectRepository(project(), vi.fn(), 60_000) : null
   const emitted: CommandResult[] = []
+  const guard = { exporting: false, restoring: false, recording: false }
+  const generation = createGenerationQueue({ guard: () => guard, changed: () => undefined })
+  const settings: AppSettings = { countIn: true, autoReference: false }
+  const gen = { hold: null as Promise<void> | null, sent: [] as unknown[], taken: 0 }
   const deps: AgentDeps = {
     version: '1.2.3',
     repository: () => repo,
@@ -73,6 +82,31 @@ function setup(open = true) {
         return ref.relPath.includes('silent') ? '' : `heard ${ref.fileId}`
       }, (result) => emitted.push(result)),
     provider: () => provider,
+    generation,
+    queueGeneration: (req, expected, after) =>
+      generation.submit({
+        kind: req.kind,
+        cueId: req.cueId,
+        origin: 'agent',
+        chars: req.kind === 'tts' ? req.text.length : 0,
+        owner: expected,
+        run: async () => {
+          gen.sent.push(req)
+          await gen.hold
+          const id = `gen${++gen.taken}`
+          const take: Take = { id, kind: req.kind, createdAt: 'now', file: { fileId: id, relPath: `/root/Demo.vostudio/${id}.mp3`, format: 'mp3' }, duration: 0, meta: {}, edits: emptyEdits() }
+          await expected.mutate((p) => {
+            const target = p.cues.find((c) => c.id === req.cueId)
+            if (!target) throw new Error('Cue not found')
+            target.takes = [...target.takes, take]
+            return { cues: [target] }
+          })
+          await after(take)
+          return take
+        },
+      }),
+    measureTake: async () => 1.5,
+    settings: async () => settings,
     diagnostics: () => [
       { at: '2026-01-01T00:00:00.000Z', source: 'renderer', message: 'old' },
       { at: '2026-01-02T00:00:00.000Z', source: 'crash', message: 'new' },
@@ -80,13 +114,17 @@ function setup(open = true) {
     screenshot: async () => null,
   }
   const spec: McpServer = { info: { name: 'vo-studio', version: '1.2.3' }, instructions: AGENT_INSTRUCTIONS, tools: agentTools(deps) }
-  const call = async (name: string, args: Record<string, unknown> = {}): Promise<{ data: Record<string, unknown>; error?: string }> => {
+  const call = async (
+    name: string,
+    args: Record<string, unknown> = {},
+    session: McpSession = createSession()
+  ): Promise<{ data: Record<string, unknown>; error?: string }> => {
     const sent: RpcMessage[] = []
-    await handleMessage(spec, createSession(), { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, (m) => sent.push(m))
+    await handleMessage(spec, session, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, (m) => sent.push(m))
     const result = sent[0].result as { structuredContent?: Record<string, unknown>; isError?: boolean; content: { text: string }[] }
     return result.isError ? { data: {}, error: result.content[0].text } : { data: result.structuredContent ?? {} }
   }
-  return { repo, deps, emitted, call, spec }
+  return { repo, deps, emitted, call, spec, generation, guard, settings, gen }
 }
 
 describe('agent tool registry', () => {
@@ -97,7 +135,8 @@ describe('agent tool registry', () => {
     const tools = (sent[0].result as { tools: { name: string; inputSchema: { type: string }; annotations: Record<string, unknown> }[] }).tools
     expect(tools.map((t) => t.name)).toEqual([
       'status', 'projects', 'project_open', 'project_close', 'lines', 'line', 'lines_edit', 'characters', 'character_set', 'voices', 'versions', 'command',
-      'import', 'transcribe', 'translate_context', 'translations_suggest', 'glossary', 'glossary_check', 'rules', 'diagnostics', 'screenshot',
+      'import', 'transcribe', 'translate_context', 'translations_suggest', 'glossary', 'glossary_check', 'rules', 'generate', 'jobs', 'take_use',
+      'diagnostics', 'screenshot',
     ])
     for (const tool of tools) {
       expect(tool.inputSchema.type).toBe('object')
@@ -522,5 +561,162 @@ describe('glossary and rules', () => {
     expect((await call('rules', { get: true })).data).toEqual({ rules: '' })
     expect((await call('rules', { set: 'GIF = jif' })).data).toEqual({ rules: 'GIF = jif' })
     expect(repo!.projectForMain().pronunciationRules).toBe('GIF = jif')
+  })
+})
+
+describe('generation tools', () => {
+  const voiced = async (call: ReturnType<typeof setup>['call']): Promise<void> => {
+    expect((await call('character_set', { character: 'Ada', voiceId: 'va' })).error).toBeUndefined()
+  }
+  const comp = (repo: SerialProjectRepository | null, key: string) => repo?.projectForMain().cues.find((c) => c.key === key)?.comp
+
+  it('dry-runs for free with text, characters, skip reasons, quota and budget', async () => {
+    const { call, gen, generation, repo } = setup()
+    await voiced(call)
+    await call('lines_edit', { ops: [{ op: 'exclude', line: 'L2', excluded: true }] })
+    await call('rules', { set: 'Hello → Hi' })
+    gen.hold = new Promise(() => undefined)
+    await call('generate', { lines: ['c5'] })
+    const { data } = await call('generate', { filter: 'all', dryRun: true })
+    expect(data.lines).toEqual([
+      { line: 'L1', mode: 'tts', text: 'Hi there', chars: 8, model: 'm', voice: 'va' },
+      { line: 'L2', mode: 'tts', text: '', chars: 0, model: null, voice: 'va', skip: 'excluded' },
+      { line: 'L3', mode: 'tts', text: 'Voiced line', chars: 11, model: 'm', voice: 'v' },
+      { line: 'DUP', mode: 'tts', text: 'one', chars: 3, model: 'm', voice: 'va' },
+      { line: 'DUP', mode: 'tts', text: '', chars: 0, model: null, voice: 'va', skip: 'busy' },
+      { line: 'L6', mode: 'tts', text: '', chars: 0, model: 'm', voice: 'va', skip: 'no text' },
+    ])
+    expect(data.totals).toEqual({ lines: 3, chars: 22, skipped: 3 })
+    expect(data.quota).toEqual({ remaining: 9_900, limit: 10_000, unit: 'chars' })
+    expect(data.budget).toEqual({ limit: 20_000, used: 0, remaining: 20_000 })
+    expect(generation.list()).toHaveLength(1)
+    expect(comp(repo, 'L1')).toBeUndefined()
+  })
+
+  it('reports lines without a voice and generates a text range of one line only', async () => {
+    const { call } = setup()
+    const dry = await call('generate', { lines: ['L1'], dryRun: true })
+    expect((dry.data.lines as { skip?: string }[])[0].skip).toBe('no voice')
+    await voiced(call)
+    const range = await call('generate', { lines: ['L1'], target: { start: 0, end: 5 }, dryRun: true })
+    expect((range.data.lines as { text: string }[])[0].text).toBe('Hello')
+    expect((await call('generate', { filter: 'all', target: { start: 0, end: 5 } })).error).toMatch(/target needs exactly one line/)
+    expect((await call('generate', { lines: ['L1'], filter: 'all' })).error).toMatch(/exactly one of lines or filter/)
+    expect((await call('generate', { lines: ['L1'], target: { clipId: 'nope' }, dryRun: true })).error).toBe(
+      'Line L1 has no clip "nope"; call line to list its clips.'
+    )
+  })
+
+  it('refuses a batch over the remaining budget and queues nothing', async () => {
+    const { call, settings, generation } = setup()
+    await voiced(call)
+    settings.agentCharacterBudget = 10
+    const { error } = await call('generate', { filter: 'all' })
+    expect(error).toBe(
+      'This batch needs 328 characters but only 10 remain of the 10-character agent budget; generate fewer lines or ask the user to raise Agent budget in Settings.'
+    )
+    expect(generation.list()).toEqual([])
+  })
+
+  it('counts the budget per connection and 0 means unlimited', async () => {
+    const { call, settings } = setup()
+    await voiced(call)
+    settings.agentCharacterBudget = 20
+    const session = createSession()
+    expect((await call('generate', { lines: ['L1'], wait: 5 }, session)).data.budget).toEqual({ limit: 20, used: 11, remaining: 9 })
+    expect((await call('generate', { lines: ['L3'] }, session)).error).toMatch(/needs 11 characters but only 9 remain of the 20-character/)
+    expect((await call('generate', { lines: ['L3'], dryRun: true }, createSession())).data.budget).toEqual({ limit: 20, used: 0, remaining: 20 })
+    settings.agentCharacterBudget = 0
+    expect((await call('generate', { lines: ['L3'], wait: 5 }, session)).data.budget).toEqual({ unlimited: true, used: 22 })
+  })
+
+  it('replaces the target track with the new take by default and waits for the result', async () => {
+    const { call, repo, emitted } = setup()
+    await call('command', {
+      command: { type: 'cue.setComp', cueId: 'c3', comp: { clips: [{ id: 'k1', sourceTakeId: 't1', srcIn: 0, srcOut: 2, start: 0, edits: emptyEdits() }, { id: 'k2', sourceTakeId: 't1', srcIn: 0, srcOut: 1, start: 3, edits: emptyEdits() }] } },
+    })
+    const { data } = await call('generate', { lines: ['L3'], wait: 5 })
+    expect(data.jobs).toEqual([{ id: expect.any(String), line: 'L3', kind: 'tts', state: 'done', take: 'gen1' }])
+    const clips = comp(repo, 'L3')?.clips ?? []
+    expect(clips.map((c) => [c.sourceTakeId, c.start, c.srcOut])).toEqual([['gen1', 0, 1.5]])
+    expect(repo?.projectForMain().cues.find((c) => c.key === 'L3')?.output).toMatchObject({ kind: 'comp' })
+    expect(emitted.at(-1)?.changes.cues?.[0].comp?.clips[0].sourceTakeId).toBe('gen1')
+  })
+
+  it('appends after the last clip or keeps the take in the library only', async () => {
+    const { call, repo } = setup()
+    await call('command', {
+      command: { type: 'cue.setComp', cueId: 'c3', comp: { clips: [{ id: 'k1', sourceTakeId: 't1', srcIn: 0, srcOut: 2, start: 0.5, edits: emptyEdits() }] } },
+    })
+    await call('generate', { lines: ['L3'], placement: 'append', wait: 5 })
+    expect(comp(repo, 'L3')?.clips.map((c) => [c.sourceTakeId, c.start])).toEqual([
+      ['t1', 0.5],
+      ['gen1', 2.5],
+    ])
+    const before = comp(repo, 'L3')
+    const { data } = await call('generate', { lines: ['L3'], placement: 'library', wait: 5 })
+    expect((data.jobs as { state: string }[])[0].state).toBe('done')
+    expect(comp(repo, 'L3')).toEqual(before)
+    expect(repo?.projectForMain().cues.find((c) => c.key === 'L3')?.takes.map((t) => t.id)).toEqual(['t1', 'gen1', 'gen2'])
+  })
+
+  it('returns running jobs when the wait runs out and finishes them later through jobs', async () => {
+    const { call, gen } = setup()
+    let release!: () => void
+    gen.hold = new Promise((resolve) => (release = resolve))
+    const first = await call('generate', { lines: ['L3'], wait: 0.05 })
+    const [job] = first.data.jobs as { id: string; state: string }[]
+    expect(job.state).toBe('running')
+    release()
+    const later = await call('jobs', { ids: [job.id, 'gone'], wait: 5 })
+    expect(later.data).toEqual({ jobs: [{ id: job.id, line: 'L3', kind: 'tts', state: 'done', take: 'gen1' }], missing: ['gone'] })
+  })
+
+  it('cancels queued jobs, refunds their characters and lets the running one finish', async () => {
+    const { call, gen, generation } = setup()
+    await voiced(call)
+    let release!: () => void
+    gen.hold = new Promise((resolve) => (release = resolve))
+    const session = createSession()
+    const { data } = await call('generate', { lines: ['L1', 'L3'] }, session)
+    const [running, queued] = (data.jobs as { id: string }[]).map((j) => j.id)
+    expect(data.budget).toMatchObject({ used: 22 })
+    const cancelled = await call('jobs', { cancel: [running, queued] })
+    expect(cancelled.data.cancelled).toEqual([queued])
+    expect((cancelled.data.jobs as { state: string }[]).map((j) => j.state)).toEqual(['running', 'cancelled'])
+    await Promise.resolve()
+    expect((await call('generate', { lines: ['L3'], dryRun: true }, session)).data.budget).toMatchObject({ used: 11 })
+    release()
+    await generation.settle([running], 5000, new AbortController().signal, () => undefined)
+    expect(generation.list().map((j) => j.state)).toEqual(['done', 'cancelled'])
+  })
+
+  it('refuses when an export or restore runs and skips busy lines', async () => {
+    const { call, guard, generation, gen } = setup()
+    guard.exporting = true
+    expect((await call('generate', { lines: ['L3'] })).error).toBe('Export in progress in the app; wait until it finishes, then retry.')
+    guard.exporting = false
+    gen.hold = new Promise(() => undefined)
+    await call('generate', { lines: ['L3'] })
+    const again = await call('generate', { lines: ['L3'] })
+    expect(again.data).toMatchObject({ jobs: [], skipped: [{ line: 'L3', reason: 'busy' }] })
+    expect(generation.list()).toHaveLength(1)
+  })
+
+  it('take_use places an existing take and refuses unknown takes', async () => {
+    const { call, repo } = setup()
+    const { data } = await call('take_use', { line: 'L3', take: 't1' })
+    expect(comp(repo, 'L3')?.clips.map((c) => [c.sourceTakeId, c.start, c.srcOut])).toEqual([['t1', 0, 2]])
+    expect(data.key).toBe('L3')
+    await call('take_use', { line: 'L3', take: 't1', placement: 'append' })
+    expect(comp(repo, 'L3')?.clips.map((c) => c.start)).toEqual([0, 2])
+    expect((await call('take_use', { line: 'L3', take: 'zz' })).error).toBe('Line L3 has no take "zz"; call line to list its takes.')
+  })
+
+  it('tells the agent about cost, dry runs, the budget and waiting', () => {
+    expect(AGENT_INSTRUCTIONS).toMatch(/costs money/)
+    expect(AGENT_INSTRUCTIONS).toMatch(/dryRun true first/)
+    expect(AGENT_INSTRUCTIONS).toMatch(/budget/)
+    expect(AGENT_INSTRUCTIONS).toMatch(/jobs with wait/)
   })
 })

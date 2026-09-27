@@ -5,6 +5,8 @@ import { CREATE_LINES_MAX, LINE_TEXT_MAX } from '@shared/lines'
 import { CHARACTER_ID_MAX, CUE_KEY_MAX, TABLE_COLUMNS_MAX, TABLE_ROWS_MAX } from '@shared/import-table'
 import { PUNCH_PREROLL_MAX, PUNCH_PREROLL_STEP, RECORD_LATENCY_MAX_MS } from '@shared/punch'
 import { LOOP_PASS_MAX } from '@shared/loop-record'
+import { AGENT_BUDGET_MAX } from '@shared/ipc'
+import { TTS_TEXT_MAX } from '@shared/agent-generate'
 import { LUFS_TARGET_MAX, LUFS_TARGET_MIN, PEAK_TARGET_MAX, PEAK_TARGET_MIN } from '@shared/export-settings'
 import {
   DUCK_MAX_DB,
@@ -418,7 +420,7 @@ export const recAbortSchema = z.object({ session: recSession })
 
 export const ttsSchema = z.object({
   cueId: z.string().min(1),
-  text: z.string().min(1).max(5000),
+  text: z.string().min(1).max(TTS_TEXT_MAX),
   voiceSettings: voiceSettingsSchema,
   model: z.string().min(1).max(120).optional(),
   fragment: z.boolean().optional(),
@@ -622,6 +624,7 @@ export const appSettingsSchema = z.object({
   countIn: z.boolean(),
   autoReference: z.boolean(),
   agentAccess: z.literal(true).optional(),
+  agentCharacterBudget: z.number().int().min(0).max(AGENT_BUDGET_MAX).optional(),
 })
 
 export const bridgeReplySchema = z.object({

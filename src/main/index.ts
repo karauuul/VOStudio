@@ -34,7 +34,7 @@ import { emit } from './emit'
 import * as store from './project-store'
 import { voiceProvider } from './providers/voice-provider'
 import { setApiKey } from './secrets'
-import { runFfmpeg } from './ffmpeg'
+import { decodedDuration, runFfmpeg } from './ffmpeg'
 import { parseCsv } from '@shared/csv'
 import { applyRules } from '@shared/pronunciation'
 import { DEFAULT_EXPORT_TEMPLATE } from '@shared/export-plan'
@@ -611,7 +611,12 @@ function reimportTemplateDir(dir: string, expected?: SerialProjectRepository): P
   })
 }
 
-function queueGeneration(req: GenRequest, origin: JobOrigin, expected?: SerialProjectRepository): QueuedGeneration {
+function queueGeneration(
+  req: GenRequest,
+  origin: JobOrigin,
+  expected?: SerialProjectRepository,
+  after?: (take: Take) => Promise<void>
+): QueuedGeneration {
   const repository = liveRepository(expected)
   const session = requireSession()
   const chars = req.kind === 'tts' ? applyRules(req.text, repository.projectForMain().pronunciationRules).length : 0
@@ -629,12 +634,27 @@ function queueGeneration(req: GenRequest, origin: JobOrigin, expected?: SerialPr
             ? await createTtsTake(session, req, provider, emitChange)
             : await createStsTake(session, req, provider, emitChange)
         pushUsage()
+        await after?.(take)
         return take
       } catch (error) {
         throw repository.isLive() ? error : new Error('The project was closed or switched during generation.')
       }
     },
   })
+}
+
+async function measureTake(cueId: string, take: Take, expected: SerialProjectRepository): Promise<number> {
+  const duration = await decodedDuration(take.file.relPath)
+  if (!duration) throw new Error('The new take could not be measured.')
+  const entry = { cueId, takeId: take.id, duration }
+  let applied: TakeDurationEntry[] = []
+  await publish(liveRepository(expected), (project) => {
+    const result = applyTakeDurations(project, [entry])
+    applied = result.applied
+    return result.cues.length > 0 ? { cues: result.cues } : null
+  })
+  if (applied.length > 0) emit('takes:durations', applied)
+  return duration
 }
 
 function transcribe(
@@ -1001,6 +1021,10 @@ function agentServerSpec(): McpServer {
       reimportTemplate: reimportTemplateDir,
       transcribe,
       provider: voiceProvider,
+      generation: generations,
+      queueGeneration: (req, expected, after) => queueGeneration(req, 'agent', expected, after),
+      measureTake,
+      settings: store.getSettings,
       diagnostics,
       screenshot: async () => {
         const win = uiWindow()

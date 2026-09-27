@@ -57,9 +57,18 @@ export interface AppSettings {
   countIn: boolean
   autoReference: boolean
   agentAccess?: true
+  agentCharacterBudget?: number
 }
 
 export const sanitizeAgentAccess = (value: unknown): true | undefined => (value === true ? true : undefined)
+
+export const AGENT_BUDGET_DEFAULT = 20_000
+export const AGENT_BUDGET_MAX = 10_000_000
+
+export const sanitizeAgentBudget = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= AGENT_BUDGET_MAX ? value : undefined
+
+export const agentBudget = (value: unknown): number => sanitizeAgentBudget(value) ?? AGENT_BUDGET_DEFAULT
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   countIn: true,

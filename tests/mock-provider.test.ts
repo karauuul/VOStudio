@@ -10,7 +10,7 @@ vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }))
 
 const { voiceProvider } = await import('../src/main/providers/voice-provider')
 const { mockProvider } = await import('../src/main/providers/mock')
-const { runFfmpeg } = await import('../src/main/ffmpeg')
+const { decodedDuration, decodedSeconds: timeInStderr, runFfmpeg } = await import('../src/main/ffmpeg')
 
 const LINE = 'Welcome back, pioneer. The station is ready.'
 const request = (text = LINE, speed = 1) => ({
@@ -103,5 +103,22 @@ describe('mock voice provider', () => {
     expect(modelsFor(models, 'tts').map((m) => m.id)).toEqual(['eleven_multilingual_v2'])
     expect(modelsFor(models, 'sts').map((m) => m.id)).toEqual(['eleven_multilingual_sts_v2'])
     expect(models.some(isV3)).toBe(false)
+  })
+})
+
+describe('decoded take duration', () => {
+  it('measures what a decoder plays, not the padded mp3 header length', async () => {
+    const { audio } = await mockProvider.ttsWithTimestamps(request())
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'vostudio-mock-test-'))
+    const file = path.join(dir, 'take.mp3')
+    await fs.writeFile(file, audio)
+    const measured = await decodedDuration(file)
+    await fs.rm(dir, { recursive: true, force: true })
+    expect(Math.abs((measured ?? 0) - (await decodedSeconds(audio)))).toBeLessThan(0.011)
+  })
+
+  it('reads the last progress time and ignores output without one', () => {
+    expect(timeInStderr('size=N/A time=00:00:00.50 bitrate=N/A\rsize=N/A time=00:01:01.49 bitrate=N/A')).toBe(61.49)
+    expect(timeInStderr('Duration: 00:00:01.54')).toBeUndefined()
   })
 })

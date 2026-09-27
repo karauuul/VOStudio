@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { createGenerationQueue, JOB_CANCELLED, JOB_RETIRED, type GenerationSpec } from '../src/main/gen-queue'
+import { createGenerationQueue, type GenerationSpec } from '../src/main/gen-queue'
 import { emptyEdits, type Take } from '../src/shared/domain'
-import type { Job } from '../src/shared/jobs'
+import { JOB_CANCELLED, JOB_RETIRED, type Job } from '../src/shared/jobs'
 
 const take = (id: string): Take => ({
   id,
@@ -67,7 +67,7 @@ describe('main generation queue', () => {
     queue.submit(spec('c2', () => deferred().promise))
     expect(() => queue.submit(spec('c1', () => deferred().promise, { origin: 'agent' }))).toThrow('The line is already generating')
     expect(() => queue.submit(spec('c2', () => deferred().promise))).toThrow('The line is already generating')
-    expect(queue.busy('c1')).toBe(true)
+    expect(queue.check('c1')).toEqual({ lineBusy: true, exporting: false, restoring: false, recording: false })
     expect(queue.list()).toHaveLength(2)
   })
 
@@ -94,7 +94,7 @@ describe('main generation queue', () => {
     first.resolve(take('t1'))
     await a.done
     expect(queue.list().map((j) => j.state)).toEqual(['done', 'cancelled'])
-    expect(queue.busy('c2')).toBe(false)
+    expect(queue.check('c2').lineBusy).toBe(false)
   })
 
   it('a project switch drops the old project queued and finished jobs and keeps the running one', async () => {

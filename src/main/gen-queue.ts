@@ -1,6 +1,8 @@
 import { randomUUID } from 'crypto'
 import type { Take } from '@shared/domain'
 import {
+  JOB_CANCELLED,
+  JOB_RETIRED,
   cancelQueued,
   cueHasPending,
   enqueue,
@@ -15,8 +17,6 @@ import {
   type JobOrigin,
 } from '@shared/jobs'
 
-export const JOB_CANCELLED = 'The job was cancelled before it ran.'
-export const JOB_RETIRED = 'The project was closed or switched before this job ran.'
 
 export interface GenerationSpec {
   kind: 'tts' | 'sts'
@@ -37,7 +37,7 @@ export interface GenerationQueue {
   cancel: (ids: readonly string[]) => string[]
   retire: (owner: object | null) => void
   list: () => Job[]
-  busy: (cueId: string) => boolean
+  check: (cueId: string) => GenerationGuard
   settle: (ids: readonly string[], ms: number, signal: AbortSignal, progress: (done: number, total: number) => void) => Promise<void>
 }
 
@@ -65,6 +65,8 @@ export function createGenerationQueue(options: {
     options.changed(jobs)
     for (const listener of [...listeners]) listener()
   }
+
+  const check = (cueId: string): GenerationGuard => ({ lineBusy: cueHasPending(jobs, cueId), ...options.guard(cueId) })
 
   const settleEntry = (id: string, error: Error): void => {
     entries.get(id)?.reject(error)
@@ -102,7 +104,7 @@ export function createGenerationQueue(options: {
 
   return {
     submit(spec) {
-      const refusal = generationRefusal({ lineBusy: cueHasPending(jobs, spec.cueId), ...options.guard(spec.cueId) })
+      const refusal = generationRefusal(check(spec.cueId))
       if (refusal) throw new Error(refusal)
       const id = randomUUID()
       const done = new Promise<Take>((resolve, reject) => entries.set(id, { spec, resolve, reject }))
@@ -127,7 +129,7 @@ export function createGenerationQueue(options: {
       for (const j of dropped) settleEntry(j.id, new Error(JOB_RETIRED))
     },
     list: () => jobs,
-    busy: (cueId) => cueHasPending(jobs, cueId),
+    check,
     settle(ids, ms, signal, progress) {
       return new Promise((resolve) => {
         let reported = -1

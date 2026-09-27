@@ -1,15 +1,18 @@
 import { randomUUID } from 'crypto'
 import path from 'path'
 import { z } from 'zod/v4'
-import type { Cue, ProjectVersion } from '@shared/domain'
+import type { Cue, ProjectVersion, Take } from '@shared/domain'
 import { resolveVoiceSettings, TERM_TEXT_MAX, TERMS_MAX } from '@shared/domain'
-import { clampVoiceSettings } from '@shared/generation'
+import { clampVoiceSettings, placeOnTrack, type TakePlacement } from '@shared/generation'
 import { LINE_TEXT_MAX } from '@shared/lines'
-import { defineTool, errorText, issueText, type McpTool, type ToolAnnotations, type ToolOutput } from '@shared/mcp'
+import { defineTool, errorText, issueText, type McpSession, type McpTool, type ToolAnnotations, type ToolOutput } from '@shared/mcp'
 import { audioWithinRoots, type CommandResult, type FieldStep, type ProjectCommand } from '@shared/project-commands'
 import type { ProjectSummary } from '@shared/project-summary'
+import { agentBudget } from '@shared/ipc'
 import type {
+  AppSettings,
   AudioImportResult,
+  GenRequest,
   ReimportResult,
   TableImportResult,
   TablePreview,
@@ -32,7 +35,11 @@ import {
   projectOverview,
   stablePage,
 } from '@shared/agent-lines'
+import { planLine, type LinePlan } from '@shared/agent-generate'
+import { generationRefusal, isTerminal, JOB_CANCELLED, JOB_RETIRED, type Job } from '@shared/jobs'
+import { resolveTake } from '@shared/library'
 import type { SerialProjectRepository } from '../project-repository'
+import type { GenerationQueue, QueuedGeneration } from '../gen-queue'
 import type { VoiceProvider } from '../providers/voice-provider'
 import { projectCommandSchema } from '../schemas'
 import type { DiagnosticEntry } from './diagnostics'
@@ -58,6 +65,10 @@ export interface AgentDeps {
   reimportTemplate: (dir: string, expected?: SerialProjectRepository) => Promise<ReimportResult>
   transcribe: (req: { cueIds: string[]; overwrite?: boolean }, expected?: SerialProjectRepository) => Promise<{ updated: number; skipped: number }>
   provider: () => VoiceProvider
+  generation: GenerationQueue
+  queueGeneration: (req: GenRequest, expected: SerialProjectRepository, after: (take: Take) => Promise<void>) => QueuedGeneration
+  measureTake: (cueId: string, take: Take, expected: SerialProjectRepository) => Promise<number>
+  settings: () => Promise<AppSettings>
   diagnostics: () => DiagnosticEntry[]
   screenshot: () => Promise<Buffer | null>
 }
@@ -68,7 +79,9 @@ export const AGENT_INSTRUCTIONS = [
   'Address lines by key, or by id when a key is ambiguous; lines paginates, so follow nextCursor.',
   'Nothing here deletes audio: takes stay on disk and a version named "Before agent" is saved before your first change to a project.',
   'Text pipeline order: import (audio folder, subtitle table, template), then transcribe or a subtitle table matched by text, then translate_context, translations_suggest and glossary_check.',
-  'Voice generation costs money and is not available through these tools yet.',
+  'Voice generation costs money: always call generate with dryRun true first and show the user the characters it would send.',
+  'Agent generation is capped by a per-connection character budget the user sets in Settings; generate refuses a batch that would exceed it.',
+  'generate queues jobs in the app queue shared with the user; pass wait, or call jobs with wait, until they finish.',
   'Use screenshot and diagnostics to check what the user sees.',
 ].join(' ')
 
@@ -222,7 +235,82 @@ async function applyEdit(deps: AgentDeps, op: EditOp): Promise<{ op: string; lin
   return done
 }
 
+export const GENERATE_PAGE_MAX = 100
+export const WAIT_MAX_SECONDS = 45
+
+const jobId = z.string().min(1).max(200)
+const waitSeconds = z.number().min(0).max(WAIT_MAX_SECONDS)
+const voiceSettingsPatch = z.object({ stability: unit, similarity: unit, style: unit, speed: z.number(), boost: z.boolean() }).partial()
+
+type AgentPlacement = TakePlacement | 'library'
+
+async function placeAgentTake(
+  deps: AgentDeps,
+  cueId: string,
+  take: Take,
+  placement: AgentPlacement,
+  replaceClipId?: string
+): Promise<void> {
+  if (placement === 'library') return
+  const repository = requireRepository(deps)
+  const owner = resolveTake(repository.projectForMain(), findLine(repository.projectForMain(), cueId), take.id)?.cue.id ?? cueId
+  const duration = take.duration > 0 ? take.duration : await deps.measureTake(owner, take, repository)
+  const project = repository.projectForMain()
+  const cue = project.cues.find((c) => c.id === cueId)
+  if (!cue) throw new Error('The line was deleted before its take could be placed.')
+  const comp = placeOnTrack(cue.comp, {
+    placement,
+    takeId: take.id,
+    duration,
+    targetTrackId: project.ui.targetTrack?.[cueId],
+    ...(replaceClipId ? { replaceClipId } : {}),
+  })
+  await execute(deps, { type: 'cue.setComp', cueId, comp })
+}
+
+function jobView(deps: AgentDeps, job: Job): Record<string, unknown> {
+  const cue = deps.repository()?.projectForMain().cues.find((c) => c.id === job.cueId)
+  return {
+    id: job.id,
+    line: cue?.key ?? job.cueId,
+    kind: job.kind,
+    state: job.state,
+    ...(job.origin === 'agent' ? {} : { origin: job.origin }),
+    ...(job.error === undefined ? {} : { error: job.error }),
+    ...(job.takeId === undefined ? {} : { take: job.takeId }),
+  }
+}
+
+function budgetView(limit: number, used: number): Record<string, unknown> {
+  return limit === 0 ? { unlimited: true, used } : { limit, used, remaining: Math.max(0, limit - used) }
+}
+
+function planView(plan: LinePlan): Record<string, unknown> {
+  return {
+    line: plan.cue.key,
+    mode: plan.mode,
+    text: plan.text,
+    chars: plan.chars,
+    model: plan.model,
+    voice: plan.voice,
+    ...(plan.skip ? { skip: plan.skip } : {}),
+  }
+}
+
+async function waitForJobs(deps: AgentDeps, ctx: { signal: AbortSignal; progress: (p: number, t?: number, m?: string) => void }, ids: string[], seconds: number): Promise<void> {
+  const open = deps.generation.list().filter((j) => ids.includes(j.id) && !isTerminal(j)).map((j) => j.id)
+  if (seconds <= 0 || open.length === 0) return
+  await deps.generation.settle(open, seconds * 1000, ctx.signal, (done, total) => ctx.progress(done, total, `${done} of ${total} jobs finished`))
+}
+
+function request(plan: LinePlan): GenRequest {
+  const common = { cueId: plan.cue.id, voiceSettings: plan.voiceSettings, selectOutput: false, ...(plan.fragment ? { fragment: true } : {}) }
+  if (plan.mode === 'sts') return { kind: 'sts', ...common, sourceTakeId: plan.sourceTakeId ?? '' }
+  return { kind: 'tts', ...common, text: plan.text, ...(plan.model ? { model: plan.model } : {}) }
+}
+
 export function agentTools(deps: AgentDeps): McpTool[] {
+  const spent = new WeakMap<McpSession, number>()
   const tools = [
     defineTool({
       name: 'status',
@@ -711,6 +799,143 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       async run(_ctx, args) {
         if (args.set !== undefined) await execute(deps, { type: 'rules.set', text: args.set })
         return structured({ rules: requireRepository(deps).projectForMain().pronunciationRules })
+      },
+    }),
+    defineTool({
+      name: 'generate',
+      title: 'Generate voice',
+      description: `Generate takes for lines through the app queue, at most ${GENERATE_PAGE_MAX} lines per call; follow nextCursor. Costs money: call with dryRun true first to see the text, characters, model and voice per line, skip reasons, the provider quota and the remaining agent budget. mode tts (default) speaks the line text after pronunciation rules; sts converts the newest recording. target (one line only) generates a text range {start,end} or re-generates a timeline clip {clipId}. placement replace (default) replaces the target track with the new take, append adds it after the last clip, library keeps it as a take only. Returns job ids; wait blocks up to that many seconds.`,
+      input: z
+        .object({
+          ...lineSelection,
+          cursor: pageCursor.optional(),
+          mode: z.enum(['tts', 'sts']).optional(),
+          target: z
+            .union([
+              z.object({ start: z.number().int().min(0).max(LINE_TEXT_MAX), end: z.number().int().min(0).max(LINE_TEXT_MAX) }),
+              z.object({ clipId: z.string().min(1).max(200) }),
+            ])
+            .optional(),
+          model: modelId.optional(),
+          settings: voiceSettingsPatch.optional(),
+          placement: z.enum(['replace', 'append', 'library']).optional(),
+          dryRun: z.boolean().optional(),
+          wait: waitSeconds.optional(),
+        })
+        .refine((a) => (a.lines === undefined) !== (a.filter === undefined), { message: 'pass exactly one of lines or filter' })
+        .refine((a) => a.target === undefined || a.lines?.length === 1, { message: 'target needs exactly one line in lines' })
+        .refine((a) => a.target === undefined || !('start' in a.target) || a.target.end > a.target.start, { message: 'target end must be after start' })
+        .refine((a) => a.mode !== 'sts' || (a.model === undefined && a.target === undefined), { message: 'model and target apply to tts only' }),
+      annotations: { ...WRITE, openWorldHint: true },
+      writes: (args) => args.dryRun !== true,
+      async run(ctx, args) {
+        await deps.flushUi()
+        const pinned = pin(deps)
+        const repository = requireRepository(pinned)
+        const project = repository.projectForMain()
+        const selected = selectLines(pinned, args)
+        const { page, nextCursor } = args.lines
+          ? offsetPage(selected, args.cursor, GENERATE_PAGE_MAX)
+          : stablePage(selected, (cue) => cue, project.cues, args.cursor, GENERATE_PAGE_MAX)
+        const guards = page.map((cue) => deps.generation.check(cue.id))
+        const plans = page.map((cue, i) => {
+          const guard = guards[i]
+          const blocked = guard.recording ? 'recording' : guard.lineBusy ? 'busy' : undefined
+          return planLine(project, cue, {
+            mode: args.mode ?? 'tts',
+            ...(args.target ? { target: args.target } : {}),
+            ...(args.model ? { model: args.model } : {}),
+            ...(args.settings ? { settings: args.settings } : {}),
+            ...(blocked ? { blocked } : {}),
+          })
+        })
+        const eligible = plans.filter((p) => !p.skip)
+        const chars = eligible.reduce((n, p) => n + p.chars, 0)
+        const limit = agentBudget((await deps.settings()).agentCharacterBudget)
+        const used = spent.get(ctx.session) ?? 0
+        const totals = { lines: eligible.length, chars, skipped: plans.length - eligible.length }
+        const more = nextCursor === undefined ? {} : { nextCursor }
+        if (args.dryRun === true) {
+          const quota = await deps.provider().usage().catch(() => null)
+          return structured({
+            lines: plans.map(planView),
+            totals,
+            quota: quota ? { remaining: quota.remaining, limit: quota.limit, unit: quota.unit } : null,
+            budget: budgetView(limit, used),
+            ...more,
+          })
+        }
+        const blocked = guards.map((g) => generationRefusal({ ...g, lineBusy: false, recording: false })).find(Boolean)
+        if (blocked) throw new Error(`${blocked} in the app; wait until it finishes, then retry.`)
+        if (limit > 0 && chars > limit - used) {
+          throw new Error(
+            `This batch needs ${chars} characters but only ${Math.max(0, limit - used)} remain of the ${limit}-character agent budget; generate fewer lines or ask the user to raise Agent budget in Settings.`
+          )
+        }
+        const placement = args.placement ?? 'replace'
+        const queued: { line: string; job: string }[] = []
+        const skipped = plans.filter((p) => p.skip).map((p) => ({ line: p.cue.key, reason: p.skip ?? '' }))
+        for (const plan of eligible) {
+          let job: QueuedGeneration
+          try {
+            job = deps.queueGeneration(request(plan), repository, (take) => placeAgentTake(pinned, plan.cue.id, take, placement, plan.replaceClipId))
+          } catch (error) {
+            skipped.push({ line: plan.cue.key, reason: reason(error) })
+            continue
+          }
+          spent.set(ctx.session, (spent.get(ctx.session) ?? 0) + plan.chars)
+          job.done.catch((error: unknown) => {
+            const message = errorText(error)
+            if (message === JOB_CANCELLED || message === JOB_RETIRED) spent.set(ctx.session, Math.max(0, (spent.get(ctx.session) ?? 0) - plan.chars))
+          })
+          queued.push({ line: plan.cue.key, job: job.id })
+        }
+        const ids = queued.map((q) => q.job)
+        await waitForJobs(deps, ctx, ids, args.wait ?? 0)
+        const jobs = deps.generation.list().filter((j) => ids.includes(j.id)).map((j) => jobView(deps, j))
+        return structured({ jobs, skipped, totals, budget: budgetView(limit, spent.get(ctx.session) ?? 0), ...more })
+      },
+    }),
+    defineTool({
+      name: 'jobs',
+      title: 'Jobs',
+      description: `Generation jobs in the app queue, the user's and yours: state, error and the take each produced. ids narrows the list; wait (at most ${WAIT_MAX_SECONDS} s) blocks until the listed jobs finish; cancel removes queued jobs (running ones always finish). Jobs of a closed project are cleared.`,
+      input: z.object({
+        ids: z.array(jobId).min(1).max(1000).optional(),
+        wait: waitSeconds.optional(),
+        cancel: z.array(jobId).min(1).max(1000).optional(),
+      }),
+      annotations: { ...WRITE, idempotentHint: true },
+      writes: (args) => args.cancel !== undefined,
+      async run(ctx, args) {
+        const cancelled = args.cancel ? deps.generation.cancel(args.cancel) : []
+        const ids = args.ids ?? deps.generation.list().map((j) => j.id)
+        await waitForJobs(deps, ctx, ids, args.wait ?? 0)
+        const listed = deps.generation.list().filter((j) => ids.includes(j.id))
+        const missing = ids.filter((id) => !listed.some((j) => j.id === id))
+        return structured({
+          jobs: listed.map((j) => jobView(deps, j)),
+          ...(args.cancel ? { cancelled } : {}),
+          ...(missing.length > 0 ? { missing } : {}),
+        })
+      },
+    }),
+    defineTool({
+      name: 'take_use',
+      title: 'Use take',
+      description: 'Place an existing take of a line (or a pinned take of another line) on its timeline: replace (default) replaces the target track, append adds it after the last clip.',
+      input: z.object({ line: lineRef, take: z.string().min(1).max(200), placement: z.enum(['replace', 'append']).optional() }),
+      annotations: WRITE,
+      async run(_ctx, args) {
+        const pinned = pin(deps)
+        const project = requireRepository(pinned).projectForMain()
+        const cue = findLine(project, args.line)
+        const found = resolveTake(project, cue, args.take)
+        if (!found || found.take.deletedAt) throw new Error(`Line ${cue.key} has no take "${args.take}"; call line to list its takes.`)
+        if (deps.generation.check(cue.id).lineBusy) throw new Error(`Line ${cue.key} is generating; wait for it with jobs, then retry.`)
+        await placeAgentTake(pinned, cue.id, found.take, args.placement ?? 'replace')
+        const after = requireRepository(pinned).projectForMain()
+        return structured(lineDetail(after, findLine(after, cue.id)))
       },
     }),
     defineTool({

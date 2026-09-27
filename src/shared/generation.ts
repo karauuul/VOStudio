@@ -1,4 +1,5 @@
 import { clipSpeed, emptyEdits, type Cue, type CueComp, type VoiceSettings } from './domain'
+import { clipEnd, clipTrackId, trackClips } from './comp'
 import { clipText, placeClip, resolveTake, resolveTargetTrack, type TakeLookup } from './library'
 
 export type GenTarget =
@@ -90,6 +91,21 @@ export function placeTake(req: PlaceTakeRequest): {
     edits: emptyEdits(),
     ...(req.replaceClipId ? { replaceClipId: req.replaceClipId } : {}),
   })
+}
+
+export type TakePlacement = 'replace' | 'append'
+
+export function placeOnTrack(
+  comp: CueComp | undefined,
+  req: { placement: TakePlacement; takeId: string; duration: number; targetTrackId?: string; replaceClipId?: string }
+): CueComp {
+  const base = comp ?? { clips: [] }
+  const trackId = resolveTargetTrack(base, req.targetTrackId)
+  const place = (on: CueComp, playhead: number, replaceClipId?: string): CueComp =>
+    placeTake({ comp: on, takeId: req.takeId, duration: req.duration, targetTrackId: trackId, playhead, ...(replaceClipId ? { replaceClipId } : {}) }).comp
+  if (req.replaceClipId && base.clips.some((c) => c.id === req.replaceClipId)) return place(base, 0, req.replaceClipId)
+  if (req.placement === 'append') return place(base, Math.max(0, ...trackClips(base, trackId).map(clipEnd)))
+  return place({ ...base, clips: base.clips.filter((c) => clipTrackId(c) !== trackId) }, 0)
 }
 
 export interface GhostPlacement {

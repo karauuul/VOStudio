@@ -6,6 +6,7 @@ import {
   deriveGenTarget,
   findWholeWord,
   fromPercent,
+  placeOnTrack,
   placeTake,
   targetRange,
   targetText,
@@ -271,5 +272,39 @@ describe('voice settings clamp', () => {
       speed: 0.7,
       boost: false,
     })
+  })
+})
+
+describe('placeOnTrack — agent placement through placeTake', () => {
+  const clip = (id: string, start: number, srcOut: number, trackId?: string): CompClip => ({
+    id, sourceTakeId: 'old', srcIn: 0, srcOut, start, edits: emptyEdits(), ...(trackId ? { trackId } : {}),
+  })
+  const tracks = [
+    { id: 'track-1', name: 'Track 1', gainDb: 0, muted: false, solo: false },
+    { id: 'track-2', name: 'Track 2', gainDb: 0, muted: false, solo: false },
+  ]
+  const twoTracks: CueComp = { clips: [clip('a', 0, 2, 'track-1'), clip('b', 3, 1, 'track-1'), clip('c', 0, 4, 'track-2')], tracks }
+
+  it('replace clears only the target track and starts the take at 0', () => {
+    const placed = placeOnTrack(twoTracks, { placement: 'replace', takeId: 'new', duration: 1.5, targetTrackId: 'track-2' })
+    expect(placed.clips.filter((c) => c.trackId === 'track-2').map((c) => [c.sourceTakeId, c.start, c.srcOut])).toEqual([['new', 0, 1.5]])
+    expect(placed.clips.filter((c) => c.trackId === 'track-1')).toHaveLength(2)
+  })
+
+  it('replace falls back to the first track and works on an empty line', () => {
+    expect(placeOnTrack(undefined, { placement: 'replace', takeId: 'new', duration: 2 }).clips.map((c) => [c.sourceTakeId, c.start, c.srcOut])).toEqual([['new', 0, 2]])
+    const placed = placeOnTrack(twoTracks, { placement: 'replace', takeId: 'new', duration: 2, targetTrackId: 'gone' })
+    expect(placed.clips.filter((c) => c.trackId === 'track-1').map((c) => c.sourceTakeId)).toEqual(['new'])
+  })
+
+  it('append starts after the last clip of the target track', () => {
+    const placed = placeOnTrack(twoTracks, { placement: 'append', takeId: 'new', duration: 1, targetTrackId: 'track-1' })
+    expect(placed.clips.find((c) => c.sourceTakeId === 'new')).toMatchObject({ start: 4, trackId: 'track-1' })
+  })
+
+  it('a clip target swaps that clip in place', () => {
+    const placed = placeOnTrack(twoTracks, { placement: 'replace', takeId: 'new', duration: 0.5, replaceClipId: 'b' })
+    expect(placed.clips.find((c) => c.id === 'b')).toMatchObject({ sourceTakeId: 'new', start: 3, srcOut: 0.5 })
+    expect(placed.clips).toHaveLength(3)
   })
 })
