@@ -50,7 +50,15 @@ import {
   type UiSessionState,
 } from '@shared/domain'
 import type { Project } from '@shared/domain'
-import type { AppSettings } from '@shared/ipc'
+import type {
+  AppSettings,
+  AudioImportResult,
+  ReimportResult,
+  TableImportResult,
+  TablePreview,
+  TableRequest,
+} from '@shared/ipc'
+import type { MatchRule } from '@shared/domain'
 import {
   createProjectFromTemplate,
   reimportTemplate,
@@ -530,6 +538,86 @@ function restoreVersion(req: { n: number }, from?: WebContents) {
   })
 }
 
+function liveRepository(expected?: SerialProjectRepository): SerialProjectRepository {
+  const repository = requireRepository()
+  if (expected && expected !== repository) throw new Error('The project was closed or switched during this call; call status, then retry.')
+  return repository
+}
+
+function importAudioPaths(req: { paths: string[]; rule: MatchRule }, expected?: SerialProjectRepository): Promise<AudioImportResult> {
+  return serialLifecycle(async () => {
+    const parsed = audioImportSchema.parse(req)
+    const repository = liveRepository(expected)
+    const projectDir = store.getProjectDir()
+    if (!projectDir) throw new Error('No project is open')
+    const { media, rest } = await splitMediaPaths(parsed.paths)
+    const sources = await importSources(repository.projectForMain(), projectDir, media)
+    if (sources.added.length > 0) {
+      emit('project:changed', await repository.commit(sources.changes))
+    }
+    if (rest.length === 0) {
+      return { added: 0, updated: 0, files: sources.added.length }
+    }
+    const { result, changes } = await importAudio(
+      repository.projectForMain(),
+      projectDir,
+      rest,
+      parsed.rule
+    )
+    emit('project:changed', await repository.commit(changes))
+    return { ...result, files: result.files + sources.added.length }
+  })
+}
+
+async function previewTableImport(req: TableRequest, expected?: SerialProjectRepository): Promise<TablePreview> {
+  const parsed = tableImportSchema.parse(req)
+  const table = await readTable(parsed.path)
+  return previewTableFile(liveRepository(expected).projectForMain(), table, parsed)
+}
+
+function importTable(req: TableRequest, expected?: SerialProjectRepository): Promise<TableImportResult> {
+  return serialLifecycle(async () => {
+    const parsed = tableImportSchema.parse(req)
+    const table = await readTable(parsed.path)
+    let imported: ReturnType<typeof importTableFile> | undefined
+    await publish(liveRepository(expected), (project) => (imported = importTableFile(project, table, parsed)).changes)
+    if (!imported) throw new Error('Table import did not run')
+    return imported.result
+  })
+}
+
+function reimportTemplateDir(dir: string, expected?: SerialProjectRepository): Promise<ReimportResult> {
+  return serialLifecycle(async () => {
+    const target = templateDirSchema.parse(dir)
+    const repository = liveRepository(expected)
+    const projectDir = store.getProjectDir()
+    if (!projectDir) throw new Error('No project is open')
+    const validation = await validateTemplate(target)
+    const { result, changes } = await reimportTemplate(validation, repository.projectForMain(), projectDir)
+    emit('project:changed', await repository.commit(changes))
+    return result
+  })
+}
+
+function transcribe(
+  req: { cueIds: string[]; overwrite?: boolean },
+  expected?: SerialProjectRepository
+): Promise<{ updated: number; skipped: number }> {
+  return serialLifecycle(async () => {
+    const parsed = transcribeSchema.parse(req)
+    const repository = liveRepository(expected)
+    const result = await transcribeCues(
+      repository,
+      parsed.cueIds,
+      parsed.overwrite === true,
+      async (ref) => voiceProvider().stt({ audio: await fs.readFile(ref.relPath), filename: path.basename(ref.relPath) }),
+      emitChange
+    )
+    pushUsage()
+    return result
+  })
+}
+
 function registerHandlers(): void {
   typedHandle('project:list', () => store.listProjects())
 
@@ -593,47 +681,11 @@ function registerHandlers(): void {
     return picked.canceled ? [] : picked.filePaths
   })
 
-  typedHandle('import:audio', (req) =>
-    serialLifecycle(async () => {
-      const parsed = audioImportSchema.parse(req)
-      const repository = projectRepository
-      const projectDir = store.getProjectDir()
-      if (!repository || !projectDir) throw new Error('No project is open')
-      const { media, rest } = await splitMediaPaths(parsed.paths)
-      const sources = await importSources(repository.projectForMain(), projectDir, media)
-      if (sources.added.length > 0) {
-        emit('project:changed', await repository.commit(sources.changes))
-      }
-      if (rest.length === 0) {
-        return { added: 0, updated: 0, files: sources.added.length }
-      }
-      const { result, changes } = await importAudio(
-        repository.projectForMain(),
-        projectDir,
-        rest,
-        parsed.rule
-      )
-      emit('project:changed', await repository.commit(changes))
-      return { ...result, files: result.files + sources.added.length }
-    })
-  )
+  typedHandle('import:audio', (req) => importAudioPaths(req))
 
-  typedHandle('import:tablePreview', async (req) => {
-    const parsed = tableImportSchema.parse(req)
-    const table = await readTable(parsed.path)
-    return previewTableFile(requireRepository().projectForMain(), table, parsed)
-  })
+  typedHandle('import:tablePreview', (req) => previewTableImport(req))
 
-  typedHandle('import:table', (req) =>
-    serialLifecycle(async () => {
-      const parsed = tableImportSchema.parse(req)
-      const table = await readTable(parsed.path)
-      let imported: ReturnType<typeof importTableFile> | undefined
-      await publish(requireRepository(), (project) => (imported = importTableFile(project, table, parsed)).changes)
-      if (!imported) throw new Error('Table import did not run')
-      return imported.result
-    })
-  )
+  typedHandle('import:table', (req) => importTable(req))
 
   typedHandle('source:detect', (req) =>
     serialLifecycle(async () => {
@@ -650,18 +702,7 @@ function registerHandlers(): void {
     })
   )
 
-  typedHandle('import:template', (dir: string) =>
-    serialLifecycle(async () => {
-      const target = templateDirSchema.parse(dir)
-      const repository = projectRepository
-      const projectDir = store.getProjectDir()
-      if (!repository || !projectDir) throw new Error('No project is open')
-      const validation = await validateTemplate(target)
-      const { result, changes } = await reimportTemplate(validation, repository.projectForMain(), projectDir)
-      emit('project:changed', await repository.commit(changes))
-      return result
-    })
-  )
+  typedHandle('import:template', (dir) => reimportTemplateDir(dir))
 
   typedHandle('project:command', (command) => {
     if (!projectRepository) throw new Error('No project is open')
@@ -904,20 +945,7 @@ function registerHandlers(): void {
     return take
   })
 
-  typedHandle('provider:transcribe', (req) =>
-    serialLifecycle(async () => {
-      const parsed = transcribeSchema.parse(req)
-      const result = await transcribeCues(
-        requireRepository(),
-        parsed.cueIds,
-        parsed.overwrite === true,
-        async (ref) => voiceProvider().stt({ audio: await fs.readFile(ref.relPath), filename: path.basename(ref.relPath) }),
-        emitChange
-      )
-      pushUsage()
-      return result
-    })
-  )
+  typedHandle('provider:transcribe', (req) => transcribe(req))
 
   typedHandle('provider:voices', () => voiceProvider().voices())
   typedHandle('provider:models', () => voiceProvider().models())
@@ -1045,6 +1073,11 @@ function agentServerSpec(): McpServer {
       checkRemovable: (cueIds) => requestUi({ kind: 'removable', cueIds }),
       emit: emitChange,
       audioRoots: trustedAudioRoots,
+      importAudio: importAudioPaths,
+      previewTable: previewTableImport,
+      importTable,
+      reimportTemplate: reimportTemplateDir,
+      transcribe,
       provider: voiceProvider,
       diagnostics,
       screenshot: async () => {

@@ -621,3 +621,26 @@ describe('preview cells', () => {
     expect(long.endsWith('…')).toBe(true)
   })
 })
+
+describe('table requests matched by text', () => {
+  it('passes matchBy through the IPC schema and reports the text match in preview and import', async () => {
+    const { previewTableFile, importTableFile } = await import('../src/main/table-import')
+    const req = { path: '/data/subs.csv', rule: 'id' as const, matchBy: 'text' as const }
+    expect(tableImportSchema.parse(req)).toEqual(req)
+    expect(() => tableImportSchema.parse({ ...req, matchBy: 'fuzzy' })).toThrow()
+    const table = { path: '/data/subs.csv', ...parseTableFile('subs.csv', 'text,translation\nWelcome back pioneer!,Привіт\nNope,Ні\n') }
+    const p = {
+      cues: [{ id: 'c1', characterId: '', key: 'hit', fields: {}, sourceText: 'Welcome back, pioneer.', text: '', status: 'empty', notes: '', takes: [] }],
+      characters: [],
+    } as unknown as Project
+    const preview = previewTableFile(p, table, req)
+    expect(preview.summary).toEqual({ added: 0, updated: 1, suggested: 0, unchanged: 0, skipped: 1 })
+    expect(preview.textMatch).toEqual({ matched: [{ index: 0, cueId: 'c1', key: 'hit', score: 1 }], ambiguous: [], unmatched: [1] })
+    expect(p.cues[0].text).toBe('')
+    const imported = importTableFile(p, table, req)
+    expect(imported.result.textMatch?.matched).toHaveLength(1)
+    expect(p.cues[0].text).toBe('Привіт')
+    expect(p.cues).toHaveLength(1)
+    expect(previewTableFile(p, table, { path: req.path, rule: 'id' })).not.toHaveProperty('textMatch')
+  })
+})

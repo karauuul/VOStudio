@@ -11,6 +11,8 @@ import {
   DUCK_MIN_DB,
   ORIGINAL_START_MAX,
   TEMPLATE_NAME_MAX,
+  TERM_TEXT_MAX,
+  TERMS_MAX,
   TRACK_GAIN_MAX_DB,
   TRACK_GAIN_MIN_DB,
 } from '@shared/domain'
@@ -90,6 +92,7 @@ export const tableImportSchema = z.object({
     .optional(),
   replaceTranslations: z.boolean().optional(),
   keepOriginal: z.boolean().optional(),
+  matchBy: z.enum(['key', 'text']).optional(),
 })
 
 export const projectDirSchema = (root: string) =>
@@ -582,6 +585,12 @@ export const projectCommandSchema = z.discriminatedUnion('type', [
   }),
   characterId.extend({ type: z.literal('character.delete'), reassignTo: z.string().max(200) }),
   z.object({ type: z.literal('rules.set'), text: z.string().max(100_000) }),
+  z.object({
+    type: z.literal('terms.set'),
+    terms: z
+      .array(z.object({ term: z.string().max(TERM_TEXT_MAX), translation: z.string().max(TERM_TEXT_MAX), note: z.string().max(TERM_TEXT_MAX).optional() }))
+      .max(TERMS_MAX),
+  }),
   z.object({ type: z.literal('project.rename'), name: z.string().min(1).max(200) }),
   z.object({
     type: z.literal('project.setLanguages'),

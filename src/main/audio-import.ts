@@ -3,6 +3,7 @@ import path from 'path'
 import { randomUUID } from 'crypto'
 import { attachesOnly, matchAudioFiles, type MatchRule } from '@shared/import-table'
 import type { AudioRef, Cue, Project } from '@shared/domain'
+import { PATH_FIELD } from '@shared/export-plan'
 import type { ChangeSet } from '@shared/project-commands'
 import { pendingTakeDurations, type TakeDurationEntry } from '@shared/library'
 import type { AudioImportResult } from '@shared/ipc'
@@ -47,6 +48,7 @@ export async function probeTakeDurations(project: Project): Promise<TakeDuration
 export interface PickedAudio {
   name: string
   rel: string
+  dir: string
   src: string
   format: AudioRef['format']
 }
@@ -61,16 +63,17 @@ async function walk(dir: string, root: string, out: PickedAudio[]): Promise<void
       continue
     }
     if (!entry.isFile()) continue
-    push(out, abs, path.join(path.basename(root), path.relative(root, abs)))
+    push(out, abs, path.join(path.basename(root), path.relative(root, abs)), path.relative(root, dir))
   }
 }
 
-function push(out: PickedAudio[], abs: string, rel: string): void {
+function push(out: PickedAudio[], abs: string, rel: string, dir = ''): void {
   const format = FORMATS[path.extname(abs).toLowerCase()]
   if (!format || out.length >= MAX_FILES) return
   out.push({
     name: path.basename(abs, path.extname(abs)),
     rel: rel.replace(/\\/g, '/'),
+    dir: dir.replace(/\\/g, '/'),
     src: abs,
     format,
   })
@@ -92,7 +95,7 @@ function buildCue(file: PickedAudio, abs: string, duration: number | undefined):
     id: randomUUID(),
     characterId: '',
     key: file.name,
-    fields: { EventName: file.name },
+    fields: { EventName: file.name, ...(file.dir ? { [PATH_FIELD]: file.dir } : {}) },
     sourceText: '',
     text: '',
     status: 'empty',
@@ -112,9 +115,9 @@ export async function importAudio(
 ): Promise<{ result: AudioImportResult; changes: ChangeSet }> {
   const files = await collectAudio(paths)
   const referenceRoot = path.join(projectDir, 'audio', 'reference')
-  const { update, create } = matchAudioFiles(project.cues, files, rule)
+  const { update, create, duplicates } = matchAudioFiles(project.cues, files, rule)
   const attach = attachesOnly(project)
-  const kept = attach ? update.map(({ file }) => file) : files
+  const kept = [...update.map(({ file }) => file), ...(attach ? [] : create)]
 
   for (const dir of new Set(kept.map((f) => path.dirname(path.join(referenceRoot, f.rel))))) {
     await fs.mkdir(dir, { recursive: true })
@@ -127,19 +130,23 @@ export async function importAudio(
     }
     return { file, abs, duration: await probeDuration(abs) }
   })
-  const byName = new Map(probed.map((row) => [row.file.name, row]))
+  const byFile = new Map(probed.map((row) => [row.file, row]))
 
   const changed: Cue[] = []
   for (const { cue, file } of update) {
-    const row = byName.get(file.name)
+    const row = byFile.get(file)
     if (!row) continue
     cue.referenceAudio = { fileId: cue.key, relPath: row.abs, format: file.format }
     if (row.duration !== undefined) cue.referenceDuration = row.duration
+    if (!attach && file.rel.includes('/') && (cue.fields[PATH_FIELD] ?? '') !== file.dir) {
+      const { [PATH_FIELD]: _moved, ...fields } = cue.fields
+      cue.fields = file.dir ? { ...fields, [PATH_FIELD]: file.dir } : fields
+    }
     changed.push(cue)
   }
   const added: Cue[] = []
   for (const file of attach ? [] : create) {
-    const row = byName.get(file.name)
+    const row = byFile.get(file)
     if (!row) continue
     const cue = buildCue(file, row.abs, row.duration)
     project.cues.push(cue)
@@ -152,6 +159,7 @@ export async function importAudio(
       updated: changed.length,
       files: files.length,
       ...(attach ? { unmatched: create.length } : {}),
+      ...(duplicates.length > 0 ? { duplicates: duplicates.map((file) => file.rel) } : {}),
     },
     changes: { cues: structuredClone([...changed, ...added]) },
   }

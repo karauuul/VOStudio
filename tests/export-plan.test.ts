@@ -4,6 +4,7 @@ import {
   DEFAULT_EXPORT_TEMPLATE,
   exportName,
   exportNamePreview,
+  exportPath,
   extOf,
   findCollisions,
   hasEdits,
@@ -249,6 +250,14 @@ describe('collisions', () => {
     expect(coll[0].cueKeys).toEqual(['100', '200'])
   })
 
+  it('a name that is also a folder of another name collides', () => {
+    const file = cue('500', { fields: { EventName: 'sfx' } })
+    const nested = cue('600', { fields: { EventName: 'x', path: 'sfx.mp3' } })
+    const planned = planBatch({ ...project([file, nested]), exportTemplate: '{Path}{EventName}.{ext}' })
+    expect(planned.map((p) => p.name)).toEqual(['sfx.mp3', 'sfx.mp3/x.mp3'])
+    expect(findCollisions(planned)).toEqual([{ name: 'sfx.mp3/x.mp3', cueKeys: ['500', '600'] }])
+  })
+
   it('names differing only in case collide — the filesystem would overwrite one', () => {
     const upper = cue('400', { fields: { EventName: 'SAME' } })
     const coll = findCollisions(planBatch(project([a, upper, c])))
@@ -258,5 +267,43 @@ describe('collisions', () => {
 
   it('a plan without collisions is clean', () => {
     expect(findCollisions(planBatch(project([c])))).toHaveLength(0)
+  })
+})
+
+describe('{Path} export token', () => {
+  it('expands to the relative folder with a trailing slash and to nothing without one', () => {
+    const nested = cue('8', { fields: { EventName: 'hit', path: 'sfx/combat' } })
+    const flat = cue('9', { fields: { EventName: 'hit' } })
+    expect(exportName(project([nested], '{Path}{EventName}.{ext}'), nested, nested.takes[0])).toBe('sfx/combat/hit.mp3')
+    expect(exportName(project([flat], '{Path}{EventName}.{ext}'), flat, flat.takes[0])).toBe('hit.mp3')
+    expect(exportNamePreview(project([nested], '{Path}{EventName}.{ext}'), nested)).toBe('sfx/combat/hit.mp3')
+  })
+
+  it('leaves names unchanged for templates without the token', () => {
+    const nested = cue('8', { fields: { EventName: 'hit', path: 'sfx/combat' } })
+    expect(exportName(project([nested]), nested, nested.takes[0])).toBe('hit.mp3')
+  })
+
+  it('cannot escape the export folder', () => {
+    expect(exportPath('../../etc')).toBe('etc/')
+    expect(exportPath('/abs/dir/')).toBe('abs/dir/')
+    expect(exportPath('C:\\Windows\\..\\x')).toBe('Windows/x/')
+    expect(exportPath('a/./b/ ../c.')).toBe('a/b/c/')
+    expect(exportPath('ab:c/d?e')).toBe('ab_c/d_e/')
+    expect(exportPath('d:rel')).toBe('rel/')
+    expect(exportPath('$&')).toBe('$&/')
+    expect(exportPath(undefined)).toBe('')
+    expect(exportPath(' / .. / ')).toBe('')
+    const sneaky = cue('10', { fields: { EventName: 'x', path: '../../../outside' } })
+    expect(exportName(project([sneaky], '{Path}{EventName}.{ext}'), sneaky, sneaky.takes[0])).toBe('outside/x.mp3')
+  })
+
+  it('keeps dots of folders out of the extension', () => {
+    expect(extOf('v1.2/NAME')).toBe('')
+    expect(extOf('v1.2/NAME.wav')).toBe('.wav')
+    expect(extOf('dir/.hidden')).toBe('')
+    const c = cue('11', { takes: [], finalTakeId: undefined, output: null, fields: { EventName: 'NAME', path: 'v1.2' } })
+    const p = { ...project([c], '{Path}{EventName}'), export: { format: 'wav-48-24' as const } }
+    expect(exportNamePreview(p, c)).toBe('v1.2/NAME.wav')
   })
 })

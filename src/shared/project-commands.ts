@@ -13,6 +13,7 @@ import {
   sanitizePinned,
   sanitizeProviderSettings,
   sanitizeStems,
+  sanitizeTerms,
   type AudioRef,
   type Character,
   type CueApproval,
@@ -28,6 +29,7 @@ import {
   type ProjectVersion,
   type ProviderSettings,
   type Stem,
+  type Term,
   type VoiceSettings,
 } from './domain'
 import { referencedByOtherComp, resolveTake, type TakeLookup } from './library'
@@ -72,6 +74,7 @@ export type ProjectCommand =
   | { type: 'character.setProvider'; characterId: string; voiceId?: string; ttsModel?: string; stsModel?: string }
   | { type: 'character.delete'; characterId: string; reassignTo: string }
   | { type: 'rules.set'; text: string }
+  | { type: 'terms.set'; terms: Term[] }
   | { type: 'project.rename'; name: string }
   | { type: 'project.setLanguages'; languages: ProjectLanguages | null }
   | { type: 'project.setExport'; settings: ExportSettings | null }
@@ -117,6 +120,7 @@ export interface ChangeSet {
   characters?: Project['characters']
   charactersReplace?: boolean
   pronunciationRules?: string
+  terms?: Term[] | null
   linesFromTable?: true
 }
 
@@ -376,6 +380,12 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
     project.pronunciationRules = command.text
     return { pronunciationRules: command.text }
   }
+  if (command.type === 'terms.set') {
+    const terms = sanitizeTerms(command.terms)
+    if (terms) project.terms = terms
+    else delete project.terms
+    return { terms: terms ?? null }
+  }
   if (command.type === 'project.rename') {
     const name = command.name.trim()
     if (!name) throw new Error('Project name cannot be empty')
@@ -627,6 +637,12 @@ export function applyChangeSet(project: Project, changes: ChangeSet): Project {
   }
   if (changes.exportTemplate !== undefined) next = { ...next, exportTemplate: changes.exportTemplate }
   if (changes.pronunciationRules !== undefined) next = { ...next, pronunciationRules: changes.pronunciationRules }
+  if (changes.terms !== undefined) {
+    if (changes.terms === null) {
+      const { terms: _dropped, ...rest } = next
+      next = rest as Project
+    } else next = { ...next, terms: structuredClone(changes.terms) }
+  }
   if (changes.linesFromTable) next = { ...next, linesFromTable: true }
   return next
 }

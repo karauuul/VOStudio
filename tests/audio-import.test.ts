@@ -179,3 +179,59 @@ describe('importAudio into lines that come from a table', () => {
     await expect(fs.stat(path.join(projectDir, 'audio', 'reference', 'LINE_A.wav'))).rejects.toThrow()
   })
 })
+
+describe('importAudio from nested folders', () => {
+  it('keeps the relative folder, leaves flat files untouched and skips later duplicate names', async () => {
+    const dir = path.join(H.root, 'nested-src')
+    const projectDir = path.join(H.root, 'nested.vostudio')
+    await fs.mkdir(path.join(dir, 'a', 'deep'), { recursive: true })
+    await fs.mkdir(path.join(dir, 'b'), { recursive: true })
+    await fs.copyFile(path.join(SRC, 'LINE_A.wav'), path.join(dir, 'a', 'deep', 'hit.wav'))
+    await fs.copyFile(path.join(SRC, 'LINE_B.wav'), path.join(dir, 'b', 'hit.wav'))
+    await fs.copyFile(path.join(SRC, 'LINE_B.wav'), path.join(dir, 'top.wav'))
+    const p = project()
+
+    const { result, changes } = await importAudio(p, projectDir, [dir], 'id')
+
+    expect(result).toEqual({ added: 2, updated: 0, files: 3, duplicates: ['nested-src/b/hit.wav'] })
+    const hit = p.cues.find((c) => c.key === 'hit')!
+    expect(hit.fields).toEqual({ EventName: 'hit', path: 'a/deep' })
+    expect(hit.referenceAudio?.relPath).toBe(path.join(projectDir, 'audio', 'reference', 'nested-src', 'a', 'deep', 'hit.wav'))
+    expect(hit.referenceDuration).toBeCloseTo(1, 1)
+    expect(p.cues.find((c) => c.key === 'top')!.fields).toEqual({ EventName: 'top' })
+    expect(changes.cues).toHaveLength(2)
+    await expect(fs.stat(path.join(projectDir, 'audio', 'reference', 'nested-src', 'b', 'hit.wav'))).rejects.toThrow()
+  })
+
+  it('refreshes the stored folder when a nested source moves and is imported again', async () => {
+    const dir = path.join(H.root, 'moved-src')
+    const projectDir = path.join(H.root, 'moved.vostudio')
+    await fs.mkdir(path.join(dir, 'a'), { recursive: true })
+    await fs.copyFile(path.join(SRC, 'LINE_A.wav'), path.join(dir, 'a', 'hit.wav'))
+    const p = project()
+    await importAudio(p, projectDir, [dir], 'id')
+    await fs.mkdir(path.join(dir, 'b'), { recursive: true })
+    await fs.rename(path.join(dir, 'a', 'hit.wav'), path.join(dir, 'b', 'hit.wav'))
+    const { result } = await importAudio(p, projectDir, [dir], 'id')
+    expect(result).toMatchObject({ added: 0, updated: 1 })
+    expect(p.cues.find((c) => c.key === 'hit')!.fields).toEqual({ EventName: 'hit', path: 'b' })
+  })
+
+  it('clears the stored folder when a nested source moves to the folder root', async () => {
+    const dir = path.join(H.root, 'rooted-src')
+    const projectDir = path.join(H.root, 'rooted.vostudio')
+    await fs.mkdir(path.join(dir, 'a'), { recursive: true })
+    await fs.copyFile(path.join(SRC, 'LINE_A.wav'), path.join(dir, 'a', 'hit.wav'))
+    const p = project()
+    await importAudio(p, projectDir, [dir], 'id')
+    await fs.rename(path.join(dir, 'a', 'hit.wav'), path.join(dir, 'hit.wav'))
+    await importAudio(p, projectDir, [dir], 'id')
+    expect(p.cues.find((c) => c.key === 'hit')!.fields).toEqual({ EventName: 'hit' })
+  })
+
+  it('stores no folder for files picked one by one', async () => {
+    const p = project()
+    await importAudio(p, path.join(H.root, 'picked.vostudio'), [path.join(SRC, 'LINE_A.wav')], 'id')
+    expect(p.cues[0].fields).toEqual({ EventName: 'LINE_A' })
+  })
+})

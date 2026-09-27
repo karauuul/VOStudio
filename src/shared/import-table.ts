@@ -1,6 +1,8 @@
 import { changeCueSourceText, changeCueText, invalidateVoicedOutput } from './approval'
 import { parseCsv } from './csv'
 import { LINE_TEXT_MAX, newLineCue, nextLineNumber, splitParagraphs } from './lines'
+import { matchRowsByText, type TextMatchReport } from './agent-text'
+import { PATH_FIELD } from './export-plan'
 import type { ChangeSet, FieldStep, LineFields } from './project-commands'
 import {
   characterColor,
@@ -27,6 +29,7 @@ export function matchKey(cue: Pick<Cue, 'key' | 'fields'>, rule: MatchRule): str
   return rule === 'exportName' ? cue.fields['exportName'] || cue.key : cue.key
 }
 
+export type TableMatchBy = 'key' | 'text'
 export type TableColumn = 'id' | 'text' | 'translation' | 'character'
 export type TableMapping = Partial<Record<TableColumn, number>>
 
@@ -156,6 +159,7 @@ export interface TableApplyResult {
   unmatched: Cue[]
   createdCharacters: Character[]
   summary: TableSummary
+  textMatch?: TextMatchReport
 }
 
 function ensureCharacter(project: Pick<Project, 'characters'>, name: string): string {
@@ -219,9 +223,12 @@ export function applyTable(
   mapping: TableMapping,
   rule: MatchRule,
   replaceTranslations: boolean,
-  keepOriginal = false
+  keepOriginal = false,
+  matchBy: TableMatchBy = 'key'
 ): TableApplyResult {
-  const idColumn = mapping.id
+  const textMatch = matchBy === 'text' ? matchRowsByText(project.cues, rows, textColumn(mapping)) : undefined
+  const idColumn = textMatch ? undefined : mapping.id
+  const byId = new Map(project.cues.map((cue) => [cue.id, cue]))
   const byKey = new Map(project.cues.map((cue) => [matchKey(cue, rule), cue]))
   const before = project.characters.length
   const changed = new Map<string, Cue>()
@@ -229,8 +236,12 @@ export function applyTable(
   const summary: TableSummary = { added: 0, updated: 0, suggested: 0, unchanged: 0, skipped: 0 }
   let matched = 0
   let line = nextLineNumber(project.cues)
+  const entries = textMatch
+    ? textMatch.matched.map((m) => ({ cells: rows[m.index], cue: byId.get(m.cueId) }))
+    : (idColumn === undefined ? rows : coalesceRows(rows, idColumn)).map((cells) => ({ cells, cue: undefined }))
+  if (textMatch) summary.skipped += rows.length - entries.length
 
-  for (const cells of idColumn === undefined ? rows : coalesceRows(rows, idColumn)) {
+  for (const { cells, cue: textCue } of entries) {
     const id = cellAt(cells, idColumn)
     const source = cellAt(cells, mapping.text)
     const translation = cellAt(cells, mapping.translation)
@@ -245,7 +256,11 @@ export function applyTable(
       summary.skipped++
       continue
     }
-    let cue = idColumn === undefined ? undefined : byKey.get(id)
+    let cue = textCue ?? (idColumn === undefined ? undefined : byKey.get(id))
+    if (!cue && textMatch) {
+      summary.skipped++
+      continue
+    }
     const created = !cue
     if (!cue) {
       cue = idColumn === undefined ? newLineCue(crypto.randomUUID(), line++) : keyedCue(id)
@@ -292,7 +307,13 @@ export function applyTable(
     unmatched,
     createdCharacters: project.characters.slice(before),
     summary,
+    ...(textMatch ? { textMatch } : {}),
   }
+}
+
+export function textColumn(mapping: TableMapping): number {
+  if (mapping.text === undefined) throw new Error('Matching by text needs a mapped original text column')
+  return mapping.text
 }
 
 export interface TableOptions {
@@ -300,6 +321,7 @@ export interface TableOptions {
   rule: MatchRule
   replaceTranslations: boolean
   keepOriginal: boolean
+  matchBy?: TableMatchBy
 }
 
 export interface TableUndo {
@@ -310,6 +332,7 @@ export interface TableUndo {
 
 export interface TableCommit {
   summary: TableSummary
+  textMatch?: TextMatchReport
   undo: TableUndo
   changes: ChangeSet | null
 }
@@ -325,7 +348,7 @@ const LINE_FIELD_KEYS = ['sourceText', 'text', 'characterId', 'suggestedText'] a
 
 export function previewTable(project: Pick<Project, 'cues' | 'characters'>, rows: string[][], options: TableOptions): TableSummary {
   const copy = { cues: project.cues.map((cue) => ({ ...cue })), characters: [...project.characters] }
-  return applyTable(copy, rows, options.mapping, options.rule, options.replaceTranslations, options.keepOriginal).summary
+  return applyTable(copy, rows, options.mapping, options.rule, options.replaceTranslations, options.keepOriginal, options.matchBy).summary
 }
 
 export function commitTable(
@@ -334,7 +357,7 @@ export function commitTable(
   options: TableOptions
 ): TableCommit {
   const before = new Map(project.cues.map((cue) => [cue.id, lineFields(cue)]))
-  const applied = applyTable(project, rows, options.mapping, options.rule, options.replaceTranslations, options.keepOriginal)
+  const applied = applyTable(project, rows, options.mapping, options.rule, options.replaceTranslations, options.keepOriginal, options.matchBy)
   const fields: FieldStep[] = []
   for (const cue of applied.changed) {
     const from = before.get(cue.id)
@@ -352,6 +375,7 @@ export function commitTable(
   const createdLines = applied.unmatched.length > 0
   return {
     summary: applied.summary,
+    ...(applied.textMatch ? { textMatch: applied.textMatch } : {}),
     undo: {
       ids: applied.unmatched.map((cue) => cue.id),
       fields,
@@ -371,6 +395,7 @@ export function commitTable(
 export interface AudioMatch<T> {
   update: { cue: Cue; file: T }[]
   create: T[]
+  duplicates: T[]
 }
 
 export function matchAudioFiles<T extends { name: string }>(
@@ -381,15 +406,19 @@ export function matchAudioFiles<T extends { name: string }>(
   const byKey = new Map(cues.map((cue) => [matchKey(cue, rule), cue as Cue]))
   const update: { cue: Cue; file: T }[] = []
   const create: T[] = []
+  const duplicates: T[] = []
   const seen = new Set<string>()
   for (const file of files) {
-    if (seen.has(file.name)) continue
+    if (seen.has(file.name)) {
+      duplicates.push(file)
+      continue
+    }
     seen.add(file.name)
     const cue = byKey.get(file.name)
     if (cue) update.push({ cue, file })
     else create.push(file)
   }
-  return { update, create }
+  return { update, create, duplicates }
 }
 
 export function attachesOnly(project: Pick<Project, 'template' | 'csvBinding' | 'linesFromTable' | 'cues'>): boolean {
@@ -397,7 +426,7 @@ export function attachesOnly(project: Pick<Project, 'template' | 'csvBinding' | 
     project.template !== undefined ||
     project.csvBinding !== undefined ||
     project.linesFromTable === true ||
-    project.cues.some((cue) => Object.keys(cue.fields).some((field) => field !== 'EventName'))
+    project.cues.some((cue) => Object.keys(cue.fields).some((field) => field !== 'EventName' && field !== PATH_FIELD))
   )
 }
 

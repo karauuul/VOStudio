@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { applyChangeSet, applyProjectCommand, parseSnapshot, type ProjectCommand } from '../src/shared/project-commands'
-import type { ProjectFile } from '../src/shared/project-file'
+import { projectFile, type ProjectFile } from '../src/shared/project-file'
 import { SerialProjectRepository } from '../src/main/project-repository'
 import {
   cueVoiceUnchanged,
@@ -42,6 +42,37 @@ describe('project rename', () => {
   it('carries saved versions to the renderer', () => {
     const versions = [{ n: 1, createdAt: 'now' }]
     expect(applyChangeSet(project(), { versions }).versions).toEqual(versions)
+  })
+})
+
+describe('glossary terms command', () => {
+  it('sanitizes terms, drops an empty glossary and reaches the renderer through the change set', () => {
+    const p = project()
+    const command: ProjectCommand = { type: 'terms.set', terms: [{ term: ' Pioneer ', translation: 'піонер', note: ' ' }, { term: 'x', translation: ' ' }] }
+    expect(projectCommandSchema.parse(command)).toEqual(command)
+    expect(() => projectCommandSchema.parse({ type: 'terms.set', terms: [{ term: 'a' }] })).toThrow()
+    const changes = applyProjectCommand(p, command)
+    expect(changes).toEqual({ terms: [{ term: 'Pioneer', translation: 'піонер' }] })
+    expect(p.terms).toEqual([{ term: 'Pioneer', translation: 'піонер' }])
+    expect(applyChangeSet(project(), changes).terms).toEqual(p.terms)
+    const cleared = applyProjectCommand(p, { type: 'terms.set', terms: [] })
+    expect(cleared).toEqual({ terms: null })
+    expect(p).not.toHaveProperty('terms')
+    expect(applyChangeSet(p, { terms: null })).not.toHaveProperty('terms')
+  })
+
+  it('keeps a line folder through save and the restore schema', () => {
+    const p = project()
+    p.cues[0].fields = { EventName: 'hit', path: 'sfx/combat' }
+    expect(fromFile(projectFile(p)).cues[0].fields).toEqual({ EventName: 'hit', path: 'sfx/combat' })
+    const restore = projectCommandSchema.parse({ type: 'cue.restore', cues: [{ cue: p.cues[0], index: 0 }] })
+    expect(restore.type === 'cue.restore' && restore.cues[0].cue.fields).toEqual({ EventName: 'hit', path: 'sfx/combat' })
+  })
+
+  it('leaves a project without terms byte-identical when other changes arrive', () => {
+    const before = project()
+    const json = JSON.stringify(before)
+    expect(JSON.stringify(applyChangeSet(before, { name: 'P' }))).toBe(json)
   })
 })
 

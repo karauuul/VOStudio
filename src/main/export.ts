@@ -51,6 +51,7 @@ import {
 } from '@shared/export-settings'
 import { renderChunks, videoTimelinePlan } from '@shared/sources'
 import { sanitizeRevision } from '@shared/approval'
+import { isInsideDir } from '@shared/project-summary'
 import type { Project } from '@shared/domain'
 import * as store from './project-store'
 import { ffmpegStderr, runFfmpeg } from './ffmpeg'
@@ -260,8 +261,29 @@ async function copyTree(from: string, to: string): Promise<void> {
   for (const entry of await fs.readdir(from, { withFileTypes: true })) {
     const src = path.join(from, entry.name)
     const dst = path.join(to, entry.name)
+    const existing = await fs.lstat(dst).catch(() => null)
+    if (existing?.isSymbolicLink()) {
+      if (entry.isDirectory()) throw new Error(`The export folder has a link at ${dst}; remove it and export again`)
+      await fs.rm(dst, { force: true })
+    } else if (existing && existing.isDirectory() !== entry.isDirectory()) {
+      throw new Error(`The export folder has ${existing.isDirectory() ? 'a folder' : 'a file'} at ${dst} where the export needs ${entry.isDirectory() ? 'a folder' : 'a file'}`)
+    }
     if (entry.isDirectory()) await copyTree(src, dst)
     else await fs.copyFile(src, dst)
+  }
+}
+
+export async function removeSuperseded(outDir: string, files: string[]): Promise<void> {
+  const audioRoot = await fs.realpath(path.join(outDir, 'audio')).catch(() => null)
+  if (!audioRoot) return
+  for (const file of files) {
+    const target = path.join(outDir, file)
+    const folder = await fs.realpath(path.dirname(target)).catch(() => null)
+    if (!folder || (folder !== audioRoot && !isInsideDir(folder, audioRoot))) continue
+    await fs.rm(path.join(folder, path.basename(target)), { force: true })
+    for (let dir: string = folder; dir !== audioRoot && isInsideDir(dir, audioRoot); dir = path.dirname(dir)) {
+      if (!(await fs.rmdir(dir).then(() => true, () => false))) break
+    }
   }
 }
 
@@ -308,11 +330,9 @@ export async function finishExport(
   if (index !== null) await fs.writeFile(path.join(stagingDir, 'index.updated.csv'), index)
   const report = buildReport(project.name, deliver, version)
   await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
+  await removeSuperseded(outDir, supersededFiles(previous?.exported ?? [], exported))
   await copyTree(stagingDir, outDir)
   await fs.rm(stagingDir, { recursive: true, force: true })
-  for (const file of supersededFiles(previous?.exported ?? [], exported)) {
-    await fs.rm(path.join(outDir, file), { force: true })
-  }
   return {
     ...(index === null ? {} : { indexPath: path.join(outDir, 'index.updated.csv') }),
     reportPath: path.join(outDir, 'report.json'),

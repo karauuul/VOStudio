@@ -16,7 +16,7 @@ import {
 vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }))
 
 const store = await import('../src/main/project-store')
-const { cancelExports, copyJob, exportInfo, finishExport, planBatchExport } = await import('../src/main/export')
+const { cancelExports, copyJob, exportInfo, finishExport, planBatchExport, removeSuperseded } = await import('../src/main/export')
 
 const TEMPLATE = '{Key}.{ext}'
 
@@ -316,9 +316,40 @@ describe('superseded files', () => {
   })
 
   it('never point outside the audio folder', () => {
-    const previous = ['../a.wav', 'audio/../../a.wav', 'audio/sub/a.wav', 'audio/..', 'audio\\..\\a.wav', '/etc/a.wav'].map((file) =>
+    const previous = ['../a.wav', 'audio/../../a.wav', 'audio/sub/../../a.wav', 'audio/..', 'audio\\..\\a.wav', '/etc/a.wav', 'audio/c:/a.wav'].map((file) =>
       entry('a', file)
     )
     expect(supersededFiles(previous, [entry('a', 'audio/a.mp3')])).toEqual([])
+  })
+
+  it('cleans superseded files inside nested export folders', () => {
+    expect(supersededFiles([entry('a', 'audio/sfx/old.wav')], [entry('a', 'audio/voice/new.wav')])).toEqual(['audio/sfx/old.wav'])
+  })
+})
+
+describe('removing superseded files', () => {
+  it('deletes nested stale files but never follows a symlinked folder out of the delivery', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'vostudio-superseded-'))
+    const out = path.join(root, 'export')
+    const outside = path.join(root, 'outside')
+    await fs.mkdir(path.join(out, 'audio', 'voice'), { recursive: true })
+    await fs.mkdir(outside, { recursive: true })
+    await fs.writeFile(path.join(out, 'audio', 'voice', 'old.wav'), 'x')
+    await fs.writeFile(path.join(outside, 'old.wav'), 'keep')
+    await fs.symlink(outside, path.join(out, 'audio', 'sfx'), 'dir')
+    await removeSuperseded(out, ['audio/voice/old.wav', 'audio/sfx/old.wav'])
+    await expect(fs.stat(path.join(out, 'audio', 'voice', 'old.wav'))).rejects.toThrow()
+    expect(await fs.readFile(path.join(outside, 'old.wav'), 'utf8')).toBe('keep')
+    await fs.rm(root, { recursive: true, force: true })
+  })
+
+  it('prunes folders it emptied so a later file can take their name', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'vostudio-superseded-'))
+    await fs.mkdir(path.join(root, 'audio', 'sfx.wav'), { recursive: true })
+    await fs.writeFile(path.join(root, 'audio', 'sfx.wav', 'hit.wav'), 'x')
+    await removeSuperseded(root, ['audio/sfx.wav/hit.wav'])
+    await expect(fs.stat(path.join(root, 'audio', 'sfx.wav'))).rejects.toThrow()
+    expect((await fs.stat(path.join(root, 'audio'))).isDirectory()).toBe(true)
+    await fs.rm(root, { recursive: true, force: true })
   })
 })

@@ -1,11 +1,13 @@
 import { promises as fs } from 'fs'
 import path from 'path'
+import { matchRowsByText } from '@shared/agent-text'
 import {
   commitTable,
   parseTableFile,
   previewCell,
   previewTable,
   tableMapping,
+  textColumn,
   type TableFile,
   type TableOptions,
 } from '@shared/import-table'
@@ -37,6 +39,7 @@ const optionsFor = (table: TableFile, req: TableRequest): TableOptions => ({
   rule: req.rule,
   replaceTranslations: req.replaceTranslations === true,
   keepOriginal: req.keepOriginal === true,
+  ...(req.matchBy === 'text' ? { matchBy: 'text' as const } : {}),
 })
 
 export function previewTableFile(project: Project, table: ReadTable, req: TableRequest): TablePreview {
@@ -50,6 +53,7 @@ export function previewTableFile(project: Project, table: ReadTable, req: TableR
     total: table.rows.length,
     mapping: options.mapping,
     summary: previewTable(project, table.rows, options),
+    ...(options.matchBy === 'text' ? { textMatch: matchRowsByText(project.cues, table.rows, textColumn(options.mapping)) } : {}),
   }
 }
 
@@ -68,6 +72,7 @@ export function importTableFile(
       rows: table.rows.length,
       summary: committed.summary,
       undo: committed.undo,
+      ...(committed.textMatch ? { textMatch: committed.textMatch } : {}),
     },
     changes: committed.changes,
   }
