@@ -16,7 +16,7 @@ import {
 vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }))
 
 const store = await import('../src/main/project-store')
-const { exportInfo, finishExport, planBatchExport } = await import('../src/main/export')
+const { cancelExports, copyJob, exportInfo, finishExport, planBatchExport } = await import('../src/main/export')
 
 const TEMPLATE = '{Key}.{ext}'
 
@@ -203,7 +203,7 @@ describe('export records the signature in report.json', () => {
     await finishExport(plan.token, {
       exported: plan.jobs.map((j) => ({ cueKey: j.cueKey, name: j.name, bytes: 1, sha256: 'f'.repeat(64) })),
       failed: [],
-    })
+    }, async () => undefined)
   }
 
   const rows = async (p: Project) => {
@@ -272,6 +272,36 @@ describe('export records the signature in report.json', () => {
     expect(report.exported.map((e: DeliverExported) => e.file).sort()).toEqual(['audio/a.mp3', 'audio/b.wav'])
     expect((await fs.readdir(audio)).sort()).toEqual(['b.wav'])
     expect((await rows(p)).a.changed).toBe(false)
+  })
+
+  it('a plan cancelled by a project change refuses jobs and finishes without stamping a version', async () => {
+    const p = project({ format: 'wav-48-24' }, ['a'])
+    const cancelled = path.join(root, 'C.vostudio')
+    store.adoptProject(p, cancelled)
+    const plan = await planBatchExport({ cueIds: ['c-a'] })
+    cancelExports()
+    const stamp = vi.fn(async () => 7)
+    await expect(copyJob(plan.jobs[0].outPath)).rejects.toThrow('Export cancelled: the project changed')
+    await expect(
+      finishExport(plan.token, { exported: [{ cueKey: 'a', name: 'a.wav', bytes: 1, sha256: 'f'.repeat(64) }], failed: [] }, stamp)
+    ).rejects.toThrow('Export cancelled: the project changed')
+    expect(stamp).not.toHaveBeenCalled()
+    await expect(fs.access(path.join(cancelled, 'export', 'report.json'))).rejects.toThrow()
+  })
+
+  it('a live plan stamps the version and records it in the report', async () => {
+    const p = project({ format: 'wav-48-24' }, ['a'])
+    const stamped = path.join(root, 'S.vostudio')
+    store.adoptProject(p, stamped)
+    const plan = await planBatchExport({ cueIds: ['c-a'] })
+    const result = await finishExport(
+      plan.token,
+      { exported: [{ cueKey: 'a', name: 'a.wav', bytes: 1, sha256: 'f'.repeat(64) }], failed: [] },
+      async () => 7
+    )
+    expect(result.version).toBe(7)
+    const report = JSON.parse(await fs.readFile(path.join(stamped, 'export', 'report.json'), 'utf8'))
+    expect(report.exported[0].version).toBe(7)
   })
 })
 

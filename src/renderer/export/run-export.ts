@@ -75,7 +75,8 @@ export async function runJob(job: ExportJob): Promise<ExportResult> {
 
 export async function runVideo(
   plan: VideoExportPlan,
-  onProgress?: (p: ExportProgress) => void
+  onProgress?: (p: ExportProgress) => void,
+  signal?: AbortSignal
 ): Promise<ExportResult> {
   const resolved: ResolvedComp = {
     clips: plan.clips.map((c, i) => ({
@@ -97,6 +98,7 @@ export async function runVideo(
   let done = false
   try {
     for (let i = 0; i < plan.chunks.length; i++) {
+      signal?.throwIfAborted()
       const chunk = plan.chunks[i]
       onProgress?.({ done: i, total: plan.chunks.length, current: plan.name })
       const rendered = await renderCompOffline(sources, chunk, plan.tracks)
@@ -108,6 +110,7 @@ export async function runVideo(
         rendered.numberOfChannels
       )
     }
+    signal?.throwIfAborted()
     const result = await api['export:videoFinish'](plan.token)
     done = true
     return result
@@ -119,11 +122,13 @@ export async function runVideo(
 
 export async function runPlan(
   plan: ExportPlan,
-  onProgress?: (p: ExportProgress) => void
+  onProgress?: (p: ExportProgress) => void,
+  signal?: AbortSignal
 ): Promise<BatchExportResult> {
   const failed: BatchExportFailure[] = []
   const summary: ExportSummary = { exported: [], failed: [] }
   for (let i = 0; i < plan.jobs.length; i++) {
+    signal?.throwIfAborted()
     const job = plan.jobs[i]
     onProgress?.({ done: i, total: plan.jobs.length, current: job.name })
     try {
@@ -135,10 +140,12 @@ export async function runPlan(
         sha256: result.parityHash,
       })
     } catch (e) {
+      signal?.throwIfAborted()
       failed.push({ cueKey: job.cueKey, name: job.name, error: message(e) })
       summary.failed.push({ cueKey: job.cueKey, name: job.name, reason: message(e) })
     }
   }
+  signal?.throwIfAborted()
   onProgress?.({ done: plan.jobs.length, total: plan.jobs.length, current: '' })
   const paths = await api['export:finish'](plan.token, summary)
   return { written: summary.exported.length, failed, outDir: plan.outDir, ...paths }

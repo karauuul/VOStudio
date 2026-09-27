@@ -67,6 +67,7 @@ import {
   appendVideoChunk,
   copyJob,
   encodeJob,
+  cancelExports,
   finishExport,
   finishVideoExport,
   planBatchExport,
@@ -239,12 +240,14 @@ const transcribeSchema = z.object({
 
 let projectRepository: SerialProjectRepository | null = null
 function resetRepository(project: Project, revision = 0): SerialProjectRepository {
+  cancelExports()
   projectRepository = new SerialProjectRepository(project, store.persistProjectFile, undefined, revision)
   store.adoptProject(projectRepository.projectForMain())
   return projectRepository
 }
 
 async function detachCurrentRepository(): Promise<void> {
+  cancelExports()
   const repository = projectRepository
   await repository?.detach()
   if (repository) await closeRecordings(repository)
@@ -252,6 +255,7 @@ async function detachCurrentRepository(): Promise<void> {
 }
 
 function abandonProject(): void {
+  cancelExports()
   if (projectRepository) void closeRecordings(projectRepository)
   projectRepository = null
   store.closeProject()
@@ -958,10 +962,12 @@ function registerHandlers(): void {
   })
   typedHandle('export:copy', (outPath: string) => copyJob(z.string().min(1).parse(outPath)))
   typedHandle('export:encode', (outPath, wav) => encodeJob(z.string().min(1).parse(outPath), wav))
-  typedHandle('export:finish', async (token, summary) => {
+  typedHandle('export:finish', (token, summary) => {
     const parsed = exportSummarySchema.parse(summary)
-    const version = parsed.exported.length > 0 ? await serialLifecycle(stampVersion) : undefined
-    return finishExport(z.string().uuid().parse(token), parsed, version)
+    const planToken = z.string().uuid().parse(token)
+    return serialLifecycle(() =>
+      finishExport(planToken, parsed, () => (parsed.exported.length > 0 ? stampVersion() : Promise.resolve(undefined)))
+    )
   })
 
   typedHandle('export:videoPlan', (sourceId: string) =>
@@ -1085,11 +1091,12 @@ if (primaryInstance) void app.whenReady().then(() => {
   })
 })
 
+function quitIfNoWindows(): void {
+  if (BrowserWindow.getAllWindows().length === 0) app.quit()
+}
+
 app.on('window-all-closed', () => {
-  void flushPersist().then(
-    () => app.quit(),
-    () => app.quit()
-  )
+  void flushPersist().then(quitIfNoWindows, quitIfNoWindows)
 })
 
 if (primaryInstance) void app.whenReady().then(async () => {
