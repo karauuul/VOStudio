@@ -411,6 +411,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         })
         .refine((a) => a.action !== 'restore' || a.n !== undefined, { message: 'restore needs n, a version number from list' }),
       annotations: DESTRUCTIVE,
+      writes: (args) => args.action !== 'list',
       async run(_ctx, args) {
         const repository = requireRepository(deps)
         if (args.action === 'save') {
@@ -469,6 +470,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
           message: 'pass exactly one of audio, table or templateReimport',
         }),
       annotations: DESTRUCTIVE,
+      writes: (args) => !args.table || args.table.preview === false,
       async run(_ctx, args) {
         requireRepository(deps)
         await deps.flushUi()
@@ -628,6 +630,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         })
         .refine((a) => exactlyOne([a.list, a.upsert, a.remove]), { message: 'pass exactly one of list, upsert or remove' }),
       annotations: DESTRUCTIVE,
+      writes: (args) => args.list !== true,
       async run(_ctx, args) {
         const current = requireRepository(deps).projectForMain().terms ?? []
         if (args.list) return structured({ terms: current })
@@ -672,6 +675,7 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         .object({ get: z.literal(true).optional(), set: z.string().max(100_000).optional() })
         .refine((a) => exactlyOne([a.get, a.set]), { message: 'pass exactly one of get or set' }),
       annotations: { ...DESTRUCTIVE, idempotentHint: true },
+      writes: (args) => args.set !== undefined,
       async run(_ctx, args) {
         if (args.set !== undefined) await execute(deps, { type: 'rules.set', text: args.set })
         return structured({ rules: requireRepository(deps).projectForMain().pronunciationRules })

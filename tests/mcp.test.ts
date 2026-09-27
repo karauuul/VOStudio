@@ -205,6 +205,28 @@ describe('MCP tools/call', () => {
     expect(writes).toEqual([session])
   })
 
+  it('lets a tool decide per call whether it writes', async () => {
+    const { spec, writes } = server({})
+    spec.tools.push(
+      defineTool({
+        name: 'maybe',
+        title: 'Maybe',
+        description: 'Writes unless asked to list.',
+        input: z.object({ list: z.boolean().optional() }),
+        annotations: WRITE,
+        writes: (args) => args.list !== true,
+        async run() {
+          return { structured: {} }
+        },
+      })
+    )
+    const session = createSession()
+    await exchange(spec, req(11, 'tools/call', { name: 'maybe', arguments: { list: true } }), session)
+    expect(writes).toEqual([])
+    await exchange(spec, req(12, 'tools/call', { name: 'maybe', arguments: {} }), session)
+    expect(writes).toEqual([session])
+  })
+
   it('sends progress only when the request carries a progress token', async () => {
     const { spec, gate } = server()
     gate.resolve()
