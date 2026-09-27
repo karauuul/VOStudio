@@ -1,8 +1,8 @@
 import { randomUUID } from 'crypto'
 import path from 'path'
 import { z } from 'zod/v4'
-import type { Cue, ProjectAsset, ProjectVersion, Take, Term, WordTiming } from '@shared/domain'
-import { ASSET_KINDS, PROPOSAL_REASON_MAX, resolveVoiceSettings, speakerCharacters, TERM_TEXT_MAX, TERMS_MAX } from '@shared/domain'
+import type { ClipEffects, Cue, CueComp, Project, ProjectAsset, ProjectVersion, Take, Term, WordTiming } from '@shared/domain'
+import { ASSET_KINDS, clipSpeed, ORIGINAL_START_MAX, PROPOSAL_REASON_MAX, resolveVoiceSettings, speakerCharacters, TERM_TEXT_MAX, TERMS_MAX } from '@shared/domain'
 import { clampVoiceSettings, placeOnTrack, type TakePlacement } from '@shared/generation'
 import { LINE_TEXT_MAX } from '@shared/lines'
 import { defineTool, errorText, issueText, quitWhenIdle, type McpSession, type McpTool, type ToolAnnotations, type ToolImage, type ToolOutput } from '@shared/mcp'
@@ -34,7 +34,7 @@ import { DEFAULT_MATCH_RULE, TABLE_COLUMNS_MAX } from '@shared/import-table'
 import { ALL_CHARACTERS, filterCues } from '@shared/cue-filter'
 import { requireRevision, TRANSCRIPT_WORDS_MAX, transcriptMatch } from '@shared/agent-render'
 import type { AudioMetrics } from '@shared/audio-metrics'
-import { findCollisions, originalLength, planBatch, planLine as planExportLine, renderedWords } from '@shared/export-plan'
+import { findCollisions, mixesOriginal, originalLength, planBatch, planLine as planExportLine, renderedWords, renderWindow, timelineEchoes } from '@shared/export-plan'
 import {
   ANALYSIS_MAX_SECONDS,
   ANALYSIS_RATE,
@@ -44,7 +44,26 @@ import {
   type ProsodyFigure,
   type ProsodyPanel,
 } from '@shared/prosody'
-import { compareProsody, comparisonView } from '@shared/prosody-compare'
+import { compareProsody, comparisonView, type ProsodyComparison } from '@shared/prosody-compare'
+import {
+  applyEditOps,
+  bypassEffects,
+  chainEffects,
+  EFFECT_PRESET_NAMES,
+  EFFECT_PRESETS,
+  effectsSummary,
+  planAlignment,
+  r3,
+  timelineWords,
+  type EditInfo,
+  type EffectPreset,
+  type TakeOf,
+} from '@shared/agent-edit'
+import { clipEnd, clipTrackId, committedComp, compDuration, compOriginalStart, GAIN_MAX_DB, GAIN_MIN_DB, isEmptyComp, normalizeComp, setClipEdits } from '@shared/comp'
+import { EFFECT_KINDS, pickEffects, sanitizeEffects, TRACK_EFFECT_KINDS, type EffectKind } from '@shared/effects'
+import { SPEED_MAX, SPEED_MIN } from '@shared/generation'
+import { usesCompOutput } from '@shared/approval'
+import { applyProjectCommand } from '@shared/project-commands'
 import { readinessRows, statusWords, summarize } from '@shared/readiness'
 import { glossaryIssues, removeTerms, TEXT_MATCH_MIN, translationContext, upsertTerms, type TextMatchReport } from '@shared/agent-text'
 import {
@@ -74,7 +93,7 @@ import {
 } from '@shared/agent-lines'
 import { planLine, type LinePlan } from '@shared/agent-generate'
 import { generationRefusal, isTerminal, JOB_CANCELLED, JOB_RETIRED, type Job } from '@shared/jobs'
-import { resolveTake } from '@shared/library'
+import { compTracks, resolveTake, updateTrack } from '@shared/library'
 import type { SerialProjectRepository } from '../project-repository'
 import { isTable, type AssetContent, type AssetReadOptions, type AudioLinesResult } from '../assets'
 import type { GenerationQueue, QueuedGeneration } from '../gen-queue'
@@ -144,6 +163,7 @@ export const AGENT_INSTRUCTIONS = [
   'generate queues jobs in the app queue shared with the user; pass wait, or call jobs with wait, until they finish.',
   'Check lines with render (exact export audio and its metrics) or verify (speech-to-text against the line text, costs money) before export; call export with dryRun first to see readiness and file names.',
   'You cannot listen: analyze gives a line\'s intonation, rhythm and emphasis as numbers and a prosody transcript; after each generation call compare to check timing and intonation against the original, apply its suggestions (speed, pauses, delivery) and compare again until the scores stop improving.',
+  'timeline shows a line\'s clips and word timings; edit changes that timeline (split, cut, move, gaps, speed, gain, fades, crossfades) as one change that never touches takes, effects sets clip, track or take effects and presets, and align plans the dub\'s phrase timing against the original, applied only with apply true.',
   'Use screenshot and diagnostics to check what the user sees; status mode headless means no window is open and app_quit ends the app.',
   'Prompts localize, voice_lines and smoke_test are step-by-step workflows over these tools.',
 ].join(' ')
@@ -313,6 +333,117 @@ async function figureOutput(deps: AgentDeps, revision: number, view: Record<stri
   return output
 }
 
+interface ComparedLine {
+  view: Record<string, unknown>
+  dub: HeardLine
+  original: HeardLine
+  comparison: ProsodyComparison
+  revision: number
+}
+
+async function compareCue(deps: AgentDeps, cue: Cue): Promise<ComparedLine> {
+  const repository = requireRepository(deps)
+  const revision = repository.currentRevision()
+  const project = repository.projectForMain()
+  const words = renderedWords(project, cue)
+  const speed = planExportLine(project, cue)?.take.meta.voiceSettings?.speed ?? resolveVoiceSettings(project.characters.find((c) => c.id === cue.characterId), cue).speed
+  const dubRender = await liveCall(repository, () => deps.renderLine(cue.id, 'output', repository))
+  if (!dubRender) throw new Error(`Line ${cue.key} has no voiced output to compare; generate a take first, or analyze the original with source "original".`)
+  const originalRender = await liveCall(repository, () => deps.renderLine(cue.id, 'original', repository))
+  if (!originalRender) throw new Error(`Line ${cue.key} has no original audio to compare with; analyze describes the dub alone.`)
+  const dub = await hear(deps, 'output', dubRender, words)
+  const original = await hear(deps, 'original', originalRender, words)
+  requireRevision(revision, repository.currentRevision())
+  const side = (heard: HeardLine): Record<string, unknown> => {
+    const { transcript, phrases, phrasesTotal } = prosodyView(heard.prosody)
+    return { ...heardSummary(heard), transcript, phrases, ...(phrasesTotal === undefined ? {} : { phrasesTotal }) }
+  }
+  const comparison = compareProsody(dub.prosody, original.prosody, speed, { dub: dubRender.metrics.duration, original: originalRender.metrics.duration })
+  return { view: { line: cue.key, dub: side(dub), original: side(original), ...comparisonView(comparison) }, dub, original, comparison, revision }
+}
+
+const takeLookup = (project: Project, cue: Cue): TakeOf => (takeId) => resolveTake(project, cue, takeId)?.take
+
+function requireComp(project: Project, cue: Cue): CueComp {
+  if (!cue.comp || isEmptyComp(cue.comp)) throw new Error(`Line ${cue.key} has no clips on its timeline; generate a take or place one with take_use first.`)
+  return cue.comp
+}
+
+async function commitComp(deps: AgentDeps, cueId: string, build: (project: Project, cue: Cue) => CueComp): Promise<void> {
+  const repository = requireRepository(deps)
+  const result = await repository
+    .mutate((project) => {
+      const cue = project.cues.find((c) => c.id === cueId)
+      if (!cue) throw new Error('The line was deleted meanwhile; call lines, then retry.')
+      const next = committedComp(structuredClone(build(project, cue)))
+      if (JSON.stringify(next) === JSON.stringify(committedComp(cue.comp ?? null))) return null
+      return applyProjectCommand(project, { type: 'cue.setComp', cueId, comp: next })
+    })
+    .catch((error: unknown) => {
+      throw repository.isLive() ? error : new Error(PROJECT_SWITCHED)
+    })
+  if (result) deps.emit(result)
+}
+
+export const TIMELINE_CLIPS_MAX = 200
+export const TIMELINE_WORDS_MAX = 300
+
+const fxView = (fx: ClipEffects | undefined): Record<string, unknown> => (fx ? { effects: effectsSummary(fx) } : {})
+
+function timelineView(project: Project, cue: Cue): Record<string, unknown> {
+  const comp = cue.comp ?? { clips: [] }
+  const takeOf = takeLookup(project, cue)
+  const words = timelineWords(comp, takeOf)
+  const clips = normalizeComp(comp).clips
+  const multi = new Set(clips.map(clipTrackId)).size > 1
+  const originalDuration = originalLength(cue)
+  return {
+    line: cue.key,
+    output: isEmptyComp(cue.comp) ? 'none' : usesCompOutput(cue, project) ? 'timeline' : 'take',
+    duration: r3(compDuration(comp)),
+    tracks: compTracks(comp).map((t) => ({
+      id: t.id,
+      name: t.name,
+      gainDb: t.gainDb,
+      ...(t.muted ? { muted: true } : {}),
+      ...(t.solo ? { solo: true } : {}),
+      ...fxView(t.effects),
+    })),
+    clips: clips.slice(0, TIMELINE_CLIPS_MAX).map((c) => {
+      const source = takeOf(c.sourceTakeId)?.edits.effects
+      return {
+        id: c.id,
+        track: clipTrackId(c),
+        take: c.sourceTakeId,
+        start: r3(c.start),
+        end: r3(clipEnd(c)),
+        srcIn: r3(c.srcIn),
+        srcOut: r3(c.srcOut),
+        speed: clipSpeed(c.edits),
+        gainDb: c.edits.gainDb,
+        ...(c.edits.fadeIn.duration > 0 ? { fadeIn: r3(c.edits.fadeIn.duration) } : {}),
+        ...(c.edits.fadeOut.duration > 0 ? { fadeOut: r3(c.edits.fadeOut.duration) } : {}),
+        ...(c.crossfade === undefined ? {} : { crossfade: r3(c.crossfade) }),
+        ...fxView(c.edits.effects),
+        ...(source ? { sourceEffects: effectsSummary(source) } : {}),
+      }
+    }),
+    ...(clips.length > TIMELINE_CLIPS_MAX ? { clipsTotal: clips.length } : {}),
+    words: words.slice(0, TIMELINE_WORDS_MAX).map((w, i) => ({ i, text: w.text, clip: w.clip, ...(multi ? { track: w.track } : {}), start: r3(w.start), end: r3(w.end) })),
+    ...(words.length > TIMELINE_WORDS_MAX ? { wordsTotal: words.length } : {}),
+    original:
+      originalDuration === undefined
+        ? null
+        : {
+            start: r3(compOriginalStart(cue.comp)),
+            duration: r3(originalDuration),
+            export: cue.original?.exportMode === 'on',
+            ...(cue.original?.duckDb === undefined ? {} : { duckDb: cue.original.duckDb }),
+          },
+    region: cue.comp?.region ? { in: r3(cue.comp.region.in), out: r3(cue.comp.region.out) } : null,
+  }
+}
+
 const clip = (text: string, max = CELL_MAX): string => (text.length > max ? `${text.slice(0, max)}… [${text.length} chars]` : text)
 
 async function assetTable(deps: AgentDeps, asset: ProjectAsset, options: AssetReadOptions): Promise<AssetTable> {
@@ -425,6 +556,41 @@ const editOp = z.discriminatedUnion('op', [
 ])
 
 type EditOp = z.output<typeof editOp>
+
+export const EDIT_OPS_MAX = 200
+
+const timelineSeconds = z.number().min(0).max(ORIGINAL_START_MAX)
+const wordRef = z.union([z.number().int().min(0), z.string().min(1).max(200)])
+const compClipRef = z.string().min(1).max(200)
+const trackRef = z.string().min(1).max(200).optional()
+const timelineOp = z.discriminatedUnion('op', [
+  z.object({ op: z.literal('split'), at: timelineSeconds.optional(), word: wordRef.optional(), track: trackRef }),
+  z.object({
+    op: z.literal('cut'),
+    word: wordRef.optional(),
+    range: z.object({ start: timelineSeconds, end: timelineSeconds }).optional(),
+    track: trackRef,
+    ripple: z.boolean().optional(),
+  }),
+  z.object({ op: z.literal('move'), clip: compClipRef, to: timelineSeconds.optional(), shift: z.number().min(-ORIGINAL_START_MAX).max(ORIGINAL_START_MAX).optional(), track: trackRef }),
+  z.object({ op: z.literal('gap'), beforeWord: wordRef.optional(), at: timelineSeconds.optional(), seconds: z.number().min(-60).max(60), track: trackRef }),
+  z.object({ op: z.literal('speed'), clip: compClipRef.optional(), at: timelineSeconds.optional(), track: trackRef, value: z.number().min(SPEED_MIN).max(SPEED_MAX) }),
+  z.object({ op: z.literal('gain'), clip: compClipRef, db: z.number().min(GAIN_MIN_DB).max(GAIN_MAX_DB) }),
+  z.object({
+    op: z.literal('fade'),
+    clip: compClipRef,
+    in: z.number().min(0).max(60).optional(),
+    out: z.number().min(0).max(60).optional(),
+    shape: z.enum(['linear', 'equalPower', 'sCurve']).optional(),
+  }),
+  z.object({ op: z.literal('crossfade'), clip: compClipRef, seconds: z.number().min(0).max(10) }),
+  z.object({ op: z.literal('trimSilence'), clip: compClipRef, pad: z.number().min(0).max(0.5).optional() }),
+])
+const chainItem = z.object({
+  kind: z.enum(EFFECT_KINDS as [EffectKind, ...EffectKind[]]),
+  params: z.record(z.string().max(40), z.number()).optional(),
+  enabled: z.boolean().optional(),
+})
 
 async function applyEdit(deps: AgentDeps, op: EditOp): Promise<{ op: string; line: string; id: string }> {
   const project = requireRepository(deps).projectForMain()
@@ -1448,29 +1614,8 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       async run(_ctx, args) {
         await deps.flushUi()
         const pinned = pin(deps)
-        const repository = requireRepository(pinned)
-        const revision = repository.currentRevision()
-        const project = repository.projectForMain()
-        const cue = findLine(project, args.line)
-        const words = renderedWords(project, cue)
-        const speed = planExportLine(project, cue)?.take.meta.voiceSettings?.speed ?? resolveVoiceSettings(project.characters.find((c) => c.id === cue.characterId), cue).speed
-        const dubRender = await liveCall(repository, () => deps.renderLine(cue.id, 'output', repository))
-        if (!dubRender) throw new Error(`Line ${cue.key} has no voiced output to compare; generate a take first, or analyze the original with source "original".`)
-        const originalRender = await liveCall(repository, () => deps.renderLine(cue.id, 'original', repository))
-        if (!originalRender) throw new Error(`Line ${cue.key} has no original audio to compare with; analyze describes the dub alone.`)
-        const dub = await hear(pinned, 'output', dubRender, words)
-        const original = await hear(pinned, 'original', originalRender, words)
-        requireRevision(revision, repository.currentRevision())
-        const side = (heard: HeardLine): Record<string, unknown> => {
-          const { transcript, phrases, phrasesTotal } = prosodyView(heard.prosody)
-          return { ...heardSummary(heard), transcript, phrases, ...(phrasesTotal === undefined ? {} : { phrasesTotal }) }
-        }
-        const view = {
-          line: cue.key,
-          dub: side(dub),
-          original: side(original),
-          ...comparisonView(compareProsody(dub.prosody, original.prosody, speed, { dub: dubRender.metrics.duration, original: originalRender.metrics.duration })),
-        }
+        const cue = findLine(requireRepository(pinned).projectForMain(), args.line)
+        const { view, dub, original, revision } = await compareCue(pinned, cue)
         if (args.image !== true) return structured(view)
         return figureOutput(pinned, revision, view, cue.key, [prosodyPanel('original', original.prosody), prosodyPanel('dub', dub.prosody)])
       },
@@ -1678,6 +1823,152 @@ export function agentTools(deps: AgentDeps): McpTool[] {
         await placeAgentTake(pinned, cue.id, found.take, args.placement ?? 'replace', undefined, admit)
         const after = requireRepository(pinned).projectForMain()
         return structured(lineDetail(after, findLine(after, cue.id)))
+      },
+    }),
+    defineTool({
+      name: 'timeline',
+      title: 'Timeline',
+      description: `A line's timeline as the Work room shows it: tracks (gain, mute, solo, effects), clips (take, start and end in timeline seconds, source in and out, speed, gain, fades, crossfade into the next clip, clip and source effects; at most ${TIMELINE_CLIPS_MAX}), words numbered from 0 in timeline seconds (at most ${TIMELINE_WORDS_MAX}; edit refers to them by i), the original lane and the region. output says whether the line exports this timeline or a single take.`,
+      input: z.object({ line: lineRef }),
+      annotations: READ,
+      async run(_ctx, args) {
+        const project = requireRepository(deps).projectForMain()
+        return structured(timelineView(project, findLine(project, args.line)))
+      },
+    }),
+    defineTool({
+      name: 'edit',
+      title: 'Edit timeline',
+      description:
+        'Edit a line\'s timeline like the Work room does, never touching takes: ops run in order on a copy and land as one change, or none lands if any op fails. Times are timeline seconds; word is an index from timeline or a word text that occurs once, and indexes are re-read after each op. split at a time or a word start. cut a word (with the pause after it, or before it for a clip\'s last word) or a range; ripple (default) closes the hole, ripple false leaves a gap. move a clip to a time or by shift, optionally to another track. gap inserts seconds of silence before a word or at a time, pushing later clips on that track; negative seconds shorten the pause there, never past the audio before it. speed 0.7 to 1.2 on a clip (or the clip at a time) keeps the pauses after it. gain in dB, fade in/out seconds and shape, crossfade into the next abutting clip, trimSilence trims a clip to its words plus pad. Ops at a time need track when clips sit on several tracks.',
+      input: z.object({ line: lineRef, ops: z.array(timelineOp).min(1).max(EDIT_OPS_MAX) }),
+      annotations: WRITE,
+      async run(_ctx, args) {
+        await deps.flushUi()
+        const pinned = pin(deps)
+        const cue = findLine(requireRepository(pinned).projectForMain(), args.line)
+        let applied: EditInfo[] = []
+        await commitComp(pinned, cue.id, (project, live) => {
+          const done = applyEditOps(requireComp(project, live), args.ops, takeLookup(project, live))
+          applied = done.applied
+          return done.comp
+        })
+        const project = requireRepository(pinned).projectForMain()
+        return structured({ applied, ...timelineView(project, findLine(project, cue.id)) })
+      },
+    }),
+    defineTool({
+      name: 'effects',
+      title: 'Effects',
+      description: `Set the effect stack of a clip, a track or a take (source effects apply to every clip of that take and mark the voiced output of every line using it as changed), exactly like the Properties panel. chain replaces the stack: one entry per kind (${EFFECT_KINDS.join(', ')}; tracks take no pitch) with params merged over the defaults and clamped to their ranges; the processing order is fixed. preset replaces it with ${EFFECT_PRESET_NAMES.join(', ')} (clean removes every effect). bypass true or false switches the resulting stack off or on without removing it. list returns the stacks of the line and the preset catalogue.`,
+      input: z
+        .object({
+          line: lineRef,
+          target: z.union([z.object({ clip: z.string().min(1).max(200) }), z.object({ track: z.string().min(1).max(200) }), z.object({ take: z.string().min(1).max(200) })]).optional(),
+          chain: z.array(chainItem).max(EFFECT_KINDS.length).optional(),
+          preset: z.enum(EFFECT_PRESET_NAMES as [EffectPreset, ...EffectPreset[]]).optional(),
+          bypass: z.boolean().optional(),
+          list: z.literal(true).optional(),
+        })
+        .refine((a) => a.chain === undefined || a.preset === undefined, { message: 'pass chain or preset, not both' })
+        .refine((a) => (a.list === true) !== (a.target !== undefined), { message: 'pass target, or list true' })
+        .refine((a) => a.list === true || a.chain !== undefined || a.preset !== undefined || a.bypass !== undefined, { message: 'pass chain, preset or bypass' }),
+      annotations: WRITE,
+      writes: (args) => args.list !== true,
+      async run(_ctx, args) {
+        const pinned = pin(deps)
+        const project = requireRepository(pinned).projectForMain()
+        const cue = findLine(project, args.line)
+        if (args.list === true) {
+          const comp = cue.comp ?? { clips: [] }
+          const takeIds = [...new Set(comp.clips.map((c) => c.sourceTakeId))]
+          return structured({
+            line: cue.key,
+            clips: comp.clips.slice(0, TIMELINE_CLIPS_MAX).map((c) => ({ id: c.id, effects: c.edits.effects ?? null })),
+            tracks: compTracks(comp).map((t) => ({ id: t.id, effects: t.effects ?? null })),
+            takes: takeIds.map((id) => ({ id, effects: resolveTake(project, cue, id)?.take.edits.effects ?? null })),
+            presets: EFFECT_PRESETS,
+          })
+        }
+        await deps.flushUi()
+        const target = args.target ?? { clip: '' }
+        const stack = (current: ClipEffects | undefined, kinds: readonly EffectKind[]): ClipEffects | undefined => {
+          const chosen = args.chain ? chainEffects(args.chain) : args.preset ? sanitizeEffects(EFFECT_PRESETS[args.preset]) : current
+          const next = args.bypass === undefined ? chosen : bypassEffects(chosen, args.bypass)
+          return pickEffects(next, kinds)
+        }
+        if ('take' in target) {
+          const found = resolveTake(project, cue, target.take)
+          if (!found || found.take.deletedAt) throw new Error(`Line ${cue.key} has no take "${target.take}"; call timeline or line for take ids.`)
+          const effects = stack(found.take.edits.effects, EFFECT_KINDS)
+          await execute(pinned, { type: 'cue.setTakeEffects', cueId: found.cue.id, takeId: found.take.id, effects: effects ?? null })
+          return structured({ line: cue.key, take: found.take.id, effects: effects ?? null })
+        }
+        if ('track' in target && args.chain?.some((item) => item.kind === 'pitch')) throw new Error('Tracks take no pitch effect; put pitch on a clip or a take.')
+        let effects: ClipEffects | undefined
+        await commitComp(pinned, cue.id, (live, liveCue) => {
+          const comp = requireComp(live, liveCue)
+          if ('track' in target) {
+            const track = compTracks(comp).find((t) => t.id === target.track)
+            if (!track) throw new Error(`Line ${cue.key} has no track "${target.track}"; call timeline for track ids.`)
+            effects = stack(track.effects, TRACK_EFFECT_KINDS)
+            return updateTrack(comp, track.id, { effects })
+          }
+          const found = comp.clips.find((c) => c.id === target.clip)
+          if (!found) throw new Error(`Line ${cue.key} has no clip "${target.clip}"; call timeline for clip ids.`)
+          effects = stack(found.edits.effects, EFFECT_KINDS)
+          return setClipEdits(comp, found.id, { effects })
+        })
+        return structured({ line: cue.key, ...target, effects: effects ?? null })
+      },
+    }),
+    defineTool({
+      name: 'align',
+      title: 'Align to original',
+      description:
+        'Plan timeline edits that bring the dub\'s phrases to the original\'s timing, from the same phrase alignment compare uses: per aligned phrase, splits in the pauses around it, a clip speed within 0.7 to 1.2 when its length differs by 0.15 s or more, then a gap or a cut of the pause before it so it starts with the original. Returns the plan as edit ops with the predicted start and duration of every phrase. apply true runs those ops as one edit (takes are never touched) and returns a fresh compare summary; without apply nothing changes.',
+      input: z.object({ line: lineRef, apply: z.boolean().optional() }),
+      annotations: { ...WRITE, idempotentHint: false },
+      writes: (args) => args.apply === true,
+      async run(_ctx, args) {
+        await deps.flushUi()
+        const pinned = pin(deps)
+        const repository = requireRepository(pinned)
+        const opened = repository.projectForMain()
+        const cue = findLine(opened, args.line)
+        if (mixesOriginal(cue)) throw new Error(`Line ${cue.key} mixes the original into its output; align needs a voice-only output, so turn off Export on the original lane or stems, or edit manually.`)
+        if (cue.comp && timelineEchoes(opened, cue, cue.comp)) throw new Error(`Line ${cue.key}: align needs dry audio; bypass delay/reverb on this line or edit manually.`)
+        const compared = await compareCue(pinned, cue)
+        const project = repository.projectForMain()
+        const live = findLine(project, cue.id)
+        const comp = requireComp(project, live)
+        if (!usesCompOutput(live, project)) throw new Error(`Line ${cue.key} exports a single take, not its timeline; place the take with take_use first.`)
+        const planned = planExportLine(project, live)
+        const from = planned ? (renderWindow(live, planned.take, project)?.in ?? 0) : 0
+        const plan = planAlignment({
+          comp,
+          takeOf: takeLookup(project, live),
+          dubFrom: from,
+          originalFrom: compOriginalStart(comp),
+          dub: compared.dub.prosody.phrases,
+          original: compared.original.prosody.phrases,
+          pairs: compared.comparison.pairs,
+        })
+        const scores = (c: ProsodyComparison): Record<string, unknown> => {
+          const { lengthDiff, speechDiff, onsetDiff, rhythm, intonation, suggestions } = comparisonView(c)
+          return { lengthDiff, speechDiff, onsetDiff, rhythm, intonation, suggestions }
+        }
+        const view = { line: cue.key, ops: plan.ops, phrases: plan.phrases, before: scores(compared.comparison) }
+        if (args.apply !== true || plan.ops.length === 0) return structured({ ...view, applied: false })
+        await commitComp(pinned, cue.id, (current, currentCue) => {
+          requireRevision(compared.revision, repository.currentRevision())
+          return applyEditOps(requireComp(current, currentCue), plan.ops, takeLookup(current, currentCue)).comp
+        })
+        const after = await compareCue(pinned, findLine(repository.projectForMain(), cue.id)).then(
+          (fresh) => scores(fresh.comparison),
+          (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) })
+        )
+        return structured({ ...view, applied: true, after })
       },
     }),
     defineTool({

@@ -190,6 +190,11 @@ export function normalizeComp(comp: CueComp): CueComp {
   }
 }
 
+export function committedComp(comp: CueComp | null): CueComp | null {
+  const value = comp ? normalizeComp(comp) : null
+  return value && value.clips.length > 0 ? value : null
+}
+
 export function compOriginalStart(comp: CueComp | null | undefined): number {
   return sanitizeOriginalStart(comp?.originalStart) ?? 0
 }

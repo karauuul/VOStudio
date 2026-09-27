@@ -1,5 +1,5 @@
-import { approveCue, sanitizeRevision, changeCompOutput, changeCueSourceText, changeCueText, changeTakeOutput, invalidateVoicedOutput, removeApproval, sanitizeApproval, sanitizeCueOutput, setExcluded } from './approval'
-import { compProblem, normalizeComp } from './comp'
+import { approveCue, sanitizeRevision, changeCompOutput, changeCueSourceText, changeCueText, changeTakeOutput, invalidateVoicedOutput, outputUsesTake, removeApproval, sanitizeApproval, sanitizeCueOutput, setExcluded } from './approval'
+import { committedComp, compProblem } from './comp'
 import { sanitizeEffects } from './effects'
 import {
   blankCharacter,
@@ -145,7 +145,8 @@ export interface ChangeSet {
   linesFromTable?: true
 }
 
-export interface CommandResult { revision: number; changes: ChangeSet }
+export type ChangeOrigin = 'agent'
+export interface CommandResult { revision: number; changes: ChangeSet; origin?: ChangeOrigin }
 export interface ProjectSnapshot { revision: number; project: Project }
 export interface SerializedSnapshot { revision: number; json: string }
 
@@ -528,17 +529,18 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
       break
     }
     case 'cue.setComp': {
-      if (command.comp === null) {
+      const problem = command.comp && compProblem(command.comp)
+      if (problem) throw new Error(`Invalid composition: ${problem}`)
+      const comp = committedComp(command.comp)
+      if (comp === null) {
         delete cue.comp
         Object.assign(cue, changeCompOutput(cue, null, project))
         break
       }
-      const problem = compProblem(command.comp)
-      if (problem) throw new Error(`Invalid composition: ${problem}`)
-      for (const clip of command.comp.clips) {
+      for (const clip of comp.clips) {
         if (!resolveTake(project, cue, clip.sourceTakeId)) throw new Error(`Composition clip "${clip.id}": take ${clip.sourceTakeId} is not in this cue`)
       }
-      Object.assign(cue, changeCompOutput(cue, normalizeComp(command.comp), project))
+      Object.assign(cue, changeCompOutput(cue, comp, project))
       break
     }
     case 'cue.setOriginal': {
@@ -584,8 +586,16 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
         const { effects: _dropped, ...edits } = take.edits
         take.edits = edits
       }
-      Object.assign(cue, invalidateVoicedOutput(cue, project))
-      break
+      if (outputUsesTake(cue, take.id, project)) Object.assign(cue, invalidateVoicedOutput(cue, project))
+      const others: Cue[] = []
+      for (const other of project.cues) {
+        if (other.id === cue.id || !outputUsesTake(other, take.id, project)) continue
+        const next = invalidateVoicedOutput(other, project)
+        if (next === other) continue
+        Object.assign(other, next)
+        others.push(structuredClone(other))
+      }
+      return { cues: [structuredClone(cue), ...others] }
     }
     case 'cue.setRegion': {
       if (command.region === null) {

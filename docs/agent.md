@@ -131,6 +131,13 @@ Generation
 - `jobs` — list, wait for, cancel generation jobs
 - `take_use` — place an existing take on the timeline
 
+Editing
+
+- `timeline` — a line's tracks, clips and word timings in seconds
+- `edit` — split, cut, move, gaps, speed, gain, fades, crossfades as one change; takes are never modified
+- `effects` — clip, track or take effect stacks and presets
+- `align` — plan (or apply) edits that fit the dub to the original's phrase rhythm
+
 Check and export
 
 - `render` — render a line exactly like export and measure it

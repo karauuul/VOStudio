@@ -21,6 +21,7 @@ import {
   projectCommandSchema,
   projectFileSchema,
 } from '../src/main/schemas'
+import { committedComp } from '../src/shared/comp'
 import { applyProjectCommand } from '../src/shared/project-commands'
 import { hasValidVoicedOutput } from '../src/shared/approval'
 
@@ -418,6 +419,16 @@ describe('the new commands', () => {
     expect(p.cues[0].comp?.clips.map((c) => c.sourceTakeId)).toEqual(['t1', 't2'])
     expect(p.cues[0].status).toBe('generated')
     expect(hasValidVoicedOutput(p.cues[0], p)).toBe(true)
+  })
+
+  it('a composition without audible clips clears the timeline like null', () => {
+    const p = twoCues()
+    applyProjectCommand(p, { type: 'cue.setComp', cueId: 'c', comp: { clips: [{ id: 'cc1', sourceTakeId: 't1', srcIn: 0, srcOut: 2, start: 0, edits: emptyEdits() }] } })
+    applyProjectCommand(p, { type: 'cue.setComp', cueId: 'c', comp: { clips: [] } })
+    expect(p.cues[0]).not.toHaveProperty('comp')
+    expect(committedComp({ clips: [] })).toBeNull()
+    expect(committedComp(null)).toBeNull()
+    expect(committedComp({ clips: [{ id: 'z', sourceTakeId: 't1', srcIn: 1, srcOut: 1, start: 0, edits: emptyEdits() }] })).toBeNull()
   })
 
   it('an unpinned take of another cue is still refused', () => {

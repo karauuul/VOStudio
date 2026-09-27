@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { dropLineEdits, type LineHistory } from '../src/shared/line-history'
 import { emptyEdits, type Cue, type CueComp } from '../src/shared/domain'
-import { externalChanges, pickHistory, redoStale, takeKey } from '../src/shared/undo-route'
+import { externalChanges, pickHistory, recordExternalEffects, redoStale, takeKey, type TakeEffectsEdit } from '../src/shared/undo-route'
 
 describe('undo routing between comp and take-effect histories', () => {
   it('undoes the newer entry first', () => {
@@ -75,6 +75,58 @@ describe('external changes that invalidate local undo', () => {
     changed.takes[0].edits = { ...emptyEdits(), effects: { reverb: { mix: 0.3, size: 0.5, decay: 1 } } }
     expect([...externalChanges(before, { cues: [changed] }).effects]).toEqual([takeKey('a', 't')])
     expect(externalChanges(before, { cues: [line('a')] }).effects.size).toBe(0)
+  })
+
+  it('records agent composition edits as undo steps instead of dropping them', () => {
+    const before = { cues: [line('a', { comp: comp(0) }), line('b')] }
+    const changes = { cues: [line('a', { comp: comp(2) }), line('b', { comp: comp(1) })] }
+    const agent = externalChanges(before, changes, 'agent')
+    expect([...agent.comps]).toEqual([])
+    expect(agent.compEdits).toEqual([{ cueId: 'a', prev: comp(0) }, { cueId: 'b', prev: null }])
+    const other = externalChanges(before, changes)
+    expect([...other.comps]).toEqual(['a', 'b'])
+    expect(other.compEdits).toEqual([])
+  })
+
+  it('records agent take effect edits, but drops agent take deletions', () => {
+    const before = { cues: [line('a')] }
+    const changed = line('a')
+    const effects = { delay: { time: 0.2, feedback: 0.3, mix: 0.4 } }
+    changed.takes[0].edits = { ...emptyEdits(), effects }
+    const agent = externalChanges(before, { cues: [changed] }, 'agent')
+    expect(agent.effectEdits).toEqual([{ cueId: 'a', takeId: 't', prev: undefined, next: effects }])
+    expect(agent.effects.size).toBe(0)
+    expect(externalChanges(before, { cues: [changed] }).effectEdits).toEqual([])
+    const deleted = line('a')
+    deleted.takes[0].deletedAt = '2026-01-01T00:00:00.000Z'
+    const removal = externalChanges(before, { cues: [deleted] }, 'agent')
+    expect([...removal.effects]).toEqual([takeKey('a', 't')])
+    expect(removal.effectEdits).toEqual([])
+  })
+
+  it('records agent edits of a take owned by another line next to Properties edits of it', () => {
+    const effects = { delay: { time: 0.2, feedback: 0.3, mix: 0.4 } }
+    const properties: TakeEffectsEdit = { cueId: 'owner', takeId: 'pinned', prev: undefined, next: effects, at: 1 }
+    const redo: TakeEffectsEdit = { cueId: 'owner', takeId: 'pinned', prev: effects, next: undefined, at: 0 }
+    const before = { cues: [line('owner')] }
+    before.cues[0].takes[0].id = 'pinned'
+    const changed = structuredClone(before.cues[0])
+    changed.takes[0].edits = { ...emptyEdits(), effects }
+    const external = externalChanges(before, { cues: [changed] }, 'agent')
+    const history = recordExternalEffects({ undo: [properties], redo: [redo] }, external, 5, 100)
+    expect(history.undo).toEqual([properties, { cueId: 'owner', takeId: 'pinned', prev: undefined, next: effects, at: 5 }])
+    expect(history.redo).toEqual([])
+  })
+
+  it('drops history of takes changed by others and keeps the newest entries within the limit', () => {
+    const entry = (cueId: string, at: number): TakeEffectsEdit => ({ cueId, takeId: 't', prev: undefined, next: undefined, at })
+    const external = externalChanges(null, { cues: [] })
+    external.effects.add(takeKey('a', 't'))
+    const kept = recordExternalEffects({ undo: [entry('a', 1), entry('b', 2)], redo: [entry('a', 3), entry('b', 4)] }, external, 9, 100)
+    expect(kept).toEqual({ undo: [entry('b', 2)], redo: [entry('b', 4)] })
+    external.effects.clear()
+    external.effectEdits.push({ cueId: 'c', takeId: 't', prev: undefined, next: undefined })
+    expect(recordExternalEffects({ undo: [entry('a', 1), entry('b', 2)], redo: [] }, external, 9, 2).undo).toEqual([entry('b', 2), entry('c', 9)])
   })
 
   it('ignores change sets without cues', () => {

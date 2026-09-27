@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react'
-import { compProblem, normalizeComp } from '@shared/comp'
+import { committedComp, compProblem } from '@shared/comp'
 import { recordCompEdit, stepCompEdit, type CompHistory } from '@shared/comp-history'
 import type { CueComp } from '@shared/domain'
 import type { StepDir } from '@shared/line-history'
@@ -65,7 +65,7 @@ export function useCompEdit(
 
   const commit = useCallback(
     (next: CueComp | null) => {
-      const value = next && next.clips.length > 0 ? normalizeComp(next) : null
+      const value = committedComp(next)
       if (value) {
         const problem = compProblem(value)
         if (problem) {

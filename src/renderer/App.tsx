@@ -19,7 +19,7 @@ import {
   type VoiceSettings,
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '@shared/ipc'
-import { externalChanges, pickHistory, redoStale, takeKey, type UndoSide } from '@shared/undo-route'
+import { externalChanges, pickHistory, recordExternalEffects, redoStale, type TakeEffectsEdit, type UndoSide } from '@shared/undo-route'
 import { dropCompRedo, nextCompEdit, pruneCompHistory, recordCompEdit, type CompHistory } from '@shared/comp-history'
 import { PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
 import { hasSourceMaterial } from '@shared/import-table'
@@ -81,7 +81,7 @@ import {
 import { hasValidVoicedOutput, isDone } from '@shared/approval'
 import { compDuration, isEmptyComp } from '@shared/comp'
 import { libraryRow, lineLabel, locateText, punchClip, recordClip, resolveTake, type LibraryRow } from '@shared/library'
-import { parseSnapshot, type ChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
+import { parseSnapshot, type ChangeOrigin, type ChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
 import {
   doneChange,
   lineStepCommand,
@@ -138,14 +138,6 @@ const createLinesCommand = (texts: string[], afterCueId: string | null): Extract
   afterCueId,
   lines: texts.map((text) => ({ id: crypto.randomUUID(), text })),
 })
-
-interface TakeEffectsEdit {
-  cueId: string
-  takeId: string
-  prev: ClipEffects | undefined
-  next: ClipEffects | undefined
-  at: number
-}
 
 export default function App() {
   const [activeCueId, setActiveCueId] = useState<string | undefined>(undefined)
@@ -273,12 +265,14 @@ export default function App() {
     dropCompRedo(compHistRef.current)
   }, [])
 
-  const onExternal = useCallback((before: Project | null, changes: ChangeSet) => {
-    const external = externalChanges(before, changes)
+  const onExternal = useCallback((before: Project | null, changes: ChangeSet, origin?: ChangeOrigin) => {
+    const external = externalChanges(before, changes, origin)
     for (const cueId of external.comps) compHistRef.current.delete(cueId)
-    const kept = (entry: TakeEffectsEdit): boolean => !external.effects.has(takeKey(entry.cueId, entry.takeId))
-    fxUndoRef.current = fxUndoRef.current.filter(kept)
-    fxRedoRef.current = fxRedoRef.current.filter(kept)
+    const at = Date.now()
+    for (const edit of external.compEdits) recordCompEdit(compHistRef.current, edit.cueId, edit.prev, at)
+    const fx = recordExternalEffects({ undo: fxUndoRef.current, redo: fxRedoRef.current }, external, at, FX_HISTORY_LIMIT)
+    fxUndoRef.current = fx.undo
+    fxRedoRef.current = fx.redo
     dropLineEdits(linesRef.current, external.lines)
   }, [])
 

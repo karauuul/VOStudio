@@ -11,7 +11,7 @@ import {
 } from 'react'
 import type { Cue, Project, UiSessionState } from '@shared/domain'
 import type { TakeDurationUpdate } from '@shared/ipc'
-import { applyChangeSet, type ChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
+import { applyChangeSet, type ChangeOrigin, type ChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
 import { settleDraft, withSavedText, type TextDraft } from '@shared/text-draft'
 import { api } from './api'
 import { durationQueue } from './audio/duration-backfill'
@@ -70,7 +70,7 @@ export function useProjectSession(o: {
   onStatus: (kind: StatusKind, text: string) => void
   onBootstrap: (project: Project) => void
   onEdit: () => void
-  onExternal: (before: Project | null, changes: ChangeSet) => void
+  onExternal: (before: Project | null, changes: ChangeSet, origin?: ChangeOrigin) => void
 }): ProjectSession {
   const [project, setProject] = useState<Project | null>(null)
   const [, setDraftSeen] = useState(0)
@@ -123,7 +123,7 @@ export function useProjectSession(o: {
         editRef.current()
         if (result.revision <= revisionRef.current) return
         revisionRef.current = result.revision
-        externalRef.current(projectRef.current, result.changes)
+        externalRef.current(projectRef.current, result.changes, result.origin)
         setProject((current) => (current ? applyChangeSet(current, result.changes) : current))
       }),
     []
