@@ -273,8 +273,14 @@ export function useProjectSession(o: {
     }
     const next = pendingUi.current
     pendingUi.current = null
-    if (!next) return Promise.resolve()
-    return api['ui:save'](next).catch(() => {})
+    if (!next) return Promise.resolve(true)
+    return api['ui:save'](next).then(
+      () => true,
+      () => {
+        if (!pendingUi.current) pendingUi.current = next
+        return false
+      }
+    )
   }, [])
 
   const abandon = useCallback(() => {
@@ -299,7 +305,7 @@ export function useProjectSession(o: {
       const voiced = await flushVoice()
       if (!saved || !voiced) return false
     }
-    await flushUi()
+    if (!(await flushUi())) return false
     await durationQueue.flushNow()
     return true
   }, [flushText, flushVoice, flushUi])

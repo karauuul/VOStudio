@@ -107,3 +107,12 @@ describe('externalChanges lines', () => {
     expect([...externalChanges({ cues: [cue] }, { removedCueIds: ['a'] }).lines]).toEqual(['a'])
   })
 })
+
+describe('externalChanges effects', () => {
+  it('flags a take whose deletion changed even when its effects did not', () => {
+    const take = { id: 't', edits: emptyEdits() }
+    const cue = { id: 'a', key: 'a', characterId: 'c', fields: {}, sourceText: '', text: '', status: 'generated', notes: '', takes: [take] } as unknown as Cue
+    const deleted = { ...cue, takes: [{ ...take, deletedAt: '2026-01-01T00:00:00.000Z' }] } as unknown as Cue
+    expect([...externalChanges({ cues: [cue] }, { cues: [deleted] }).effects]).toEqual([takeKey('a', 't')])
+  })
+})

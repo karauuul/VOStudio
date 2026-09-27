@@ -33,7 +33,7 @@ export interface ExternalChanges {
 }
 
 const compKey = (comp: CueComp | undefined): string => JSON.stringify(comp && comp.clips.length > 0 ? comp : null)
-const effectsKey = (take: Take | undefined): string => JSON.stringify(take?.edits.effects ?? null)
+const effectsKey = (take: Take | undefined): string => JSON.stringify([take?.edits.effects ?? null, take?.deletedAt ?? null])
 const lineKey = (cue: Cue | undefined): string =>
   JSON.stringify(
     cue
