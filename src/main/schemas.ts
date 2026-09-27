@@ -668,6 +668,7 @@ const prosodySchema = z.object({
       })
     )
     .max(PROSODY_ROWS_MAX),
+  truncated: z.boolean().optional(),
 })
 
 export const renderReplySchema = bridgeReplySchema.extend({

@@ -788,6 +788,7 @@ describe('analyze and compare', () => {
     const heard = prosody.analyzeProsody(tones([[0.1, 0], [0.5, 170], [0.3, 0], [0.6, 170], [0.2, 0]]), prosody.ANALYSIS_RATE, words)
     const id = '00000000-0000-4000-8000-000000000000'
     expect(renderReplySchema.parse({ id, ok: true, prosody: heard }).prosody).toEqual(heard)
+    expect(renderReplySchema.parse({ id, ok: true, prosody: { ...heard, truncated: true } }).prosody).toEqual({ ...heard, truncated: true })
     const tooLong = { ...heard, track: { ...heard.track, db: new Float32Array(prosody.ANALYSIS_FRAMES_MAX + 1) } }
     expect(renderReplySchema.safeParse({ id, ok: true, prosody: tooLong }).success).toBe(false)
   })

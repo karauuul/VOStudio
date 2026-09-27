@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   analyzeFrames,
   analyzeProsody,
+  ANALYSIS_MAX_SECONDS,
   ANALYSIS_RATE,
   contourOf,
   findPhrases,
@@ -159,6 +160,36 @@ describe('word prosody', () => {
     expect(view.words).toHaveLength(WORDS_VIEW_MAX)
     expect(view.wordsTotal).toBe(90)
     expect(prosodyTranscript(p).endsWith('… truncated')).toBe(true)
+  })
+
+  it('drops words past the analysed audio and clamps a word that straddles its end', () => {
+    const p = analyzeProsody(signal([gap(0.1), tone(0.8, 150), gap(0.1)]), RATE, [
+      { text: 'inside', start: 0.1, end: 0.5 },
+      { text: 'straddles', start: 0.6, end: 1.4 },
+      { text: 'beyond', start: 1.0, end: 1.3 },
+      { text: 'later', start: 2, end: 2.5 },
+    ])
+    expect(p.words.map((w) => [w.text, w.end])).toEqual([
+      ['inside', 0.5],
+      ['straddles', 1],
+    ])
+    expect(p.phrases[0].words).toBe(2)
+    expect(p.truncated).toBeUndefined()
+    expect(prosodyTranscript(p)).not.toContain('analysis stops')
+    expect(prosodyView(p)).not.toHaveProperty('truncated')
+  })
+
+  it('flags audio cut at the analysis limit in the result, the view and the transcript', () => {
+    const p = analyzeProsody(signal([gap(ANALYSIS_MAX_SECONDS - 0.6), tone(0.5, 150), gap(0.1)]), RATE, [
+      { text: 'last', start: ANALYSIS_MAX_SECONDS - 0.6, end: ANALYSIS_MAX_SECONDS - 0.1 },
+      { text: 'cut', start: ANALYSIS_MAX_SECONDS - 0.05, end: ANALYSIS_MAX_SECONDS + 0.4 },
+      { text: 'unheard', start: ANALYSIS_MAX_SECONDS + 1, end: ANALYSIS_MAX_SECONDS + 1.5 },
+    ])
+    expect(p.truncated).toBe(true)
+    expect(p.words.map((w) => w.text)).toEqual(['last', 'cut'])
+    expect(p.words[1].end).toBe(ANALYSIS_MAX_SECONDS)
+    expect(prosodyView(p)).toMatchObject({ truncated: true })
+    expect(prosodyTranscript(p).endsWith(`[analysis stops at ${ANALYSIS_MAX_SECONDS.toFixed(2)}s]`)).toBe(true)
   })
 })
 

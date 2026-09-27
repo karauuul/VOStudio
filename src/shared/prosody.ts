@@ -63,6 +63,7 @@ export interface Prosody {
   track: FrameTrack
   words: WordProsody[]
   phrases: PhraseProsody[]
+  truncated?: boolean
 }
 
 export const semitones = (hz: number): number => 12 * Math.log2(hz / 100)
@@ -325,7 +326,13 @@ export function analyzeProsody(pcm: Float32Array, rate: number, timings?: WordTi
   const track = analyzeFrames(pcm, rate)
   const silenceDb = silenceThreshold(track.db)
   const spans = findPhrases(track, silenceDb)
-  const sorted = [...(timings ?? [])].filter((w) => w.end > w.start).sort((a, b) => a.start - b.start)
+  const heard = pcm.length / rate
+  const sorted = (timings ?? [])
+    .flatMap((w) => {
+      const end = Math.min(w.end, heard)
+      return end > w.start ? [{ ...w, end }] : []
+    })
+    .sort((a, b) => a.start - b.start)
   const words = sorted.map((w, i) =>
     wordProsody(track, w, i > 0 ? sorted[i - 1].end : 0, spans.length > 0 ? nearestPhrase(spans, (w.start + w.end) / 2) : -1)
   )
@@ -348,7 +355,7 @@ export function analyzeProsody(pcm: Float32Array, rate: number, timings?: WordTi
       peakAt: peakPosition(track, span.start, span.end + track.hop),
     }
   })
-  return { duration: pcm.length / rate, silenceDb, track, words, phrases }
+  return { duration: heard, silenceDb, track, words, phrases, ...(pcm.length >= ANALYSIS_MAX_SECONDS * rate ? { truncated: true } : {}) }
 }
 
 export function voicedContour(track: FrameTrack, start: number, end: number): { times: number[]; st: number[] } {
@@ -379,7 +386,8 @@ function phraseToken(p: PhraseProsody): string {
 }
 
 export function prosodyTranscript(p: Prosody): string {
-  if (p.phrases.length === 0) return 'silence'
+  const cut = p.truncated ? ` · [analysis stops at ${p.duration.toFixed(2)}s]` : ''
+  if (p.phrases.length === 0) return `silence${cut}`
   const parts: string[] = []
   let words = 0
   let shown = 0
@@ -396,7 +404,7 @@ export function prosodyTranscript(p: Prosody): string {
     shown++
   }
   const truncated = shown < p.phrases.length || words < p.words.filter((w) => w.phrase >= 0).length
-  return `${parts.join(' · ')}${truncated ? ' · … truncated' : ''}`
+  return `${parts.join(' · ')}${truncated ? ' · … truncated' : ''}${cut}`
 }
 
 export const WORDS_VIEW_MAX = 60
@@ -405,6 +413,7 @@ export const PHRASES_VIEW_MAX = 20
 export function prosodyView(p: Prosody): Record<string, unknown> {
   return {
     duration: r2(p.duration),
+    ...(p.truncated ? { truncated: true } : {}),
     transcript: prosodyTranscript(p),
     phrases: p.phrases.slice(0, PHRASES_VIEW_MAX).map((ph) => ({
       start: r2(ph.start),
