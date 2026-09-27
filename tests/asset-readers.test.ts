@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { TAKE_FILE_EXTENSIONS } from '../src/shared/take-import'
 import {
   ASSET_EXTENSIONS,
   assetKind,
@@ -23,6 +24,8 @@ describe('assetKind', () => {
     expect(['a.md', 'b.txt'].map(assetKind)).toEqual(['text', 'text'])
     expect(['a.json', 'b.xml'].map(assetKind)).toEqual(['data', 'data'])
     expect(['a.wav', 'b.mp3', 'c.ogg', 'd.flac', 'e.m4a'].map(assetKind)).toEqual(['audio', 'audio', 'audio', 'audio', 'audio'])
+    expect(TAKE_FILE_EXTENSIONS.map((ext) => assetKind(`take.${ext.toUpperCase()}`))).toEqual(TAKE_FILE_EXTENSIONS.map(() => 'audio'))
+    expect(routeDrop(['/in/a.aac', '/in/b.opus', '/in/c.webm'])).toEqual({ templates: [], lines: ['/in/a.aac', '/in/b.opus', '/in/c.webm'], bin: [] })
     expect(['a.mp4', 'b.mov', 'c.mkv'].map(assetKind)).toEqual(['video', 'video', 'video'])
     expect(['game.locres', 'README', 'dir.v2/file'].map(assetKind)).toEqual(['other', 'other', 'other'])
   })

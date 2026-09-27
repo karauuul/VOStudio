@@ -306,7 +306,8 @@ export function buildRowLines(
   asset: Pick<ProjectAsset, 'id' | 'name'>
 ): { summary: RowLinesSummary; changes: ChangeSet | null } {
   const built = new Set(project.cues.flatMap((cue) => (cue.origins ?? []).filter((o) => o.assetId === asset.id).map((o) => o.row)))
-  const pending = rows.map((cells, row) => ({ cells, row })).filter(({ row }) => !built.has(row))
+  const builtKeys = new Set(rows.filter((_, row) => built.has(row)).map((cells) => cell(cells, columns.key)).filter(Boolean))
+  const pending = rows.map((cells, row) => ({ cells, row })).filter(({ cells, row }) => !built.has(row) && !builtKeys.has(cell(cells, columns.key)))
   const mapping: TableMapping = {
     ...(columns.key === undefined ? {} : { id: columns.key }),
     ...(columns.text === undefined ? {} : { text: columns.text }),

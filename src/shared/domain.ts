@@ -506,15 +506,13 @@ export function sanitizeProposals(value: unknown): CueProposals | undefined {
 
 export const ORIGINS_MAX = 100
 
-export const withOrigin = (origins: CueOrigin[] | undefined, origin: CueOrigin): CueOrigin[] => [
-  ...(origins ?? []).filter((o) => o.assetId !== origin.assetId),
-  origin,
-]
+export const withOrigin = (origins: CueOrigin[] | undefined, origin: CueOrigin): CueOrigin[] =>
+  [...(origins ?? []).filter((o) => o.assetId !== origin.assetId), origin].slice(-ORIGINS_MAX)
 
 export function sanitizeOrigins(rows: unknown): CueOrigin[] | undefined {
   if (!Array.isArray(rows)) return undefined
   let out: CueOrigin[] = []
-  for (const raw of rows.slice(0, ORIGINS_MAX)) {
+  for (const raw of rows.slice(-ORIGINS_MAX)) {
     if (!raw || typeof raw !== 'object') continue
     const assetId = nonEmptyString((raw as Partial<CueOrigin>).assetId)
     if (!assetId) continue

@@ -1,13 +1,10 @@
 import type { AssetKind } from './domain'
 import { TABLE_COLUMNS_MAX, TABLE_ROWS_MAX } from './import-table'
 import { splitParagraphs } from './lines'
+import { TAKE_FILE_EXTENSIONS } from './take-import'
 
 const KIND_BY_EXTENSION: Record<string, AssetKind> = {
-  wav: 'audio',
-  mp3: 'audio',
-  ogg: 'audio',
-  flac: 'audio',
-  m4a: 'audio',
+  ...Object.fromEntries(TAKE_FILE_EXTENSIONS.map((ext) => [ext, 'audio' as const])),
   mp4: 'video',
   mov: 'video',
   mkv: 'video',

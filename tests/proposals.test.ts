@@ -5,6 +5,8 @@ import {
   sanitizeOrigins,
   sanitizeProposals,
   sanitizeTerms,
+  ORIGINS_MAX,
+  withOrigin,
   type Cue,
   type Project,
 } from '../src/shared/domain'
@@ -171,6 +173,19 @@ describe('rule 2: the new fields', () => {
       { term: 'a', translation: 'б', proposed: true },
       { term: 'c', translation: 'д' },
     ])
+  })
+
+  it('origins stay within the cap on write, keeping the newest and evicting the oldest', () => {
+    let origins = Array.from({ length: ORIGINS_MAX }, (_, i) => ({ assetId: `a${i}` }))
+    origins = withOrigin(origins, { assetId: 'new', row: 1 })
+    expect(origins).toHaveLength(ORIGINS_MAX)
+    expect(origins[0]).toEqual({ assetId: 'a1' })
+    expect(origins.at(-1)).toEqual({ assetId: 'new', row: 1 })
+    expect(withOrigin(origins, { assetId: 'a1' })).toHaveLength(ORIGINS_MAX)
+    const c = { ...project().cues[0], origins }
+    expect(cueSchema.parse(c).origins).toEqual(origins)
+    expect(sanitizeOrigins(origins)).toEqual(origins)
+    expect(sanitizeOrigins([{ assetId: 'old' }, ...origins])).toEqual(origins)
   })
 
   it('zod mirrors keep assets, proposals, origins and proposed terms', () => {

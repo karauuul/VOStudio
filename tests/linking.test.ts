@@ -162,6 +162,20 @@ describe('buildRowLines', () => {
     expect(p.cues).toHaveLength(2)
   })
 
+  it('builds a duplicated key once and a second build changes nothing', () => {
+    const p = project([])
+    const dup = [['K1', 'Hi'], ['K2', 'Yo'], ['K1', 'Hello']]
+    const first = buildRowLines(p, dup, { key: 0, text: 1 }, asset)
+    expect(first.summary).toMatchObject({ created: 2, alreadyBuilt: 0 })
+    expect(p.cues.map((c) => [c.key, c.sourceText, c.origins])).toEqual([
+      ['K1', 'Hello', [{ assetId: 'a1', row: 0 }]],
+      ['K2', 'Yo', [{ assetId: 'a1', row: 1 }]],
+    ])
+    const again = buildRowLines(p, dup, { key: 0, text: 1 }, asset)
+    expect(again).toEqual({ summary: { created: 0, updated: 0, unchanged: 0, skipped: 0, alreadyBuilt: 3, characterProposals: 0 }, changes: null })
+    expect(p.cues.map((c) => c.origins)).toEqual([[{ assetId: 'a1', row: 0 }], [{ assetId: 'a1', row: 1 }]])
+  })
+
   it('updates a line whose key matches instead of creating one', () => {
     const p = project([{ ...cue('c1', 'K1'), origins: [{ assetId: 'wav' }] }])
     const built = buildRowLines(p, [['K1', 'Hi'], ['K2', 'Yo']], { key: 0, text: 1 }, asset)
