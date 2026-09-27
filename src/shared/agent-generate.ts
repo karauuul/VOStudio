@@ -1,6 +1,6 @@
 import { MAX_STS_SECONDS, resolveVoiceSettings, type Cue, type Project, type VoiceSettings } from './domain'
 import { clampVoiceSettings, clipTargetText, hasClip, targetText, type GenTarget } from './generation'
-import { ttsPlan } from './provider-models'
+import { stsPlan, ttsPlan } from './provider-models'
 
 export const TTS_TEXT_MAX = 5000
 
@@ -21,6 +21,7 @@ export interface LinePlan {
   rawText: string
   chars: number
   model: string | null
+  language?: string
   voice: string | null
   voiceSettings: VoiceSettings
   fragment: boolean
@@ -62,7 +63,7 @@ export function planLine(project: Project, cue: Cue, options: GenerateOptions): 
   if (!character?.provider.voiceId) return skipped('no voice')
   if (options.mode === 'sts') {
     const source = cue.takes.filter((t) => t.kind === 'recording' && !t.deletedAt).at(-1)
-    const model = project.provider?.sts?.model ?? character.provider.stsModel
+    const { model } = stsPlan(project, cue)
     if (!source) return skipped('no recording', { model })
     const extra = { model, text: source.meta.text ?? '', sourceTakeId: source.id, fragment: source.fragment === true }
     if (source.duration > MAX_STS_SECONDS) return skipped(`recording longer than ${MAX_STS_SECONDS / 60} min`, extra)
@@ -70,7 +71,7 @@ export function planLine(project: Project, cue: Cue, options: GenerateOptions): 
   }
   const text = targetText(cue.text, target)
   const plan = ttsPlan(project, cue, text, options.model)
-  const extra = { text: plan.text, rawText: text, chars: plan.text.length, model: plan.model }
+  const extra = { text: plan.text, rawText: text, chars: plan.text.length, model: plan.model, ...(plan.language ? { language: plan.language } : {}) }
   if (!text || !plan.text.trim()) return skipped('no text', { ...extra, chars: 0 })
   if (text.length > TTS_TEXT_MAX) return skipped(`text longer than ${TTS_TEXT_MAX} characters`, { ...extra, chars: 0 })
   return { ...base, ...extra }

@@ -8,7 +8,7 @@ import {
 } from './domain'
 import { targetText, type GenTarget } from './generation'
 import { applyRules } from './pronunciation'
-import type { GenJob } from './ipc'
+import type { GenJob, JobPlan, PlannedVoice, TtsRequest } from './ipc'
 
 export interface ProviderModel {
   id: string
@@ -124,22 +124,56 @@ export interface TtsPlan {
   language?: string
 }
 
-export function ttsPlan(project: Project, cue: Cue, text: string, model?: string, providerText?: string): TtsPlan {
+export const VOICE_CHANGED = 'The line\'s character or voice changed after planning; run generate again'
+
+function voicedCharacter(project: Project, cue: Cue): Character & { provider: { voiceId: string } } {
   const character = project.characters.find((c) => c.id === cue.characterId)
   if (!character) throw new Error('Line has no character')
   if (!character.provider.voiceId) {
     throw new Error(`No voice configured for character "${character.name}"`)
   }
+  return character
+}
+
+function plannedCharacter(project: Project, cue: Cue, planned: PlannedVoice): Character {
+  const character = project.characters.find((c) => c.id === cue.characterId)
+  if (!character || character.id !== planned.characterId || character.provider.voiceId !== planned.voiceId) {
+    throw new Error(VOICE_CHANGED)
+  }
+  return character
+}
+
+export function ttsPlan(project: Project, cue: Cue, text: string, model?: string): TtsPlan {
+  const character = voicedCharacter(project, cue)
   const mode = project.provider?.tts
   const projectModel = mode?.model ?? character.provider.ttsModel
   const chosen = model ?? projectModel
   return {
     character,
     voiceId: character.provider.voiceId,
-    text: providerText ?? applyRules(text, project.pronunciationRules),
+    text: applyRules(text, project.pronunciationRules),
     model: chosen,
     ...(mode?.language && chosen === projectModel && chosen !== NO_LANGUAGE_CODE_MODEL ? { language: mode.language } : {}),
   }
+}
+
+export function jobTtsPlan(project: Project, cue: Cue, req: TtsRequest & JobPlan): TtsPlan {
+  const text = req.providerText ?? applyRules(req.text, project.pronunciationRules)
+  if (!req.planned) return { ...ttsPlan(project, cue, req.text, req.model), text }
+  const { voiceId, model, language } = req.planned
+  return { character: plannedCharacter(project, cue, req.planned), voiceId, text, model, ...(language ? { language } : {}) }
+}
+
+export interface StsPlan {
+  character: Character
+  voiceId: string
+  model: string
+}
+
+export function stsPlan(project: Project, cue: Cue, planned?: PlannedVoice): StsPlan {
+  if (planned) return { character: plannedCharacter(project, cue, planned), voiceId: planned.voiceId, model: planned.model }
+  const character = voicedCharacter(project, cue)
+  return { character, voiceId: character.provider.voiceId, model: project.provider?.sts?.model ?? character.provider.stsModel }
 }
 
 export const jobChars = (req: GenJob, rules: string): number =>

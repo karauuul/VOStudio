@@ -19,8 +19,11 @@ describe('provider request schemas', () => {
     expect(stsSchema.parse({ ...sts, selectOutput: true }).selectOutput).toBe(true)
   })
 
-  it('drops a provider text from the app so the rules always apply to its requests', () => {
+  it('drops a provider text and a planned voice from the app so its requests always resolve live', () => {
     expect(genRunSchema.parse({ kind: 'tts', ...tts, providerText: 'raw bypass' })).not.toHaveProperty('providerText')
+    const planned = { characterId: 'a', voiceId: 'v', model: 'm' }
+    expect(genRunSchema.parse({ kind: 'tts', ...tts, planned })).not.toHaveProperty('planned')
+    expect(genRunSchema.parse({ kind: 'sts', ...sts, planned })).not.toHaveProperty('planned')
   })
 
     it('rejects a non-boolean flag', () => {

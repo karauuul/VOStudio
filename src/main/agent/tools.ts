@@ -406,7 +406,13 @@ async function waitForJobs(deps: AgentDeps, ctx: { signal: AbortSignal; progress
 }
 
 function request(plan: LinePlan): GenJob {
-  const common = { cueId: plan.cue.id, voiceSettings: plan.voiceSettings, selectOutput: false, ...(plan.fragment ? { fragment: true } : {}) }
+  const planned = {
+    characterId: plan.cue.characterId ?? '',
+    voiceId: plan.voice ?? '',
+    model: plan.model ?? '',
+    ...(plan.language ? { language: plan.language } : {}),
+  }
+  const common = { cueId: plan.cue.id, voiceSettings: plan.voiceSettings, selectOutput: false, planned, ...(plan.fragment ? { fragment: true } : {}) }
   if (plan.mode === 'sts') return { kind: 'sts', ...common, sourceTakeId: plan.sourceTakeId ?? '' }
   return { kind: 'tts', ...common, text: plan.rawText, providerText: plan.text, ...(plan.model ? { model: plan.model } : {}) }
 }

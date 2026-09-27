@@ -2,20 +2,20 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
 import { emptyEdits, MAX_STS_SECONDS, type Take } from '@shared/domain'
-import type { StsRequest, TtsRequest } from '@shared/ipc'
+import type { JobPlan, StsRequest, TtsRequest } from '@shared/ipc'
 import type { CommandResult } from '@shared/project-commands'
-import { ttsPlan } from '@shared/provider-models'
+import { jobTtsPlan, stsPlan } from '@shared/provider-models'
 import { autoSelectsOutput } from './schemas'
 import { appendTake, takeBase, type TakeSession } from './take-append'
 import type { VoiceProvider } from './providers/voice-provider'
 
 type Publish = (result: CommandResult) => void
 
-export async function createTtsTake(session: TakeSession, req: TtsRequest & { providerText?: string }, provider: VoiceProvider, publish: Publish): Promise<Take> {
+export async function createTtsTake(session: TakeSession, req: TtsRequest & JobPlan, provider: VoiceProvider, publish: Publish): Promise<Take> {
   const project = session.repository.projectForMain()
   const cue = project.cues.find((c) => c.id === req.cueId)
   if (!cue) throw new Error('Cue not found')
-  const plan = ttsPlan(project, cue, req.text, req.model, req.providerText)
+  const plan = jobTtsPlan(project, cue, req)
   const { audio, words } = await provider.ttsWithTimestamps({
     text: plan.text,
     voiceId: plan.voiceId,
@@ -48,7 +48,7 @@ export async function createTtsTake(session: TakeSession, req: TtsRequest & { pr
   )
 }
 
-export async function createStsTake(session: TakeSession, req: StsRequest, provider: VoiceProvider, publish: Publish): Promise<Take> {
+export async function createStsTake(session: TakeSession, req: StsRequest & JobPlan, provider: VoiceProvider, publish: Publish): Promise<Take> {
   const project = session.repository.projectForMain()
   const cue = project.cues.find((c) => c.id === req.cueId)
   if (!cue) throw new Error('Cue not found')
@@ -63,15 +63,9 @@ export async function createStsTake(session: TakeSession, req: StsRequest, provi
     )
   }
 
-  const character = project.characters.find((c) => c.id === cue.characterId)
-  if (!character) throw new Error('Line has no character')
-  if (!character.provider.voiceId) {
-    throw new Error(`No voice configured for character "${character.name}"`)
-  }
+  const { character, voiceId, model } = stsPlan(project, cue, req.planned)
 
   const audio = await fs.readFile(source.file.relPath)
-  const model = project.provider?.sts?.model ?? character.provider.stsModel
-  const voiceId = character.provider.voiceId
   const mp3 = await provider.sts({
     audio,
     filename: path.basename(source.file.relPath),

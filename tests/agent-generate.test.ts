@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { planLine } from '../src/shared/agent-generate'
-import { jobChars, ttsPlan } from '../src/shared/provider-models'
+import { jobChars, jobTtsPlan, stsPlan, ttsPlan, VOICE_CHANGED } from '../src/shared/provider-models'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 
 const voice = { stability: 0.5, similarity: 0.5, style: 0.2, speed: 1, boost: true }
@@ -40,10 +40,38 @@ describe('planLine', () => {
     const plan = planLine(p, p.cues[0], { mode: 'tts' })
     const job = { kind: 'tts' as const, cueId: 'c', text: plan.rawText, providerText: plan.text, voiceSettings: voice }
     const changed = { ...p, pronunciationRules: 'cat → kitty kitty' }
-    expect(ttsPlan(changed, changed.cues[0], plan.rawText, undefined, plan.text).text).toBe('AA cat')
+    expect(jobTtsPlan(changed, changed.cues[0], job).text).toBe('AA cat')
     expect(jobChars(job, changed.pronunciationRules)).toBe(plan.chars)
     expect(jobChars({ ...job, providerText: undefined }, changed.pronunciationRules)).toBe('A kitty kitty'.length)
     expect(jobChars({ kind: 'sts', cueId: 'c', sourceTakeId: 'r', voiceSettings: voice }, changed.pronunciationRules)).toBe(0)
+  })
+
+  it('resolves a planned job with the voice, model and language frozen at planning and a live job with the current ones', () => {
+    const p = { ...project(), provider: { tts: { language: 'uk' } } }
+    const plan = planLine(p, p.cues[0], { mode: 'tts' })
+    expect(plan).toMatchObject({ voice: 'v1', model: 'tm', language: 'uk' })
+    const planned = { characterId: 'a', voiceId: 'v1', model: 'tm', language: 'uk' }
+    const job = { cueId: 'c', text: plan.rawText, voiceSettings: voice, planned }
+    const [ada] = p.characters
+    const changed = { ...p, provider: {}, characters: [{ ...ada, provider: { ...ada.provider, ttsModel: 'tm2', stsModel: 'sm2' } }] }
+    expect(jobTtsPlan(changed, changed.cues[0], job)).toMatchObject({ voiceId: 'v1', model: 'tm', language: 'uk', text: 'Hello there' })
+    expect(stsPlan(changed, changed.cues[0], { ...planned, model: 'sm' })).toMatchObject({ voiceId: 'v1', model: 'sm' })
+    const live = jobTtsPlan(changed, changed.cues[0], { ...job, planned: undefined })
+    expect(live).toMatchObject({ voiceId: 'v1', model: 'tm2' })
+    expect(live.language).toBeUndefined()
+    expect(stsPlan(changed, changed.cues[0])).toMatchObject({ voiceId: 'v1', model: 'sm2' })
+  })
+
+  it('refuses a planned job when the line changed character or voice after planning', () => {
+    const p = project()
+    const planned = { characterId: 'a', voiceId: 'v1', model: 'tm' }
+    const job = { cueId: 'c', text: 'Hello there', voiceSettings: voice, planned }
+    const [ada] = p.characters
+    const revoiced = { ...p, characters: [{ ...ada, provider: { ...ada.provider, voiceId: 'v2' } }] }
+    expect(() => jobTtsPlan(revoiced, revoiced.cues[0], job)).toThrow(VOICE_CHANGED)
+    expect(() => stsPlan(revoiced, revoiced.cues[0], planned)).toThrow(VOICE_CHANGED)
+    const moved = { ...p, characters: [...p.characters, { ...ada, id: 'b' }], cues: [{ ...p.cues[0], characterId: 'b' }] }
+    expect(() => jobTtsPlan(moved, moved.cues[0], job)).toThrow(VOICE_CHANGED)
   })
 
   it('converts the newest live recording in sts mode and skips a line without one', () => {

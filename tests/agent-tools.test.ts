@@ -12,7 +12,7 @@ import { createGenerationQueue } from '../src/main/gen-queue'
 import type { McpSession } from '../src/shared/mcp'
 import type { AppSettings } from '../src/shared/ipc'
 import type { Take } from '../src/shared/domain'
-import { jobChars, ttsPlan } from '../src/shared/provider-models'
+import { jobChars, jobTtsPlan, stsPlan, VOICE_CHANGED } from '../src/shared/provider-models'
 import { TARGET_CLIP_GONE } from '../src/shared/generation'
 
 const voice = { stability: 0.5, similarity: 0.5, style: 0, speed: 1, boost: true }
@@ -74,7 +74,7 @@ function setup(open = true) {
   const guard = { exporting: false, restoring: false, recording: false }
   const generation = createGenerationQueue({ guard: () => guard, changed: () => undefined })
   const settings: AppSettings = { countIn: true, autoReference: false }
-  const gen = { hold: null as Promise<void> | null, sent: [] as unknown[], spoken: [] as string[], taken: 0 }
+  const gen = { hold: null as Promise<void> | null, sent: [] as unknown[], spoken: [] as string[], received: [] as { voiceId: string; model: string }[], taken: 0 }
   const deps: AgentDeps = {
     version: '1.2.3',
     repository: () => repo,
@@ -130,10 +130,11 @@ function setup(open = true) {
         run: async () => {
           gen.sent.push(req)
           await gen.hold
-          if (req.kind === 'tts') {
-            const live = expected.projectForMain()
-            gen.spoken.push(ttsPlan(live, live.cues.find((c) => c.id === req.cueId)!, req.text, req.model, req.providerText).text)
-          }
+          const live = expected.projectForMain()
+          const target = live.cues.find((c) => c.id === req.cueId)!
+          const plan = req.kind === 'tts' ? jobTtsPlan(live, target, req) : stsPlan(live, target, req.planned)
+          gen.received.push({ voiceId: plan.voiceId, model: plan.model })
+          if ('text' in plan) gen.spoken.push(plan.text)
           const id = `gen${++gen.taken}`
           const take: Take = { id, kind: req.kind, createdAt: 'now', file: { fileId: id, relPath: `/root/Demo.vostudio/${id}.mp3`, format: 'mp3' }, duration: 0, meta: {}, edits: emptyEdits() }
           await expected.mutate((p) => {
@@ -678,6 +679,40 @@ describe('generation tools', () => {
     expect(gen.spoken).toEqual(['Voiceed linee', 'Heello theeree'])
     expect(generation.list().map((j) => [j.state, j.chars])).toEqual([['done', 13], ['done', 14]])
     expect(gen.spoken.reduce((n, t) => n + t.length, 0)).toBe(27)
+  })
+
+  it('sends the voice and models planned even when the character changes before the job runs', async () => {
+    const { call, gen, generation, repo } = setup()
+    await voiced(call)
+    await repo!.mutate((p) => {
+      const target = p.cues.find((c) => c.id === 'c3')!
+      target.takes = [...target.takes, { id: 'r1', kind: 'recording', createdAt: 'now', file: { fileId: 'r1', relPath: '/p/r1.wav', format: 'wav' }, duration: 2, meta: { text: 'said' }, edits: emptyEdits() }]
+      return { cues: [target] }
+    })
+    let release!: () => void
+    gen.hold = new Promise((resolve) => (release = resolve))
+    const tts = await call('generate', { lines: ['L1'] })
+    const sts = await call('generate', { lines: ['L3'], mode: 'sts' })
+    await call('character_set', { character: 'Ada', ttsModel: 'm2' })
+    await call('character_set', { character: 'Bob', stsModel: 's2' })
+    release()
+    const ids = [...(tts.data.jobs as { id: string }[]), ...(sts.data.jobs as { id: string }[])].map((j) => j.id)
+    await generation.settle(ids, 5000, new AbortController().signal, () => undefined)
+    expect(gen.received).toEqual([{ voiceId: 'va', model: 'm' }, { voiceId: 'v', model: 's' }])
+    expect(generation.list().map((j) => j.state)).toEqual(['done', 'done'])
+  })
+
+  it('fails a planned job before the provider call when the voice changes before it runs', async () => {
+    const { call, gen } = setup()
+    await voiced(call)
+    let release!: () => void
+    gen.hold = new Promise((resolve) => (release = resolve))
+    const [job] = (await call('generate', { lines: ['L1'] })).data.jobs as { id: string }[]
+    await call('character_set', { character: 'Ada', voiceId: 'vb' })
+    release()
+    const { data } = await call('jobs', { ids: [job.id], wait: 5 })
+    expect(data.jobs).toEqual([{ id: job.id, line: 'L1', kind: 'tts', state: 'error', error: VOICE_CHANGED }])
+    expect(gen.received).toEqual([])
   })
 
   it('refuses a batch over the remaining budget and queues nothing', async () => {
