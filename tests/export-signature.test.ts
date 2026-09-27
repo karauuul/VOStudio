@@ -342,4 +342,14 @@ describe('removing superseded files', () => {
     expect(await fs.readFile(path.join(outside, 'old.wav'), 'utf8')).toBe('keep')
     await fs.rm(root, { recursive: true, force: true })
   })
+
+  it('prunes folders it emptied so a later file can take their name', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'vostudio-superseded-'))
+    await fs.mkdir(path.join(root, 'audio', 'sfx.wav'), { recursive: true })
+    await fs.writeFile(path.join(root, 'audio', 'sfx.wav', 'hit.wav'), 'x')
+    await removeSuperseded(root, ['audio/sfx.wav/hit.wav'])
+    await expect(fs.stat(path.join(root, 'audio', 'sfx.wav'))).rejects.toThrow()
+    expect((await fs.stat(path.join(root, 'audio'))).isDirectory()).toBe(true)
+    await fs.rm(root, { recursive: true, force: true })
+  })
 })
