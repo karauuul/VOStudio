@@ -622,3 +622,19 @@ export const bridgeReplySchema = z.object({
   ok: z.boolean(),
   error: z.string().max(2000).optional(),
 })
+
+const shortText = z.string().max(4096)
+
+export const renderReplySchema = bridgeReplySchema.extend({
+  wav: z.union([z.instanceof(ArrayBuffer), z.instanceof(Uint8Array)]).optional(),
+  result: z
+    .object({
+      written: z.number().int().min(0),
+      failed: z.array(z.object({ cueKey: shortText, name: shortText, error: z.string().max(2000) })).max(100_000),
+      outDir: shortText,
+      indexPath: shortText.optional(),
+      reportPath: shortText.optional(),
+      version: z.number().int().min(1).optional(),
+    })
+    .optional(),
+})

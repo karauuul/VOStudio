@@ -29,6 +29,7 @@ import {
   recFinishSchema,
   recFinishPassesSchema,
   bridgeReplySchema,
+  renderReplySchema,
 } from './schemas'
 import { emit } from './emit'
 import * as store from './project-store'
@@ -83,6 +84,11 @@ import {
   planVideoExport,
   exportDir,
   exportInfo,
+  exportBusy,
+  encodeAnalysis,
+  lineJob,
+  measureAudio,
+  releaseExports,
 } from './export'
 import { detectLines, importSources, splitMediaPaths } from './sources'
 import { applyAlienMigration } from './satisfactory-preset'
@@ -111,6 +117,10 @@ import { startAgentServer, type AgentServerHandle } from './agent/server'
 import { AGENT_INSTRUCTIONS, agentTools } from './agent/tools'
 import { diagnostics, watchDiagnostics } from './agent/diagnostics'
 import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
+import { closeRenderWorker, renderExportPlan, renderLineWav, renderWorker, settleRender } from './agent/render-worker'
+import { hardenedWindow, loadRenderer, uiWindows } from './windows'
+import { renderFileName } from '@shared/agent-render'
+import type { BatchExportResult } from '@shared/ipc'
 
 const primaryInstance = app.requestSingleInstanceLock()
 if (!primaryInstance) app.quit()
@@ -155,24 +165,17 @@ function isInsideExportDir(abs: string): boolean {
 }
 
 function createWindow(): void {
-  const win = new BrowserWindow({
+  const win = hardenedWindow({
     width: 1400,
     height: 900,
     minWidth: 1280,
     minHeight: 720,
     title: 'VO Studio',
     backgroundColor: '#191b1e',
-    webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
-      sandbox: true,
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
   })
 
   watchDiagnostics(win.webContents)
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  win.webContents.on('will-navigate', (e) => e.preventDefault())
+  win.on('closed', () => closeRenderWorker())
 
   if (!app.isPackaged) {
     win.webContents.on('before-input-event', (_e, input) => {
@@ -180,11 +183,7 @@ function createWindow(): void {
     })
   }
 
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    void win.loadFile(path.join(__dirname, '../renderer/index.html'))
-  }
+  void loadRenderer(win)
 }
 
 const TEST_VOICE_TEXT = 'Voice test, one two three.'
@@ -266,6 +265,7 @@ function resetRepository(project: Project, revision = 0): SerialProjectRepositor
 
 async function detachCurrentRepository(): Promise<void> {
   cancelExports()
+  closeRenderWorker()
   const repository = projectRepository
   await repository?.detach()
   if (repository) await closeRecordings(repository)
@@ -274,6 +274,7 @@ async function detachCurrentRepository(): Promise<void> {
 
 function abandonProject(): void {
   cancelExports()
+  closeRenderWorker()
   if (projectRepository) void closeRecordings(projectRepository)
   projectRepository = null
   store.closeProject()
@@ -724,6 +725,8 @@ function registerHandlers(): void {
 
   typedHandle('bridge:reply', async (reply) => settleUi(bridgeReplySchema.parse(reply)))
 
+  typedHandleFrom('render:reply', async (sender, reply) => settleRender(sender.id, renderReplySchema.parse(reply)))
+
   typedHandle('suggestions:load', async () => {
     const r = await consumeSuggestionsFile(true, requireRepository())
     if (!r) {
@@ -991,7 +994,7 @@ function registerHandlers(): void {
 
   typedHandle('csv:sync', () => syncCsv())
 
-  typedHandle('export:planBatch', async (req) => planBatchExport(batchExportSchema.parse(req)))
+  typedHandleFrom('export:planBatch', async (sender, req) => planBatchExport(batchExportSchema.parse(req), sender.id))
   typedHandle('export:info', () => exportInfo())
   typedHandle('export:pickDir', async () => {
     const options: Electron.OpenDialogOptions = {
@@ -1040,6 +1043,41 @@ function registerHandlers(): void {
   typedHandle('updater:restart', async () => restartToUpdate())
 }
 
+async function renderForAgent(cueId: string, source: 'output' | 'original', expected?: SerialProjectRepository) {
+  const repository = liveRepository(expected)
+  const dir = store.getProjectDir()
+  if (!dir) throw new Error('No project is open')
+  const project = repository.projectForMain()
+  const cue = project.cues.find((c) => c.id === cueId)
+  if (!cue) throw new Error('The line was removed meanwhile; call lines, then retry.')
+  const outPath = path.join(dir, 'agent', 'renders', renderFileName(cue.key, source === 'original' ? '.original' : ''))
+  const job = lineJob(project, cue, outPath, source)
+  if (!job) return null
+  const wav = await renderLineWav(job)
+  liveRepository(expected)
+  await fs.mkdir(path.dirname(outPath), { recursive: true })
+  await encodeAnalysis(job, wav)
+  return { path: outPath, name: job.name, metrics: await measureAudio(outPath) }
+}
+
+async function exportForAgent(cueIds: string[], expected?: SerialProjectRepository): Promise<BatchExportResult> {
+  liveRepository(expected)
+  if (exportBusy()) throw new Error('The app is exporting; wait for that export to finish, then retry.')
+  const owner = await renderWorker()
+  const plan = await planBatchExport(batchExportSchema.parse({ cueIds }), owner)
+  try {
+    return await renderExportPlan(plan)
+  } finally {
+    releaseExports(owner, plan.token)
+  }
+}
+
+async function transcribeFile(file: string): Promise<string> {
+  const text = await voiceProvider().stt({ audio: await fs.readFile(file), filename: path.basename(file) })
+  pushUsage()
+  return text
+}
+
 const guardedSessions = new WeakMap<McpSession, string>()
 
 async function guardAgentWrite(session: McpSession): Promise<void> {
@@ -1078,6 +1116,10 @@ function agentServerSpec(): McpServer {
       importTable,
       reimportTemplate: reimportTemplateDir,
       transcribe,
+      renderLine: renderForAgent,
+      exportInfo,
+      exportLines: exportForAgent,
+      transcribeFile,
       provider: voiceProvider,
       diagnostics,
       screenshot: async () => {
@@ -1188,7 +1230,7 @@ if (primaryInstance) void app.whenReady().then(() => {
   void syncAgentServer()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (uiWindows().length === 0) createWindow()
   })
 
   app.on('second-instance', (_event, argv) => {
@@ -1196,11 +1238,17 @@ if (primaryInstance) void app.whenReady().then(() => {
       agentForced = true
       void syncAgentServer()
     }
-    const win = BrowserWindow.getAllWindows()[0]
+    const win = uiWindows()[0]
     if (!win) return createWindow()
     if (win.isMinimized()) win.restore()
     win.focus()
   })
+})
+
+app.on('web-contents-created', (_event, contents) => {
+  const id = contents.id
+  contents.on('render-process-gone', () => releaseExports(id))
+  contents.once('destroyed', () => releaseExports(id))
 })
 
 app.on('will-quit', () => {

@@ -20,7 +20,9 @@ import {
   findCollisions,
   hasEdits,
   isFastPath,
+  originalOnlyPlan,
   planBatch,
+  planLine,
   type PlannedTake,
   videoLines,
 } from '@shared/export-plan'
@@ -52,9 +54,10 @@ import {
 import { renderChunks, videoTimelinePlan } from '@shared/sources'
 import { sanitizeRevision } from '@shared/approval'
 import { isInsideDir } from '@shared/project-summary'
-import type { Project } from '@shared/domain'
+import { emptyEdits, type Cue, type Project } from '@shared/domain'
+import { loudnessFilter, METRICS_FILTER, parseMetrics, type AudioMetrics } from '@shared/audio-metrics'
 import * as store from './project-store'
-import { ffmpegStderr, runFfmpeg } from './ffmpeg'
+import { ffmpegStderr, parseProbe, runFfmpeg } from './ffmpeg'
 import { muxVideo } from './sources'
 
 const MAX_ENCODE_BYTES = 600 * 1024 * 1024
@@ -81,6 +84,8 @@ interface BatchPlan {
   outDir: string
   stagingDir: string
   live: boolean
+  running: boolean
+  owner: number
 }
 
 let batchPlan: BatchPlan | null = null
@@ -147,7 +152,39 @@ export async function exportInfo(): Promise<ExportInfo> {
   }
 }
 
-export async function planBatchExport(req: BatchExportRequest): Promise<ExportPlan> {
+const batchRunning = (): boolean => batchPlan?.running === true && batchPlan.live
+
+export const exportBusy = (): boolean => batchRunning() || videoRun?.live === true
+
+export function releaseExports(owner: number, token?: string): void {
+  if (batchPlan?.owner === owner && (token === undefined || batchPlan.token === token)) batchPlan.running = false
+}
+
+export function lineJob(project: Project, cue: Cue, outPath: string, source: 'output' | 'original'): ExportJob | null {
+  if (source === 'output') {
+    const item = planLine(project, cue)
+    return item ? { ...toJobs([item], path.dirname(outPath), project)[0], outPath } : null
+  }
+  const plan = originalOnlyPlan(cue, project.sources)
+  if (!plan?.originals) return null
+  return {
+    cueId: cue.id,
+    cueKey: cue.key,
+    takeId: '',
+    name: path.basename(outPath),
+    outPath,
+    srcPath: plan.originals[0].srcPath,
+    format: 'wav',
+    formatArgs: [],
+    fastPath: false,
+    hasEdits: false,
+    edits: emptyEdits(),
+    compPlan: plan,
+  }
+}
+
+export async function planBatchExport(req: BatchExportRequest, owner = 0): Promise<ExportPlan> {
+  if (batchRunning() && batchPlan?.owner !== owner) throw new Error('Another export is running; wait for it to finish')
   const { project, dir } = ctx()
   const outDir = exportDir(project, dir)
   const wanted = new Set(req.cueIds)
@@ -160,7 +197,7 @@ export async function planBatchExport(req: BatchExportRequest): Promise<ExportPl
   const token = randomUUID()
   const stagingDir = path.join(dir, STAGING_DIR)
   const jobs = toJobs(items, path.join(stagingDir, 'audio'), project)
-  batchPlan = { token, project: structuredClone(project), outDir, stagingDir, live: true }
+  batchPlan = { token, project: structuredClone(project), outDir, stagingDir, live: true, running: jobs.length > 0, owner }
   planned = new Map(jobs.map((j) => [j.outPath, j]))
   await fs.rm(stagingDir, { recursive: true, force: true })
   return { token, jobs, outDir }
@@ -205,8 +242,7 @@ const WAV_RATE_OFFSET = 24
 
 async function measureLoudness(file: string, rate?: number): Promise<LoudnessMeasure> {
   try {
-    const filter = `${rate ? `aresample=${rate},` : ''}ebur128=peak=sample,astats=measure_perchannel=none`
-    const stderr = await ffmpegStderr(['-i', file, '-af', filter, '-f', 'null', '-'])
+    const stderr = await ffmpegStderr(['-i', file, '-af', loudnessFilter(rate), '-f', 'null', '-'])
     return { lufs: parseEbur128(stderr), peak: parseSamplePeak(stderr) }
   } catch {
     return { lufs: null, peak: null }
@@ -226,8 +262,21 @@ async function postGainDb(job: ExportJob, rendered: string, rate: number): Promi
   return loudnessGainDb(reference.lufs, actual.lufs)
 }
 
-export async function encodeJob(outPath: string, wav: unknown): Promise<ExportResult> {
+export async function measureAudio(file: string): Promise<AudioMetrics> {
+  const stderr = await ffmpegStderr(['-i', file, '-af', METRICS_FILTER, '-f', 'null', '-'])
+  return parseMetrics(stderr, parseProbe(stderr))
+}
+
+export function encodeJob(outPath: string, wav: unknown): Promise<ExportResult> {
   const job = jobFor(outPath)
+  return encodeTo(job, wav, job.formatArgs)
+}
+
+export const encodeAnalysis = (job: ExportJob, wav: unknown): Promise<ExportResult> =>
+  encodeTo(job, wav, [...(job.sampleRate === undefined ? [] : ['-ar', String(job.sampleRate)]), '-c:a', 'pcm_f32le'])
+
+async function encodeTo(job: ExportJob, wav: unknown, codecArgs: string[]): Promise<ExportResult> {
+  const outPath = job.outPath
   const bytes = toBuffer(wav)
   if (bytes.length === 0) throw new Error('Rendered audio is empty')
   if (bytes.length > MAX_ENCODE_BYTES) {
@@ -245,7 +294,7 @@ export async function encodeJob(outPath: string, wav: unknown): Promise<ExportRe
       '-i',
       tmp,
       ...(gain === 0 ? [] : ['-af', `volume=${gain}dB`]),
-      ...job.formatArgs,
+      ...codecArgs,
       ...(job.sampleRate === undefined && rate !== renderedRate ? ['-ar', String(rate)] : []),
       outPath,
     ])
@@ -293,10 +342,23 @@ export async function finishExport(
   stamp: () => Promise<number | undefined>
 ): Promise<DeliverPaths> {
   if (!batchPlan || token !== batchPlan.token) throw new Error('This batch export plan is no longer current')
-  if (!batchPlan.live) throw new Error(PROJECT_CHANGED)
-  if (ctx().project.id !== batchPlan.project.id) throw new Error('The exported project is no longer open')
+  const current = batchPlan
+  try {
+    return await publishExport(current, summary, stamp)
+  } finally {
+    current.running = false
+  }
+}
+
+async function publishExport(
+  current: BatchPlan,
+  summary: ExportSummary,
+  stamp: () => Promise<number | undefined>
+): Promise<DeliverPaths> {
+  if (!current.live) throw new Error(PROJECT_CHANGED)
+  if (ctx().project.id !== current.project.id) throw new Error('The exported project is no longer open')
   const version = await stamp()
-  const { project, outDir, stagingDir } = batchPlan
+  const { project, outDir, stagingDir } = current
   for (const f of summary.failed) {
     const outPath = path.join(stagingDir, 'audio', f.name)
     if (planned.has(outPath)) await fs.rm(outPath, { force: true })

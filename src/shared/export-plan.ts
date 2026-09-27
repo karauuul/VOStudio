@@ -183,16 +183,19 @@ export function outputTakeOf(cue: Cue, project?: TakeLookup): Take | undefined {
   return cue.takes.find((t) => t.id === cue.finalTakeId)
 }
 
+export function planLine(project: Project, cue: Cue): PlannedTake | undefined {
+  if (cue.status === 'excluded' || !hasValidVoicedOutput(cue, project)) return undefined
+  const take = outputTakeOf(cue, project)
+  return take ? { cue, take, name: exportName(project, cue, take) } : undefined
+}
+
 export function planBatch(project: Project): PlannedTake[] {
-  const out: PlannedTake[] = []
-  for (const cue of project.cues) {
-    if (cue.status === 'excluded') continue
-    if (!hasValidVoicedOutput(cue, project)) continue
-    const take = outputTakeOf(cue, project)
-    if (!take) continue
-    out.push({ cue, take, name: exportName(project, cue, take) })
-  }
-  return out
+  return project.cues.map((cue) => planLine(project, cue)).filter((p): p is PlannedTake => p !== undefined)
+}
+
+export function originalOnlyPlan(cue: Cue, sources: ProjectSource[] | undefined): CompPlan | undefined {
+  const ref = originalRef(cue, sources)
+  return ref ? { clips: [], originals: [{ ...ref, gainDb: 0 }] } : undefined
 }
 
 const nameKey = (name: string): string => name.toLowerCase()

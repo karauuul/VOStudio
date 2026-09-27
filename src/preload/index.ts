@@ -20,6 +20,7 @@ const channelMap: Record<IpcChannel, true> = {
   'project:restoreVersion': true,
   'ui:save': true,
   'bridge:reply': true,
+  'render:reply': true,
 
   'suggestions:load': true,
 
@@ -85,6 +86,8 @@ const eventMap: Record<EventChannel, true> = {
   'project:opened': true,
   'project:closed': true,
   'bridge:request': true,
+  'render:line': true,
+  'render:plan': true,
 }
 
 const api = {} as Record<string, unknown>

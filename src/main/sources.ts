@@ -18,9 +18,11 @@ import {
   parseSilence,
   regionCues,
   regionsBetween,
+  SILENCE_MIN,
   transcriptRegions,
   type DetectedRegion,
 } from '@shared/sources'
+import { silenceFilter } from '@shared/audio-metrics'
 import { ffmpegStderr, probeMedia, runFfmpeg } from './ffmpeg'
 import { voiceProvider } from './providers/voice-provider'
 
@@ -104,7 +106,7 @@ async function silenceRegions(source: ProjectSource): Promise<DetectedRegion[]> 
     '-i',
     source.file.relPath,
     '-af',
-    `silencedetect=noise=${SILENCE_DB}dB:d=0.6`,
+    silenceFilter(SILENCE_DB, SILENCE_MIN),
     '-f',
     'null',
     '-',

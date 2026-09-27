@@ -294,6 +294,21 @@ export interface BridgeReply {
   error?: string
 }
 
+export interface RenderLineRequest {
+  id: string
+  job: ExportJob
+}
+
+export interface RenderPlanRequest {
+  id: string
+  plan: ExportPlan
+}
+
+export interface RenderReply extends BridgeReply {
+  wav?: ArrayBuffer
+  result?: BatchExportResult
+}
+
 export interface IpcApi {
   'project:list': () => Promise<ProjectSummary[]>
   'project:open': (dir: string) => Promise<SerializedSnapshot | null>
@@ -313,6 +328,7 @@ export interface IpcApi {
   'project:restoreVersion': (req: { n: number }) => Promise<SerializedSnapshot>
   'ui:save': (ui: UiSessionState) => Promise<void>
   'bridge:reply': (reply: BridgeReply) => Promise<void>
+  'render:reply': (reply: RenderReply) => Promise<void>
 
   'suggestions:load': () => Promise<SuggestionsLoadResult>
 
@@ -385,6 +401,8 @@ export interface IpcEvents {
   'project:opened': SerializedSnapshot
   'project:closed': null
   'bridge:request': BridgeRequest
+  'render:line': RenderLineRequest
+  'render:plan': RenderPlanRequest
 }
 
 export type EventChannel = keyof IpcEvents

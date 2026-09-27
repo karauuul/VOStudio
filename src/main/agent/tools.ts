@@ -10,6 +10,8 @@ import { audioWithinRoots, type CommandResult, type FieldStep, type ProjectComma
 import type { ProjectSummary } from '@shared/project-summary'
 import type {
   AudioImportResult,
+  BatchExportResult,
+  ExportInfo,
   ReimportResult,
   TableImportResult,
   TablePreview,
@@ -20,6 +22,10 @@ import type { MatchRule } from '@shared/domain'
 import { DEFAULT_MATCH_RULE, TABLE_COLUMNS_MAX } from '@shared/import-table'
 import { ALL_CHARACTERS, filterCues } from '@shared/cue-filter'
 import { glossaryIssues, removeTerms, translationContext, upsertTerms, type TextMatchReport } from '@shared/agent-text'
+import { transcriptMatch } from '@shared/agent-render'
+import type { AudioMetrics } from '@shared/audio-metrics'
+import { findCollisions, originalLength, planBatch } from '@shared/export-plan'
+import { readinessRows, statusWords, summarize } from '@shared/readiness'
 import {
   cursorOffset,
   findCharacter,
@@ -36,6 +42,14 @@ import type { SerialProjectRepository } from '../project-repository'
 import type { VoiceProvider } from '../providers/voice-provider'
 import { projectCommandSchema } from '../schemas'
 import type { DiagnosticEntry } from './diagnostics'
+
+export type RenderSource = 'output' | 'original'
+
+export interface LineRender {
+  path: string
+  name: string
+  metrics: AudioMetrics
+}
 
 export interface AgentDeps {
   version: string
@@ -57,6 +71,10 @@ export interface AgentDeps {
   importTable: (req: TableRequest, expected?: SerialProjectRepository) => Promise<TableImportResult>
   reimportTemplate: (dir: string, expected?: SerialProjectRepository) => Promise<ReimportResult>
   transcribe: (req: { cueIds: string[]; overwrite?: boolean }, expected?: SerialProjectRepository) => Promise<{ updated: number; skipped: number }>
+  renderLine: (cueId: string, source: RenderSource, expected?: SerialProjectRepository) => Promise<LineRender | null>
+  exportInfo: () => Promise<ExportInfo>
+  exportLines: (cueIds: string[], expected?: SerialProjectRepository) => Promise<BatchExportResult>
+  transcribeFile: (file: string) => Promise<string>
   provider: () => VoiceProvider
   diagnostics: () => DiagnosticEntry[]
   screenshot: () => Promise<Buffer | null>
@@ -69,6 +87,7 @@ export const AGENT_INSTRUCTIONS = [
   'Nothing here deletes audio: takes stay on disk and a version named "Before agent" is saved before your first change to a project.',
   'Text pipeline order: import (audio folder, subtitle table, template), then transcribe or a subtitle table matched by text, then translate_context, translations_suggest and glossary_check.',
   'Voice generation costs money and is not available through these tools yet.',
+  'Check lines with render (exact export audio and its metrics) or verify (speech-to-text against the line text, costs money) before export; call export with dryRun first to see readiness and file names.',
   'Use screenshot and diagnostics to check what the user sees.',
 ].join(' ')
 
@@ -101,6 +120,7 @@ const termRow = z.object({
 export const TRANSCRIBE_PAGE_MAX = 500
 export const CONTEXT_PAGE_MAX = 50
 export const REPORT_LIST_MAX = 100
+export const EXPORT_PAGE_MAX = 200
 
 const PROJECT_SWITCHED = 'The project was closed or switched during this call; call status, then retry.'
 
@@ -129,6 +149,49 @@ function textMatchView(report: TextMatchReport | undefined): Record<string, unkn
 }
 
 const reason = (error: unknown): string => errorText(error).replace(/\.$/, '')
+
+const round3 = (n: number): number => Math.round(n * 1000) / 1000
+
+async function liveCall<T>(repository: SerialProjectRepository, call: () => Promise<T>): Promise<T> {
+  try {
+    const result = await call()
+    if (!repository.isLive()) throw new Error(PROJECT_SWITCHED)
+    return result
+  } catch (error) {
+    throw repository.isLive() ? error : new Error(PROJECT_SWITCHED)
+  }
+}
+
+interface RenderedLine {
+  source: RenderSource
+  render: LineRender
+  view: Record<string, unknown>
+}
+
+async function renderCue(deps: AgentDeps, cue: Cue, withOriginal: boolean): Promise<RenderedLine> {
+  const repository = requireRepository(deps)
+  const render = (source: RenderSource): Promise<LineRender | null> => liveCall(repository, () => deps.renderLine(cue.id, source, repository))
+  const output = await render('output')
+  const rendered = output ?? (await render('original'))
+  if (!rendered) throw new Error(`Line ${cue.key} has no voiced output and no original audio to render.`)
+  const source: RenderSource = output ? 'output' : 'original'
+  const original = withOriginal && output ? await render('original') : null
+  const reference = originalLength(cue) ?? null
+  return {
+    source,
+    render: rendered,
+    view: {
+      line: cue.key,
+      source,
+      path: rendered.path,
+      ...(output ? { exportName: rendered.name } : {}),
+      metrics: rendered.metrics,
+      referenceDuration: reference,
+      durationDiff: reference === null ? null : round3(rendered.metrics.duration - reference),
+      ...(original ? { original: { path: original.path, metrics: original.metrics } } : {}),
+    },
+  }
+}
 
 function requireRepository(deps: AgentDeps): SerialProjectRepository {
   const repository = deps.repository()
@@ -711,6 +774,105 @@ export function agentTools(deps: AgentDeps): McpTool[] {
       async run(_ctx, args) {
         if (args.set !== undefined) await execute(deps, { type: 'rules.set', text: args.set })
         return structured({ rules: requireRepository(deps).projectForMain().pronunciationRules })
+      },
+    }),
+    defineTool({
+      name: 'render',
+      title: 'Render line',
+      description:
+        'Render one line exactly as export would (same audio graph, loudness and sample rate; always 32-bit float WAV) into agent/renders in the project folder, overwriting the previous render, and measure it: duration, integrated LUFS, true peak, sample peak, RMS, leading and trailing silence, clipping. A line without exportable voiced output renders its original. withOriginal also renders and measures the original next to it.',
+      input: z.object({ line: lineRef, withOriginal: z.boolean().optional() }),
+      annotations: { ...WRITE, idempotentHint: true },
+      writes: () => false,
+      async run(_ctx, args) {
+        const pinned = pin(deps)
+        const cue = findLine(requireRepository(pinned).projectForMain(), args.line)
+        return structured((await renderCue(pinned, cue, args.withOriginal === true)).view)
+      },
+    }),
+    defineTool({
+      name: 'verify',
+      title: 'Verify line',
+      description:
+        'Render one line like render does, transcribe the render with the voice provider and compare it word by word with the line text (the original text when the original was rendered): similarity 0 to 1, missing and extra words, plus the render metrics. Speech-to-text may cost money.',
+      input: z.object({ line: lineRef }),
+      annotations: { ...WRITE, idempotentHint: true, openWorldHint: true },
+      writes: () => false,
+      async run(_ctx, args) {
+        const pinned = pin(deps)
+        const repository = requireRepository(pinned)
+        const cue = findLine(repository.projectForMain(), args.line)
+        const rendered = await renderCue(pinned, cue, false)
+        const expected = rendered.source === 'output' ? cue.text : cue.sourceText
+        if (!expected.trim()) {
+          throw new Error(`Line ${cue.key} has no ${rendered.source === 'output' ? 'text' : 'original text'} to compare the audio with.`)
+        }
+        let heard: string
+        try {
+          heard = await liveCall(repository, () => deps.transcribeFile(rendered.render.path))
+        } catch (error) {
+          if (!repository.isLive()) throw error
+          throw new Error(`Transcription is unavailable for this audio (${reason(error)}); render gives the metrics without it.`)
+        }
+        return structured({ ...rendered.view, expected, heard, ...transcriptMatch(expected, heard) })
+      },
+    }),
+    defineTool({
+      name: 'export',
+      title: 'Export',
+      description: `Export ready lines to the project export folder exactly like the Export room: all ready lines, or only lines, a line filter, or changed (ready lines changed since the last export). Lines that are not ready are skipped with the reason. dryRun writes nothing and returns readiness counts, planned file names (at most ${EXPORT_PAGE_MAX} per page; follow nextCursor), skipped lines, name collisions and the output folder.`,
+      input: z
+        .object({
+          ...lineSelection,
+          changed: z.literal(true).optional(),
+          dryRun: z.boolean().optional(),
+          cursor: pageCursor.optional(),
+          limit: z.number().int().min(1).max(EXPORT_PAGE_MAX).optional(),
+        })
+        .refine((a) => [a.lines, a.filter, a.changed].filter((v) => v !== undefined).length <= 1, {
+          message: 'pass at most one of lines, filter or changed',
+        }),
+      annotations: WRITE,
+      writes: (args) => args.dryRun !== true,
+      async run(_ctx, args) {
+        const pinned = pin(deps)
+        const repository = requireRepository(pinned)
+        const info = await deps.exportInfo()
+        const project = repository.projectForMain()
+        const rows = readinessRows(project, info.last?.lines ?? {})
+        const chosen = args.lines || args.filter ? new Set(selectLines(pinned, args).map((c) => c.id)) : null
+        const scope = rows.filter((r) => (chosen ? chosen.has(r.cueId) : true) && (args.changed ? r.changed : true))
+        const ready = scope.filter((r) => r.status === 'ready')
+        const notReady = scope.filter((r) => r.status !== 'ready')
+        const skipped = {
+          skippedTotal: notReady.length,
+          skipped: notReady.slice(0, REPORT_LIST_MAX).map((r) => ({ line: r.cueKey, reason: statusWords(r) })),
+        }
+        if (args.dryRun) {
+          const byId = new Map(project.cues.map((c) => [c.id, c]))
+          const { page, nextCursor } = stablePage(ready, (r) => byId.get(r.cueId) as Cue, project.cues, args.cursor, args.limit ?? 100)
+          return structured({
+            dryRun: true,
+            outDir: info.outDir,
+            summary: summarize(project, rows),
+            ready: ready.length,
+            files: page.map((r) => ({ line: r.cueKey, name: r.name, changed: r.changed, duration: r.outputLength ?? null })),
+            ...skipped,
+            collisions: findCollisions(planBatch(project)).slice(0, REPORT_LIST_MAX).map((c) => ({ name: c.name, lines: c.cueKeys })),
+            ...(nextCursor === undefined ? {} : { nextCursor }),
+          })
+        }
+        if (ready.length === 0) throw new Error('None of the selected lines is ready to export; call export with dryRun to see why.')
+        const result = await liveCall(repository, () => deps.exportLines(ready.map((r) => r.cueId), repository))
+        return structured({
+          written: result.written,
+          failed: result.failed.slice(0, REPORT_LIST_MAX).map((f) => ({ line: f.cueKey, name: f.name, reason: f.error })),
+          outDir: result.outDir,
+          reportPath: result.reportPath ?? null,
+          ...(result.indexPath ? { indexPath: result.indexPath } : {}),
+          ...(result.version === undefined ? {} : { version: result.version }),
+          ...skipped,
+        })
       },
     }),
     defineTool({
