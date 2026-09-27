@@ -27,7 +27,7 @@ interface Props {
   onStatus: (kind: StatusKind, text: string) => void
   onOpenCue: (cueId: string) => void
   onCommand: (command: ProjectCommand) => void
-  beginExport: () => Promise<boolean>
+  beginExport: () => Promise<AbortSignal | null>
   endExport: () => void
 }
 
@@ -131,18 +131,20 @@ export const ExportRoom = memo(function ExportRoom({
         r.status === 'ready' && (!changedOnly || r.changed)
       const cueIds = rows.filter(pick).map((r) => r.cueId)
       if (cueIds.length === 0) return
-      if (!(await beginExport())) return
+      const signal = await beginExport()
+      if (!signal) return
       setBusy(true)
       setError('')
       setProgress(null)
       try {
         const plan = await api['export:planBatch']({ cueIds })
-        const result = await runPlan(plan, setProgress)
+        const result = await runPlan(plan, setProgress, signal)
         let written = 0
         for (const v of videos) {
+          signal.throwIfAborted()
           const videoPlan = await api['export:videoPlan'](v.id)
           if (!videoPlan) continue
-          await runVideo(videoPlan, setProgress)
+          await runVideo(videoPlan, setProgress, signal)
           written++
         }
         onStatus(
@@ -152,7 +154,7 @@ export const ExportRoom = memo(function ExportRoom({
             : `Exported ${result.written}${written > 0 ? ` + ${written} video` : ''} to ${result.outDir}`
         )
       } catch (e) {
-        setError(String(e))
+        if (!signal.aborted) setError(String(e))
       } finally {
         setProgress(null)
         setBusy(false)

@@ -275,7 +275,7 @@ export function useVoiceToVoice({
       submitJob({
         kind: 'sts',
         cueId,
-        run: async () => {
+        run: async (live) => {
           const take = await api['provider:sts']({
             cueId,
             sourceTakeId,
@@ -283,6 +283,7 @@ export function useVoiceToVoice({
             selectOutput: false,
             ...(fragment ? { fragment: true } : {}),
           })
+          if (!live()) return
           onTakeAdded(cueId, take)
           await onPlace(cueId, take)
           if (isActiveCue(cueId)) {

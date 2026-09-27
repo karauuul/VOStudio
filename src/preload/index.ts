@@ -81,6 +81,8 @@ const eventMap: Record<EventChannel, true> = {
   'project:changed': true,
   'updater:status': true,
   'recordings:recovered': true,
+  'project:opened': true,
+  'project:closed': true,
 }
 
 const api = {} as Record<string, unknown>
