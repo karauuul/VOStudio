@@ -1,4 +1,5 @@
 export const END_EPS = 0.02
+export const LOOP_AHEAD = 0.2
 
 export interface ResumeBounds {
   dur: number
@@ -20,4 +21,8 @@ export function playBounds(
   if (!region) return { from: 0, until: d + Math.max(0, tail) }
   const from = Math.min(Math.max(0, region.in), d)
   return { from, until: Math.max(from, region.out) }
+}
+
+export function nextPassAt(now: number, end: number): number | null {
+  return now < end - LOOP_AHEAD ? null : Math.max(end, now)
 }

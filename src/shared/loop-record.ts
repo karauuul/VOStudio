@@ -1,5 +1,6 @@
 export const LOOP_PASS_MAX = 1000
 export const LOOP_PARTIAL_MIN_SECONDS = 0.1
+export const LOOP_MARK_SLACK_SECONDS = 0.05
 
 export interface PassRange {
   from: number
@@ -29,9 +30,16 @@ export function loopPlan(take: LoopTake): LoopPlan {
   if (!(length > 0) || !(frames > 0)) return EMPTY
   const shift = Math.round(take.latency * rate)
   const minPartial = Math.max(1, Math.round(LOOP_PARTIAL_MIN_SECONDS * rate))
-  const starts = [...new Set(take.marks.filter(Number.isFinite).map((m) => Math.round(m) + shift))]
+  const slack = Math.round(LOOP_MARK_SLACK_SECONDS * rate)
+  const marks = [...new Set(take.marks.filter(Number.isFinite).map((m) => Math.round(m) + shift))]
     .sort((a, b) => a - b)
     .filter((from) => from < frames)
+  const starts: number[] = []
+  for (const mark of marks) {
+    const last = starts.at(-1)
+    const start = last !== undefined && Math.abs(mark - (last + length)) <= slack ? last + length : mark
+    if (last === undefined || start > last) starts.push(start)
+  }
 
   const passes: PassRange[] = []
   let place: number | null = null

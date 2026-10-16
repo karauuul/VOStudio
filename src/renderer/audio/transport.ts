@@ -8,7 +8,7 @@ import {
   type OriginalVoice,
 } from './clip-graph'
 import type { ResolvedComp } from './comp-source'
-import { playBounds, resumeAt } from '@shared/resume'
+import { nextPassAt, playBounds, resumeAt } from '@shared/resume'
 import { Lru } from '@shared/lru'
 import { DECODE_BUDGET_BYTES } from '@shared/take-import'
 import { ensureEffectWorklets } from './effect-worklets'
@@ -212,6 +212,7 @@ interface CompState {
   at: number
   startPos: number
   bus: Bus | null
+  next: { bus: Bus; at: number } | null
   once?: boolean
   onLoop?: () => void
 }
@@ -389,10 +390,7 @@ function teardown(): void {
     killVoice(voice)
     voice = null
   }
-  if (comp?.bus) {
-    killBus(comp.bus)
-    comp.bus = null
-  }
+  if (comp) killBuses(comp)
   playing = false
   wantPlay = false
   resolveWaiters()
@@ -400,7 +398,7 @@ function teardown(): void {
 
 function dropComp(): void {
   if (!comp) return
-  if (comp.bus) killBus(comp.bus)
+  killBuses(comp)
   comp = null
 }
 
@@ -500,20 +498,28 @@ function onClipEnded(): void {
   emit({ clipId: c?.id ?? null, playing: false, pos: 0, dur: c?.dur ?? 0 })
 }
 
+function killBuses(s: CompState): void {
+  if (s.bus) killBus(s.bus)
+  if (s.next) killBus(s.next.bus)
+  s.bus = null
+  s.next = null
+}
+
+function passBus(s: CompState, when: number, p: number): Bus {
+  return makeCompBus(s.sources, when, p, p < s.until ? s.until : Infinity, s.tracks, s.originals)
+}
+
 function startComp(pos: number, rewindAtEnd: boolean): void {
   const s = comp
   if (!s) return
   const c = ac()
   void c.resume().catch(() => {})
-  if (s.bus) {
-    killBus(s.bus)
-    s.bus = null
-  }
+  killBuses(s)
   const p = resumeAt(pos, { dur: s.dur, end: s.until, from: s.from }, rewindAtEnd)
   const when = c.currentTime + LEAD_IN
   s.at = when
   s.startPos = p
-  s.bus = makeCompBus(s.sources, when, p, p < s.until ? s.until : Infinity, s.tracks, s.originals)
+  s.bus = passBus(s, when, p)
   playing = true
   pausedPos = p
   emit({ clipId: s.id, playing: true, pos: p, dur: s.dur })
@@ -603,6 +609,7 @@ export async function playComp(
     at: 0,
     startPos: 0,
     bus: null,
+    next: null,
     ...(opts.once ? { once: true } : {}),
     ...(opts.onLoop ? { onLoop: opts.onLoop } : {}),
   }
@@ -750,19 +757,29 @@ function tick(): void {
   if (mode === 'comp' && comp) {
     const s = comp
     const stopAt = s.startPos < s.until ? s.until : s.dur
-    if (now >= s.at + (stopAt - s.startPos)) {
-      if (s.onLoop) {
-        startComp(s.from, false)
-        s.onLoop()
+    const end = s.at + (stopAt - s.startPos)
+    const loops = !!s.onLoop || (looping && !s.once)
+    if (!loops && s.next) {
+      killBus(s.next.bus)
+      s.next = null
+    }
+    const nextAt = loops && !s.next ? nextPassAt(now, end) : null
+    if (nextAt !== null) s.next = { bus: passBus(s, nextAt, s.from), at: nextAt }
+    if (now >= end) {
+      if (!s.next) {
+        teardown()
+        pausedPos = stopAt >= s.dur ? s.from : stopAt
+        emit({ clipId: s.id, playing: false, pos: pausedPos, dur: s.dur })
         return
       }
-      teardown()
-      pausedPos = stopAt >= s.dur ? s.from : stopAt
-      if (looping && !s.once) {
-        startComp(s.from, false)
-        return
-      }
-      emit({ clipId: s.id, playing: false, pos: pausedPos, dur: s.dur })
+      if (s.bus) killBus(s.bus)
+      s.bus = s.next.bus
+      s.at = s.next.at
+      s.startPos = s.from
+      s.next = null
+      emit({ clipId: s.id, playing: true, pos: compPos(), dur: s.dur })
+      startTicking()
+      s.onLoop?.()
       return
     }
     emit({ clipId: s.id, playing: true, pos: compPos(), dur: s.dur })

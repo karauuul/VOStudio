@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resumeAt } from '../src/shared/resume'
+import { LOOP_AHEAD, nextPassAt, resumeAt } from '../src/shared/resume'
 
 const clip = (dur: number) => ({ dur, end: dur, from: 0 })
 
@@ -32,5 +32,34 @@ describe('resume position', () => {
     expect(resumeAt(6, region, true)).toBe(2)
     expect(resumeAt(8, region, true)).toBe(2)
     expect(resumeAt(8, region, false)).toBe(8)
+  })
+})
+
+describe('loop pass schedule', () => {
+  const first = { at: 0.06, startPos: 0, stopAt: 1 }
+  const end = first.at + (first.stopAt - first.startPos)
+
+  it('waits until the pass end is within the lookahead', () => {
+    expect(nextPassAt(0.5, end)).toBeNull()
+    expect(nextPassAt(end - LOOP_AHEAD - 0.001, end)).toBeNull()
+  })
+
+  it('starts the next pass exactly where the previous one ends', () => {
+    expect(nextPassAt(end - LOOP_AHEAD, end)).toBe(1.06)
+    expect(nextPassAt(1.04, end)).toBe(1.06)
+  })
+
+  it('chains passes on the audio clock without drift', () => {
+    let at = first.at
+    for (let k = 0; k < 100; k++) {
+      const next = nextPassAt(at + 1 - 0.05, at + 1)
+      expect(next).not.toBeNull()
+      at = next as number
+    }
+    expect(at).toBeCloseTo(100.06, 9)
+  })
+
+  it('never schedules into the past when the clock overran the boundary', () => {
+    expect(nextPassAt(1.1, end)).toBe(1.1)
   })
 })
