@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { applyProjectCommand, type ProjectCommand } from '../src/shared/project-commands'
+import { applyProjectCommand, outputStateKey, type ProjectCommand } from '../src/shared/project-commands'
 import { emptyEdits, type Character, type Cue, type CueComp, type Project } from '../src/shared/domain'
-import { lineStepCommand, recordLineEdit, runLineStep, steppedEdit, type LineHistory, type StepDir } from '../src/shared/line-history'
+import { lineStepCommand, outputStateOf, recordLineEdit, runLineStep, steppedEdit, type LineHistory, type StepDir } from '../src/shared/line-history'
 import { externalChanges } from '../src/shared/undo-route'
 
 const cue = (id: string, over: Partial<Cue> = {}): Cue => ({
@@ -109,6 +109,19 @@ describe('agent line edits are undoable', () => {
     const final = externalChanges(structuredClone(q), applyProjectCommand(q, { type: 'cue.setFinalTake', cueId: 'L1', takeId: 't' }), 'agent')
     expect(final.lineEdits).toEqual([])
     expect([...final.lines]).toEqual(['L1'])
+  })
+
+  it('leaves output invalidated by agent effect edits to the effect history', () => {
+    const take = { id: 't', kind: 'tts' as const, createdAt: 'now', file: { fileId: 't', relPath: 't.mp3', format: 'mp3' as const }, duration: 2, meta: {}, edits: emptyEdits() }
+    const p = project([cue('L1', { text: 'x', status: 'translated', takes: [take] })])
+    applyProjectCommand(p, { type: 'cue.setFinalTake', cueId: 'L1', takeId: 't' })
+    const before = structuredClone(p)
+    const effects = { delay: { time: 0.2, feedback: 0.3, mix: 0.4 } }
+    const external = externalChanges(before, applyProjectCommand(p, { type: 'cue.setTakeEffects', cueId: 'L1', takeId: 't', effects }), 'agent')
+    expect(outputStateKey(outputStateOf(p.cues[0]))).not.toBe(outputStateKey(outputStateOf(before.cues[0])))
+    expect(external.effectEdits).toHaveLength(1)
+    expect(external.lineEdits).toEqual([])
+    expect([...external.lines]).toEqual(['L1'])
   })
 
   it('keeps dropping line history for changes that are not from the agent', () => {

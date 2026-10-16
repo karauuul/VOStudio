@@ -19,7 +19,7 @@ import {
   type VoiceSettings,
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '@shared/ipc'
-import { externalChanges, pickHistory, pruneEffectsHistory, recordExternalEffects, redoStale, type TakeEffectsEdit, type UndoSide } from '@shared/undo-route'
+import { externalChanges, pickHistory, pruneEffectsHistory, recordExternalEffects, redoStale, staleRedo, type TakeEffectsEdit, type UndoSide } from '@shared/undo-route'
 import { dropCompRedo, nextCompEdit, pruneCompHistory, recordCompEdit, type CompHistory } from '@shared/comp-history'
 import { PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
 import { hasSourceMaterial } from '@shared/import-table'
@@ -258,10 +258,13 @@ export default function App() {
     )
   }, [])
 
-  const onEdit = useCallback(() => {
-    fxRedoRef.current = []
-    linesRef.current.redo = []
-    dropCompRedo(compHistRef.current)
+  const onEdit = useCallback((): (() => void) => {
+    const kept = staleRedo([fxRedoRef.current, linesRef.current.redo, ...[...compHistRef.current.values()].map((stacks) => stacks.redo)])
+    return () => {
+      fxRedoRef.current = fxRedoRef.current.filter(kept)
+      linesRef.current.redo = linesRef.current.redo.filter(kept)
+      for (const stacks of compHistRef.current.values()) stacks.redo = stacks.redo.filter(kept)
+    }
   }, [])
 
   const onExternal = useCallback((before: Project | null, changes: ChangeSet, origin?: ChangeOrigin) => {

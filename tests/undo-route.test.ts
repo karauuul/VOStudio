@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { dropLineEdits, type LineHistory } from '../src/shared/line-history'
 import { emptyEdits, type Cue, type CueComp } from '../src/shared/domain'
-import { dropCompRedo, recordCompEdit, stepCompEdit, type CompHistory } from '../src/shared/comp-history'
-import { externalChanges, pickHistory, pruneEffectsHistory, recordExternalEffects, redoStale, sendEdit, takeKey, type TakeEffectsEdit } from '../src/shared/undo-route'
+import { recordCompEdit, stepCompEdit, type CompHistory } from '../src/shared/comp-history'
+import { externalChanges, pickHistory, pruneEffectsHistory, recordExternalEffects, redoStale, sendEdit, staleRedo, takeKey, type TakeEffectsEdit } from '../src/shared/undo-route'
 
 describe('undo routing between comp and take-effect histories', () => {
   it('undoes the newer entry first', () => {
@@ -171,22 +171,42 @@ describe('externalChanges effects', () => {
 })
 
 describe('sendEdit', () => {
-  it('keeps a redo step made while an earlier edit waits for its acknowledgement', async () => {
-    const history: CompHistory = new Map()
-    const comp: CueComp = { clips: [] }
-    recordCompEdit(history, 'a', null, 1)
+  const setup = () => {
+    const comps: CompHistory = new Map()
+    const lines: LineHistory = { undo: [], redo: [{ kind: 'done', cueId: 'b', textRevision: 0, before: { status: 'generated' }, after: { status: 'approved' }, at: 0 }] }
+    const onEdit = (): (() => void) => {
+      const kept = staleRedo([lines.redo, ...[...comps.values()].map((stacks) => stacks.redo)])
+      return () => {
+        lines.redo = lines.redo.filter(kept)
+        for (const stacks of comps.values()) stacks.redo = stacks.redo.filter(kept)
+      }
+    }
+    return { comps, lines, onEdit }
+  }
+
+  it('keeps a redo step made while an earlier edit waits for its acknowledgement and drops older ones', async () => {
+    const { comps, lines, onEdit } = setup()
+    recordCompEdit(comps, 'a', null, 1)
     let ack: () => void = () => {}
-    const sent = sendEdit(() => new Promise<void>((resolve) => (ack = resolve)), false, () => dropCompRedo(history))
-    stepCompEdit(history, 'a', 'undo', comp)
+    const sent = sendEdit(() => new Promise<void>((resolve) => (ack = resolve)), false, onEdit)
+    stepCompEdit(comps, 'a', 'undo', { clips: [] })
     ack()
     await sent
-    expect(history.get('a')?.redo).toHaveLength(1)
+    expect(comps.get('a')?.redo).toHaveLength(1)
+    expect(lines.redo).toEqual([])
+  })
+
+  it('keeps redo when the command is rejected', async () => {
+    const { lines, onEdit } = setup()
+    await expect(sendEdit(() => Promise.reject(new Error('refused')), false, onEdit)).rejects.toThrow('refused')
+    expect(lines.redo).toHaveLength(1)
   })
 
   it('does not invalidate redo for replayed steps', async () => {
     let edits = 0
-    await sendEdit(() => Promise.resolve(), true, () => edits++)
-    await sendEdit(() => Promise.resolve(), false, () => edits++)
+    const onEdit = (): (() => void) => () => edits++
+    await sendEdit(() => Promise.resolve(), true, onEdit)
+    await sendEdit(() => Promise.resolve(), false, onEdit)
     expect(edits).toBe(1)
   })
 })

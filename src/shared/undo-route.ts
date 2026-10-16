@@ -25,9 +25,16 @@ export function pickHistory(times: UndoTimes, dir: 'undo' | 'redo'): UndoSide | 
   return best
 }
 
-export function sendEdit<T>(send: () => Promise<T>, replay: boolean, onEdit: () => void): Promise<T> {
-  if (!replay) onEdit()
-  return send()
+export async function sendEdit<T>(send: () => Promise<T>, replay: boolean, onEdit: () => () => void): Promise<T> {
+  const invalidate = replay ? null : onEdit()
+  const result = await send()
+  invalidate?.()
+  return result
+}
+
+export function staleRedo(stacks: readonly (readonly object[])[]): (entry: object) => boolean {
+  const stale = new Set(stacks.flat())
+  return (entry) => !stale.has(entry)
 }
 
 export function redoStale(redoAt: number | null, otherUndoAt: number | null): boolean {
@@ -115,6 +122,7 @@ export function externalChanges(before: Pick<Project, 'cues'> | null, changes: C
   const prior = new Map((before?.cues ?? []).map((cue) => [cue.id, cue]))
   const created: string[] = []
   const fields: FieldStep[] = []
+  const outputs: Extract<LineChange, { kind: 'done' }>[] = []
   for (const cue of changes.cues) {
     const was = prior.get(cue.id)
     if (compKey(was?.comp) !== compKey(cue.comp)) {
@@ -127,7 +135,7 @@ export function externalChanges(before: Pick<Project, 'cues'> | null, changes: C
       if (lineAgent && !was && changes.cueIndex?.[cue.id] !== undefined) created.push(cue.id)
       else if (step) fields.push(step)
       else if (own && outputSourceKey(was) === outputSourceKey(cue) && outputStateKey(outputStateOf(was)) !== outputStateKey(outputStateOf(cue))) {
-        out.lineEdits.push({ kind: 'done', cueId: cue.id, textRevision: sanitizeRevision(was.textRevision), before: outputStateOf(was), after: outputStateOf(cue) })
+        outputs.push({ kind: 'done', cueId: cue.id, textRevision: sanitizeRevision(was.textRevision), before: outputStateOf(was), after: outputStateOf(cue) })
       } else out.lines.add(cue.id)
     }
     for (const take of cue.takes) {
@@ -137,6 +145,11 @@ export function externalChanges(before: Pick<Project, 'cues'> | null, changes: C
         out.effectEdits.push({ cueId: cue.id, takeId: take.id, prev: old.edits.effects, next: take.edits.effects })
       } else out.effects.add(takeKey(cue.id, take.id))
     }
+  }
+  const effectsChanged = out.effects.size > 0 || out.effectEdits.length > 0
+  for (const change of outputs) {
+    if (effectsChanged) out.lines.add(change.cueId)
+    else out.lineEdits.push(change)
   }
   if (created.length > 0 || fields.length > 0) {
     out.lineEdits.push({ kind: 'table', ids: created, snapshots: [], fields, characters: [], focus: created[0] ?? fields[0].cueId })
