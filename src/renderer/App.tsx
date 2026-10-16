@@ -488,10 +488,10 @@ export default function App() {
 
   if (previewCueId !== activeCue?.id) {
     setPreviewCueId(activeCue?.id)
-    setPreviewSource(activeCue ? initialPreviewSource(activeCue) : { kind: 'none' })
+    setPreviewSource(activeCue ? initialPreviewSource(activeCue, project ?? undefined) : { kind: 'none' })
     setSourceTakeId(null)
   } else if (activeCue && previewSource.kind === 'comp' && isEmptyComp(activeCue.comp)) {
-    setPreviewSource(initialPreviewSource(activeCue))
+    setPreviewSource(initialPreviewSource(activeCue, project ?? undefined))
   }
 
   previewSourceRef.current = previewSource
@@ -579,13 +579,14 @@ export default function App() {
   const makeFinal = useCallback(() => {
     const cue = activeCue
     if (!cue) return
-    const current = outputSource(cue)
+    const lookup = projectRef.current ?? undefined
+    const current = outputSource(cue, lookup)
     if (current && sameSource(current, previewSource)) return
     if (previewSource.kind === 'take') {
       onSetFinal(previewSource.takeId)
       return
     }
-    if (previewSource.kind === 'comp' && cue.comp && setFinalEligible(cue, previewSource)) {
+    if (previewSource.kind === 'comp' && cue.comp && setFinalEligible(cue, previewSource, lookup)) {
       onSetComp(cue.id, cue.comp)
     }
   }, [activeCue, previewSource, onSetFinal, onSetComp])

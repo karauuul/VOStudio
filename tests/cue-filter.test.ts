@@ -237,3 +237,25 @@ describe('outputDuration and deltaLabel', () => {
     expect(deltaLabel(cue({ takes: [{ ...take(), duration: 3.1 }], finalTakeId: 't1' }))).toBe('n/a')
   })
 })
+
+describe('a line whose timeline uses a pinned take of another line', () => {
+  const owner = cue({ id: 'a', takes: [{ ...take('ta'), pinned: true }], finalTakeId: undefined, status: 'translated' })
+  const borrowed: CueComp = { clips: [{ id: 'k', sourceTakeId: 'ta', srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits() }] }
+  const base = cue({ id: 'b', takes: [], finalTakeId: undefined, status: 'translated' })
+  const lookup = { cues: [owner, base] }
+  const done = approveCue(changeCompOutput(base, borrowed, lookup), APPROVED_AT, lookup)
+  const cues = [owner, done]
+  const project = { cues }
+
+  it('counts as approved with output in the filters', () => {
+    expect(filterCues(cues, 'appr', '').map((c) => c.id)).toEqual(['b'])
+    expect(filterCues(cues, 'notgen', '').map((c) => c.id)).toEqual(['a'])
+    expect(filterCues(cues, 'gen', '').map((c) => c.id)).toEqual(['b'])
+    expect(matchesFilter(done, 'review', project)).toBe(false)
+    expect(filterCounts(cues, '')).toMatchObject({ appr: 1, notgen: 1, review: 0 })
+  })
+
+  it('reports the timeline length as its output duration', () => {
+    expect(outputDuration(done, project)).toBe(1)
+  })
+})

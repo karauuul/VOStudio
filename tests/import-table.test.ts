@@ -16,6 +16,7 @@ import {
   tableDelimiter,
 } from '../src/shared/import-table'
 import {
+  emptyEdits,
   sanitizeLanguages,
   sanitizeMatchRule,
   type Character,
@@ -425,5 +426,22 @@ describe('table rows matched by text', () => {
     const p = project(lines())
     const summary = applyTable(p, [['hit_03', 'Play for us.', 'Грайте']], options.mapping, 'id', false).summary
     expect(summary).toEqual({ added: 0, updated: 1, suggested: 0, unchanged: 0, skipped: 0 })
+  })
+})
+
+describe('applyTable on a line voiced with a borrowed take', () => {
+  it('keeps the line voiced when its source text changes', () => {
+    const owner = cue({ key: 'A', takes: [{ id: 'ta', kind: 'tts', createdAt: 'now', file: { fileId: 'ta', relPath: 'ta.mp3', format: 'mp3' }, duration: 1, meta: {}, edits: emptyEdits(), pinned: true }] })
+    const borrower = cue({
+      key: 'B',
+      text: 'Готово',
+      status: 'generated',
+      comp: { clips: [{ id: 'k', sourceTakeId: 'ta', srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits() }] },
+      output: { kind: 'comp', revision: 1 },
+    })
+    const p = project([owner, borrower])
+    applyTable(p, [['B', 'New source']], { id: 0, text: 1 }, 'id', false)
+    expect(p.cues[1].sourceText).toBe('New source')
+    expect(p.cues[1].status).toBe('generated')
   })
 })

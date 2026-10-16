@@ -27,14 +27,13 @@ export function summarizeProject(raw: unknown): ProjectStats | null {
     const cues = (raw as { cues?: unknown } | null | undefined)?.cues
     if (!Array.isArray(cues)) return null
     const stats: ProjectStats = { cues: 0, translated: 0, voiced: 0, approved: 0 }
-    for (const entry of cues) {
-      const cue = asCue(entry)
-      if (!cue) continue
+    const lookup = { cues: cues.flatMap((entry) => asCue(entry) ?? []) }
+    for (const cue of lookup.cues) {
       stats.cues++
       if (cue.status === 'excluded') continue
       if (cue.text.trim()) stats.translated++
-      if (hasValidVoicedOutput(cue)) stats.voiced++
-      if (approvalState(cue) === 'approved') stats.approved++
+      if (hasValidVoicedOutput(cue, lookup)) stats.voiced++
+      if (approvalState(cue, lookup) === 'approved') stats.approved++
     }
     return stats
   } catch {

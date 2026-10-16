@@ -22,7 +22,7 @@ export async function syncCsv(): Promise<CsvSyncResult> {
     if (!cue) continue
     if (tI >= 0 && setCell(csv, r, tI, cue.text)) changedCells++
     if (aI >= 0 && mapping.approvedFlag) {
-      const want = approvalState(cue) === 'approved' ? mapping.approvedFlag.value : ''
+      const want = approvalState(cue, project) === 'approved' ? mapping.approvedFlag.value : ''
       const cur = csv.rows[r][aI] ?? ''
       if ((cur === mapping.approvedFlag.value || cur === '') && setCell(csv, r, aI, want)) changedCells++
     }

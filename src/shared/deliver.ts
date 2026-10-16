@@ -40,14 +40,14 @@ export interface DeliverReport extends DeliverSummary {
   version?: number
 }
 
-function statusCell(cue: Cue): string {
-  if (approvalState(cue) === 'approved') return 'approved'
+function statusCell(cue: Cue, project: Project): string {
+  if (approvalState(cue, project) === 'approved') return 'approved'
   return cue.status === 'excluded' ? 'excluded' : ''
 }
 
-function cell(cue: Cue, header: string): string {
+function cell(cue: Cue, header: string, project: Project): string {
   if (header === 'translation') return cue.text
-  if (header === 'status') return statusCell(cue)
+  if (header === 'status') return statusCell(cue, project)
   return cue.fields[header] ?? ''
 }
 
@@ -63,7 +63,7 @@ export function buildUpdatedIndex(project: Project): string | null {
   for (const required of ['translation', 'status']) {
     if (!headers.includes(required)) headers.push(required)
   }
-  const rows = project.cues.map((cue) => headers.map((header) => cell(cue, header)))
+  const rows = project.cues.map((cue) => headers.map((header) => cell(cue, header, project)))
   return serializeCsv({
     hadBom: false,
     newline: '\n',

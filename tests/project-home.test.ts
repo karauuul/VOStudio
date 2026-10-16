@@ -309,3 +309,22 @@ describe('closeProject', () => {
     expect(store.getProject()).toBeNull()
   })
 })
+
+describe('summarizeProject with a borrowed take', () => {
+  it('counts a done line whose timeline uses a pinned take of another line', () => {
+    const stats = summarizeProject({
+      cues: [
+        cue({ id: 'a', takes: [{ ...take('ta'), pinned: true }] }),
+        cue({
+          id: 'b',
+          text: 'текст',
+          status: 'approved',
+          comp: { clips: [{ id: 'k', sourceTakeId: 'ta', srcIn: 0, srcOut: 1, start: 0, edits: take('ta').edits }] },
+          output: { kind: 'comp', revision: 1 },
+          approval: { textRevision: 0, outputRevision: 1, approvedAt: '2026-01-01T00:00:00.000Z' },
+        }),
+      ],
+    })
+    expect(stats).toEqual({ cues: 2, translated: 1, voiced: 1, approved: 1 })
+  })
+})
