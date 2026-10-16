@@ -1,6 +1,6 @@
-import { promises as fs } from 'fs'
+import { createReadStream, promises as fs } from 'fs'
 import path from 'path'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { attachesOnly, matchAudioFiles, type MatchRule } from '@shared/import-table'
 import { safeRelPath, withOrigin, type AudioRef, type Cue, type Project } from '@shared/domain'
 import { PATH_FIELD } from '@shared/export-plan'
@@ -127,6 +127,12 @@ function buildCue(file: PickedAudio, abs: string, duration: number | undefined):
   return cue
 }
 
+async function fileDigest(file: string): Promise<string> {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer)
+  return hash.digest('hex')
+}
+
 async function keepReference(part: string, abs: string, current = abs): Promise<string> {
   try {
     await linkNew(part, abs)
@@ -134,9 +140,11 @@ async function keepReference(part: string, abs: string, current = abs): Promise<
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
   }
-  const bytes = await fs.readFile(part)
+  const size = (await fs.stat(part)).size
+  let digest: string | undefined
   for (const existing of new Set([abs, current])) {
-    if ((await fs.readFile(existing).catch(() => null))?.equals(bytes)) return existing
+    if ((await fs.stat(existing).catch(() => null))?.size !== size) continue
+    if ((await fileDigest(existing).catch(() => '')) === (digest ??= await fileDigest(part))) return existing
   }
   const ext = path.extname(abs)
   const revision = `${abs.slice(0, abs.length - ext.length)}_${randomUUID().slice(0, 8)}${ext}`

@@ -197,6 +197,25 @@ describe('importPickedAudio over an existing reference', () => {
     expect(p.cues[0].referenceAudio!.relPath).toBe(second)
     expect(await fs.readdir(path.join(target, 'audio', 'reference'))).toHaveLength(2)
   })
+
+  it('stores same-length audio with different samples under a new name', async () => {
+    const target = path.join(H.root, 'same-size.vostudio')
+    const dir = path.join(H.root, 'same-size-src')
+    await fs.mkdir(dir, { recursive: true })
+    const pick = { src: path.join(dir, 'line.wav'), rel: 'line.wav', dir: '', name: 'line', format: 'wav' } as const
+    await fs.copyFile(path.join(SRC, 'LINE_A.wav'), pick.src)
+    const p = project()
+    await importPickedAudio(repo(p), target, [pick], 'id')
+    const first = p.cues[0].referenceAudio!.relPath
+    const before = await fs.readFile(first)
+    await run(ffmpegStatic, ['-y', '-f', 'lavfi', '-i', 'sine=frequency=880:duration=1', '-ar', '48000', '-ac', '1', pick.src])
+    expect((await fs.stat(pick.src)).size).toBe(before.length)
+    await importPickedAudio(repo(p), target, [pick], 'id')
+    const second = p.cues[0].referenceAudio!.relPath
+    expect(second).not.toBe(first)
+    expect(await fs.readFile(first)).toEqual(before)
+    expect(await fs.readFile(second)).toEqual(await fs.readFile(pick.src))
+  })
 })
 
 describe('importPickedAudio racing another command', () => {
