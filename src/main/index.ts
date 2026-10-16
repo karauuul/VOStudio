@@ -125,7 +125,7 @@ import { AGENT_INSTRUCTIONS, agentTools, ASSET_READ_MAX, WINDOW_OPEN_QUIT } from
 import { diagnostics, watchDiagnostics } from './agent/diagnostics'
 import { agentPrompts } from './agent/prompts'
 import { requestUi, settleUi, uiWindow } from './agent/ui-bridge'
-import { analyzeInWorker, closeRenderWorker, renderExportPlan, renderLineWav, renderProsodyImage, renderWorker, settleRender } from './agent/render-worker'
+import { analyzeInWorker, closeRenderWorker, renderExportPlan, renderLineWav, renderProsodyImage, settleRender, withRenderWorker } from './agent/render-worker'
 import { hardenedWindow, loadRenderer, uiWindows } from './windows'
 import { renderFileName, requireRevision } from '@shared/agent-render'
 import { ANALYSIS_MAX_SECONDS, ANALYSIS_RATE } from '@shared/prosody'
@@ -1089,14 +1089,15 @@ function requireExportIdle(expected?: SerialProjectRepository): void {
 function exportForAgent(cueIds: string[], expected?: SerialProjectRepository): Promise<BatchExportResult> {
   return serialAgentExport(async () => {
     requireExportIdle(expected)
-    const owner = await renderWorker()
-    requireExportIdle(expected)
-    const plan = await planBatchExport(batchExportSchema.parse({ cueIds }), owner, liveRepository(expected).currentRevision())
-    try {
-      return await renderExportPlan(plan)
-    } finally {
-      releaseExports(owner, plan.token)
-    }
+    return withRenderWorker(async (owner) => {
+      requireExportIdle(expected)
+      const plan = await planBatchExport(batchExportSchema.parse({ cueIds }), owner, liveRepository(expected).currentRevision())
+      try {
+        return await renderExportPlan(plan)
+      } finally {
+        releaseExports(owner, plan.token)
+      }
+    })
   })
 }
 
