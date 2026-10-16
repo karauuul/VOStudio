@@ -8,7 +8,9 @@ import {
   punchHidden,
   punchPrerollSeconds,
   recordLatencyMs,
+  recordPlacement,
 } from '../src/shared/punch'
+import { placeTake } from '../src/shared/generation'
 
 const clip = (over: Partial<CompClip> = {}): CompClip => ({
   id: 'a',
@@ -299,5 +301,45 @@ describe('punch latency', () => {
   it('refuses when the correction leaves nothing after the punch point', () => {
     const hidden = punchHidden(punch.hidden, latencySeconds(1000, 0), punch.duration)
     expect(punchClip({ clips: [clip()] }, { ...punch, hidden })).toBeNull()
+  })
+})
+
+describe('record pre-roll', () => {
+  const timing = { hidden: 0.25, latency: 0.04, duration: 3.25 }
+
+  it('trims the hidden pre-roll from a take recorded at the playhead', () => {
+    const placement = recordPlacement(timing, { punchAt: null, replacing: false, spot: { at: 5 } })
+    expect(placement).toEqual({ kind: 'take', at: 5, hidden: 0.25 })
+    const r = recordClip(undefined, { takeId: 'new', duration: timing.duration, at: 5, hidden: 0.25 })
+    expect(added(r.comp, r.clipId)).toMatchObject({ start: 5, srcIn: 0.25, srcOut: 3.25 })
+    expect(clipEnd(added(r.comp, r.clipId))).toBeCloseTo(8)
+  })
+
+  it('trims the pre-roll when recording over a selected clip', () => {
+    expect(recordPlacement(timing, { punchAt: null, replacing: true, spot: null })).toEqual({ kind: 'replace', hidden: 0.25 })
+    const placed = placeTake({ comp: { clips: [clip({ start: 2 })] }, takeId: 'new', duration: 3.25, playhead: 0, replaceClipId: 'a', srcIn: 0.25 })
+    expect(placed.comp.clips[0]).toMatchObject({ start: 2, srcIn: 0.25, srcOut: 3.25 })
+  })
+
+  it('keeps punch-in hidden time with latency compensation', () => {
+    expect(recordPlacement(timing, { punchAt: 1, trackId: 'track-2', replacing: false, spot: { at: 5 } })).toEqual({
+      kind: 'punch',
+      at: 1,
+      hidden: 0.29,
+      trackId: 'track-2',
+    })
+  })
+
+  it('clears only the audible span of the trimmed take', () => {
+    const comp: CueComp = { clips: [clip({ id: 'b', start: 7.9, srcOut: 1 })] }
+    const r = recordClip(comp, { takeId: 'new', duration: 3.25, at: 5, hidden: 0.25 })
+    expect(added(r.comp, 'b').start).toBe(8)
+    expect(added(r.comp, 'b').srcIn).toBeCloseTo(0.1)
+  })
+
+  it('places takes without pre-roll exactly as before', () => {
+    const r = recordClip(undefined, { takeId: 'new', duration: 2, at: 5 })
+    expect(added(r.comp, r.clipId)).toMatchObject({ start: 5, srcIn: 0, srcOut: 2 })
+    expect(recordPlacement(timing, { punchAt: null, replacing: false, spot: null })).toBeUndefined()
   })
 })

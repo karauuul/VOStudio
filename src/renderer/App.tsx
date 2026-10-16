@@ -56,7 +56,8 @@ import type { CompApi, TimelineSelection } from './work/TimelinePanel'
 import type { LibraryPanel } from './work/LibraryPanel'
 import { ProgramPanel, type ProgramApi } from './work/ProgramPanel'
 import { CueText } from './work/CueText'
-import type { PlaceAddress, RecordPlacement } from './cue/useVoiceToVoice'
+import type { PlaceAddress } from './cue/useVoiceToVoice'
+import type { RecordPlacement } from '@shared/punch'
 import { TimelinePanel } from './work/TimelinePanel'
 import { RulesDialog } from './RulesPanel'
 import { GlossaryDialog } from './GlossaryDialog'
@@ -829,20 +830,17 @@ export default function App() {
       const address = drop ?? placeAddress(cueId)
       let trackId = address.trackId
       let playhead = address.at
-      if (placement) {
+      if (placement && placement.kind !== 'replace') {
         const request = {
           takeId: takes[0].id,
           duration: durations[0],
           at: placement.at,
+          hidden: placement.hidden,
           targetTrackId: placement.trackId ?? trackId,
         }
         const placed =
           placement.kind === 'punch'
-            ? punchClip(comp, {
-                ...request,
-                hidden: placement.hidden,
-                ...(placement.until === undefined ? {} : { until: placement.until }),
-              })
+            ? punchClip(comp, { ...request, ...(placement.until === undefined ? {} : { until: placement.until }) })
             : recordClip(comp, request)
         if (!placed) throw new Error('nothing was recorded after the punch point')
         comp = placed.comp
@@ -856,6 +854,7 @@ export default function App() {
             targetTrackId: trackId,
             playhead,
             ...(replaceClipId ? { replaceClipId } : {}),
+            ...(placement ? { srcIn: placement.hidden } : {}),
           })
           comp = placed.comp
           trackId = placed.trackId
