@@ -4,6 +4,7 @@ import {
   DEFAULT_DELAY,
   DEFAULT_REVERB,
   delayTail,
+  effectsTail,
   setEffectEnabled,
   type ClipEffects,
 } from '../src/shared/effects'
@@ -323,10 +324,17 @@ describe('render length carries the effects tail the render adds', () => {
     expect(summarize(asis, readinessRows(asis)).bytes).toBeCloseTo(estimateBytes(4.2, undefined), 6)
   })
 
+  it('a pitched line carries the shifter latency as its tail', () => {
+    const fx = { pitch: { semitones: 3 } }
+    const t = withFx(fx)
+    const c = plain(t)
+    expect(renderLength(c, t, project([c]))).toBeCloseTo(3 + effectsTail(fx), 9)
+    expect(renderWindow(c, t, project([c], { export: { length: 'pad' } }))).toEqual({ in: 0, out: 3.5 })
+  })
+
   it('lines without an audible effect keep exactly the old lengths', () => {
     const bypassed = withFx(setEffectEnabled({ reverb: DEFAULT_REVERB }, 'reverb', false)!)
-    const pitched = withFx({ pitch: { semitones: 3 } })
-    for (const t of [take('t'), bypassed, pitched]) {
+    for (const t of [take('t'), bypassed]) {
       const c = plain(t)
       expect(renderLength(c, t, project([c]))).toBe(3)
       expect(renderWindow(c, t, project([c], { export: { length: 'pad' } }))).toEqual({ in: 0, out: 3.5 })
