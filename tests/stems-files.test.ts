@@ -2,6 +2,7 @@ import { mkdirSync, promises as fs } from 'fs'
 import path from 'path'
 import { describe, expect, it, vi } from 'vitest'
 import type { Project } from '../src/shared/domain'
+import { autosaveName } from '../src/shared/project-file'
 
 const H = vi.hoisted(() => ({
   root: `${process.env['TEMP'] ?? process.env['TMPDIR'] ?? '/tmp'}/vostudio-stems-${Date.now()}`,
@@ -63,5 +64,17 @@ describe('stem files', () => {
     for (const stem of kept) expect(await exists(stem.file.relPath)).toBe(true)
     for (const stem of dropped) expect(await exists(stem.file.relPath)).toBe(false)
     expect(await exists(path.dirname(dropped[0].file.relPath))).toBe(false)
+  })
+
+  it('keeps stems only an autosave backup still uses', async () => {
+    const project = await store.createProject('stems-autosaved', base())
+    const dir = store.getProjectDir()!
+    const kept = await store.saveStems('c1', Buffer.from('V1'), Buffer.from('R1'))
+    const dropped = await store.saveStems('c2', Buffer.from('V2'), Buffer.from('R2'))
+    await fs.writeFile(path.join(dir, 'autosave', autosaveName(new Date())), JSON.stringify({ cues: [{ id: 'c1', stems: kept }] }, null, 2))
+    expect(project.cues.every((c) => !c.stems)).toBe(true)
+    await store.dropUnusedStems()
+    for (const stem of kept) expect(await exists(stem.file.relPath)).toBe(true)
+    for (const stem of dropped) expect(await exists(stem.file.relPath)).toBe(false)
   })
 })
