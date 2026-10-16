@@ -258,4 +258,9 @@ describe('a line whose timeline uses a pinned take of another line', () => {
   it('reports the timeline length as its output duration', () => {
     expect(outputDuration(done, project)).toBe(1)
   })
+
+  it('labels it approved', () => {
+    expect(reviewLabel(done, project)).toBe('Approved')
+    expect(deltaLabel({ ...done, referenceDuration: 0.5 }, project)).toBe('+0.50')
+  })
 })

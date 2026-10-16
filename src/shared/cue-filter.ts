@@ -140,9 +140,9 @@ export type ReviewLabel =
   | 'Needs voice'
   | 'Excluded'
 
-export function reviewLabel(cue: Cue): ReviewLabel {
+export function reviewLabel(cue: Cue, project?: TakeLookup): ReviewLabel {
   if (cue.status === 'excluded') return 'Excluded'
-  const state = approvalState(cue)
+  const state = approvalState(cue, project)
   if (state === 'approved') return 'Approved'
   if (state === 'stale') return 'Stale approval'
   if (state === 'needs-review') return 'Needs review'
@@ -192,9 +192,9 @@ export function outputDuration(cue: Cue, project?: TakeLookup): number | undefin
   return d !== undefined && d > 0 ? d : undefined
 }
 
-export function deltaLabel(cue: Cue): string {
+export function deltaLabel(cue: Cue, project?: TakeLookup): string {
   const reference = cue.referenceDuration
-  const actual = outputDuration(cue)
+  const actual = outputDuration(cue, project)
   if (reference === undefined || actual === undefined) return 'n/a'
   const d = actual - reference
   return `${d >= 0 ? '+' : ''}${d.toFixed(2)}`

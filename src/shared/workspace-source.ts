@@ -68,11 +68,11 @@ export function setFinalEligible(cue: Cue, source: PreviewSource, project?: Take
   return source.kind === 'comp' && !isEmptyComp(cue.comp)
 }
 
-export function cueDecision(cue: Cue, source: PreviewSource): CueDecision {
+export function cueDecision(cue: Cue, source: PreviewSource, project?: TakeLookup): CueDecision {
   if (cue.status === 'excluded') return 'none'
-  const output = outputSource(cue)
+  const output = outputSource(cue, project)
   if (output && sameSource(output, source)) {
-    return approvalState(cue) === 'approved' ? 'approved' : 'approve'
+    return approvalState(cue, project) === 'approved' ? 'approved' : 'approve'
   }
   return source.kind === 'none' ? 'none' : 'set-final'
 }
