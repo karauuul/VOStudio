@@ -81,19 +81,18 @@ export async function startAgentServer(userData: string, server: McpServer): Pro
     serve(socket, token, server, hub)
   })
   await clearStaleSocket(endpoint)
-  await new Promise<void>((resolve, reject) => {
-    listener.once('error', reject)
-    listener.listen(endpoint, () => {
-      listener.off('error', reject)
-      resolve()
-    })
-  })
+  await fs.rm(tokenFile, { force: true })
+  await fs.writeFile(tokenFile, `${token}\n`, { mode: 0o600 })
   try {
-    await fs.rm(tokenFile, { force: true })
-    await fs.writeFile(tokenFile, `${token}\n`, { mode: 0o600 })
+    await new Promise<void>((resolve, reject) => {
+      listener.once('error', reject)
+      listener.listen(endpoint, () => {
+        listener.off('error', reject)
+        resolve()
+      })
+    })
   } catch (error) {
-    for (const socket of sockets) socket.destroy()
-    await new Promise<void>((resolve) => listener.close(() => resolve()))
+    await fs.rm(tokenFile, { force: true })
     throw error
   }
   return {

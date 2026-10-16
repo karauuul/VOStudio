@@ -5,7 +5,7 @@ import type { ClipEffects, Cue, CueComp, Project, ProjectAsset, ProjectVersion, 
 import { ASSET_KINDS, clipSpeed, ORIGINAL_START_MAX, PROPOSAL_REASON_MAX, resolveVoiceSettings, speakerCharacters, TERM_TEXT_MAX, TERMS_MAX } from '@shared/domain'
 import { clampVoiceSettings, placeOnTrack, type TakePlacement } from '@shared/generation'
 import { LINE_TEXT_MAX } from '@shared/lines'
-import { defineTool, errorText, issueText, quitWhenIdle, type McpSession, type McpTool, type ToolAnnotations, type ToolImage, type ToolOutput } from '@shared/mcp'
+import { defineTool, errorText, issueText, PROJECT_SWITCHED, quitWhenIdle, type McpSession, type McpTool, type ToolAnnotations, type ToolImage, type ToolOutput } from '@shared/mcp'
 import {
   audioWithinRoots,
   type CommandResult,
@@ -225,7 +225,7 @@ export const PROPOSALS_PAGE_MAX = 200
 export const CELL_MAX = 500
 export const ASSIGN_MAX = 2000
 
-export const PROJECT_SWITCHED = 'The project was closed or switched during this call; call status, then retry.'
+export { PROJECT_SWITCHED }
 
 const exactlyOne = (values: unknown[]): boolean => values.filter((v) => v !== undefined).length === 1
 

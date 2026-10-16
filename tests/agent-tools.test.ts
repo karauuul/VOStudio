@@ -384,6 +384,19 @@ describe('lines_edit', () => {
     expect(emitted.map((r) => r.revision)).toEqual([1, 2, 3, 4, 5, 6])
   })
 
+  it('refuses an edit when another project opens while its write guard waits', async () => {
+    const { call, deps, spec, repo } = setup()
+    const other = new SerialProjectRepository(project(), vi.fn(), 60_000)
+    spec.scope = () => deps.repository()
+    spec.beforeWrite = async () => {
+      deps.repository = () => other
+    }
+    const { error } = await call('lines_edit', { ops: [{ op: 'setText', line: 'L1', text: 'Meant for the first project' }] })
+    expect(error).toBe(PROJECT_SWITCHED)
+    expect(other.projectForMain().cues[0].text).toBe('Hello there')
+    expect(repo!.projectForMain().cues[0].text).toBe('Hello there')
+  })
+
   it('stops at the first failing op and says how many applied', async () => {
     const { call, repo } = setup()
     const { error } = await call('lines_edit', {

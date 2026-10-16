@@ -2,7 +2,7 @@
 
 VO Studio runs an MCP server inside the app. An AI agent (Claude Code, Codex, Claude Desktop or any MCP client) drives the same project the user sees: every change goes through the app's project commands, shows up in the window live and is undoable. There is no separate backend and no cloud relay.
 
-The server speaks MCP (JSON-RPC 2.0, protocol versions 2025-11-25, 2025-06-18 and 2025-03-26) with the `tools` and `prompts` capabilities. Clients reach it through the bridge `bridge.js`, a small stdio process that connects to the running app and launches it when it is not running.
+The server speaks MCP (JSON-RPC 2.0, protocol versions 2025-11-25 and 2025-06-18) with the `tools` and `prompts` capabilities. Clients reach it through the bridge `bridge.js`, a small stdio process that connects to the running app and launches it when it is not running.
 
 ## Enabling
 

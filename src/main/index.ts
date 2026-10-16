@@ -1114,20 +1114,22 @@ async function transcribeFile(file: string): Promise<string> {
 const guardedSessions = new WeakMap<McpSession, string>()
 
 async function guardAgentWrite(session: McpSession): Promise<void> {
+  const pinned = projectRepository
   await requestUi({ kind: 'flush' })
   const dir = store.getProjectDir()
-  if (!projectRepository || !dir || guardedSessions.get(session) === dir) return
+  if (!pinned || projectRepository !== pinned || !dir || guardedSessions.get(session) === dir) return
   await serialLifecycle(async () => {
-    if (!needsGuardVersion(requireRepository().projectForMain().versions ?? [], Date.now())) return
+    if (!needsGuardVersion(liveRepository(pinned).projectForMain().versions ?? [], Date.now())) return
     await recordVersions((previous) => store.saveVersion(previous, 'Before agent'))
   })
-  guardedSessions.set(session, dir)
+  if (projectRepository === pinned) guardedSessions.set(session, dir)
 }
 
 function agentServerSpec(): McpServer {
   return {
     info: { name: 'vo-studio', version: app.getVersion() },
     instructions: AGENT_INSTRUCTIONS,
+    scope: () => projectRepository,
     beforeWrite: guardAgentWrite,
     prompts: agentPrompts,
     tools: agentTools({
