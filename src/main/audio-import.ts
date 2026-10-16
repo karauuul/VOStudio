@@ -11,6 +11,7 @@ import { isInsideDir } from '@shared/project-summary'
 import { takeFileKind } from '@shared/take-import'
 import { MAX_PICKED_FILES } from '@shared/asset-readers'
 import { probeMedia, transcodeToWav } from './ffmpeg'
+import { linkNew } from './project-store'
 
 const CONCURRENCY = 8
 
@@ -125,6 +126,23 @@ function buildCue(file: PickedAudio, abs: string, duration: number | undefined):
   return cue
 }
 
+async function keepReference(part: string, abs: string, current = abs): Promise<string> {
+  try {
+    await linkNew(part, abs)
+    return abs
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  }
+  const bytes = await fs.readFile(part)
+  for (const existing of new Set([abs, current])) {
+    if ((await fs.readFile(existing).catch(() => null))?.equals(bytes)) return existing
+  }
+  const ext = path.extname(abs)
+  const revision = `${abs.slice(0, abs.length - ext.length)}_${randomUUID().slice(0, 8)}${ext}`
+  await linkNew(part, revision)
+  return revision
+}
+
 export async function importAudio(
   project: Project,
   projectDir: string,
@@ -152,23 +170,25 @@ export async function importPickedAudio(
   const { update, create, duplicates } = matchAudioFiles(project.cues, contained, rule)
   const attach = attachesOnly(project)
   const kept = [...update.map(({ file }) => file), ...(attach ? [] : create)]
+  const currentReference = new Map(update.map(({ cue, file }) => [file, cue.referenceAudio?.relPath]))
 
   for (const dir of new Set(kept.map((f) => path.dirname(path.join(referenceRoot, referenceRel(f)))))) {
     await fs.mkdir(dir, { recursive: true })
   }
 
   const probed = await mapLimited(kept, async (file) => {
-    const abs = path.join(referenceRoot, referenceRel(file))
+    let abs = path.join(referenceRoot, referenceRel(file))
     const transcode = takeFileKind(file.src) === 'transcode'
     if (transcode || path.resolve(abs).toLowerCase() !== path.resolve(file.src).toLowerCase()) {
       const part = path.join(path.dirname(abs), `.part-${randomUUID()}-${path.basename(abs)}`)
       try {
         await (transcode ? transcodeToWav(file.src, part) : fs.copyFile(file.src, part))
-        await fs.rename(part, abs)
+        abs = await keepReference(part, abs, currentReference.get(file))
       } catch {
-        await fs.rm(part, { force: true }).catch(() => undefined)
         failed.push({ name: file.rel, reason: transcode ? 'could not be converted to wav' : 'could not be read' })
         return null
+      } finally {
+        await fs.rm(part, { force: true }).catch(() => undefined)
       }
     }
     return { file, abs, duration: await probeDuration(abs) }

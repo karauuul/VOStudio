@@ -206,10 +206,10 @@ const AUTOSAVE_NAME_ATTEMPTS = 1000
 
 const isTaken = (err: unknown): boolean => (err as NodeJS.ErrnoException | null)?.code === 'EEXIST'
 
-async function linkBackup(file: string, backup: string): Promise<void> {
-  await fs.link(file, backup).catch((err: unknown) => {
+export async function linkNew(file: string, target: string): Promise<void> {
+  await fs.link(file, target).catch((err: unknown) => {
     if (isTaken(err)) throw err
-    return fs.copyFile(file, backup, fs.constants.COPYFILE_EXCL)
+    return fs.copyFile(file, target, fs.constants.COPYFILE_EXCL)
   })
 }
 
@@ -222,7 +222,7 @@ async function keepAutosave(dir: string): Promise<void> {
     for (let offset = 0; !created; offset++) {
       const name = autosaveName(new Date(now + offset))
       try {
-        await linkBackup(file, path.join(autosave, name))
+        await linkNew(file, path.join(autosave, name))
         created = name
       } catch (err) {
         if (!isTaken(err) || offset + 1 >= AUTOSAVE_NAME_ATTEMPTS) throw err

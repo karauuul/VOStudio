@@ -169,6 +169,33 @@ describe('importAudio of formats a line cannot keep', () => {
   })
 })
 
+describe('importPickedAudio over an existing reference', () => {
+  it('stores different audio under a new name, keeps the old file and reuses an identical one', async () => {
+    const target = path.join(H.root, 'revisions.vostudio')
+    const dir = path.join(H.root, 'revisions-src')
+    await fs.mkdir(dir, { recursive: true })
+    const pick = { src: path.join(dir, 'line.wav'), rel: 'line.wav', dir: '', name: 'line', format: 'wav' } as const
+    await fs.copyFile(path.join(SRC, 'LINE_A.wav'), pick.src)
+    const p = project()
+    await importPickedAudio(p, target, [pick], 'id')
+    const first = p.cues[0].referenceAudio!.relPath
+    const before = await fs.readFile(first)
+
+    await fs.copyFile(path.join(SRC, 'LINE_B.wav'), pick.src)
+    await importPickedAudio(p, target, [pick], 'id')
+    const second = p.cues[0].referenceAudio!.relPath
+    expect(second).not.toBe(first)
+    expect(path.dirname(second)).toBe(path.dirname(first))
+    expect(await fs.readFile(first)).toEqual(before)
+    expect(await fs.readFile(second)).toEqual(await fs.readFile(path.join(SRC, 'LINE_B.wav')))
+    expect(p.cues[0].referenceDuration).toBeCloseTo(2, 1)
+
+    await importPickedAudio(p, target, [pick], 'id')
+    expect(p.cues[0].referenceAudio!.relPath).toBe(second)
+    expect(await fs.readdir(path.join(target, 'audio', 'reference'))).toHaveLength(2)
+  })
+})
+
 describe('importPickedAudio keeps every copy inside the reference folder', () => {
   it.each(['../../escaped.wav', '/abs/escaped.wav', 'C:/escaped.wav', 'a\\..\\..\\escaped.wav', 'a/./escaped.wav'])('skips and reports %s while the rest imports', async (rel) => {
     const target = path.join(H.root, 'jail', 'proj.vostudio')
