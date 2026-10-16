@@ -77,7 +77,12 @@ export class SerialProjectRepository {
     const file = projectFile(this.project)
     this.persistRun = this.persistRun.catch(() => undefined).then(async () => {
       if (this.detached) return
-      await this.persist(file)
+      try {
+        await this.persist(file)
+      } catch (error) {
+        if (this.enqueuedRevision === revision) this.enqueuedRevision = this.persistedRevision
+        throw error
+      }
       this.persistedRevision = Math.max(this.persistedRevision, revision)
       if (!this.detached && this.dirtyRevision > this.persistedRevision) this.startPersist()
     })

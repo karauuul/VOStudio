@@ -1318,9 +1318,23 @@ async function quitHeadless(): Promise<void> {
   setImmediate(() => app.quit())
 }
 
-app.on('window-all-closed', () => {
-  void flushPersist().then(quitIfNoWindows, quitIfNoWindows)
-})
+function quitWhenSaved(): void {
+  void flushPersist().then(quitIfNoWindows, async (error: unknown) => {
+    if (headless) return
+    const { response } = await dialog.showMessageBox({
+      type: 'error',
+      message: 'Project not saved',
+      detail: String(error),
+      buttons: ['Retry', 'Quit'],
+      defaultId: 0,
+      cancelId: 0,
+    })
+    if (response === 0) quitWhenSaved()
+    else quitIfNoWindows()
+  })
+}
+
+app.on('window-all-closed', quitWhenSaved)
 
 if (primaryInstance) void app.whenReady().then(async () => {
   try {
