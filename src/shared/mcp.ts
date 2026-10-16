@@ -35,6 +35,8 @@ export interface McpSession {
 
 export const APP_QUITTING = 'VO Studio is quitting; retry if app_quit is refused, otherwise start the app again and reconnect.'
 
+export const PROJECT_SWITCHED = 'The project was closed or switched during this call; call status, then retry.'
+
 export interface ToolContext {
   session: McpSession
   signal: AbortSignal
@@ -78,6 +80,7 @@ export interface McpServer {
   instructions: string
   tools: McpTool[]
   prompts?: McpPrompt[]
+  scope?: () => unknown
   beforeWrite?: (session: McpSession) => Promise<void>
 }
 
@@ -232,8 +235,10 @@ async function callTool(server: McpServer, session: McpSession, id: RpcId, param
     })
   }
   try {
+    const scope = server.scope?.()
     if (tool.writes ? tool.writes(parsed.data) : !tool.annotations.readOnlyHint) await server.beforeWrite?.(session)
     if (controller.signal.aborted) return null
+    if (server.scope?.() !== scope) return errorResult(PROJECT_SWITCHED)
     const output = await tool.run({ session, signal: controller.signal, progress }, parsed.data)
     return controller.signal.aborted ? null : toolResult(output)
   } catch (error) {

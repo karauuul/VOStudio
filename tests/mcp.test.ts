@@ -10,6 +10,7 @@ import {
   handleMessage,
   MCP_PROTOCOL_VERSIONS,
   negotiateVersion,
+  PROJECT_SWITCHED,
   quitWhenIdle,
   RPC_INVALID_PARAMS,
   RPC_INVALID_REQUEST,
@@ -269,6 +270,36 @@ describe('MCP tools/call', () => {
     await call
     expect(ran).toEqual([])
     expect(sent).toEqual([])
+  })
+
+  it('fails a write whose project changed while its guard was pending', async () => {
+    let project = 'a'
+    const ran: string[] = []
+    const { spec } = server({
+      scope: () => project,
+      beforeWrite: async () => {
+        project = 'b'
+      },
+    })
+    spec.tools.push(
+      defineTool({
+        name: 'mutate',
+        title: 'Mutate',
+        description: 'Records the project it ran on.',
+        input: z.object({}),
+        annotations: WRITE,
+        async run() {
+          ran.push(project)
+          return { structured: {} }
+        },
+      })
+    )
+    const [reply] = await exchange(spec, req(14, 'tools/call', { name: 'mutate' }))
+    expect(ran).toEqual([])
+    expect(reply.result).toEqual({ content: [{ type: 'text', text: PROJECT_SWITCHED }], isError: true })
+    project = 'a'
+    const [read] = await exchange(spec, req(15, 'tools/call', { name: 'echo', arguments: { word: 'hi' } }))
+    expect(read.result).toMatchObject({ structuredContent: { said: 'hi' } })
   })
 
   it('sends progress only when the request carries a progress token', async () => {
