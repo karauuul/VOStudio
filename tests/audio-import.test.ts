@@ -14,6 +14,9 @@ vi.mock('electron', () => ({ app: { getPath: () => H.root } }))
 mkdirSync(H.root, { recursive: true })
 
 const { importAudio, importPickedAudio, probeDuration } = await import('../src/main/audio-import')
+const { SerialProjectRepository } = await import('../src/main/project-repository')
+const { applyChangeSet } = await import('../src/shared/project-commands')
+const repo = (p: Project): InstanceType<typeof SerialProjectRepository> => new SerialProjectRepository(p, async () => undefined)
 const ffmpegStatic = (await import('ffmpeg-static')).default as unknown as string
 
 const run = promisify(execFile)
@@ -75,7 +78,7 @@ describe('probeDuration', () => {
 describe('importAudio', () => {
   it('creates one line per file, copies it and probes the duration', async () => {
     const p = project()
-    const { result } = await importAudio(p, PROJECT_DIR, [SRC], 'id')
+    const { result } = await importAudio(repo(p), PROJECT_DIR, [SRC], 'id')
     expect(result).toEqual({ added: 2, updated: 0, files: 2 })
     expect(p.cues.map((c) => c.key).sort()).toEqual(['LINE_A', 'LINE_B'])
     const a = p.cues.find((c) => c.key === 'LINE_A')!
@@ -88,19 +91,19 @@ describe('importAudio', () => {
 
   it('re-importing the same folder adds only new files and refreshes durations', async () => {
     const p = project()
-    await importAudio(p, PROJECT_DIR, [SRC], 'id')
+    await importAudio(repo(p), PROJECT_DIR, [SRC], 'id')
     const ids = p.cues.map((c) => c.id)
     for (const cue of p.cues) delete cue.referenceDuration
 
     await tone('LINE_C.wav', 3)
-    const { result, changes } = await importAudio(p, PROJECT_DIR, [SRC], 'id')
+    const { result, published } = await importAudio(repo(p), PROJECT_DIR, [SRC], 'id')
 
     expect(result).toEqual({ added: 1, updated: 2, files: 3 })
     expect(p.cues.map((c) => c.key).sort()).toEqual(['LINE_A', 'LINE_B', 'LINE_C'])
     expect(p.cues.slice(0, 2).map((c) => c.id)).toEqual(ids)
     expect(p.cues.find((c) => c.key === 'LINE_B')?.referenceDuration).toBeCloseTo(2, 1)
     expect(p.cues.find((c) => c.key === 'LINE_C')?.referenceDuration).toBeCloseTo(3, 1)
-    expect(changes.cues).toHaveLength(3)
+    expect(published?.changes.cues).toHaveLength(3)
   })
 
   it('matches existing lines by exportName when the rule says so', async () => {
@@ -116,7 +119,7 @@ describe('importAudio', () => {
       notes: '',
       takes: [],
     })
-    const { result } = await importAudio(p, PROJECT_DIR, [path.join(SRC, 'LINE_A.wav')], 'exportName')
+    const { result } = await importAudio(repo(p), PROJECT_DIR, [path.join(SRC, 'LINE_A.wav')], 'exportName')
     expect(result.updated).toBe(1)
     expect(result.added).toBe(0)
     expect(p.cues[0].sourceText).toBe('kept')
@@ -126,7 +129,7 @@ describe('importAudio', () => {
   it('ignores files that are not audio', async () => {
     const p = project()
     await fs.writeFile(path.join(SRC, 'notes.txt'), 'ignore me')
-    const { result } = await importAudio(p, PROJECT_DIR, [SRC], 'id')
+    const { result } = await importAudio(repo(p), PROJECT_DIR, [SRC], 'id')
     expect(result.files).toBe(3)
   })
 })
@@ -140,7 +143,7 @@ describe('importAudio of formats a line cannot keep', () => {
     await fs.writeFile(path.join(dir, 'BROKEN.opus'), 'not audio')
     const target = path.join(H.root, 'convert.vostudio')
     const p = project()
-    const { result } = await importAudio(p, target, [dir], 'id')
+    const { result } = await importAudio(repo(p), target, [dir], 'id')
     expect(result).toEqual({ added: 2, updated: 0, files: 3, failed: [{ name: 'convert/BROKEN.opus', reason: 'could not be converted to wav' }] })
     const flac = p.cues.find((c) => c.key === 'FLAC_LINE')!
     expect(flac.referenceAudio).toMatchObject({ format: 'wav', relPath: path.join(target, 'audio', 'reference', 'convert', 'FLAC_LINE.wav') })
@@ -156,16 +159,77 @@ describe('importAudio of formats a line cannot keep', () => {
     await fs.copyFile(path.join(SRC, 'LINE_A.wav'), path.join(scene, 'a.wav'))
     await fs.writeFile(path.join(scene, 'a.flac'), 'not audio')
     const p = project()
-    await importPickedAudio(p, target, [{ src: path.join(scene, 'a.wav'), rel: 'scene/a.wav', dir: 'scene', name: 'a', format: 'wav' }], 'id')
+    await importPickedAudio(repo(p), target, [{ src: path.join(scene, 'a.wav'), rel: 'scene/a.wav', dir: 'scene', name: 'a', format: 'wav' }], 'id')
     const dest = path.join(target, 'audio', 'reference', 'scene', 'a.wav')
     const before = await fs.readFile(dest)
     const cue = structuredClone(p.cues[0])
-    const { result } = await importPickedAudio(p, target, [{ src: path.join(scene, 'a.flac'), rel: 'scene/a.flac', dir: 'scene', name: 'a', format: 'wav' }], 'id')
+    const { result } = await importPickedAudio(repo(p), target, [{ src: path.join(scene, 'a.flac'), rel: 'scene/a.flac', dir: 'scene', name: 'a', format: 'wav' }], 'id')
     expect(result).toEqual({ added: 0, updated: 0, files: 1, failed: [{ name: 'scene/a.flac', reason: 'could not be converted to wav' }] })
     expect(p.cues).toEqual([cue])
     expect(cue.referenceAudio?.relPath).toBe(dest)
     expect(await fs.readFile(dest)).toEqual(before)
     expect(await fs.readdir(path.dirname(dest))).toEqual(['a.wav'])
+  })
+})
+
+describe('importPickedAudio over an existing reference', () => {
+  it('stores different audio under a new name, keeps the old file and reuses an identical one', async () => {
+    const target = path.join(H.root, 'revisions.vostudio')
+    const dir = path.join(H.root, 'revisions-src')
+    await fs.mkdir(dir, { recursive: true })
+    const pick = { src: path.join(dir, 'line.wav'), rel: 'line.wav', dir: '', name: 'line', format: 'wav' } as const
+    await fs.copyFile(path.join(SRC, 'LINE_A.wav'), pick.src)
+    const p = project()
+    await importPickedAudio(repo(p), target, [pick], 'id')
+    const first = p.cues[0].referenceAudio!.relPath
+    const before = await fs.readFile(first)
+
+    await fs.copyFile(path.join(SRC, 'LINE_B.wav'), pick.src)
+    await importPickedAudio(repo(p), target, [pick], 'id')
+    const second = p.cues[0].referenceAudio!.relPath
+    expect(second).not.toBe(first)
+    expect(path.dirname(second)).toBe(path.dirname(first))
+    expect(await fs.readFile(first)).toEqual(before)
+    expect(await fs.readFile(second)).toEqual(await fs.readFile(path.join(SRC, 'LINE_B.wav')))
+    expect(p.cues[0].referenceDuration).toBeCloseTo(2, 1)
+
+    await importPickedAudio(repo(p), target, [pick], 'id')
+    expect(p.cues[0].referenceAudio!.relPath).toBe(second)
+    expect(await fs.readdir(path.join(target, 'audio', 'reference'))).toHaveLength(2)
+  })
+
+  it('stores same-length audio with different samples under a new name', async () => {
+    const target = path.join(H.root, 'same-size.vostudio')
+    const dir = path.join(H.root, 'same-size-src')
+    await fs.mkdir(dir, { recursive: true })
+    const pick = { src: path.join(dir, 'line.wav'), rel: 'line.wav', dir: '', name: 'line', format: 'wav' } as const
+    await fs.copyFile(path.join(SRC, 'LINE_A.wav'), pick.src)
+    const p = project()
+    await importPickedAudio(repo(p), target, [pick], 'id')
+    const first = p.cues[0].referenceAudio!.relPath
+    const before = await fs.readFile(first)
+    await run(ffmpegStatic, ['-y', '-f', 'lavfi', '-i', 'sine=frequency=880:duration=1', '-ar', '48000', '-ac', '1', pick.src])
+    expect((await fs.stat(pick.src)).size).toBe(before.length)
+    await importPickedAudio(repo(p), target, [pick], 'id')
+    const second = p.cues[0].referenceAudio!.relPath
+    expect(second).not.toBe(first)
+    expect(await fs.readFile(first)).toEqual(before)
+    expect(await fs.readFile(second)).toEqual(await fs.readFile(pick.src))
+  })
+})
+
+describe('importPickedAudio racing another command', () => {
+  it('does not bring back a line deleted while its file was being copied', async () => {
+    const p = project()
+    p.cues.push({ id: 'gone', characterId: '', key: 'LINE_A', fields: { EventName: 'LINE_A' }, sourceText: '', text: '', status: 'empty', notes: '', takes: [] })
+    const repository = repo(p)
+    const renderer = structuredClone(p)
+    const pending = importPickedAudio(repository, path.join(H.root, 'race.vostudio'), [{ src: path.join(SRC, 'LINE_A.wav'), rel: 'LINE_A.wav', dir: '', name: 'LINE_A', format: 'wav' }], 'id')
+    const deleted = await repository.execute({ type: 'cue.delete', cueIds: ['gone'] })
+    const { result, published } = await pending
+    expect(result).toMatchObject({ added: 0, updated: 0 })
+    expect(repository.projectForMain().cues).toEqual([])
+    expect(applyChangeSet(applyChangeSet(renderer, deleted.changes), published!.changes).cues).toEqual([])
   })
 })
 
@@ -177,7 +241,7 @@ describe('importPickedAudio keeps every copy inside the reference folder', () =>
     const src = path.join(SRC, 'LINE_A.wav')
     const p = project()
     const { result } = await importPickedAudio(
-      p,
+      repo(p),
       target,
       [
         { src, rel, dir: '', name: 'escaped', format: 'wav' },
@@ -199,7 +263,7 @@ describe('importPickedAudio keeps every copy inside the reference folder', () =>
     await fs.copyFile(path.join(SRC, 'LINE_B.wav'), path.join(dir, 'SCENE_2.wav'))
     const target = path.join(H.root, 'colon.vostudio')
     const p = project()
-    const { result } = await importAudio(p, target, [dir], 'id')
+    const { result } = await importAudio(repo(p), target, [dir], 'id')
     expect(result).toEqual({ added: 2, updated: 0, files: 2 })
     expect(p.cues.find((c) => c.key === 'SCENE:1')?.referenceAudio?.relPath).toBe(path.join(target, 'audio', 'reference', 'colon', 'SCENE:1.wav'))
   })
@@ -229,14 +293,14 @@ describe('importAudio into lines that come from a table', () => {
     p.linesFromTable = true
     p.cues.push(line('LINE_A'), line('LINE_Z'))
 
-    const { result, changes } = await importAudio(p, projectDir, [dir], 'id')
+    const { result, published } = await importAudio(repo(p), projectDir, [dir], 'id')
 
     expect(result).toEqual({ added: 0, updated: 1, unmatched: 2, files: 3 })
     expect(p.cues.map((c) => c.key)).toEqual(['LINE_A', 'LINE_Z'])
     expect(p.cues[0].referenceDuration).toBeCloseTo(1, 1)
     expect(p.cues[0].referenceAudio?.relPath).toBe(path.join(projectDir, 'audio', 'reference', 'attach-src', 'LINE_A.wav'))
     expect(p.cues[1].referenceAudio).toBeUndefined()
-    expect(changes.cues?.map((c) => c.key)).toEqual(['LINE_A'])
+    expect(published?.changes.cues?.map((c) => c.key)).toEqual(['LINE_A'])
     const copied = await fs.readdir(path.join(projectDir, 'audio', 'reference'), { recursive: true })
     expect(copied.map((f) => f.replace(/\\/g, '/')).sort()).toEqual(['attach-src', 'attach-src/LINE_A.wav'])
   })
@@ -246,10 +310,10 @@ describe('importAudio into lines that come from a table', () => {
     p.template = { name: 'Demo' }
     p.cues.push(line('OTHER'))
     const projectDir = path.join(H.root, 'none.vostudio')
-    const { result, changes } = await importAudio(p, projectDir, [path.join(SRC, 'LINE_A.wav')], 'id')
+    const { result, published } = await importAudio(repo(p), projectDir, [path.join(SRC, 'LINE_A.wav')], 'id')
     expect(result).toEqual({ added: 0, updated: 0, unmatched: 1, files: 1 })
     expect(p.cues.map((c) => c.key)).toEqual(['OTHER'])
-    expect(changes.cues).toEqual([])
+    expect(published?.changes.cues).toEqual([])
     await expect(fs.stat(path.join(projectDir, 'audio', 'reference', 'LINE_A.wav'))).rejects.toThrow()
   })
 })
@@ -265,7 +329,7 @@ describe('importAudio from nested folders', () => {
     await fs.copyFile(path.join(SRC, 'LINE_B.wav'), path.join(dir, 'top.wav'))
     const p = project()
 
-    const { result, changes } = await importAudio(p, projectDir, [dir], 'id')
+    const { result, published } = await importAudio(repo(p), projectDir, [dir], 'id')
 
     expect(result).toEqual({ added: 2, updated: 0, files: 3, duplicates: ['nested-src/b/hit.wav'] })
     const hit = p.cues.find((c) => c.key === 'hit')!
@@ -273,7 +337,7 @@ describe('importAudio from nested folders', () => {
     expect(hit.referenceAudio?.relPath).toBe(path.join(projectDir, 'audio', 'reference', 'nested-src', 'a', 'deep', 'hit.wav'))
     expect(hit.referenceDuration).toBeCloseTo(1, 1)
     expect(p.cues.find((c) => c.key === 'top')!.fields).toEqual({ EventName: 'top' })
-    expect(changes.cues).toHaveLength(2)
+    expect(published?.changes.cues).toHaveLength(2)
     await expect(fs.stat(path.join(projectDir, 'audio', 'reference', 'nested-src', 'b', 'hit.wav'))).rejects.toThrow()
   })
 
@@ -283,10 +347,10 @@ describe('importAudio from nested folders', () => {
     await fs.mkdir(path.join(dir, 'a'), { recursive: true })
     await fs.copyFile(path.join(SRC, 'LINE_A.wav'), path.join(dir, 'a', 'hit.wav'))
     const p = project()
-    await importAudio(p, projectDir, [dir], 'id')
+    await importAudio(repo(p), projectDir, [dir], 'id')
     await fs.mkdir(path.join(dir, 'b'), { recursive: true })
     await fs.rename(path.join(dir, 'a', 'hit.wav'), path.join(dir, 'b', 'hit.wav'))
-    const { result } = await importAudio(p, projectDir, [dir], 'id')
+    const { result } = await importAudio(repo(p), projectDir, [dir], 'id')
     expect(result).toMatchObject({ added: 0, updated: 1 })
     expect(p.cues.find((c) => c.key === 'hit')!.fields).toEqual({ EventName: 'hit', path: 'b' })
   })
@@ -297,15 +361,15 @@ describe('importAudio from nested folders', () => {
     await fs.mkdir(path.join(dir, 'a'), { recursive: true })
     await fs.copyFile(path.join(SRC, 'LINE_A.wav'), path.join(dir, 'a', 'hit.wav'))
     const p = project()
-    await importAudio(p, projectDir, [dir], 'id')
+    await importAudio(repo(p), projectDir, [dir], 'id')
     await fs.rename(path.join(dir, 'a', 'hit.wav'), path.join(dir, 'hit.wav'))
-    await importAudio(p, projectDir, [dir], 'id')
+    await importAudio(repo(p), projectDir, [dir], 'id')
     expect(p.cues.find((c) => c.key === 'hit')!.fields).toEqual({ EventName: 'hit' })
   })
 
   it('stores no folder for files picked one by one', async () => {
     const p = project()
-    await importAudio(p, path.join(H.root, 'picked.vostudio'), [path.join(SRC, 'LINE_A.wav')], 'id')
+    await importAudio(repo(p), path.join(H.root, 'picked.vostudio'), [path.join(SRC, 'LINE_A.wav')], 'id')
     expect(p.cues[0].fields).toEqual({ EventName: 'LINE_A' })
   })
 })

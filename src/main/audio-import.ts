@@ -1,16 +1,18 @@
-import { promises as fs } from 'fs'
+import { createReadStream, promises as fs } from 'fs'
 import path from 'path'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { attachesOnly, matchAudioFiles, type MatchRule } from '@shared/import-table'
 import { safeRelPath, withOrigin, type AudioRef, type Cue, type Project } from '@shared/domain'
 import { PATH_FIELD } from '@shared/export-plan'
-import type { ChangeSet } from '@shared/project-commands'
+import type { CommandResult } from '@shared/project-commands'
 import { pendingTakeDurations, type TakeDurationEntry } from '@shared/library'
 import type { AudioImportResult } from '@shared/ipc'
 import { isInsideDir } from '@shared/project-summary'
 import { takeFileKind } from '@shared/take-import'
 import { MAX_PICKED_FILES } from '@shared/asset-readers'
 import { probeMedia, transcodeToWav } from './ffmpeg'
+import { linkNew } from './project-store'
+import type { SerialProjectRepository } from './project-repository'
 
 const CONCURRENCY = 8
 
@@ -125,23 +127,54 @@ function buildCue(file: PickedAudio, abs: string, duration: number | undefined):
   return cue
 }
 
+async function fileDigest(file: string): Promise<string> {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer)
+  return hash.digest('hex')
+}
+
+async function keepReference(part: string, abs: string, current = abs): Promise<string> {
+  try {
+    await linkNew(part, abs)
+    return abs
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  }
+  const size = (await fs.stat(part)).size
+  let digest: string | undefined
+  for (const existing of new Set([abs, current])) {
+    if ((await fs.stat(existing).catch(() => null))?.size !== size) continue
+    if ((await fileDigest(existing).catch(() => '')) === (digest ??= await fileDigest(part))) return existing
+  }
+  const ext = path.extname(abs)
+  const revision = `${abs.slice(0, abs.length - ext.length)}_${randomUUID().slice(0, 8)}${ext}`
+  await linkNew(part, revision)
+  return revision
+}
+
+export interface AudioImported {
+  result: AudioImportResult
+  published: CommandResult | null
+}
+
 export async function importAudio(
-  project: Project,
+  repository: SerialProjectRepository,
   projectDir: string,
   paths: string[],
   rule: MatchRule
-): Promise<{ result: AudioImportResult; changes: ChangeSet }> {
+): Promise<AudioImported> {
   const { files, truncated } = await collectAudio(paths)
-  const imported = await importPickedAudio(project, projectDir, files, rule)
+  const imported = await importPickedAudio(repository, projectDir, files, rule)
   return truncated > 0 ? { ...imported, result: { ...imported.result, truncated } } : imported
 }
 
 export async function importPickedAudio(
-  project: Project,
+  repository: SerialProjectRepository,
   projectDir: string,
   files: PickedAudio[],
   rule: MatchRule
-): Promise<{ result: AudioImportResult; changes: ChangeSet }> {
+): Promise<AudioImported> {
+  const project = repository.projectForMain()
   const referenceRoot = path.join(projectDir, 'audio', 'reference')
   const failed: NonNullable<AudioImportResult['failed']> = []
   const contained = files.filter((file) => {
@@ -152,23 +185,25 @@ export async function importPickedAudio(
   const { update, create, duplicates } = matchAudioFiles(project.cues, contained, rule)
   const attach = attachesOnly(project)
   const kept = [...update.map(({ file }) => file), ...(attach ? [] : create)]
+  const currentReference = new Map(update.map(({ cue, file }) => [file, cue.referenceAudio?.relPath]))
 
   for (const dir of new Set(kept.map((f) => path.dirname(path.join(referenceRoot, referenceRel(f)))))) {
     await fs.mkdir(dir, { recursive: true })
   }
 
   const probed = await mapLimited(kept, async (file) => {
-    const abs = path.join(referenceRoot, referenceRel(file))
+    let abs = path.join(referenceRoot, referenceRel(file))
     const transcode = takeFileKind(file.src) === 'transcode'
     if (transcode || path.resolve(abs).toLowerCase() !== path.resolve(file.src).toLowerCase()) {
       const part = path.join(path.dirname(abs), `.part-${randomUUID()}-${path.basename(abs)}`)
       try {
         await (transcode ? transcodeToWav(file.src, part) : fs.copyFile(file.src, part))
-        await fs.rename(part, abs)
+        abs = await keepReference(part, abs, currentReference.get(file))
       } catch {
-        await fs.rm(part, { force: true }).catch(() => undefined)
         failed.push({ name: file.rel, reason: transcode ? 'could not be converted to wav' : 'could not be read' })
         return null
+      } finally {
+        await fs.rm(part, { force: true }).catch(() => undefined)
       }
     }
     return { file, abs, duration: await probeDuration(abs) }
@@ -176,26 +211,30 @@ export async function importPickedAudio(
   const byFile = new Map(probed.flatMap((row) => (row ? [[row.file, row] as const] : [])))
 
   const changed: Cue[] = []
-  for (const { cue, file } of update) {
-    const row = byFile.get(file)
-    if (!row) continue
-    cue.referenceAudio = { fileId: cue.key, relPath: row.abs, format: file.format }
-    if (row.duration !== undefined) cue.referenceDuration = row.duration
-    if (file.assetId) cue.origins = withOrigin(cue.origins, { assetId: file.assetId })
-    if (!attach && file.rel.includes('/') && (cue.fields[PATH_FIELD] ?? '') !== file.dir) {
-      const { [PATH_FIELD]: _moved, ...fields } = cue.fields
-      cue.fields = file.dir ? { ...fields, [PATH_FIELD]: file.dir } : fields
-    }
-    changed.push(cue)
-  }
   const added: Cue[] = []
-  for (const file of attach ? [] : create) {
-    const row = byFile.get(file)
-    if (!row) continue
-    const cue = buildCue(file, row.abs, row.duration)
-    project.cues.push(cue)
-    added.push(cue)
-  }
+  const published = await repository.mutate((current) => {
+    for (const { cue: matched, file } of update) {
+      const row = byFile.get(file)
+      const cue = row && current.cues.find((c) => c.id === matched.id)
+      if (!row || !cue) continue
+      cue.referenceAudio = { fileId: cue.key, relPath: row.abs, format: file.format }
+      if (row.duration !== undefined) cue.referenceDuration = row.duration
+      if (file.assetId) cue.origins = withOrigin(cue.origins, { assetId: file.assetId })
+      if (!attach && file.rel.includes('/') && (cue.fields[PATH_FIELD] ?? '') !== file.dir) {
+        const { [PATH_FIELD]: _moved, ...fields } = cue.fields
+        cue.fields = file.dir ? { ...fields, [PATH_FIELD]: file.dir } : fields
+      }
+      changed.push(cue)
+    }
+    for (const file of attach ? [] : create) {
+      const row = byFile.get(file)
+      if (!row) continue
+      const cue = buildCue(file, row.abs, row.duration)
+      current.cues.push(cue)
+      added.push(cue)
+    }
+    return { cues: [...changed, ...added] }
+  })
 
   return {
     result: {
@@ -206,6 +245,6 @@ export async function importPickedAudio(
       ...(duplicates.length > 0 ? { duplicates: duplicates.map((file) => file.rel) } : {}),
       ...(failed.length > 0 ? { failed } : {}),
     },
-    changes: { cues: structuredClone([...changed, ...added]) },
+    published,
   }
 }

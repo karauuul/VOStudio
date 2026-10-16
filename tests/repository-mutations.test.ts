@@ -112,6 +112,19 @@ describe('repository mutations', () => {
     expect(persist).toHaveBeenCalledTimes(1)
   })
 
+  it('writes the same change again on the next flush after a failed write', async () => {
+    const disk = new Error('disk full')
+    const persist = vi.fn().mockRejectedValueOnce(disk).mockResolvedValue(undefined)
+    const repo = new SerialProjectRepository(project(), persist, 1000)
+    await repo.execute({ type: 'cue.saveText', cueId: 'a', text: 'kept' })
+    await expect(repo.flush()).rejects.toBe(disk)
+    await repo.flush()
+    expect(persist).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(persist.mock.calls[1][0].json).cues[0].text).toBe('kept')
+    await repo.detach()
+    expect(persist).toHaveBeenCalledTimes(2)
+  })
+
   it('rejects mutations after detach', async () => {
     const repo = new SerialProjectRepository(project(), vi.fn(), 1)
     await repo.detach()

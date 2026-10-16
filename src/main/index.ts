@@ -594,13 +594,8 @@ function importAudioPaths(req: { paths: string[]; rule: MatchRule }, expected?: 
     if (rest.length === 0) {
       return { added: 0, updated: 0, files: sources.added.length }
     }
-    const { result, changes } = await importAudio(
-      repository.projectForMain(),
-      projectDir,
-      rest,
-      parsed.rule
-    )
-    emit('project:changed', await repository.commit(changes))
+    const { result, published } = await importAudio(repository, projectDir, rest, parsed.rule)
+    if (published) emitChange(published)
     return { ...result, files: result.files + sources.added.length }
   })
 }
@@ -627,8 +622,8 @@ function buildAudioLines(assetIds: string[], expected?: SerialProjectRepository)
     const repository = liveRepository(expected)
     const projectDir = store.getProjectDir()
     if (!projectDir) throw new Error('No project is open')
-    const { result, changes } = await assetAudioLines(repository.projectForMain(), projectDir, assetIds)
-    emit('project:changed', await repository.commit(changes))
+    const { result, published } = await assetAudioLines(repository, projectDir, assetIds)
+    if (published) emitChange(published)
     return result
   })
 }
@@ -1318,9 +1313,23 @@ async function quitHeadless(): Promise<void> {
   setImmediate(() => app.quit())
 }
 
-app.on('window-all-closed', () => {
-  void flushPersist().then(quitIfNoWindows, quitIfNoWindows)
-})
+function quitWhenSaved(): void {
+  void flushPersist().then(quitIfNoWindows, async (error: unknown) => {
+    if (headless) return
+    const { response } = await dialog.showMessageBox({
+      type: 'error',
+      message: 'Project not saved',
+      detail: String(error),
+      buttons: ['Retry', 'Quit'],
+      defaultId: 0,
+      cancelId: 0,
+    })
+    if (response === 0) quitWhenSaved()
+    else quitIfNoWindows()
+  })
+}
+
+app.on('window-all-closed', quitWhenSaved)
 
 if (primaryInstance) void app.whenReady().then(async () => {
   try {

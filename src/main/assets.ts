@@ -1,9 +1,9 @@
 import { promises as fs } from 'fs'
 import path from 'path'
 import { createHash, randomUUID } from 'crypto'
-import type { Project, ProjectAsset } from '@shared/domain'
+import type { ProjectAsset } from '@shared/domain'
 import { DEFAULT_MATCH_RULE } from '@shared/import-table'
-import type { ChangeSet } from '@shared/project-commands'
+import type { CommandResult } from '@shared/project-commands'
 import { Lru } from '@shared/lru'
 import {
   assetKind,
@@ -20,6 +20,7 @@ import {
 import type { AssetAddResult, AssetPage, AudioImportResult } from '@shared/ipc'
 import { collectFiles, importPickedAudio, pickedAudio, probeDuration, type PickedAudio } from './audio-import'
 import { readTable } from './table-import'
+import type { SerialProjectRepository } from './project-repository'
 
 const ASSET_COPY_MAX_BYTES = 64 * 1024 * 1024
 const RAW_READ_MAX_BYTES = 8 * 1024 * 1024
@@ -215,10 +216,11 @@ export interface AudioLinesResult extends AudioImportResult {
 }
 
 export async function assetAudioLines(
-  project: Project,
+  repository: SerialProjectRepository,
   projectDir: string,
   assetIds: string[]
-): Promise<{ result: AudioLinesResult; changes: ChangeSet }> {
+): Promise<{ result: AudioLinesResult; published: CommandResult | null }> {
+  const project = repository.projectForMain()
   const files: PickedAudio[] = []
   const skipped: AudioLinesResult['skipped'] = []
   for (const id of new Set(assetIds)) {
@@ -232,7 +234,7 @@ export async function assetAudioLines(
     if (picked) files.push({ ...picked, assetId: asset.id })
     else skipped.push({ asset: asset.name, reason: 'not an audio file' })
   }
-  const { result, changes } = await importPickedAudio(project, projectDir, files, DEFAULT_MATCH_RULE)
+  const { result, published } = await importPickedAudio(repository, projectDir, files, DEFAULT_MATCH_RULE)
   const { failed = [], ...imported } = result
-  return { result: { ...imported, skipped: [...skipped, ...failed.map(({ name, reason }) => ({ asset: name, reason }))] }, changes }
+  return { result: { ...imported, skipped: [...skipped, ...failed.map(({ name, reason }) => ({ asset: name, reason }))] }, published }
 }

@@ -206,10 +206,10 @@ const AUTOSAVE_NAME_ATTEMPTS = 1000
 
 const isTaken = (err: unknown): boolean => (err as NodeJS.ErrnoException | null)?.code === 'EEXIST'
 
-async function linkBackup(file: string, backup: string): Promise<void> {
-  await fs.link(file, backup).catch((err: unknown) => {
+export async function linkNew(file: string, target: string): Promise<void> {
+  await fs.link(file, target).catch((err: unknown) => {
     if (isTaken(err)) throw err
-    return fs.copyFile(file, backup, fs.constants.COPYFILE_EXCL)
+    return fs.copyFile(file, target, fs.constants.COPYFILE_EXCL)
   })
 }
 
@@ -222,7 +222,7 @@ async function keepAutosave(dir: string): Promise<void> {
     for (let offset = 0; !created; offset++) {
       const name = autosaveName(new Date(now + offset))
       try {
-        await linkBackup(file, path.join(autosave, name))
+        await linkNew(file, path.join(autosave, name))
         created = name
       } catch (err) {
         if (!isTaken(err) || offset + 1 >= AUTOSAVE_NAME_ATTEMPTS) throw err
@@ -498,13 +498,14 @@ export async function saveStems(cueId: string, voice: Buffer, rest: Buffer): Pro
   ]
 }
 
-async function stemsInVersions(dir: string): Promise<Set<string>> {
-  const versions = path.join(dir, 'versions')
+async function stemsInSavedStates(dir: string): Promise<Set<string>> {
   const keys = new Set<string>()
-  for (const name of await fs.readdir(versions).catch(() => [] as string[])) {
-    if (!name.endsWith('.json')) continue
-    const raw = await fs.readFile(path.join(versions, name), 'utf-8').catch(() => '')
-    for (const key of stemKeysIn(raw)) keys.add(key)
+  for (const saved of [path.join(dir, 'versions'), path.join(dir, 'autosave')]) {
+    for (const name of await fs.readdir(saved).catch(() => [] as string[])) {
+      if (!name.endsWith('.json')) continue
+      const raw = await fs.readFile(path.join(saved, name), 'utf-8').catch(() => '')
+      for (const key of stemKeysIn(raw)) keys.add(key)
+    }
   }
   return keys
 }
@@ -523,9 +524,9 @@ export async function dropUnusedStems(): Promise<void> {
     }
   }
   if (unused.length === 0) return
-  const versioned = await stemsInVersions(dir)
+  const saved = await stemsInSavedStates(dir)
   for (const abs of unused) {
-    if (!versioned.has(stemKey(abs))) await fs.rm(abs, { recursive: true, force: true }).catch(() => undefined)
+    if (!saved.has(stemKey(abs))) await fs.rm(abs, { recursive: true, force: true }).catch(() => undefined)
   }
   for (const entry of await fs.readdir(root, { withFileTypes: true }).catch(() => [])) {
     if (entry.isDirectory()) await fs.rmdir(path.join(root, entry.name)).catch(() => undefined)
