@@ -372,17 +372,17 @@ async function copyTree(from: string, to: string, discard: Discard, written: str
   }
 }
 
-const PREVIOUS_DIR = 'export.previous'
+const PREVIOUS_PREFIX = '.export-previous-'
 
 async function replacePackage(stagingDir: string, outDir: string, superseded: string[]): Promise<void> {
-  const previous = path.join(outDir, PREVIOUS_DIR)
+  let previous: string | null = null
   const moved: [string, string][] = []
   const written: string[] = []
   const keep: Discard = async (file) => {
     const stat = await fs.lstat(file).catch(() => null)
     if (!stat || stat.isDirectory()) return
-    const kept = path.join(previous, randomUUID())
-    await fs.mkdir(previous, { recursive: true })
+    previous ??= await fs.mkdtemp(path.join(outDir, PREVIOUS_PREFIX))
+    const kept = path.join(previous, String(moved.length))
     await fs.rename(file, kept)
     moved.push([file, kept])
   }
@@ -394,10 +394,10 @@ async function replacePackage(stagingDir: string, outDir: string, superseded: st
     for (const [file, kept] of moved.reverse()) {
       await fs.mkdir(path.dirname(file), { recursive: true }).then(() => fs.rename(kept, file)).catch(() => undefined)
     }
-    await fs.rmdir(previous).catch(() => undefined)
+    if (previous) await fs.rmdir(previous).catch(() => undefined)
     throw error
   }
-  await fs.rm(previous, { recursive: true, force: true }).catch(() => undefined)
+  if (previous) await fs.rm(previous, { recursive: true, force: true }).catch(() => undefined)
 }
 
 export async function removeSuperseded(

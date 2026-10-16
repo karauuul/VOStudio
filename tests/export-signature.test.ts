@@ -369,6 +369,25 @@ describe('export records the signature in report.json', () => {
     expect((await fs.readdir(out)).sort()).toEqual(['audio', 'report.json'])
   })
 
+  it('never touches an unrelated export.previous folder in the export folder', async () => {
+    const p = project({ format: 'wav-48-24' }, ['a'])
+    const dir = path.join(root, 'U.vostudio')
+    store.adoptProject(p, dir)
+    await previousPackage(dir, ['a.wav'])
+    const out = path.join(dir, 'export')
+    const unrelated = path.join(out, 'export.previous', 'keep.txt')
+    await fs.mkdir(path.dirname(unrelated))
+    await fs.writeFile(unrelated, 'mine')
+    await stageAndFinish(['a'])
+    expect(await fs.readFile(unrelated, 'utf8')).toBe('mine')
+    await fs.mkdir(path.join(out, 'audio', 'a.mp3'))
+    p.export = { format: 'mp3-192' }
+    await expect(stageAndFinish(['a'])).rejects.toThrow('The export folder has a folder at')
+    expect(await fs.readFile(unrelated, 'utf8')).toBe('mine')
+    expect(await fs.readFile(path.join(out, 'audio', 'a.wav'), 'utf8')).toBe('new')
+    expect((await fs.readdir(out)).sort()).toEqual(['audio', 'export.previous', 'report.json'])
+  })
+
   it('plans every job inside the staged audio folder, whatever the line id or template', async () => {
     const p = project({ format: 'wav-48-24' }, ['../../../table-outside'])
     const traversal = path.join(root, 'T.vostudio')
