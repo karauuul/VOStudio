@@ -14,6 +14,7 @@ const RETRY_MS = 500
 const CLOSED = 'VO Studio closed the connection'
 const USER_DATA_FLAG = '--user-data-dir'
 const HEADLESS_FLAG = '--headless'
+const AUTH_PING = JSON.stringify({ jsonrpc: '2.0', id: 'vostudio-mcp-auth', method: 'ping' })
 
 type Message = Record<string, unknown>
 
@@ -59,15 +60,24 @@ function readToken(userData: string): string | null {
 const connect = (userData: string, token: string): Promise<net.Socket> =>
   new Promise((resolve, reject) => {
     const socket = net.connect(endpointFor(process.platform, userData))
-    socket.once('error', reject)
-    socket.once('connect', () => {
-      socket.off('error', reject)
-      socket.write(`${token}\n`)
+    const refused = (): void => {
+      socket.destroy()
+      reject(new Error(CLOSED))
+    }
+    socket.once('error', refused)
+    socket.once('close', refused)
+    socket.once('connect', () => socket.write(`${token}\n${AUTH_PING}\n`))
+    let reply = ''
+    const read = (chunk: Buffer): void => {
+      reply += chunk.toString()
+      if (!reply.includes('\n')) return
+      socket.off('data', read).off('error', refused).off('close', refused).pause()
       resolve(socket)
-    })
+    }
+    socket.on('data', read)
   })
 
-async function tryConnect(candidates: string[]): Promise<net.Socket | null> {
+export async function tryConnect(candidates: string[]): Promise<net.Socket | null> {
   for (const userData of candidates) {
     const token = readToken(userData)
     if (!token) continue
