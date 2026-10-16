@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { dropLineEdits, type LineHistory } from '../src/shared/line-history'
 import { emptyEdits, type Cue, type CueComp } from '../src/shared/domain'
-import { externalChanges, pickHistory, recordExternalEffects, redoStale, takeKey, type TakeEffectsEdit } from '../src/shared/undo-route'
+import { recordCompEdit, stepCompEdit, type CompHistory } from '../src/shared/comp-history'
+import { externalChanges, pickHistory, pruneEffectsHistory, recordExternalEffects, redoStale, sendEdit, staleRedo, takeKey, type TakeEffectsEdit } from '../src/shared/undo-route'
 
 describe('undo routing between comp and take-effect histories', () => {
   it('undoes the newer entry first', () => {
@@ -166,5 +167,62 @@ describe('externalChanges effects', () => {
     const cue = { id: 'a', key: 'a', characterId: 'c', fields: {}, sourceText: '', text: '', status: 'generated', notes: '', takes: [take] } as unknown as Cue
     const deleted = { ...cue, takes: [{ ...take, deletedAt: '2026-01-01T00:00:00.000Z' }] } as unknown as Cue
     expect([...externalChanges({ cues: [cue] }, { cues: [deleted] }).effects]).toEqual([takeKey('a', 't')])
+  })
+})
+
+describe('sendEdit', () => {
+  const setup = () => {
+    const comps: CompHistory = new Map()
+    const lines: LineHistory = { undo: [], redo: [{ kind: 'done', cueId: 'b', textRevision: 0, before: { status: 'generated' }, after: { status: 'approved' }, at: 0 }] }
+    const onEdit = (): (() => void) => {
+      const kept = staleRedo([lines.redo, ...[...comps.values()].map((stacks) => stacks.redo)])
+      return () => {
+        lines.redo = lines.redo.filter(kept)
+        for (const stacks of comps.values()) stacks.redo = stacks.redo.filter(kept)
+      }
+    }
+    return { comps, lines, onEdit }
+  }
+
+  it('keeps a redo step made while an earlier edit waits for its acknowledgement and drops older ones', async () => {
+    const { comps, lines, onEdit } = setup()
+    recordCompEdit(comps, 'a', null, 1)
+    let ack: () => void = () => {}
+    const sent = sendEdit(() => new Promise<void>((resolve) => (ack = resolve)), false, onEdit)
+    stepCompEdit(comps, 'a', 'undo', { clips: [] })
+    ack()
+    await sent
+    expect(comps.get('a')?.redo).toHaveLength(1)
+    expect(lines.redo).toEqual([])
+  })
+
+  it('keeps redo when the command is rejected', async () => {
+    const { lines, onEdit } = setup()
+    await expect(sendEdit(() => Promise.reject(new Error('refused')), false, onEdit)).rejects.toThrow('refused')
+    expect(lines.redo).toHaveLength(1)
+  })
+
+  it('does not invalidate redo for replayed steps', async () => {
+    let edits = 0
+    const onEdit = (): (() => void) => () => edits++
+    await sendEdit(() => Promise.resolve(), true, onEdit)
+    await sendEdit(() => Promise.resolve(), false, onEdit)
+    expect(edits).toBe(1)
+  })
+})
+
+describe('pruneEffectsHistory', () => {
+  const take = (id: string, deletedAt?: string) => ({ id, edits: emptyEdits(), ...(deletedAt ? { deletedAt } : {}) })
+  const line = (id: string, takes: ReturnType<typeof take>[]) =>
+    ({ id, key: id, characterId: '', fields: {}, sourceText: '', text: '', status: 'generated', notes: '', takes }) as unknown as Cue
+  const entry = (cueId: string, takeId: string, at: number): TakeEffectsEdit => ({ cueId, takeId, prev: undefined, next: undefined, at })
+
+  it('keeps effect history of other lines and drops entries whose take or line is gone', () => {
+    const cues = [line('a', [take('t')]), line('b', [take('t'), take('gone', '2026-01-01T00:00:00.000Z')])]
+    const history = {
+      undo: [entry('a', 't', 1), entry('b', 't', 2), entry('b', 'gone', 3), entry('removed', 't', 4)],
+      redo: [entry('a', 't', 5), entry('b', 'missing', 6)],
+    }
+    expect(pruneEffectsHistory(history, cues)).toEqual({ undo: [entry('a', 't', 1), entry('b', 't', 2)], redo: [entry('a', 't', 5)] })
   })
 })

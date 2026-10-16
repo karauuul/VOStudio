@@ -3,7 +3,7 @@ import { MAX_STS_SECONDS, type CompRegion, type Cue, type Take, type VoiceSettin
 import { recordingGuard } from '@shared/recording-guard'
 import type { AppSettings } from '@shared/ipc'
 import { loopPlan } from '@shared/loop-record'
-import { latencySeconds, punchHidden, punchPrerollSeconds, type LatencySetting } from '@shared/punch'
+import { latencySeconds, punchPrerollSeconds, recordPlacement, type LatencySetting, type RecordPlacement } from '@shared/punch'
 import { pcmBitDepth } from '@shared/wav-header'
 import { api, audioUrl } from '../api'
 import { useRecorder, type PrerollStart, type RecordedClip, type RecorderApi } from '../audio/recorder'
@@ -38,14 +38,15 @@ interface Options {
     cueId: string,
     take: Take,
     replaceClipId?: string,
-    drop?: undefined,
+    drop?: PlaceAddress,
     placement?: RecordPlacement
   ) => Promise<void>
 }
 
-export type RecordPlacement =
-  | { kind: 'punch'; at: number; hidden: number; until?: number; trackId?: string }
-  | { kind: 'take'; at: number; trackId?: string }
+export interface PlaceAddress {
+  trackId?: string
+  at: number
+}
 
 interface LoopSession {
   range: CompRegion
@@ -242,21 +243,16 @@ export function useVoiceToVoice({
       })
       return
     }
-    const placement: RecordPlacement | undefined =
-      at !== null && clip
-        ? {
-            kind: 'punch',
-            at,
-            hidden: punchHidden(
-              clip.hidden,
-              clip.latency === null ? 0 : latencySeconds(punchLatencyRef.current, clip.latency),
-              clip.durationSec
-            ),
-            ...(trackId ? { trackId } : {}),
-          }
-        : !target && spot
-          ? { kind: 'take', at: spot.at, ...(spot.trackId ? { trackId: spot.trackId } : {}) }
-          : undefined
+    const placement = clip
+      ? recordPlacement(
+          {
+            hidden: clip.hidden,
+            latency: clip.latency === null ? 0 : latencySeconds(punchLatencyRef.current, clip.latency),
+            duration: clip.durationSec,
+          },
+          { punchAt: at, ...(trackId ? { trackId } : {}), replacing: target !== null, spot }
+        )
+      : undefined
     void saveClip((c) => c.finish(!!target || at !== null).then((take) => [take])).then((takes) => {
       punchRef.current = null
       takeAtRef.current = null
@@ -271,6 +267,7 @@ export function useVoiceToVoice({
 
   const submitSts = useCallback(
     (cueId: string, sourceTakeId: string, voiceSettings: VoiceSettings, fragment: boolean) => {
+      const drop: PlaceAddress = { at: Math.max(0, playhead()), trackId: targetTrack() }
       runGeneration(
         cueId,
         async (live) => {
@@ -284,7 +281,7 @@ export function useVoiceToVoice({
           })
           if (!live()) return
           onTakeAdded(cueId, take)
-          await onPlace(cueId, take)
+          await onPlace(cueId, take, undefined, drop)
           if (isActiveCue(cueId)) {
             void transport.playClip(
               { id: clipId.take(take.id), url: audioUrl(take.file.relPath) },
@@ -296,7 +293,7 @@ export function useVoiceToVoice({
         (e) => onStatus('err', String(e))
       )
     },
-    [onTakeAdded, onStatus, isActiveCue, onPlace]
+    [onTakeAdded, onStatus, isActiveCue, onPlace, playhead, targetTrack]
   )
 
   const guard = useCallback(

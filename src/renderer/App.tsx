@@ -19,7 +19,7 @@ import {
   type VoiceSettings,
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '@shared/ipc'
-import { externalChanges, pickHistory, recordExternalEffects, redoStale, type TakeEffectsEdit, type UndoSide } from '@shared/undo-route'
+import { externalChanges, pickHistory, pruneEffectsHistory, recordExternalEffects, redoStale, staleRedo, type TakeEffectsEdit, type UndoSide } from '@shared/undo-route'
 import { dropCompRedo, nextCompEdit, pruneCompHistory, recordCompEdit, type CompHistory } from '@shared/comp-history'
 import { PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
 import { hasSourceMaterial } from '@shared/import-table'
@@ -56,7 +56,8 @@ import type { CompApi, TimelineSelection } from './work/TimelinePanel'
 import type { LibraryPanel } from './work/LibraryPanel'
 import { ProgramPanel, type ProgramApi } from './work/ProgramPanel'
 import { CueText } from './work/CueText'
-import type { RecordPlacement } from './cue/useVoiceToVoice'
+import type { PlaceAddress } from './cue/useVoiceToVoice'
+import type { RecordPlacement } from '@shared/punch'
 import { TimelinePanel } from './work/TimelinePanel'
 import { RulesDialog } from './RulesPanel'
 import { GlossaryDialog } from './GlossaryDialog'
@@ -217,8 +218,6 @@ export default function App() {
 
   useEffect(() => {
     activeCueIdRef.current = activeCueId
-    fxUndoRef.current = []
-    fxRedoRef.current = []
   }, [activeCueId])
 
   useEffect(() => {
@@ -259,10 +258,13 @@ export default function App() {
     )
   }, [])
 
-  const onEdit = useCallback(() => {
-    fxRedoRef.current = []
-    linesRef.current.redo = []
-    dropCompRedo(compHistRef.current)
+  const onEdit = useCallback((): (() => void) => {
+    const kept = staleRedo([fxRedoRef.current, linesRef.current.redo, ...[...compHistRef.current.values()].map((stacks) => stacks.redo)])
+    return () => {
+      fxRedoRef.current = fxRedoRef.current.filter(kept)
+      linesRef.current.redo = linesRef.current.redo.filter(kept)
+      for (const stacks of compHistRef.current.values()) stacks.redo = stacks.redo.filter(kept)
+    }
   }, [])
 
   const onExternal = useCallback((before: Project | null, changes: ChangeSet, origin?: ChangeOrigin) => {
@@ -274,6 +276,7 @@ export default function App() {
     fxUndoRef.current = fx.undo
     fxRedoRef.current = fx.redo
     dropLineEdits(linesRef.current, external.lines)
+    for (const change of external.lineEdits) recordLineEdit(linesRef.current, change, at)
   }, [])
 
   const session = useProjectSession({ onStatus: pushStatus, onBootstrap, onEdit, onExternal })
@@ -793,12 +796,23 @@ export default function App() {
   const placeQueue = useMemo(() => keyedQueue(), [])
   const lastPlacedRef = useRef(new Map<string, { base: CueComp | undefined; comp: CueComp }>())
 
+  const placeAddress = useCallback(
+    (cueId: string): PlaceAddress => {
+      const state = transport.getState()
+      return {
+        trackId: targetTrackRef.current[cueId],
+        at: isActiveCue(cueId) ? (compRef.current?.playhead() ?? 0) : state.clipId === clipId.comp(cueId) ? state.pos : 0,
+      }
+    },
+    [isActiveCue]
+  )
+
   const placeOnComp = useCallback(
     (
       cueId: string,
       take: Take | Take[],
       replaceClipId?: string,
-      drop?: { trackId: string; at: number },
+      drop?: PlaceAddress,
       placement?: RecordPlacement
     ): Promise<void> => placeQueue(cueId, async () => {
       const takes = Array.isArray(take) ? take : [take]
@@ -812,33 +826,24 @@ export default function App() {
       }
       const cue = projectRef.current?.cues.find((c) => c.id === cueId)
       if (!cue) return
-      const state = transport.getState()
       const recent = lastPlacedRef.current.get(cueId)
       const stored = recent && recent.base === cue.comp ? recent.comp : cue.comp
       let comp = isActiveCue(cueId) && compRef.current ? compRef.current.current() : stored
       if (replaceClipId && !hasClip(comp, replaceClipId)) throw new Error(TARGET_CLIP_GONE)
-      let trackId = drop?.trackId ?? targetTrackRef.current[cueId]
-      let playhead =
-        drop?.at ??
-        (isActiveCue(cueId)
-          ? (compRef.current?.playhead() ?? 0)
-          : state.clipId === clipId.comp(cueId)
-            ? state.pos
-            : 0)
-      if (placement) {
+      const address = drop ?? placeAddress(cueId)
+      let trackId = address.trackId
+      let playhead = address.at
+      if (placement && placement.kind !== 'replace') {
         const request = {
           takeId: takes[0].id,
           duration: durations[0],
           at: placement.at,
+          hidden: placement.hidden,
           targetTrackId: placement.trackId ?? trackId,
         }
         const placed =
           placement.kind === 'punch'
-            ? punchClip(comp, {
-                ...request,
-                hidden: placement.hidden,
-                ...(placement.until === undefined ? {} : { until: placement.until }),
-              })
+            ? punchClip(comp, { ...request, ...(placement.until === undefined ? {} : { until: placement.until }) })
             : recordClip(comp, request)
         if (!placed) throw new Error('nothing was recorded after the punch point')
         comp = placed.comp
@@ -852,6 +857,7 @@ export default function App() {
             targetTrackId: trackId,
             playhead,
             ...(replaceClipId ? { replaceClipId } : {}),
+            ...(placement ? { srcIn: placement.hidden } : {}),
           })
           comp = placed.comp
           trackId = placed.trackId
@@ -872,7 +878,7 @@ export default function App() {
       lastPlacedRef.current.set(cueId, { base: cue.comp, comp: placedComp })
       recordCompEdit(compHistRef.current, cueId, stored?.clips.length ? stored : null, Date.now())
     }),
-    [placeQueue, projectRef, dispatch, isActiveCue, selectSource]
+    [placeQueue, projectRef, dispatch, isActiveCue, selectSource, placeAddress]
   )
 
   const pinTake = useCallback(
@@ -908,6 +914,7 @@ export default function App() {
       override?: VoiceSettings,
       model?: string
     ) => {
+      const drop = target.kind === 'clip' ? undefined : placeAddress(cueId)
       runGeneration(
         cueId,
         async (live) => {
@@ -928,13 +935,13 @@ export default function App() {
           })
           if (!live()) return
           onTakeAdded(cueId, take)
-          await placeOnComp(cueId, take, target.kind === 'clip' ? target.clipId : undefined)
+          await placeOnComp(cueId, take, target.kind === 'clip' ? target.clipId : undefined, drop)
           if (announce) pushStatus('ok', 'Take placed')
         },
         (e) => pushStatus('err', String(e))
       )
     },
-    [onTakeAdded, pushStatus, projectRef, placeOnComp]
+    [onTakeAdded, pushStatus, projectRef, placeOnComp, placeAddress]
   )
 
   const refuseWithoutKey = useCallback((): boolean => {
@@ -1278,7 +1285,11 @@ export default function App() {
 
   const cues = project?.cues
   useEffect(() => {
-    if (cues) pruneCompHistory(compHistRef.current, cues.map((cue) => cue.id))
+    if (!cues) return
+    pruneCompHistory(compHistRef.current, cues.map((cue) => cue.id))
+    const fx = pruneEffectsHistory({ undo: fxUndoRef.current, redo: fxRedoRef.current }, cues)
+    fxUndoRef.current = fx.undo
+    fxRedoRef.current = fx.redo
   }, [cues])
 
   const lineRemovalBlock = useCallback(

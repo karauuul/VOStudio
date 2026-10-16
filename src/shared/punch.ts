@@ -36,3 +36,35 @@ export function latencySeconds(settingMs: unknown, estimate: number): number {
 export function punchHidden(hidden: number, latency: number, duration: number): number {
   return clamp(hidden + latency, 0, Math.max(0, duration))
 }
+
+export type RecordPlacement =
+  | { kind: 'punch'; at: number; hidden: number; until?: number; trackId?: string }
+  | { kind: 'take'; at: number; hidden: number; trackId?: string }
+  | { kind: 'replace'; hidden: number }
+
+export interface RecordedClipTiming {
+  hidden: number
+  latency: number
+  duration: number
+}
+
+export interface RecordStart {
+  punchAt: number | null
+  trackId?: string
+  replacing: boolean
+  spot: { at: number; trackId?: string } | null
+}
+
+export function recordPlacement(clip: RecordedClipTiming, start: RecordStart): RecordPlacement | undefined {
+  if (start.punchAt !== null) {
+    return {
+      kind: 'punch',
+      at: start.punchAt,
+      hidden: punchHidden(clip.hidden, clip.latency, clip.duration),
+      ...(start.trackId ? { trackId: start.trackId } : {}),
+    }
+  }
+  if (start.replacing) return { kind: 'replace', hidden: clip.hidden }
+  if (!start.spot) return undefined
+  return { kind: 'take', at: start.spot.at, hidden: clip.hidden, ...(start.spot.trackId ? { trackId: start.spot.trackId } : {}) }
+}

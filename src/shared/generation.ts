@@ -75,6 +75,7 @@ export interface PlaceTakeRequest {
   targetTrackId?: string
   playhead: number
   replaceClipId?: string
+  srcIn?: number
 }
 
 export function placeTake(req: PlaceTakeRequest): {
@@ -90,6 +91,7 @@ export function placeTake(req: PlaceTakeRequest): {
     sourceTakeId: req.takeId,
     edits: emptyEdits(),
     ...(req.replaceClipId ? { replaceClipId: req.replaceClipId } : {}),
+    ...(req.srcIn ? { srcIn: req.srcIn } : {}),
   })
 }
 

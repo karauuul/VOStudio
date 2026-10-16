@@ -13,6 +13,7 @@ import type { Cue, Project, UiSessionState } from '@shared/domain'
 import type { TakeDurationUpdate } from '@shared/ipc'
 import { applyChangeSet, type ChangeOrigin, type ChangeSet, type ProjectCommand, type ProjectSnapshot } from '@shared/project-commands'
 import { settleDraft, withSavedText, type TextDraft } from '@shared/text-draft'
+import { sendEdit } from '@shared/undo-route'
 import { api } from './api'
 import { durationQueue } from './audio/duration-backfill'
 import { playback } from './playback'
@@ -69,7 +70,7 @@ export interface ProjectSession {
 export function useProjectSession(o: {
   onStatus: (kind: StatusKind, text: string) => void
   onBootstrap: (project: Project) => void
-  onEdit: () => void
+  onEdit: () => () => void
   onExternal: (before: Project | null, changes: ChangeSet, origin?: ChangeOrigin) => void
 }): ProjectSession {
   const [project, setProject] = useState<Project | null>(null)
@@ -94,8 +95,7 @@ export function useProjectSession(o: {
   externalRef.current = o.onExternal
 
   const dispatch = useCallback(async (command: ProjectCommand, replay = false): Promise<ChangeSet> => {
-    const result = await api['project:command'](command)
-    if (!replay) editRef.current()
+    const result = await sendEdit(() => api['project:command'](command), replay, editRef.current)
     if (result.revision <= revisionRef.current) return result.changes
     revisionRef.current = result.revision
     setProject((current) => (current ? applyChangeSet(current, result.changes) : current))
@@ -120,7 +120,7 @@ export function useProjectSession(o: {
   useEffect(
     () =>
       api.on('project:changed', (result) => {
-        editRef.current()
+        editRef.current()()
         if (result.revision <= revisionRef.current) return
         revisionRef.current = result.revision
         externalRef.current(projectRef.current, result.changes, result.origin)

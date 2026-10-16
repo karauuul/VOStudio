@@ -515,6 +515,7 @@ export interface PlaceClipRequest {
   replaceClipId?: string
   sourceTakeId: string
   edits: ClipEdits
+  srcIn?: number
 }
 
 export interface PlacedClip {
@@ -530,8 +531,12 @@ function freshTrack(tracks: CompTrack[]): CompTrack {
   return { id: `track-${n}`, name: `Track ${n}`, gainDb: 0, muted: false, solo: false }
 }
 
+const sourceIn = (duration: number, srcIn: number | undefined): number =>
+  srcIn !== undefined && Number.isFinite(srcIn) ? Math.min(Math.max(0, srcIn), Math.max(0, duration - MIN_CLIP_SRC)) : 0
+
 export function placeClip(comp: CueComp, req: PlaceClipRequest): PlacedClip {
   const tracks = compTracks(comp)
+  const srcIn = sourceIn(req.duration, req.srcIn)
   const i = req.replaceClipId ? comp.clips.findIndex((c) => c.id === req.replaceClipId) : -1
   if (i >= 0) {
     const previous = comp.clips[i]
@@ -539,7 +544,7 @@ export function placeClip(comp: CueComp, req: PlaceClipRequest): PlacedClip {
     clips[i] = {
       ...previous,
       sourceTakeId: req.sourceTakeId,
-      srcIn: 0,
+      srcIn,
       srcOut: req.duration,
       edits: req.edits,
     }
@@ -551,7 +556,7 @@ export function placeClip(comp: CueComp, req: PlaceClipRequest): PlacedClip {
   }
 
   const start = Math.max(0, req.playhead)
-  const end = start + req.duration
+  const end = start + req.duration - srcIn
   const busy = (trackId: string): boolean =>
     comp.clips.some(
       (c) => clipTrackId(c) === trackId && c.start < end - COMP_EPS && clipEnd(c) > start + COMP_EPS
@@ -574,7 +579,7 @@ export function placeClip(comp: CueComp, req: PlaceClipRequest): PlacedClip {
   const clip: CompClip = {
     id: newCompClipId(),
     sourceTakeId: req.sourceTakeId,
-    srcIn: 0,
+    srcIn,
     srcOut: req.duration,
     start,
     edits: req.edits,
@@ -656,6 +661,7 @@ export interface RecordRequest {
   duration: number
   at: number
   targetTrackId?: string
+  hidden?: number
 }
 
 export function recordClip(comp: CueComp | undefined, req: RecordRequest): PlacedClip {
@@ -667,9 +673,11 @@ export function recordClip(comp: CueComp | undefined, req: RecordRequest): Place
   )
   const start = hit ? hit.start : at
   const others = hit ? { ...base, clips: base.clips.filter((c) => c.id !== hit.id) } : base
-  const cleared = clearSpan(others, trackId, start, start + req.duration)
+  const hidden = sourceIn(req.duration, req.hidden)
+  const cleared = clearSpan(others, trackId, start, start + req.duration - hidden)
   return placeClip(hit ? { ...cleared, clips: [...cleared.clips, hit] } : cleared, {
     duration: req.duration,
+    srcIn: hidden,
     targetTrackId: trackId,
     playhead: start,
     sourceTakeId: req.takeId,

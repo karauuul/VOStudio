@@ -2,7 +2,8 @@ import { useCallback, useMemo, useRef, type MutableRefObject } from 'react'
 import { resolveVoiceSettings, type Character, type CompRegion, type Cue, type Take } from '@shared/domain'
 import type { GenTarget } from '@shared/generation'
 import type { AppSettings } from '@shared/ipc'
-import { useVoiceToVoice, type RecordPlacement } from '../cue/useVoiceToVoice'
+import { useVoiceToVoice, type PlaceAddress } from '../cue/useVoiceToVoice'
+import type { RecordPlacement } from '@shared/punch'
 import { useWire } from '../cue/useWire'
 import { TextPanel, type TextPanelProps } from './TextPanel'
 import type { ClipSelection, CompApi } from './TimelinePanel'
@@ -19,7 +20,7 @@ export interface CueTextProps {
     cueId: string,
     take: Take,
     replaceClipId?: string,
-    drop?: undefined,
+    drop?: PlaceAddress,
     placement?: RecordPlacement
   ) => Promise<void>
   recRef: MutableRefObject<(() => void) | null>
