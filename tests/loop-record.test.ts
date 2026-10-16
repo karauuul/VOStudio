@@ -76,6 +76,17 @@ describe('loopPlan', () => {
     })
   })
 
+  it('back-to-back passes with jittered marks stay complete', () => {
+    expect(loopPlan(take({ marks: [500, 1990, 3497], frames: 4000 }))).toEqual({
+      passes: [
+        { from: 500, to: 1990 },
+        { from: 1990, to: 3490 },
+        { from: 3497, to: 4000 },
+      ],
+      place: 1,
+    })
+  })
+
   it('orders and dedupes marks', () => {
     expect(loopPlan(take({ marks: [3700, 500, 2100, 500], frames: 5200 })).passes).toHaveLength(3)
   })
