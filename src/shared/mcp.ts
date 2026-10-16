@@ -1,6 +1,6 @@
 import { z } from 'zod/v4'
 
-export const MCP_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26']
+export const MCP_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18']
 
 export const RPC_PARSE_ERROR = -32700
 export const RPC_INVALID_REQUEST = -32600

@@ -125,6 +125,11 @@ describe('MCP initialize', () => {
     for (const version of MCP_PROTOCOL_VERSIONS) expect(negotiateVersion(version)).toBe(version)
   })
 
+  it('does not negotiate 2025-03-26, which requires JSON-RPC batches', () => {
+    expect(MCP_PROTOCOL_VERSIONS).toEqual(['2025-11-25', '2025-06-18'])
+    expect(negotiateVersion('2025-03-26')).toBe('2025-11-25')
+  })
+
   it('answers ping and ignores the initialized notification', async () => {
     const { spec } = server()
     expect(await exchange(spec, req('p', 'ping'))).toEqual([{ jsonrpc: '2.0', id: 'p', result: {} }])
