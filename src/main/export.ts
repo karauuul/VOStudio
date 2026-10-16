@@ -348,31 +348,70 @@ async function encodeTo(job: ExportJob, wav: unknown, codecArgs: string[]): Prom
   return { outPath, bytes: out.length, parityHash: sha256(out) }
 }
 
-async function copyTree(from: string, to: string): Promise<void> {
-  await fs.mkdir(to, { recursive: true })
+type Discard = (file: string) => Promise<void>
+
+async function copyTree(from: string, to: string, discard: Discard, written: string[]): Promise<void> {
+  const created = await fs.mkdir(to, { recursive: true })
+  if (created) written.push(created)
   for (const entry of await fs.readdir(from, { withFileTypes: true })) {
     const src = path.join(from, entry.name)
     const dst = path.join(to, entry.name)
     const existing = await fs.lstat(dst).catch(() => null)
     if (existing?.isSymbolicLink()) {
       if (entry.isDirectory()) throw new Error(`The export folder has a link at ${dst}; remove it and export again`)
-      await fs.rm(dst, { force: true })
     } else if (existing && existing.isDirectory() !== entry.isDirectory()) {
       throw new Error(`The export folder has ${existing.isDirectory() ? 'a folder' : 'a file'} at ${dst} where the export needs ${entry.isDirectory() ? 'a folder' : 'a file'}`)
     }
-    if (entry.isDirectory()) await copyTree(src, dst)
-    else await fs.copyFile(src, dst)
+    if (entry.isDirectory()) {
+      await copyTree(src, dst, discard, written)
+      continue
+    }
+    if (existing) await discard(dst)
+    written.push(dst)
+    await fs.copyFile(src, dst)
   }
 }
 
-export async function removeSuperseded(outDir: string, files: string[]): Promise<void> {
+const PREVIOUS_DIR = 'export.previous'
+
+async function replacePackage(stagingDir: string, outDir: string, superseded: string[]): Promise<void> {
+  const previous = path.join(outDir, PREVIOUS_DIR)
+  const moved: [string, string][] = []
+  const written: string[] = []
+  const keep: Discard = async (file) => {
+    const stat = await fs.lstat(file).catch(() => null)
+    if (!stat || stat.isDirectory()) return
+    const kept = path.join(previous, randomUUID())
+    await fs.mkdir(previous, { recursive: true })
+    await fs.rename(file, kept)
+    moved.push([file, kept])
+  }
+  try {
+    await removeSuperseded(outDir, superseded, keep)
+    await copyTree(stagingDir, outDir, keep, written)
+  } catch (error) {
+    for (const file of written.reverse()) await fs.rm(file, { recursive: true, force: true }).catch(() => undefined)
+    for (const [file, kept] of moved.reverse()) {
+      await fs.mkdir(path.dirname(file), { recursive: true }).then(() => fs.rename(kept, file)).catch(() => undefined)
+    }
+    await fs.rmdir(previous).catch(() => undefined)
+    throw error
+  }
+  await fs.rm(previous, { recursive: true, force: true }).catch(() => undefined)
+}
+
+export async function removeSuperseded(
+  outDir: string,
+  files: string[],
+  discard: Discard = (file) => fs.rm(file, { force: true })
+): Promise<void> {
   const audioRoot = await fs.realpath(path.join(outDir, 'audio')).catch(() => null)
   if (!audioRoot) return
   for (const file of files) {
     const target = path.join(outDir, file)
     const folder = await fs.realpath(path.dirname(target)).catch(() => null)
     if (!folder || (folder !== audioRoot && !isInsideDir(folder, audioRoot))) continue
-    await fs.rm(path.join(folder, path.basename(target)), { force: true })
+    await discard(path.join(folder, path.basename(target)))
     for (let dir: string = folder; dir !== audioRoot && isInsideDir(dir, audioRoot); dir = path.dirname(dir)) {
       if (!(await fs.rmdir(dir).then(() => true, () => false))) break
     }
@@ -455,8 +494,7 @@ async function publishExport(
   await fs.writeFile(path.join(stagingDir, 'report.json'), JSON.stringify(report, null, 2))
   const publish = async (): Promise<void> => {
     await refuseStale(current, revision(), stamped?.changes)
-    await removeSuperseded(outDir, supersededFiles(previous?.exported ?? [], exported))
-    await copyTree(stagingDir, outDir)
+    await replacePackage(stagingDir, outDir, supersededFiles(previous?.exported ?? [], exported))
   }
   await (current.revision === undefined ? publish() : hold(publish))
   await fs.rm(stagingDir, { recursive: true, force: true })
