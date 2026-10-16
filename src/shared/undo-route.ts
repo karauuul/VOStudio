@@ -77,6 +77,8 @@ export const takeKey = (cueId: string, takeId: string): string => `${cueId}/${ta
 
 const FIELD_KEYS = ['sourceText', 'text', 'characterId'] as const
 const otherLineKey = (cue: Cue): string => JSON.stringify([cue.referenceAudio, cue.original])
+const outputSourceKey = (cue: Cue): string =>
+  JSON.stringify([compKey(cue.comp), cue.finalTakeId ?? null, sanitizeRevision(cue.textRevision), cue.takes.map((take) => [take.id, take.deletedAt ?? null])])
 
 function fieldStep(was: Cue, cue: Cue): FieldStep | null {
   const from: LineFields = {}
@@ -124,7 +126,7 @@ export function externalChanges(before: Pick<Project, 'cues'> | null, changes: C
       const step = own ? fieldStep(was, cue) : null
       if (lineAgent && !was && changes.cueIndex?.[cue.id] !== undefined) created.push(cue.id)
       else if (step) fields.push(step)
-      else if (own && outputStateKey(outputStateOf(was)) !== outputStateKey(outputStateOf(cue))) {
+      else if (own && outputSourceKey(was) === outputSourceKey(cue) && outputStateKey(outputStateOf(was)) !== outputStateKey(outputStateOf(cue))) {
         out.lineEdits.push({ kind: 'done', cueId: cue.id, textRevision: sanitizeRevision(was.textRevision), before: outputStateOf(was), after: outputStateOf(cue) })
       } else out.lines.add(cue.id)
     }

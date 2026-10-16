@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyProjectCommand, type ProjectCommand } from '../src/shared/project-commands'
-import type { Character, Cue, Project } from '../src/shared/domain'
+import { emptyEdits, type Character, type Cue, type CueComp, type Project } from '../src/shared/domain'
 import { lineStepCommand, recordLineEdit, runLineStep, steppedEdit, type LineHistory, type StepDir } from '../src/shared/line-history'
 import { externalChanges } from '../src/shared/undo-route'
 
@@ -94,6 +94,21 @@ describe('agent line edits are undoable', () => {
     expect(p.cues[0].status).toBe('translated')
     await s.step('redo')
     expect(p.cues[0].status).toBe('excluded')
+  })
+
+  it('leaves output changes caused by agent timeline and final take edits to their own history', () => {
+    const take = { id: 't', kind: 'tts' as const, createdAt: 'now', file: { fileId: 't', relPath: 't.mp3', format: 'mp3' as const }, duration: 2, meta: {}, edits: emptyEdits() }
+    const comp: CueComp = { clips: [{ id: 'k', sourceTakeId: 't', srcIn: 0, srcOut: 2, start: 0, edits: emptyEdits() }] }
+    const p = project([cue('L1', { text: 'x', status: 'translated', takes: [take] })])
+    const before = structuredClone(p)
+    const placed = externalChanges(before, applyProjectCommand(p, { type: 'cue.setComp', cueId: 'L1', comp }), 'agent')
+    expect(p.cues[0].status).not.toBe(before.cues[0].status)
+    expect(placed.compEdits).toHaveLength(1)
+    expect(placed.lineEdits).toEqual([])
+    const q = project([cue('L1', { text: 'x', status: 'translated', takes: [take] })])
+    const final = externalChanges(structuredClone(q), applyProjectCommand(q, { type: 'cue.setFinalTake', cueId: 'L1', takeId: 't' }), 'agent')
+    expect(final.lineEdits).toEqual([])
+    expect([...final.lines]).toEqual(['L1'])
   })
 
   it('keeps dropping line history for changes that are not from the agent', () => {
