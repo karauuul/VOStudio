@@ -53,7 +53,7 @@ describe('duck envelope', () => {
     ])
     expect(envelopeDbAt(env, 0)).toBe(0)
     expect(envelopeDbAt(env, 2)).toBe(-12)
-    expect(envelopeDbAt(env, 1 - DUCK_ATTACK / 2)).toBeCloseTo(-6, 6)
+    expect(envelopeDbAt(env, 1 - DUCK_ATTACK / 2)).toBeCloseTo(20 * Math.log10((1 + Math.pow(10, -12 / 20)) / 2), 9)
     expect(envelopeDbAt(env, 10)).toBe(0)
   })
 

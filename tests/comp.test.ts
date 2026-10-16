@@ -270,8 +270,16 @@ describe('splitClipAt', () => {
       clip({ id: 'a', srcOut: 4, edits: edits({ gainEnvelope: [{ t: 0, db: 0 }, { t: 4, db: -12 }] }) })
     )
     const c = splitClipAt(env, 'a', 2, { left: 'L', right: 'R' })
-    expect(c.clips[0].edits.gainEnvelope).toEqual([{ t: 0, db: 0 }, { t: 2, db: -6 }])
-    expect(c.clips[1].edits.gainEnvelope).toEqual([{ t: 0, db: -6 }, { t: 2, db: -12 }])
+    const cut = 20 * Math.log10((1 + Math.pow(10, -12 / 20)) / 2)
+    const [left, right] = c.clips.map((x) => x.edits.gainEnvelope!)
+    expect(left).toHaveLength(2)
+    expect(left[0]).toEqual({ t: 0, db: 0 })
+    expect(left[1].t).toBe(2)
+    expect(left[1].db).toBeCloseTo(cut, 9)
+    expect(right).toHaveLength(2)
+    expect(right[0].t).toBe(0)
+    expect(right[0].db).toBeCloseTo(cut, 9)
+    expect(right[1]).toEqual({ t: 2, db: -12 })
   })
 
   it('a cut at the edge or outside the clip — no-op', () => {
