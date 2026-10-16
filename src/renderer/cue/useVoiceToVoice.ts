@@ -38,9 +38,14 @@ interface Options {
     cueId: string,
     take: Take,
     replaceClipId?: string,
-    drop?: undefined,
+    drop?: PlaceAddress,
     placement?: RecordPlacement
   ) => Promise<void>
+}
+
+export interface PlaceAddress {
+  trackId?: string
+  at: number
 }
 
 export type RecordPlacement =
@@ -271,6 +276,7 @@ export function useVoiceToVoice({
 
   const submitSts = useCallback(
     (cueId: string, sourceTakeId: string, voiceSettings: VoiceSettings, fragment: boolean) => {
+      const drop: PlaceAddress = { at: Math.max(0, playhead()), trackId: targetTrack() }
       runGeneration(
         cueId,
         async (live) => {
@@ -284,7 +290,7 @@ export function useVoiceToVoice({
           })
           if (!live()) return
           onTakeAdded(cueId, take)
-          await onPlace(cueId, take)
+          await onPlace(cueId, take, undefined, drop)
           if (isActiveCue(cueId)) {
             void transport.playClip(
               { id: clipId.take(take.id), url: audioUrl(take.file.relPath) },
@@ -296,7 +302,7 @@ export function useVoiceToVoice({
         (e) => onStatus('err', String(e))
       )
     },
-    [onTakeAdded, onStatus, isActiveCue, onPlace]
+    [onTakeAdded, onStatus, isActiveCue, onPlace, playhead, targetTrack]
   )
 
   const guard = useCallback(

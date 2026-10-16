@@ -56,7 +56,7 @@ import type { CompApi, TimelineSelection } from './work/TimelinePanel'
 import type { LibraryPanel } from './work/LibraryPanel'
 import { ProgramPanel, type ProgramApi } from './work/ProgramPanel'
 import { CueText } from './work/CueText'
-import type { RecordPlacement } from './cue/useVoiceToVoice'
+import type { PlaceAddress, RecordPlacement } from './cue/useVoiceToVoice'
 import { TimelinePanel } from './work/TimelinePanel'
 import { RulesDialog } from './RulesPanel'
 import { GlossaryDialog } from './GlossaryDialog'
@@ -792,12 +792,23 @@ export default function App() {
   const placeQueue = useMemo(() => keyedQueue(), [])
   const lastPlacedRef = useRef(new Map<string, { base: CueComp | undefined; comp: CueComp }>())
 
+  const placeAddress = useCallback(
+    (cueId: string): PlaceAddress => {
+      const state = transport.getState()
+      return {
+        trackId: targetTrackRef.current[cueId],
+        at: isActiveCue(cueId) ? (compRef.current?.playhead() ?? 0) : state.clipId === clipId.comp(cueId) ? state.pos : 0,
+      }
+    },
+    [isActiveCue]
+  )
+
   const placeOnComp = useCallback(
     (
       cueId: string,
       take: Take | Take[],
       replaceClipId?: string,
-      drop?: { trackId: string; at: number },
+      drop?: PlaceAddress,
       placement?: RecordPlacement
     ): Promise<void> => placeQueue(cueId, async () => {
       const takes = Array.isArray(take) ? take : [take]
@@ -811,19 +822,13 @@ export default function App() {
       }
       const cue = projectRef.current?.cues.find((c) => c.id === cueId)
       if (!cue) return
-      const state = transport.getState()
       const recent = lastPlacedRef.current.get(cueId)
       const stored = recent && recent.base === cue.comp ? recent.comp : cue.comp
       let comp = isActiveCue(cueId) && compRef.current ? compRef.current.current() : stored
       if (replaceClipId && !hasClip(comp, replaceClipId)) throw new Error(TARGET_CLIP_GONE)
-      let trackId = drop?.trackId ?? targetTrackRef.current[cueId]
-      let playhead =
-        drop?.at ??
-        (isActiveCue(cueId)
-          ? (compRef.current?.playhead() ?? 0)
-          : state.clipId === clipId.comp(cueId)
-            ? state.pos
-            : 0)
+      const address = drop ?? placeAddress(cueId)
+      let trackId = address.trackId
+      let playhead = address.at
       if (placement) {
         const request = {
           takeId: takes[0].id,
@@ -871,7 +876,7 @@ export default function App() {
       lastPlacedRef.current.set(cueId, { base: cue.comp, comp: placedComp })
       recordCompEdit(compHistRef.current, cueId, stored?.clips.length ? stored : null, Date.now())
     }),
-    [placeQueue, projectRef, dispatch, isActiveCue, selectSource]
+    [placeQueue, projectRef, dispatch, isActiveCue, selectSource, placeAddress]
   )
 
   const pinTake = useCallback(
@@ -907,6 +912,7 @@ export default function App() {
       override?: VoiceSettings,
       model?: string
     ) => {
+      const drop = target.kind === 'clip' ? undefined : placeAddress(cueId)
       runGeneration(
         cueId,
         async (live) => {
@@ -927,13 +933,13 @@ export default function App() {
           })
           if (!live()) return
           onTakeAdded(cueId, take)
-          await placeOnComp(cueId, take, target.kind === 'clip' ? target.clipId : undefined)
+          await placeOnComp(cueId, take, target.kind === 'clip' ? target.clipId : undefined, drop)
           if (announce) pushStatus('ok', 'Take placed')
         },
         (e) => pushStatus('err', String(e))
       )
     },
-    [onTakeAdded, pushStatus, projectRef, placeOnComp]
+    [onTakeAdded, pushStatus, projectRef, placeOnComp, placeAddress]
   )
 
   const refuseWithoutKey = useCallback((): boolean => {
