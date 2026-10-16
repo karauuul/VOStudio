@@ -679,6 +679,7 @@ export function applyProjectCommand(project: Project, command: ProjectCommand): 
 
 export function commandAudioPaths(command: ProjectCommand): string[] {
   if (command.type === 'cue.restoreOriginal') return command.referenceAudio ? [command.referenceAudio.relPath] : []
+  if (command.type === 'cue.setStems') return (command.stems ?? []).map((stem) => stem.file.relPath)
   const restored = command.type === 'cue.restore' ? command.cues : command.type === 'table.step' ? command.restore : []
   return restored.flatMap(({ cue }) => [
     ...cue.takes.map((take) => take.file.relPath),

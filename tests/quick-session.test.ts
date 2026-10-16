@@ -529,6 +529,37 @@ describe('trusted audio roots for restoring', () => {
     expect(audioWithinRoots(restore({ referenceAudio: { fileId: 'r', relPath: '/data/reference/r.wav', format: 'wav' } }), ['/root/P.vostudio'])).toBe(false)
     expect(audioWithinRoots({ type: 'cue.delete', cueIds: ['a'] }, [])).toBe(true)
   })
+
+  it('checks stem files a command sets', () => {
+    const stems = (relPath: string): ProjectCommand => ({
+      type: 'cue.setStems',
+      cueId: 'a',
+      stems: [{ id: 's', name: 'Rest', file: { fileId: 's', relPath, format: 'wav' }, exportMode: 'on' }],
+    })
+    expect(commandAudioPaths(stems('/root/P.vostudio/stems/a/s.wav'))).toEqual(['/root/P.vostudio/stems/a/s.wav'])
+    expect(audioWithinRoots(stems('/root/P.vostudio/stems/a/s.wav'), roots)).toBe(true)
+    expect(audioWithinRoots(stems('/root/P.vostudio/../../outside.wav'), roots)).toBe(false)
+    expect(audioWithinRoots({ type: 'cue.setStems', cueId: 'a', stems: null }, [])).toBe(true)
+  })
+
+  it('collects the audio of every command that carries a file reference', () => {
+    const ref = { fileId: 'x', relPath: '/elsewhere/x.wav', format: 'wav' as const }
+    const carrier = cue('a', { takes: [take('t', { file: ref })] })
+    const state = { status: 'empty' as const }
+    const commands: ProjectCommand[] = [
+      { type: 'cue.restore', cues: [{ cue: carrier, index: 0 }] },
+      { type: 'table.step', remove: [], restore: [{ cue: carrier, index: 0 }], fields: [], addCharacters: [], dropCharacters: [] },
+      { type: 'cue.restoreOriginal', cueId: 'a', whenState: state, ...state, referenceAudio: ref, referenceDuration: 1 },
+      { type: 'cue.setStems', cueId: 'a', stems: [{ id: 's', name: 'Rest', file: ref, exportMode: 'on' }] },
+      { type: 'cue.setOriginal', cueId: 'a', original: { exportMode: 'on' } },
+      { type: 'cue.setRegion', cueId: 'a', region: { sourceId: 's', in: 0, out: 1 } },
+      { type: 'cue.useTakeAsOriginal', cueId: 'a', takeId: 't' },
+      { type: 'cue.restoreOutput', cueId: 'a', whenState: state, whenTextRevision: 0, ...state },
+    ]
+    for (const command of commands) {
+      expect(commandAudioPaths(command).length > 0, command.type).toBe(JSON.stringify(command).includes('relPath'))
+    }
+  })
 })
 
 describe('restore revalidates sources from other lines', () => {
