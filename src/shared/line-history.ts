@@ -48,7 +48,7 @@ export function dropLineEdits(history: LineHistory, cueIds: ReadonlySet<string>)
 
 export const LINE_HISTORY_LIMIT = 100
 
-const outputStateOf = (cue: Cue): OutputState => ({
+export const outputStateOf = (cue: Cue): OutputState => ({
   status: cue.status,
   ...(cue.output === undefined ? {} : { output: structuredClone(cue.output) }),
   ...(cue.approval === undefined ? {} : { approval: structuredClone(cue.approval) }),

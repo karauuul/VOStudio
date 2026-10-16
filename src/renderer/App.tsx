@@ -274,6 +274,7 @@ export default function App() {
     fxUndoRef.current = fx.undo
     fxRedoRef.current = fx.redo
     dropLineEdits(linesRef.current, external.lines)
+    for (const change of external.lineEdits) recordLineEdit(linesRef.current, change, at)
   }, [])
 
   const session = useProjectSession({ onStatus: pushStatus, onBootstrap, onEdit, onExternal })
