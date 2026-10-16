@@ -31,9 +31,15 @@ export function loopPlan(take: LoopTake): LoopPlan {
   const shift = Math.round(take.latency * rate)
   const minPartial = Math.max(1, Math.round(LOOP_PARTIAL_MIN_SECONDS * rate))
   const slack = Math.round(LOOP_MARK_SLACK_SECONDS * rate)
-  const starts = [...new Set(take.marks.filter(Number.isFinite).map((m) => Math.round(m) + shift))]
+  const marks = [...new Set(take.marks.filter(Number.isFinite).map((m) => Math.round(m) + shift))]
     .sort((a, b) => a - b)
     .filter((from) => from < frames)
+  const starts: number[] = []
+  for (const mark of marks) {
+    const last = starts.at(-1)
+    const start = last !== undefined && Math.abs(mark - (last + length)) <= slack ? last + length : mark
+    if (last === undefined || start > last) starts.push(start)
+  }
 
   const passes: PassRange[] = []
   let place: number | null = null
@@ -41,7 +47,7 @@ export function loopPlan(take: LoopTake): LoopPlan {
     const next = i + 1 < starts.length ? starts[i + 1] : frames
     const from = Math.max(0, start)
     const to = Math.min(start + length, next, frames)
-    const complete = start >= 0 && to >= start + length - slack
+    const complete = start >= 0 && to === start + length
     if (!complete && to - from < minPartial) continue
     if (complete) place = passes.length
     passes.push({ from, to })

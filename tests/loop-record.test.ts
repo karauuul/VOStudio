@@ -76,14 +76,36 @@ describe('loopPlan', () => {
     })
   })
 
-  it('back-to-back passes with jittered marks stay complete', () => {
-    expect(loopPlan(take({ marks: [500, 1990, 3497], frames: 4000 }))).toEqual({
+  it('snaps an early jittered mark onto the gapless boundary so the placed pass has full length', () => {
+    expect(loopPlan(take({ marks: [0, 1490, 2980], frames: 4000 }))).toEqual({
       passes: [
-        { from: 500, to: 1990 },
-        { from: 1990, to: 3490 },
-        { from: 3497, to: 4000 },
+        { from: 0, to: 1500 },
+        { from: 1500, to: 3000 },
+        { from: 3000, to: 4000 },
       ],
       place: 1,
+    })
+  })
+
+  it('snaps a late jittered mark onto the gapless boundary', () => {
+    expect(loopPlan(take({ marks: [500, 2010, 3497], frames: 4000 }))).toEqual({
+      passes: [
+        { from: 500, to: 2000 },
+        { from: 2000, to: 3500 },
+        { from: 3500, to: 4000 },
+      ],
+      place: 1,
+    })
+  })
+
+  it('a mark outside the slack is a real restart, not jitter', () => {
+    expect(loopPlan(take({ marks: [500, 1900, 3300], frames: 4000 }))).toEqual({
+      passes: [
+        { from: 500, to: 1900 },
+        { from: 1900, to: 3300 },
+        { from: 3300, to: 4000 },
+      ],
+      place: null,
     })
   })
 
