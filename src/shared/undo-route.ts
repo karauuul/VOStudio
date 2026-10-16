@@ -25,6 +25,11 @@ export function pickHistory(times: UndoTimes, dir: 'undo' | 'redo'): UndoSide | 
   return best
 }
 
+export function sendEdit<T>(send: () => Promise<T>, replay: boolean, onEdit: () => void): Promise<T> {
+  if (!replay) onEdit()
+  return send()
+}
+
 export function redoStale(redoAt: number | null, otherUndoAt: number | null): boolean {
   return redoAt !== null && otherUndoAt !== null && redoAt < otherUndoAt
 }

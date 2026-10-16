@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { dropLineEdits, type LineHistory } from '../src/shared/line-history'
 import { emptyEdits, type Cue, type CueComp } from '../src/shared/domain'
-import { externalChanges, pickHistory, recordExternalEffects, redoStale, takeKey, type TakeEffectsEdit } from '../src/shared/undo-route'
+import { dropCompRedo, recordCompEdit, stepCompEdit, type CompHistory } from '../src/shared/comp-history'
+import { externalChanges, pickHistory, recordExternalEffects, redoStale, sendEdit, takeKey, type TakeEffectsEdit } from '../src/shared/undo-route'
 
 describe('undo routing between comp and take-effect histories', () => {
   it('undoes the newer entry first', () => {
@@ -166,5 +167,26 @@ describe('externalChanges effects', () => {
     const cue = { id: 'a', key: 'a', characterId: 'c', fields: {}, sourceText: '', text: '', status: 'generated', notes: '', takes: [take] } as unknown as Cue
     const deleted = { ...cue, takes: [{ ...take, deletedAt: '2026-01-01T00:00:00.000Z' }] } as unknown as Cue
     expect([...externalChanges({ cues: [cue] }, { cues: [deleted] }).effects]).toEqual([takeKey('a', 't')])
+  })
+})
+
+describe('sendEdit', () => {
+  it('keeps a redo step made while an earlier edit waits for its acknowledgement', async () => {
+    const history: CompHistory = new Map()
+    const comp: CueComp = { clips: [] }
+    recordCompEdit(history, 'a', null, 1)
+    let ack: () => void = () => {}
+    const sent = sendEdit(() => new Promise<void>((resolve) => (ack = resolve)), false, () => dropCompRedo(history))
+    stepCompEdit(history, 'a', 'undo', comp)
+    ack()
+    await sent
+    expect(history.get('a')?.redo).toHaveLength(1)
+  })
+
+  it('does not invalidate redo for replayed steps', async () => {
+    let edits = 0
+    await sendEdit(() => Promise.resolve(), true, () => edits++)
+    await sendEdit(() => Promise.resolve(), false, () => edits++)
+    expect(edits).toBe(1)
   })
 })
