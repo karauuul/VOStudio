@@ -382,7 +382,7 @@ export function TimelinePanel({
     (next: CueComp): void => {
       setPending(null)
       if (!editable || sameComp(next, liveRef.current)) return
-      edit.commit(next.clips.length > 0 ? next : null)
+      edit.commit(next)
     },
     [edit, editable]
   )

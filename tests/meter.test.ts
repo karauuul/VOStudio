@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { METER_FLOOR_DB, meterFill } from '../src/shared/meter'
+import { METER_FLOOR_DB, meterFill, parseMonitorGain } from '../src/shared/meter'
 
 const fromDb = (db: number): number => 10 ** (db / 20)
 
@@ -18,5 +18,22 @@ describe('meterFill', () => {
   it('stays full above full scale', () => {
     expect(meterFill(1.5)).toBe(1)
     expect(meterFill(Infinity)).toBe(1)
+  })
+})
+
+describe('parseMonitorGain', () => {
+  it('starts at full gain when nothing is stored', () => {
+    expect(parseMonitorGain(null)).toBe(1)
+    expect(parseMonitorGain('')).toBe(1)
+  })
+
+  it('keeps a stored gain including a deliberate zero', () => {
+    expect(parseMonitorGain('0')).toBe(0)
+    expect(parseMonitorGain('0.5')).toBe(0.5)
+    expect(parseMonitorGain('1')).toBe(1)
+  })
+
+  it('falls back to full gain for garbage or out-of-range values', () => {
+    for (const v of ['abc', '2', '-1', 'NaN', 'Infinity']) expect(parseMonitorGain(v)).toBe(1)
   })
 })

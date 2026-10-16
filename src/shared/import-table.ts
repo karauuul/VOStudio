@@ -263,12 +263,12 @@ export function applyTable(
     let touched = created
     let suggested = false
     if (source && source !== cue.sourceText && !(keepOriginal && cue.sourceText.trim())) {
-      Object.assign(cue, changeCueSourceText(cue, source))
+      Object.assign(cue, changeCueSourceText(cue, source, project))
       touched = true
     }
     if (translation && translation !== cue.text) {
       if (replaceTranslations || !cue.text.trim()) {
-        Object.assign(cue, changeCueText(cue, translation))
+        Object.assign(cue, changeCueText(cue, translation, project))
         if (cue.status === 'empty') cue.status = 'translated'
         delete cue.suggestedText
         touched = true

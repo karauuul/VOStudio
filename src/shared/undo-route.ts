@@ -1,3 +1,4 @@
+import { committedComp } from './comp'
 import type { ClipEffects, Cue, CueComp, Project, Take } from './domain'
 import type { ChangeOrigin, ChangeSet } from './project-commands'
 
@@ -55,7 +56,7 @@ export interface ExternalChanges {
   effectEdits: AgentEffectsEdit[]
 }
 
-const liveComp = (comp: CueComp | undefined): CueComp | null => (comp && comp.clips.length > 0 ? comp : null)
+const liveComp = (comp: CueComp | undefined): CueComp | null => committedComp(comp ?? null)
 const compKey = (comp: CueComp | undefined): string => JSON.stringify(liveComp(comp))
 const effectsKey = (take: Take | undefined): string => JSON.stringify([take?.edits.effects ?? null, take?.deletedAt ?? null])
 const lineKey = (cue: Cue | undefined): string =>

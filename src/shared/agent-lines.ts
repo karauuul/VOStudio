@@ -99,7 +99,7 @@ export function listLines(project: Project, query: LineQuery): Record<string, un
   const readiness = readinessById(project)
   const full = query.detail === 'full'
   const rows = page.map((cue) => {
-    const duration = outputDuration(cue)
+    const duration = outputDuration(cue, project)
     return {
       key: cue.key,
       id: cue.id,

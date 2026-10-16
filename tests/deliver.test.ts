@@ -150,3 +150,21 @@ describe('buildReport', () => {
     })
   })
 })
+
+describe('buildUpdatedIndex with a borrowed take', () => {
+  it('marks a done line whose timeline uses a pinned take of another line as approved', () => {
+    const edits = { trimStart: 0, trimEnd: 0, gainDb: 0, fadeIn: { duration: 0, shape: 'equalPower' as const }, fadeOut: { duration: 0, shape: 'equalPower' as const } }
+    const owner = cue(row('a1', 'owner'), {
+      takes: [{ id: 'ta', kind: 'tts', createdAt: '2026-01-01T00:00:00.000Z', file: { fileId: 'ta', relPath: 'ta.mp3', format: 'mp3' }, duration: 1, meta: {}, edits, pinned: true }],
+    })
+    const borrower = cue(row('a2', 'borrower'), {
+      text: 'Done',
+      status: 'approved',
+      comp: { clips: [{ id: 'k', sourceTakeId: 'ta', srcIn: 0, srcOut: 1, start: 0, edits }] },
+      output: { kind: 'comp', revision: 1 },
+      approval: { textRevision: 0, outputRevision: 1, approvedAt: '2026-01-01T00:00:00.000Z' },
+    })
+    const parsed = parseCsv(buildUpdatedIndex(project([owner, borrower]))!)
+    expect(parsed.rows.map((r) => r[parsed.headers.indexOf('status')])).toEqual(['', 'approved'])
+  })
+})

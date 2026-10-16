@@ -277,3 +277,18 @@ describe('shouldSelectCandidate', () => {
     ).toBe(false)
   })
 })
+
+describe('a timeline built on a pinned take of another line', () => {
+  const owner = cue({ id: 'cue-a', takes: [take('ta', { pinned: true })] })
+  const base = cue({ takes: [] })
+  const lookup = { cues: [owner, base] }
+  const done = approveCue(changeCompOutput(base, comp('ta'), lookup), undefined, lookup)
+  const project = { cues: [owner, done] }
+
+  it('is the output and is approved', () => {
+    expect(outputSource(done, project)).toEqual({ kind: 'comp' })
+    expect(initialPreviewSource(done, project)).toEqual({ kind: 'comp' })
+    expect(setFinalEligible(done, { kind: 'comp' }, project)).toBe(false)
+    expect(cueDecision(done, { kind: 'comp' }, project)).toBe('approved')
+  })
+})

@@ -55,4 +55,31 @@ describe('CSV approval sync', () => {
     expect(await syncCsv()).toEqual({ changedCells: 0, path: csvPath })
     expect(await readFile(csvPath, 'utf-8')).toBe(raw)
   })
+
+  it('flags a done line whose timeline uses a pinned take of another line', async () => {
+    sandbox = await mkdtemp(join(tmpdir(), 'vostudio-csv-sync-'))
+    const csvPath = join(sandbox, 'table.csv')
+    await writeFile(csvPath, 'WemId,Notes\r\n1,\r\n2,\r\n')
+    const edits = { trimStart: 0, trimEnd: 0, gainDb: 0, fadeIn: { duration: 0, shape: 'linear' as const }, fadeOut: { duration: 0, shape: 'linear' as const } }
+    const line = { characterId: 'ada', fields: {}, sourceText: 'Source', text: 'Text', notes: '' }
+    project = {
+      cues: [
+        { ...line, id: 'a', key: '1', status: 'translated', takes: [{ id: 'ta', kind: 'tts', createdAt: '2026-08-30T00:00:00.000Z', file: { fileId: 'ta', relPath: 'ta.mp3', format: 'mp3' }, duration: 1, meta: {}, edits, pinned: true }] },
+        {
+          ...line,
+          id: 'b',
+          key: '2',
+          status: 'approved',
+          takes: [],
+          comp: { clips: [{ id: 'k', sourceTakeId: 'ta', srcIn: 0, srcOut: 1, start: 0, edits }] },
+          output: { kind: 'comp', revision: 1 },
+          approval: { textRevision: 0, outputRevision: 1, approvedAt: '2026-08-30T00:00:00.000Z' },
+        },
+      ],
+      csvBinding: { csvPath, mapping: { key: 'WemId', approvedFlag: { column: 'Notes', value: 'approved' } } },
+    } as Project
+
+    expect(await syncCsv()).toEqual({ changedCells: 1, path: csvPath })
+    expect(await readFile(csvPath, 'utf-8')).toBe('WemId,Notes\r\n1,\r\n2,approved\r\n')
+  })
 })

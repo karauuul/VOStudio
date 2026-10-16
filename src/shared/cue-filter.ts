@@ -3,6 +3,7 @@ import { compDuration } from './comp'
 import { hasVoicedTake, type Character, type Cue } from './domain'
 import { outputSource } from './workspace-source'
 import { groupByScene } from './sources'
+import type { TakeLookup } from './library'
 
 export const DEFAULT_FILTER = 'work'
 export const ALL_CHARACTERS = 'all'
@@ -23,20 +24,20 @@ export const REVIEW_FILTER = 'sugg'
 export const hasPendingProposal = (cue: Pick<Cue, 'suggestedText' | 'proposals'>): boolean =>
   cue.suggestedText !== undefined || !!cue.proposals?.character || !!cue.proposals?.link
 
-export function matchesFilter(cue: Cue, filter: string): boolean {
+export function matchesFilter(cue: Cue, filter: string, project?: TakeLookup): boolean {
   switch (filter) {
     case 'work':
       return cue.status !== 'excluded'
     case 'translated':
       return cue.status === 'translated'
     case 'gen':
-      return hasValidVoicedOutput(cue)
+      return hasValidVoicedOutput(cue, project)
     case 'notgen':
-      return !hasValidVoicedOutput(cue) && cue.status !== 'excluded'
+      return !hasValidVoicedOutput(cue, project) && cue.status !== 'excluded'
     case 'review':
-      return hasValidVoicedOutput(cue) && cue.status !== 'excluded' && approvalState(cue) !== 'approved'
+      return hasValidVoicedOutput(cue, project) && cue.status !== 'excluded' && approvalState(cue, project) !== 'approved'
     case 'appr':
-      return cue.status !== 'excluded' && approvalState(cue) === 'approved'
+      return cue.status !== 'excluded' && approvalState(cue, project) === 'approved'
     case 'sugg':
       return hasPendingProposal(cue)
     case 'excluded':
@@ -68,7 +69,7 @@ export function filterCues(
   characterId: string = ALL_CHARACTERS
 ): Cue[] {
   return cues.filter(
-    (c) => matchesFilter(c, filter) && matchesCharacter(c, characterId) && matchesSearch(c, search)
+    (c) => matchesFilter(c, filter, { cues }) && matchesCharacter(c, characterId) && matchesSearch(c, search)
   )
 }
 
@@ -79,7 +80,7 @@ export function filterCounts(
 ): Record<string, number> {
   const scope = cues.filter((c) => matchesCharacter(c, characterId) && matchesSearch(c, search))
   const counts: Record<string, number> = {}
-  for (const f of FILTERS) counts[f.id] = scope.filter((c) => matchesFilter(c, f.id)).length
+  for (const f of FILTERS) counts[f.id] = scope.filter((c) => matchesFilter(c, f.id, { cues })).length
   return counts
 }
 
@@ -139,9 +140,9 @@ export type ReviewLabel =
   | 'Needs voice'
   | 'Excluded'
 
-export function reviewLabel(cue: Cue): ReviewLabel {
+export function reviewLabel(cue: Cue, project?: TakeLookup): ReviewLabel {
   if (cue.status === 'excluded') return 'Excluded'
-  const state = approvalState(cue)
+  const state = approvalState(cue, project)
   if (state === 'approved') return 'Approved'
   if (state === 'stale') return 'Stale approval'
   if (state === 'needs-review') return 'Needs review'
@@ -179,8 +180,8 @@ export function reviewGeneration(
   return review
 }
 
-export function outputDuration(cue: Cue): number | undefined {
-  const source = outputSource(cue)
+export function outputDuration(cue: Cue, project?: TakeLookup): number | undefined {
+  const source = outputSource(cue, project)
   if (!source || source.kind === 'none') return undefined
   const d =
     source.kind === 'comp'
@@ -191,9 +192,9 @@ export function outputDuration(cue: Cue): number | undefined {
   return d !== undefined && d > 0 ? d : undefined
 }
 
-export function deltaLabel(cue: Cue): string {
+export function deltaLabel(cue: Cue, project?: TakeLookup): string {
   const reference = cue.referenceDuration
-  const actual = outputDuration(cue)
+  const actual = outputDuration(cue, project)
   if (reference === undefined || actual === undefined) return 'n/a'
   const d = actual - reference
   return `${d >= 0 ? '+' : ''}${d.toFixed(2)}`

@@ -21,9 +21,10 @@ import {
   projectCommandSchema,
   projectFileSchema,
 } from '../src/main/schemas'
-import { committedComp } from '../src/shared/comp'
+import { committedComp, isEmptyComp } from '../src/shared/comp'
+import { addTrack } from '../src/shared/library'
 import { applyProjectCommand } from '../src/shared/project-commands'
-import { hasValidVoicedOutput } from '../src/shared/approval'
+import { approvalState, hasValidVoicedOutput, usesCompOutput } from '../src/shared/approval'
 
 const legacyProject = (): Project =>
   ({
@@ -483,5 +484,66 @@ describe('the new commands', () => {
     ]) {
       expect(projectCommandSchema.parse(command)).toEqual(command)
     }
+  })
+})
+
+describe('an empty timeline keeps its tracks', () => {
+  const tracks = [
+    { id: 'track-1', name: 'Track 1', gainDb: 0, muted: false, solo: false, effects: { reverb: { mix: 0.3, size: 0.5, decay: 1 } } },
+    { id: 'track-2', name: 'Track 2', gainDb: -3, muted: false, solo: false },
+  ]
+  const setComp = (p: Project, cueId: string, comp: unknown): void => {
+    applyProjectCommand(p, projectCommandSchema.parse({ type: 'cue.setComp', cueId, comp }) as never)
+  }
+
+  it('removing the last clip keeps the track setup and falls back to the final take', () => {
+    const p = legacyProject()
+    setComp(p, 'c', { ...p.cues[0].comp, tracks })
+    setComp(p, 'c', { clips: [], tracks })
+    const cue = p.cues[0]
+    expect(cue.comp).toEqual({ clips: [], tracks })
+    expect(isEmptyComp(cue.comp)).toBe(true)
+    expect(usesCompOutput(cue, p)).toBe(false)
+    expect(cue.output).toEqual({ kind: 'take', takeId: 't1', revision: 5 })
+    expect(hasValidVoicedOutput(cue, p)).toBe(true)
+  })
+
+  it('an empty timeline is no output when there is no take to fall back to', () => {
+    const p = twoCues()
+    setComp(p, 'c2', { clips: [{ id: 'cc2', sourceTakeId: 't2', srcIn: 0, srcOut: 2, start: 0, edits: emptyEdits() }], tracks })
+    setComp(p, 'c2', { clips: [], tracks })
+    expect(p.cues[1].comp).toEqual({ clips: [], tracks })
+    expect(p.cues[1].output).toBeNull()
+    expect(hasValidVoicedOutput(p.cues[1], p)).toBe(false)
+    expect(p.cues[1].status).toBe('translated')
+  })
+
+  it('adding a track on a line without a timeline is saved and leaves an approved take output alone', () => {
+    const p = twoCues()
+    applyProjectCommand(p, { type: 'cue.setFinalTake', cueId: 'c2', takeId: 't2' })
+    applyProjectCommand(p, { type: 'cue.approve', cueId: 'c2', approved: true, approvedAt: '2026-01-02T00:00:00.000Z' })
+    const before = structuredClone(p.cues[1])
+    const grown = addTrack({ clips: [] })
+    setComp(p, 'c2', grown)
+    expect(p.cues[1]).toEqual({ ...before, comp: grown })
+    expect(approvalState(p.cues[1], p)).toBe('approved')
+  })
+
+  it('an empty timeline with tracks survives the project file schema', () => {
+    const p = legacyProject()
+    p.cues[0].comp = { clips: [], tracks }
+    const data = JSON.parse(persisted(p)) as Record<string, unknown>
+    expect(projectFileSchema.parse(data)).toEqual(data)
+    expect(compSchema.parse({ clips: [], tracks })).toEqual({ clips: [], tracks })
+  })
+
+  it('a bare empty timeline still means no timeline, as before', () => {
+    expect(committedComp({ clips: [] })).toBeNull()
+    expect(committedComp({ clips: [], tracks })).toEqual({ clips: [], tracks })
+    const p = twoCues()
+    const before = structuredClone(p.cues[1])
+    setComp(p, 'c2', { clips: [] })
+    expect(p.cues[1]).not.toHaveProperty('comp')
+    expect(p.cues[1]).toEqual({ ...before, output: null })
   })
 })

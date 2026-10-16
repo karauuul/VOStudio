@@ -1,6 +1,7 @@
 import { approvalState, hasValidVoicedOutput, usesCompOutput } from './approval'
 import { defaultCompFromTake, isEmptyComp } from './comp'
 import { liveTakes, type Cue, type CueComp, type Take } from './domain'
+import type { TakeLookup } from './library'
 
 export type PreviewSource = { kind: 'none' } | { kind: 'take'; takeId: string } | { kind: 'comp' }
 
@@ -27,15 +28,15 @@ export function sameSource(a: PreviewSource, b: PreviewSource): boolean {
   return a.kind !== 'take' || b.kind !== 'take' || a.takeId === b.takeId
 }
 
-export function outputSource(cue: Cue): PreviewSource | null {
-  if (!hasValidVoicedOutput(cue)) return null
-  if (usesCompOutput(cue)) return { kind: 'comp' }
+export function outputSource(cue: Cue, project?: TakeLookup): PreviewSource | null {
+  if (!hasValidVoicedOutput(cue, project)) return null
+  if (usesCompOutput(cue, project)) return { kind: 'comp' }
   const takeId = cue.output?.kind === 'take' ? cue.output.takeId : cue.finalTakeId
   return takeId ? { kind: 'take', takeId } : null
 }
 
-export function initialPreviewSource(cue: Cue): PreviewSource {
-  const output = outputSource(cue)
+export function initialPreviewSource(cue: Cue, project?: TakeLookup): PreviewSource {
+  const output = outputSource(cue, project)
   if (output) return output
   const live = liveTakes(cue)
   const take = newestTake(live.filter((t) => t.kind !== 'recording')) ?? newestTake(live)
@@ -57,8 +58,8 @@ export function resolvePreview(cue: Cue, source: PreviewSource, takeDuration?: n
   return { source }
 }
 
-export function setFinalEligible(cue: Cue, source: PreviewSource): boolean {
-  const output = outputSource(cue)
+export function setFinalEligible(cue: Cue, source: PreviewSource, project?: TakeLookup): boolean {
+  const output = outputSource(cue, project)
   if (output && sameSource(output, source)) return false
   if (source.kind === 'take') {
     const take = liveTakes(cue).find((t) => t.id === source.takeId)
@@ -67,11 +68,11 @@ export function setFinalEligible(cue: Cue, source: PreviewSource): boolean {
   return source.kind === 'comp' && !isEmptyComp(cue.comp)
 }
 
-export function cueDecision(cue: Cue, source: PreviewSource): CueDecision {
+export function cueDecision(cue: Cue, source: PreviewSource, project?: TakeLookup): CueDecision {
   if (cue.status === 'excluded') return 'none'
-  const output = outputSource(cue)
+  const output = outputSource(cue, project)
   if (output && sameSource(output, source)) {
-    return approvalState(cue) === 'approved' ? 'approved' : 'approve'
+    return approvalState(cue, project) === 'approved' ? 'approved' : 'approve'
   }
   return source.kind === 'none' ? 'none' : 'set-final'
 }

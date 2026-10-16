@@ -218,3 +218,19 @@ describe('applyTemplateDiff', () => {
     expect(applyChangeSet(mirror, { cues: structuredClone(changed) }).cues.map((c) => c.key)).toEqual(['1', '2'])
   })
 })
+
+describe('applyTemplateDiff on a line voiced with a borrowed take', () => {
+  it('keeps the line voiced when its source text changes', () => {
+    const owner = cue({ id: 'cue-A', key: 'A', takes: [{ ...take('ta'), pinned: true }], finalTakeId: undefined, status: 'translated' })
+    const borrower = cue({
+      takes: [],
+      finalTakeId: undefined,
+      comp: { clips: [{ id: 'k', sourceTakeId: 'ta', srcIn: 0, srcOut: 1, start: 0, edits: emptyEdits() }] },
+      output: { kind: 'comp', revision: 1 },
+    })
+    const p = project([owner, borrower])
+    applyTemplateDiff(p, diffTemplate(p, [row({ sourceText: 'New source' })]), [])
+    expect(p.cues[1].sourceText).toBe('New source')
+    expect(p.cues[1].status).toBe('generated')
+  })
+})

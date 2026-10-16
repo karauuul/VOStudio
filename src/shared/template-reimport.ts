@@ -66,11 +66,11 @@ export function applyTemplateDiff<R extends ReimportRow>(
   const warnings: TemplateIssue[] = []
 
   for (const { row, cue, sourceChanged, translationChanged } of diff.updated) {
-    if (sourceChanged) Object.assign(cue, changeCueSourceText(cue, row.sourceText))
+    if (sourceChanged) Object.assign(cue, changeCueSourceText(cue, row.sourceText, project))
     if (translationChanged) {
       if (cue.text.trim()) cue.suggestedText = row.translation
       else {
-        Object.assign(cue, changeCueText(cue, row.translation))
+        Object.assign(cue, changeCueText(cue, row.translation, project))
         if (cue.status === 'empty' && row.translation.trim()) cue.status = 'translated'
       }
     }
