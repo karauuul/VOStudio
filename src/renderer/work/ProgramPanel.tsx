@@ -8,7 +8,7 @@ import {
 } from 'react'
 import type { WordTiming } from '@shared/domain'
 import { mapToOriginal, subtitleAt } from '@shared/subtitles'
-import { meterFill } from '@shared/meter'
+import { meterFill, parseMonitorGain } from '@shared/meter'
 import { audioUrl } from '../api'
 import { clipId, transport, type TransportState } from '../audio/transport'
 import { useWire } from '../cue/useWire'
@@ -64,8 +64,7 @@ export interface ProgramPanelProps {
 
 function storedGain(): number {
   try {
-    const v = Number(localStorage.getItem(GAIN_KEY))
-    return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 1
+    return parseMonitorGain(localStorage.getItem(GAIN_KEY))
   } catch {
     return 1
   }
