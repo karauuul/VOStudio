@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto'
 import { attachesOnly, matchAudioFiles, type MatchRule } from '@shared/import-table'
 import { safeRelPath, withOrigin, type AudioRef, type Cue, type Project } from '@shared/domain'
 import { PATH_FIELD } from '@shared/export-plan'
-import type { ChangeSet } from '@shared/project-commands'
+import type { CommandResult } from '@shared/project-commands'
 import { pendingTakeDurations, type TakeDurationEntry } from '@shared/library'
 import type { AudioImportResult } from '@shared/ipc'
 import { isInsideDir } from '@shared/project-summary'
@@ -12,6 +12,7 @@ import { takeFileKind } from '@shared/take-import'
 import { MAX_PICKED_FILES } from '@shared/asset-readers'
 import { probeMedia, transcodeToWav } from './ffmpeg'
 import { linkNew } from './project-store'
+import type { SerialProjectRepository } from './project-repository'
 
 const CONCURRENCY = 8
 
@@ -143,23 +144,29 @@ async function keepReference(part: string, abs: string, current = abs): Promise<
   return revision
 }
 
+export interface AudioImported {
+  result: AudioImportResult
+  published: CommandResult | null
+}
+
 export async function importAudio(
-  project: Project,
+  repository: SerialProjectRepository,
   projectDir: string,
   paths: string[],
   rule: MatchRule
-): Promise<{ result: AudioImportResult; changes: ChangeSet }> {
+): Promise<AudioImported> {
   const { files, truncated } = await collectAudio(paths)
-  const imported = await importPickedAudio(project, projectDir, files, rule)
+  const imported = await importPickedAudio(repository, projectDir, files, rule)
   return truncated > 0 ? { ...imported, result: { ...imported.result, truncated } } : imported
 }
 
 export async function importPickedAudio(
-  project: Project,
+  repository: SerialProjectRepository,
   projectDir: string,
   files: PickedAudio[],
   rule: MatchRule
-): Promise<{ result: AudioImportResult; changes: ChangeSet }> {
+): Promise<AudioImported> {
+  const project = repository.projectForMain()
   const referenceRoot = path.join(projectDir, 'audio', 'reference')
   const failed: NonNullable<AudioImportResult['failed']> = []
   const contained = files.filter((file) => {
@@ -196,26 +203,30 @@ export async function importPickedAudio(
   const byFile = new Map(probed.flatMap((row) => (row ? [[row.file, row] as const] : [])))
 
   const changed: Cue[] = []
-  for (const { cue, file } of update) {
-    const row = byFile.get(file)
-    if (!row) continue
-    cue.referenceAudio = { fileId: cue.key, relPath: row.abs, format: file.format }
-    if (row.duration !== undefined) cue.referenceDuration = row.duration
-    if (file.assetId) cue.origins = withOrigin(cue.origins, { assetId: file.assetId })
-    if (!attach && file.rel.includes('/') && (cue.fields[PATH_FIELD] ?? '') !== file.dir) {
-      const { [PATH_FIELD]: _moved, ...fields } = cue.fields
-      cue.fields = file.dir ? { ...fields, [PATH_FIELD]: file.dir } : fields
-    }
-    changed.push(cue)
-  }
   const added: Cue[] = []
-  for (const file of attach ? [] : create) {
-    const row = byFile.get(file)
-    if (!row) continue
-    const cue = buildCue(file, row.abs, row.duration)
-    project.cues.push(cue)
-    added.push(cue)
-  }
+  const published = await repository.mutate((current) => {
+    for (const { cue: matched, file } of update) {
+      const row = byFile.get(file)
+      const cue = row && current.cues.find((c) => c.id === matched.id)
+      if (!row || !cue) continue
+      cue.referenceAudio = { fileId: cue.key, relPath: row.abs, format: file.format }
+      if (row.duration !== undefined) cue.referenceDuration = row.duration
+      if (file.assetId) cue.origins = withOrigin(cue.origins, { assetId: file.assetId })
+      if (!attach && file.rel.includes('/') && (cue.fields[PATH_FIELD] ?? '') !== file.dir) {
+        const { [PATH_FIELD]: _moved, ...fields } = cue.fields
+        cue.fields = file.dir ? { ...fields, [PATH_FIELD]: file.dir } : fields
+      }
+      changed.push(cue)
+    }
+    for (const file of attach ? [] : create) {
+      const row = byFile.get(file)
+      if (!row) continue
+      const cue = buildCue(file, row.abs, row.duration)
+      current.cues.push(cue)
+      added.push(cue)
+    }
+    return { cues: [...changed, ...added] }
+  })
 
   return {
     result: {
@@ -226,6 +237,6 @@ export async function importPickedAudio(
       ...(duplicates.length > 0 ? { duplicates: duplicates.map((file) => file.rel) } : {}),
       ...(failed.length > 0 ? { failed } : {}),
     },
-    changes: { cues: structuredClone([...changed, ...added]) },
+    published,
   }
 }

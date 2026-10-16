@@ -17,6 +17,8 @@ const { addAssets, assetAudioLines, assetPage, clearAssetCache, loadAsset, readA
 const { collectFiles } = await import('../src/main/audio-import')
 const { MAX_PICKED_FILES } = await import('../src/shared/asset-readers')
 const store = await import('../src/main/project-store')
+const { SerialProjectRepository } = await import('../src/main/project-repository')
+const repo = (p: Project): InstanceType<typeof SerialProjectRepository> => new SerialProjectRepository(p, async () => undefined)
 const ffmpegStatic = (await import('ffmpeg-static')).default as unknown as string
 
 const run = promisify(execFile)
@@ -119,7 +121,7 @@ describe('addAssets', () => {
     const { added } = await addAssets([], PROJECT_DIR, [DROP])
     const project = { ...base(), id: 'p', schemaVersion: 1, createdAt: '', assets: added } as Project
     const ids = added.filter((a) => a.kind === 'audio').map((a) => a.id)
-    const { result } = await assetAudioLines(project, PROJECT_DIR, [...ids, added.find((a) => a.kind === 'table')!.id])
+    const { result } = await assetAudioLines(repo(project), PROJECT_DIR, [...ids, added.find((a) => a.kind === 'table')!.id])
     expect(result).toMatchObject({ added: 2, updated: 0 })
     expect(result.skipped).toEqual([
       { asset: 'drop/lines.csv', reason: 'a table asset, not audio' },
@@ -145,7 +147,7 @@ describe('audio assets of every audio format become lines', () => {
     const { added } = await addAssets([], target, [dir])
     expect(added.every((a) => a.kind === 'audio')).toBe(true)
     const project = { ...base(), id: 'p', schemaVersion: 1, createdAt: '', assets: added } as Project
-    const { result } = await assetAudioLines(project, target, added.map((a) => a.id))
+    const { result } = await assetAudioLines(repo(project), target, added.map((a) => a.id))
     expect(result).toMatchObject({ added: 2, updated: 0, skipped: [], duplicates: ['flacs/bark_002.wav'] })
     const bark = project.cues.find((c) => c.key === 'bark_001')!
     expect(bark.referenceAudio).toMatchObject({ format: 'wav', relPath: path.join(target, 'audio', 'reference', 'flacs', 'bark_001.wav') })
@@ -161,7 +163,7 @@ describe('audio assets of every audio format become lines', () => {
       ...base(), id: 'p', schemaVersion: 1, createdAt: '',
       assets: [{ id: 'evil', name: '../../../../victim.wav', kind: 'audio', file: { fileId: 'hit.wav', relPath: src }, size: 1, addedAt: 'now' }],
     } as Project
-    const { result } = await assetAudioLines(project, target, ['evil'])
+    const { result } = await assetAudioLines(repo(project), target, ['evil'])
     expect(result).toEqual({ added: 0, updated: 0, files: 1, skipped: [{ asset: '../../../../victim.wav', reason: 'unsafe file name' }] })
     expect(project.cues).toEqual([])
     expect(await fs.readdir(target)).toEqual([])
@@ -179,10 +181,10 @@ describe('audio assets whose file went missing', () => {
     const { added } = await addAssets([], target, [dir])
     await fs.rm(path.join(dir, 'lost_001.wav'))
     const project = { ...base(), id: 'p', schemaVersion: 1, createdAt: '', assets: added } as Project
-    const { result, changes } = await assetAudioLines(project, target, added.map((a) => a.id))
+    const { result, published } = await assetAudioLines(repo(project), target, added.map((a) => a.id))
     expect(result).toMatchObject({ added: 1, updated: 0, skipped: [{ asset: 'gone/lost_001.wav', reason: 'could not be read' }] })
     expect(project.cues.map((c) => c.key)).toEqual(['kept_001'])
-    expect(changes.cues?.map((c) => c.key)).toEqual(['kept_001'])
+    expect(published?.changes.cues?.map((c) => c.key)).toEqual(['kept_001'])
     expect(await fs.readdir(path.join(target, 'audio', 'reference', 'gone'))).toEqual(['kept_001.wav'])
   })
 })
