@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { applyProjectCommand, outputStateKey, type ProjectCommand } from '../src/shared/project-commands'
 import { emptyEdits, type Character, type Cue, type CueComp, type Project } from '../src/shared/domain'
-import { lineStepCommand, outputStateOf, recordLineEdit, runLineStep, steppedEdit, type LineHistory, type StepDir } from '../src/shared/line-history'
+import { dropLineEdits, lineStepCommand, outputStateOf, recordLineEdit, runLineStep, steppedEdit, type LineHistory, type StepDir } from '../src/shared/line-history'
 import { externalChanges } from '../src/shared/undo-route'
+import { recordCompEdit, stepCompEdit, type CompHistory } from '../src/shared/comp-history'
 
 const cue = (id: string, over: Partial<Cue> = {}): Cue => ({
   id, characterId: '', key: id, fields: {}, sourceText: '', text: '', status: 'empty', notes: '', takes: [], ...over,
@@ -20,15 +21,23 @@ const project = (cues: Cue[]): Project => ({
 
 function agentSession(p: Project) {
   const history: LineHistory = { undo: [], redo: [] }
+  const comps: CompHistory = new Map()
   let at = 0
   const agent = (command: ProjectCommand): void => {
     const before = structuredClone(p)
-    const changes = applyProjectCommand(p, command)
-    for (const change of externalChanges(before, changes, 'agent').lineEdits) recordLineEdit(history, change, ++at)
+    const external = externalChanges(before, applyProjectCommand(p, command), 'agent')
+    dropLineEdits(history, external.lines)
+    for (const change of external.lineEdits) recordLineEdit(history, change, ++at)
+    for (const edit of external.compEdits) recordCompEdit(comps, edit.cueId, edit.prev, ++at)
   }
   const step = (dir: StepDir) =>
     runLineStep(history, dir, async (edit) => steppedEdit(edit, dir, applyProjectCommand(p, lineStepCommand(edit, dir)), undefined))
-  return { history, agent, step }
+  const compUndo = (cueId: string): void => {
+    const cue = p.cues.find((c) => c.id === cueId)
+    const entry = stepCompEdit(comps, cueId, 'undo', cue?.comp ?? null)
+    if (entry) applyProjectCommand(p, { type: 'cue.setComp', cueId, comp: entry.value })
+  }
+  return { history, agent, step, compUndo }
 }
 
 describe('agent line edits are undoable', () => {
@@ -108,7 +117,21 @@ describe('agent line edits are undoable', () => {
     const q = project([cue('L1', { text: 'x', status: 'translated', takes: [take] })])
     const final = externalChanges(structuredClone(q), applyProjectCommand(q, { type: 'cue.setFinalTake', cueId: 'L1', takeId: 't' }), 'agent')
     expect(final.lineEdits).toEqual([])
-    expect([...final.lines]).toEqual(['L1'])
+    expect([...final.lines]).toEqual([])
+  })
+
+  it('undoes an agent timeline edit and then the agent text edit before it', async () => {
+    const take = { id: 't', kind: 'tts' as const, createdAt: 'now', file: { fileId: 't', relPath: 't.mp3', format: 'mp3' as const }, duration: 2, meta: {}, edits: emptyEdits() }
+    const comp: CueComp = { clips: [{ id: 'k', sourceTakeId: 't', srcIn: 0, srcOut: 2, start: 0, edits: emptyEdits() }] }
+    const p = project([cue('L1', { text: 'before', status: 'translated', takes: [take] })])
+    const s = agentSession(p)
+    s.agent({ type: 'cue.saveText', cueId: 'L1', text: 'after' })
+    s.agent({ type: 'cue.setComp', cueId: 'L1', comp })
+    s.compUndo('L1')
+    expect(p.cues[0].comp).toBeUndefined()
+    expect(s.history.undo).toHaveLength(1)
+    await s.step('undo')
+    expect(p.cues[0].text).toBe('before')
   })
 
   it('leaves output invalidated by agent effect edits to the effect history', () => {
@@ -121,7 +144,7 @@ describe('agent line edits are undoable', () => {
     expect(outputStateKey(outputStateOf(p.cues[0]))).not.toBe(outputStateKey(outputStateOf(before.cues[0])))
     expect(external.effectEdits).toHaveLength(1)
     expect(external.lineEdits).toEqual([])
-    expect([...external.lines]).toEqual(['L1'])
+    expect([...external.lines]).toEqual([])
   })
 
   it('keeps dropping line history for changes that are not from the agent', () => {

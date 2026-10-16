@@ -134,9 +134,10 @@ export function externalChanges(before: Pick<Project, 'cues'> | null, changes: C
       const step = own ? fieldStep(was, cue) : null
       if (lineAgent && !was && changes.cueIndex?.[cue.id] !== undefined) created.push(cue.id)
       else if (step) fields.push(step)
-      else if (own && outputSourceKey(was) === outputSourceKey(cue) && outputStateKey(outputStateOf(was)) !== outputStateKey(outputStateOf(cue))) {
+      else if (!own) out.lines.add(cue.id)
+      else if (outputSourceKey(was) === outputSourceKey(cue) && outputStateKey(outputStateOf(was)) !== outputStateKey(outputStateOf(cue))) {
         outputs.push({ kind: 'done', cueId: cue.id, textRevision: sanitizeRevision(was.textRevision), before: outputStateOf(was), after: outputStateOf(cue) })
-      } else out.lines.add(cue.id)
+      }
     }
     for (const take of cue.takes) {
       const old = was?.takes.find((t) => t.id === take.id)
@@ -146,11 +147,7 @@ export function externalChanges(before: Pick<Project, 'cues'> | null, changes: C
       } else out.effects.add(takeKey(cue.id, take.id))
     }
   }
-  const effectsChanged = out.effects.size > 0 || out.effectEdits.length > 0
-  for (const change of outputs) {
-    if (effectsChanged) out.lines.add(change.cueId)
-    else out.lineEdits.push(change)
-  }
+  if (out.effects.size === 0 && out.effectEdits.length === 0) out.lineEdits.push(...outputs)
   if (created.length > 0 || fields.length > 0) {
     out.lineEdits.push({ kind: 'table', ids: created, snapshots: [], fields, characters: [], focus: created[0] ?? fields[0].cueId })
   }
