@@ -98,13 +98,15 @@ export function changeTakeOutput(cue: Cue, takeId: string, project?: TakeLookup)
 }
 
 export function changeCompOutput(cue: Cue, comp: CueComp | null, project?: TakeLookup): Cue {
+  const audible = !!comp && !isEmptyComp(comp)
+  if (comp && !audible && !usesCompOutput(cue, project)) return { ...cue, comp }
   const revision = nextOutputRevision(cue)
   let next: Cue
-  if (comp) next = { ...cue, comp, output: { kind: 'comp', revision } }
+  if (comp && audible) next = { ...cue, comp, output: { kind: 'comp', revision } }
   else {
     const { comp: _comp, ...withoutComp } = cue
     const take = usableTake(cue, cue.finalTakeId)
-    next = { ...withoutComp, output: take ? { kind: 'take', takeId: take.id, revision } : null }
+    next = { ...(comp ? { ...cue, comp } : withoutComp), output: take ? { kind: 'take', takeId: take.id, revision } : null }
   }
   return { ...next, status: nonApprovedStatus(next, project) }
 }

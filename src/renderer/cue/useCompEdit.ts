@@ -30,7 +30,7 @@ export function useCompEdit(
   const [, repaint] = useReducer((n: number) => n + 1, 0)
 
   const propRef = useRef<CueComp | null>(null)
-  propRef.current = comp && comp.clips.length > 0 ? comp : null
+  propRef.current = committedComp(comp ?? null)
 
   const cbRef = useRef({ onComp, onProblem })
   cbRef.current = { onComp, onProblem }

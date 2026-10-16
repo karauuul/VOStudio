@@ -293,7 +293,6 @@ export const compSchema = z
           })
           .refine((c) => c.srcOut > c.srcIn, { message: 'srcOut must be greater than srcIn' })
       )
-      .min(1)
       .max(500),
     region: z
       .object({ in: finite.min(0).max(36000), out: finite.min(0).max(36000) })
