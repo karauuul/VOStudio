@@ -301,13 +301,31 @@ describe('pitch in the effects set', () => {
     expect(hasSends({ delay: { time: 0.2, feedback: 0.2, mix: 0.3 } })).toBe(true)
   })
 
-  it('adds NO tail: pitch shifting does not lengthen the clip by a single sample', () => {
-    expect(effectsTail({ pitch: { semitones: 12 } })).toBe(0)
-    expect(effectsTail({ pitch: { semitones: -12 } })).toBe(0)
+  it('the render window keeps the samples the shifter delays past the clip end', () => {
+    for (const sr of [44100, 48000, 96000]) {
+      for (const semitones of [PITCH_SEMITONES_MIN, -5, 6, PITCH_SEMITONES_MAX]) {
+        const fx: ClipEffects = { pitch: { semitones } }
+        const frames = Math.ceil((1 + effectsTail(fx)) * sr)
+        const input = new Float32Array(frames + sr)
+        input[sr - 1] = 1
+        const output = new Float32Array(input.length)
+        new PitchShifterCore(sr, 1, semitones).process([input], [output])
+        const last = output.findLastIndex((v) => v !== 0)
+        expect(last).toBeGreaterThanOrEqual(sr)
+        expect(last).toBeLessThan(frames)
+      }
+    }
+  })
+
+  it('the shifter latency adds to the send tail it feeds', () => {
     const rvOnly = effectsTail({ reverb: { mix: 0.3, size: 0.5, decay: 2 } })
-    expect(effectsTail({ reverb: { mix: 0.3, size: 0.5, decay: 2 }, pitch: { semitones: 7 } })).toBe(
-      rvOnly
+    const pitchOnly = effectsTail({ pitch: { semitones: 7 } })
+    expect(pitchOnly).toBeGreaterThan(0)
+    expect(effectsTail({ reverb: { mix: 0.3, size: 0.5, decay: 2 }, pitch: { semitones: 7 } })).toBeCloseTo(
+      rvOnly + pitchOnly,
+      9
     )
+    expect(effectsTail({ pitch: { semitones: 7, enabled: false } })).toBe(0)
   })
 
   it('the toggle sets +2 and REMOVES the field when switched off', () => {

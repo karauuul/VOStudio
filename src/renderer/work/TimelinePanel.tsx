@@ -1883,7 +1883,7 @@ export function TimelinePanel({
           const mode = stem ? stem.exportMode : (original?.exportMode ?? 'off')
           const previewOn = stem ? ui.noPreview !== true : original?.previewMuted !== true
           const duckDb = laneDuck(row)
-          const curve = duckDb === undefined ? [] : duckEnvelope(comp.clips, duckDb)
+          const curve = duckDb === undefined ? [] : duckEnvelope(comp.clips, duckDb, tracks)
           const lanePeaks = row.path ? (peaks[row.path] ?? null) : null
           const laneDur = stem ? (lanePeaks?.duration ?? refDur) : refDur
           const laneFrom = stem ? 0 : regionBase

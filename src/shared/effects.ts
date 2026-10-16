@@ -1,3 +1,5 @@
+import { GRAIN_SECONDS } from './pitch'
+
 export interface ReverbEffect {
   mix: number
   size: number
@@ -375,5 +377,6 @@ export function effectsTail(fx: ClipEffects | undefined): number {
   let t = 0
   if (effectOn(fx.reverb)) t = Math.max(t, reverbTail(fx.reverb!))
   if (effectOn(fx.delay)) t = Math.max(t, delayTail(fx.delay!))
+  if (pitchActive(fx.pitch)) t += 2 * GRAIN_SECONDS
   return Math.min(t, MAX_EFFECT_TAIL)
 }

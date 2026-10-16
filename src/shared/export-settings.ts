@@ -236,12 +236,13 @@ export interface LoudnessMeasure {
 }
 
 const targetGain = (db: number): number =>
-  Math.floor(clamp(db, -TARGET_GAIN_LIMIT_DB, TARGET_GAIN_LIMIT_DB) * 100 + 1e-9) / 100
+  Math.floor(Math.min(db, TARGET_GAIN_LIMIT_DB) * 100 + 1e-9) / 100
 
 export function targetGainDb(target: LoudnessTarget, { lufs, peak }: LoudnessMeasure, lossy = false): number {
   if (peak === null || !Number.isFinite(peak)) return 0
   const headroom = lossy ? LOSSY_HEADROOM_DB : 0
   if (target.mode === 'peak') return targetGain(target.db - headroom - peak)
   if (lufs === null || !Number.isFinite(lufs) || lufs <= SILENCE_LUFS) return 0
-  return targetGain(Math.min(target.db - lufs, LUFS_PEAK_CEILING_DB - headroom - peak))
+  const match = clamp(target.db - lufs, -TARGET_GAIN_LIMIT_DB, TARGET_GAIN_LIMIT_DB)
+  return targetGain(Math.min(match, LUFS_PEAK_CEILING_DB - headroom - peak))
 }

@@ -13,6 +13,7 @@ import {
   envelopeDbAt,
   sanitizeStems,
   type CompClip,
+  type CompTrack,
   type Cue,
   type CueComp,
   type Project,
@@ -53,7 +54,7 @@ describe('duck envelope', () => {
     ])
     expect(envelopeDbAt(env, 0)).toBe(0)
     expect(envelopeDbAt(env, 2)).toBe(-12)
-    expect(envelopeDbAt(env, 1 - DUCK_ATTACK / 2)).toBeCloseTo(-6, 6)
+    expect(envelopeDbAt(env, 1 - DUCK_ATTACK / 2)).toBeCloseTo(20 * Math.log10((1 + Math.pow(10, -12 / 20)) / 2), 9)
     expect(envelopeDbAt(env, 10)).toBe(0)
   })
 
@@ -120,6 +121,38 @@ describe('duck envelope', () => {
     ramps.length = 0
     scheduleComp(ctx, sources, destination, { originals: [{ buffer, gainDb: 0 }] })
     expect(ramps).toEqual([])
+
+    const track = (id: string, over: Partial<CompTrack> = {}): CompTrack => ({
+      id,
+      name: id,
+      gainDb: 0,
+      muted: false,
+      solo: false,
+      ...over,
+    })
+    const originals = [{ buffer, gainDb: 0, duckDb: -12 }]
+    ramps.length = 0
+    scheduleComp(ctx, sources, destination, { tracks: [track('track-1', { muted: true })], originals })
+    expect(ramps).toEqual([])
+
+    ramps.length = 0
+    scheduleComp(ctx, sources, destination, {
+      tracks: [track('track-1'), track('track-2', { solo: true })],
+      originals,
+    })
+    expect(ramps).toEqual([])
+  })
+
+  it('only clips on audible tracks duck the original', () => {
+    const tracks: CompTrack[] = [
+      { id: 'track-1', name: 'a', gainDb: 0, muted: true, solo: false },
+      { id: 'track-2', name: 'b', gainDb: 0, muted: false, solo: false },
+    ]
+    const muted = clip({ id: 'm', start: 0, srcOut: 1 })
+    const live = clip({ id: 'l', start: 5, srcOut: 1, trackId: 'track-2' })
+    expect(duckEnvelope([muted], -12, tracks)).toEqual([])
+    expect(duckEnvelope([muted, live], -12, tracks)).toEqual(duckEnvelope([live], -12))
+    expect(duckEnvelope([muted, live], -12)).toHaveLength(8)
   })
 })
 

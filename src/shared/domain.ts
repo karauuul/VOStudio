@@ -1,4 +1,4 @@
-import { sanitizeEffects, type ClipEffects } from './effects'
+import { dbToGain, sanitizeEffects, type ClipEffects } from './effects'
 import type { ExportSettings } from './export-settings'
 import type { GenMode } from './provider-models'
 
@@ -79,8 +79,9 @@ export function envelopeDbAt(points: Array<{ t: number; db: number }>, t: number
     const b = points[i]
     if (t <= b.t) {
       const span = b.t - a.t
-      if (span <= 0) return b.db
-      return a.db + ((b.db - a.db) * (t - a.t)) / span
+      if (span <= 0 || t === b.t) return b.db
+      const ga = dbToGain(a.db)
+      return 20 * Math.log10(ga + ((dbToGain(b.db) - ga) * (t - a.t)) / span)
     }
   }
   return last.db

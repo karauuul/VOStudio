@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildClipGraph,
   dbToGain,
   envelopeDbAt,
   fadeCurve,
@@ -183,9 +184,44 @@ describe('gainEnvelope', () => {
     expect(envelopeDbAt(pts, 4)).toBe(0)
   })
 
-  it('between points — linear interpolation', () => {
-    expect(envelopeDbAt(pts, 1)).toBeCloseTo(-3, 6)
-    expect(envelopeDbAt(pts, 3)).toBeCloseTo(-3, 6)
+  it('between points — linear in gain, the law the scheduled ramp follows', () => {
+    const mid = 20 * Math.log10((1 + dbToGain(-6)) / 2)
+    expect(envelopeDbAt(pts, 1)).toBeCloseTo(mid, 9)
+    expect(envelopeDbAt(pts, 3)).toBeCloseTo(mid, 9)
+  })
+
+  it('starting playback inside a ramp hears the gain continuous playback reaches there', () => {
+    const ramp = [
+      { t: 0, db: -20 },
+      { t: 2, db: 0 },
+    ]
+    const starts: number[] = []
+    const ramps: Array<[number, number]> = []
+    const connect = function (this: unknown, target: unknown): unknown {
+      return target
+    }
+    const ctx = {
+      createGain: () => ({
+        connect,
+        gain: {
+          value: 1,
+          setValueAtTime: (v: number) => starts.push(v),
+          setValueCurveAtTime: () => undefined,
+          linearRampToValueAtTime: (v: number, at: number) => ramps.push([v, at]),
+        },
+      }),
+      createBufferSource: () => ({ connect, buffer: null, playbackRate: { value: 1 } }),
+    } as unknown as BaseAudioContext
+    const buffer = { duration: 2, numberOfChannels: 1, sampleRate: 48000 } as unknown as AudioBuffer
+
+    buildClipGraph(ctx, buffer, edits({ gainEnvelope: ramp }))
+    const [[to, at]] = ramps
+    const continuous = starts[0] + ((to - starts[0]) * 1) / at
+    expect(continuous).toBeCloseTo(0.55, 9)
+
+    starts.length = 0
+    buildClipGraph(ctx, buffer, edits({ gainEnvelope: ramp }), { seek: 1 })
+    expect(starts[0]).toBeCloseTo(continuous, 9)
   })
 
   it('past the edges — a plateau, not extrapolation', () => {

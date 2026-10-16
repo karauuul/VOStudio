@@ -300,7 +300,7 @@ export function scheduleComp(
     const envelope =
       orig.duckDb === undefined
         ? []
-        : duckEnvelope(sources.map((s) => s.clip), orig.duckDb).map((p) => ({
+        : duckEnvelope(sources.map((s) => s.clip), orig.duckDb, opts.tracks).map((p) => ({
             t: p.t - start,
             db: p.db,
           }))

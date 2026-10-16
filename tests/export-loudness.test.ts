@@ -5,6 +5,8 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 import {
   EXPORT_FORMATS,
+  LOSSY_HEADROOM_DB,
+  LUFS_PEAK_CEILING_DB,
   mp3Rate,
   LOUDNESS_MODES,
   loudnessMode,
@@ -218,11 +220,20 @@ describe('sample peak and target gain', () => {
     expect(targetGainDb({ mode: 'peak', db: -1 }, { lufs: null, peak: -Infinity })).toBe(0)
   })
 
-  it('gain is clamped to ±30 dB after the peak ceiling', () => {
+  it('boost is capped at +30 dB and loudness matching cuts at most 30 dB', () => {
     expect(targetGainDb({ mode: 'lufs', db: -10 }, { lufs: -65, peak: -80 })).toBe(30)
     expect(targetGainDb({ mode: 'peak', db: 0 }, { lufs: -69, peak: -60 })).toBe(30)
-    expect(targetGainDb({ mode: 'peak', db: -12 }, { lufs: -1, peak: 25 })).toBe(-30)
-    expect(targetGainDb({ mode: 'lufs', db: -35 }, { lufs: -2, peak: 35 })).toBe(-30)
+    expect(targetGainDb({ mode: 'lufs', db: -35 }, { lufs: 0, peak: -20 })).toBe(-30)
+  })
+
+  it('the attenuation the peak ceiling needs always wins over the 30 dB limit', () => {
+    expect(targetGainDb({ mode: 'peak', db: -12 }, { lufs: -1, peak: 25 })).toBe(-37)
+    expect(targetGainDb({ mode: 'lufs', db: -35 }, { lufs: -2, peak: 35 })).toBe(-36)
+    const gain = targetGainDb({ mode: 'lufs', db: -16 }, { lufs: 20, peak: 36 })
+    expect(36 + gain).toBeLessThanOrEqual(LUFS_PEAK_CEILING_DB)
+    expect(36 + targetGainDb({ mode: 'lufs', db: -16 }, { lufs: 20, peak: 36 }, true)).toBeLessThanOrEqual(
+      LUFS_PEAK_CEILING_DB - LOSSY_HEADROOM_DB
+    )
   })
 
   it('every non-off mode skips the byte-copy fast path', () => {
