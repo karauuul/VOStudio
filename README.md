@@ -9,6 +9,7 @@ Import original lines and audio, generate or record localized takes, edit them o
 
 [![CI](https://github.com/karauuul/VOStudio/actions/workflows/ci.yml/badge.svg)](https://github.com/karauuul/VOStudio/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/karauuul/VOStudio)](https://github.com/karauuul/VOStudio/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 </div>
 
@@ -116,3 +117,7 @@ Electron 33 · electron-vite · React 18 · TypeScript · zod · zustand · Web 
 - [docs/template-format.md](docs/template-format.md) — project template import/export format
 - [docs/agent.md](docs/agent.md) — agent API: in-app MCP server, connecting clients, CLI, headless mode, tools and prompts
 - [AGENTS.md](AGENTS.md) — contributor and agent rules, including the invariants any change must preserve
+
+## License
+
+[MIT](LICENSE)

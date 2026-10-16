@@ -5,6 +5,7 @@
   "main": "./out/main/index.js",
   "author": "karauuul",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
