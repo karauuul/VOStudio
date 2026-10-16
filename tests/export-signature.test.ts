@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import { emptyEdits, type Cue, type Project, type Take } from '../src/shared/domain'
 import { exportSignature, type ExportSettings } from '../src/shared/export-settings'
 import { exportedLines, mergeExported, supersededFiles, type DeliverExported } from '../src/shared/deliver'
+import type { DeliverPaths } from '../src/shared/ipc'
 import {
   matchesLineFilter,
   readinessRows,
@@ -298,6 +299,106 @@ describe('export records the signature in report.json', () => {
       rm.mockRestore()
     }
     expect(exportBusy()).toBe(false)
+  })
+
+  const previousPackage = async (dir: string, names: string[]): Promise<string> => {
+    const out = path.join(dir, 'export')
+    await fs.mkdir(path.join(out, 'audio'), { recursive: true })
+    for (const name of names) await fs.writeFile(path.join(out, 'audio', name), 'old')
+    const report = JSON.stringify({
+      formatVersion: 1,
+      project: 'P',
+      createdAt: 'then',
+      scope: 'selected',
+      exported: names.map((name) => ({ cueId: path.parse(name).name, exportName: path.parse(name).name, file: `audio/${name}`, bytes: 3, sha256: 'e'.repeat(64), revision: 1 })),
+      failed: [],
+      skipped: [],
+    })
+    await fs.writeFile(path.join(out, 'report.json'), report)
+    return report
+  }
+
+  const stageAndFinish = async (keys: string[]): Promise<DeliverPaths> => {
+    const plan = await planBatchExport({ cueIds: keys.map((k) => 'c-' + k) })
+    for (const job of plan.jobs) {
+      await fs.mkdir(path.dirname(job.outPath), { recursive: true })
+      await fs.writeFile(job.outPath, 'new')
+    }
+    return finishExport(plan.token, {
+      exported: plan.jobs.map((j) => ({ cueKey: j.cueKey, name: j.name, bytes: 3, sha256: 'f'.repeat(64) })),
+      failed: [],
+    }, async () => undefined)
+  }
+
+  it('a publish that fails on a renamed line keeps the previous package intact', async () => {
+    const p = project({ format: 'wav-48-24' }, ['a'])
+    const dir = path.join(root, 'G.vostudio')
+    store.adoptProject(p, dir)
+    const report = await previousPackage(dir, ['a.wav'])
+    await fs.mkdir(path.join(dir, 'export', 'audio', 'a.mp3'))
+    p.export = { format: 'mp3-192' }
+    await expect(stageAndFinish(['a'])).rejects.toThrow('The export folder has a folder at')
+    expect(await fs.readFile(path.join(dir, 'export', 'audio', 'a.wav'), 'utf8')).toBe('old')
+    expect(await fs.readFile(path.join(dir, 'export', 'report.json'), 'utf8')).toBe(report)
+    expect((await fs.readdir(path.join(dir, 'export'))).sort()).toEqual(['audio', 'report.json'])
+  })
+
+  it('a publish that fails midway restores every file it overwrote', async () => {
+    const p = project({ format: 'wav-48-24' }, ['a', 'b'])
+    const dir = path.join(root, 'H.vostudio')
+    store.adoptProject(p, dir)
+    const report = await previousPackage(dir, ['a.wav', 'b.wav'])
+    const copyFile = fs.copyFile
+    let calls = 0
+    const spy = vi.spyOn(fs, 'copyFile').mockImplementation(async (src, dst, mode) => {
+      if (++calls === 3) throw new Error('ENOSPC')
+      return copyFile(src, dst, mode)
+    })
+    try {
+      await expect(stageAndFinish(['a', 'b'])).rejects.toThrow('ENOSPC')
+    } finally {
+      spy.mockRestore()
+    }
+    const out = path.join(dir, 'export')
+    expect(await fs.readFile(path.join(out, 'audio', 'a.wav'), 'utf8')).toBe('old')
+    expect(await fs.readFile(path.join(out, 'audio', 'b.wav'), 'utf8')).toBe('old')
+    expect(await fs.readFile(path.join(out, 'report.json'), 'utf8')).toBe(report)
+    expect((await fs.readdir(out)).sort()).toEqual(['audio', 'report.json'])
+    await stageAndFinish(['a', 'b'])
+    expect(await fs.readFile(path.join(out, 'audio', 'a.wav'), 'utf8')).toBe('new')
+    expect((await fs.readdir(out)).sort()).toEqual(['audio', 'report.json'])
+  })
+
+  it('never touches an unrelated export.previous folder in the export folder', async () => {
+    const p = project({ format: 'wav-48-24' }, ['a'])
+    const dir = path.join(root, 'U.vostudio')
+    store.adoptProject(p, dir)
+    await previousPackage(dir, ['a.wav'])
+    const out = path.join(dir, 'export')
+    const unrelated = path.join(out, 'export.previous', 'keep.txt')
+    await fs.mkdir(path.dirname(unrelated))
+    await fs.writeFile(unrelated, 'mine')
+    await stageAndFinish(['a'])
+    expect(await fs.readFile(unrelated, 'utf8')).toBe('mine')
+    await fs.mkdir(path.join(out, 'audio', 'a.mp3'))
+    p.export = { format: 'mp3-192' }
+    await expect(stageAndFinish(['a'])).rejects.toThrow('The export folder has a folder at')
+    expect(await fs.readFile(unrelated, 'utf8')).toBe('mine')
+    expect(await fs.readFile(path.join(out, 'audio', 'a.wav'), 'utf8')).toBe('new')
+    expect((await fs.readdir(out)).sort()).toEqual(['audio', 'export.previous', 'report.json'])
+  })
+
+  it('plans every job inside the staged audio folder, whatever the line id or template', async () => {
+    const p = project({ format: 'wav-48-24' }, ['../../../table-outside'])
+    const traversal = path.join(root, 'T.vostudio')
+    store.adoptProject(p, traversal)
+    const audio = path.join(traversal, 'export.staging', 'audio')
+    let plan = await planBatchExport({ cueIds: ['c-../../../table-outside'] })
+    expect(plan.jobs.map((j) => j.outPath)).toEqual([path.join(audio, 'table-outside.wav')])
+    p.exportTemplate = '..\\..\\..\\outside.wav'
+    plan = await planBatchExport({ cueIds: ['c-../../../table-outside'] })
+    expect(plan.jobs.map((j) => j.outPath)).toEqual([path.join(audio, 'outside.wav')])
+    cancelExports()
   })
 
   it('a live plan stamps the version and records it in the report', async () => {

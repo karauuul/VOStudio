@@ -27,6 +27,7 @@ interface Worker {
 
 let worker: Worker | null = null
 let idle: NodeJS.Timeout | null = null
+let holds = 0
 const pending = new Map<string, { resolve: (reply: RenderReply) => void; reject: (error: Error) => void }>()
 
 function stopIdle(): void {
@@ -58,7 +59,7 @@ function spawn(): Worker {
   return current
 }
 
-export async function renderWorker(): Promise<number> {
+async function renderWorker(): Promise<number> {
   stopIdle()
   const current = worker ?? spawn()
   try {
@@ -72,17 +73,25 @@ export async function renderWorker(): Promise<number> {
 }
 
 function armIdle(): void {
-  if (pending.size === 0 && worker && !idle) idle = setTimeout(() => closeRenderWorker(), RENDER_IDLE_MS)
+  if (holds === 0 && worker && !idle) idle = setTimeout(() => closeRenderWorker(), RENDER_IDLE_MS)
 }
 
-async function request(send: (win: BrowserWindow, id: string) => void, timeoutMs: number): Promise<RenderReply> {
-  await renderWorker()
-  stopIdle()
-  const current = worker
-  if (!current) throw new Error(CLOSED)
-  const id = randomUUID()
+export async function withRenderWorker<T>(use: (owner: number) => Promise<T>): Promise<T> {
+  holds++
   try {
-    return await new Promise<RenderReply>((resolve, reject) => {
+    return await use(await renderWorker())
+  } finally {
+    holds--
+    armIdle()
+  }
+}
+
+function request(send: (win: BrowserWindow, id: string) => void, timeoutMs: number): Promise<RenderReply> {
+  return withRenderWorker(() => {
+    const current = worker
+    if (!current) throw new Error(CLOSED)
+    const id = randomUUID()
+    return new Promise<RenderReply>((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id)
         reject(new Error(`Rendering did not finish within ${Math.round(timeoutMs / 1000)} s; the render window was restarted, retry with fewer lines.`))
@@ -100,9 +109,7 @@ async function request(send: (win: BrowserWindow, id: string) => void, timeoutMs
       })
       send(current.win, id)
     })
-  } finally {
-    armIdle()
-  }
+  })
 }
 
 export function settleRender(senderId: number, reply: RenderReply): void {
