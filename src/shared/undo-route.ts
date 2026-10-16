@@ -150,3 +150,9 @@ export function recordExternalEffects(history: EffectsHistory, external: Externa
     redo: recorded.length > 0 ? [] : history.redo.filter(kept),
   }
 }
+
+export function pruneEffectsHistory(history: EffectsHistory, cues: readonly Cue[]): EffectsHistory {
+  const live = new Set(cues.flatMap((cue) => cue.takes.filter((take) => !take.deletedAt).map((take) => takeKey(cue.id, take.id))))
+  const kept = (entry: TakeEffectsEdit): boolean => live.has(takeKey(entry.cueId, entry.takeId))
+  return { undo: history.undo.filter(kept), redo: history.redo.filter(kept) }
+}

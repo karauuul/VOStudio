@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { dropLineEdits, type LineHistory } from '../src/shared/line-history'
 import { emptyEdits, type Cue, type CueComp } from '../src/shared/domain'
 import { dropCompRedo, recordCompEdit, stepCompEdit, type CompHistory } from '../src/shared/comp-history'
-import { externalChanges, pickHistory, recordExternalEffects, redoStale, sendEdit, takeKey, type TakeEffectsEdit } from '../src/shared/undo-route'
+import { externalChanges, pickHistory, pruneEffectsHistory, recordExternalEffects, redoStale, sendEdit, takeKey, type TakeEffectsEdit } from '../src/shared/undo-route'
 
 describe('undo routing between comp and take-effect histories', () => {
   it('undoes the newer entry first', () => {
@@ -188,5 +188,21 @@ describe('sendEdit', () => {
     await sendEdit(() => Promise.resolve(), true, () => edits++)
     await sendEdit(() => Promise.resolve(), false, () => edits++)
     expect(edits).toBe(1)
+  })
+})
+
+describe('pruneEffectsHistory', () => {
+  const take = (id: string, deletedAt?: string) => ({ id, edits: emptyEdits(), ...(deletedAt ? { deletedAt } : {}) })
+  const line = (id: string, takes: ReturnType<typeof take>[]) =>
+    ({ id, key: id, characterId: '', fields: {}, sourceText: '', text: '', status: 'generated', notes: '', takes }) as unknown as Cue
+  const entry = (cueId: string, takeId: string, at: number): TakeEffectsEdit => ({ cueId, takeId, prev: undefined, next: undefined, at })
+
+  it('keeps effect history of other lines and drops entries whose take or line is gone', () => {
+    const cues = [line('a', [take('t')]), line('b', [take('t'), take('gone', '2026-01-01T00:00:00.000Z')])]
+    const history = {
+      undo: [entry('a', 't', 1), entry('b', 't', 2), entry('b', 'gone', 3), entry('removed', 't', 4)],
+      redo: [entry('a', 't', 5), entry('b', 'missing', 6)],
+    }
+    expect(pruneEffectsHistory(history, cues)).toEqual({ undo: [entry('a', 't', 1), entry('b', 't', 2)], redo: [entry('a', 't', 5)] })
   })
 })

@@ -19,7 +19,7 @@ import {
   type VoiceSettings,
 } from '@shared/domain'
 import { DEFAULT_APP_SETTINGS, type AppSettings, type TableImportResult } from '@shared/ipc'
-import { externalChanges, pickHistory, recordExternalEffects, redoStale, type TakeEffectsEdit, type UndoSide } from '@shared/undo-route'
+import { externalChanges, pickHistory, pruneEffectsHistory, recordExternalEffects, redoStale, type TakeEffectsEdit, type UndoSide } from '@shared/undo-route'
 import { dropCompRedo, nextCompEdit, pruneCompHistory, recordCompEdit, type CompHistory } from '@shared/comp-history'
 import { PARAGRAPH_TOO_LONG, pasteOverflows, planScriptPaste, showsAi } from '@shared/lines'
 import { hasSourceMaterial } from '@shared/import-table'
@@ -217,8 +217,6 @@ export default function App() {
 
   useEffect(() => {
     activeCueIdRef.current = activeCueId
-    fxUndoRef.current = []
-    fxRedoRef.current = []
   }, [activeCueId])
 
   useEffect(() => {
@@ -1279,7 +1277,11 @@ export default function App() {
 
   const cues = project?.cues
   useEffect(() => {
-    if (cues) pruneCompHistory(compHistRef.current, cues.map((cue) => cue.id))
+    if (!cues) return
+    pruneCompHistory(compHistRef.current, cues.map((cue) => cue.id))
+    const fx = pruneEffectsHistory({ undo: fxUndoRef.current, redo: fxRedoRef.current }, cues)
+    fxUndoRef.current = fx.undo
+    fxRedoRef.current = fx.redo
   }, [cues])
 
   const lineRemovalBlock = useCallback(
