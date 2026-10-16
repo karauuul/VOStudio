@@ -119,6 +119,28 @@ describe('exportName', () => {
     expect(exportName(project([bare], '{Name}.{ext}'), bare, bare.takes[0])).toBe('88.mp3')
   })
 
+  it('never leaves the export folder, whatever the fields or the template hold', () => {
+    const t = take('t1', 'wav')
+    const named = (fields: Record<string, string>, template = DEFAULT_EXPORT_TEMPLATE): string => {
+      const c = cue('k', { fields, takes: [t], finalTakeId: t.id })
+      return exportName(project([c], template), c, t)
+    }
+    expect(named({ EventName: '../../../table-outside' })).toBe('table-outside.wav')
+    expect(named({ EventName: '..\\..\\outside' })).toBe('outside.wav')
+    expect(named({}, '../../../outside.wav')).toBe('outside.wav')
+    expect(named({}, '/etc/{Key}.{ext}')).toBe('etc/k.wav')
+    expect(named({}, 'C:\\Windows\\{Key}.{ext}')).toBe('Windows/k.wav')
+    expect(named({}, '\\\\server\\share\\{Key}.{ext}')).toBe('server/share/k.wav')
+    expect(named({ EventName: 'a/./. ./.. /b' })).toBe('a/b.wav')
+  })
+
+  it('keeps nested folders from the template and {Path}', () => {
+    const t = take('t1', 'wav')
+    const c = cue('k', { fields: { EventName: 'Hero', path: 'Voice\\Act 1' }, takes: [t], finalTakeId: t.id })
+    expect(exportName(project([c], '{Path}{Name}.{ext}'), c, t)).toBe('Voice/Act 1/Hero.wav')
+    expect(exportName(project([c], 'vo/{Name}.{ext}'), c, t)).toBe('vo/Hero.wav')
+  })
+
   it('the default template names a manual line after its label, as {EventName} did', () => {
     const line = { ...newLineCue('c1', 3, 'Hello'), takes: [take('t1', 'wav')] }
     const t = line.takes[0]

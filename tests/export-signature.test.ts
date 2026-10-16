@@ -300,6 +300,19 @@ describe('export records the signature in report.json', () => {
     expect(exportBusy()).toBe(false)
   })
 
+  it('plans every job inside the staged audio folder, whatever the line id or template', async () => {
+    const p = project({ format: 'wav-48-24' }, ['../../../table-outside'])
+    const traversal = path.join(root, 'T.vostudio')
+    store.adoptProject(p, traversal)
+    const audio = path.join(traversal, 'export.staging', 'audio')
+    let plan = await planBatchExport({ cueIds: ['c-../../../table-outside'] })
+    expect(plan.jobs.map((j) => j.outPath)).toEqual([path.join(audio, 'table-outside.wav')])
+    p.exportTemplate = '..\\..\\..\\outside.wav'
+    plan = await planBatchExport({ cueIds: ['c-../../../table-outside'] })
+    expect(plan.jobs.map((j) => j.outPath)).toEqual([path.join(audio, 'outside.wav')])
+    cancelExports()
+  })
+
   it('a live plan stamps the version and records it in the report', async () => {
     const p = project({ format: 'wav-48-24' }, ['a'])
     const stamped = path.join(root, 'S.vostudio')

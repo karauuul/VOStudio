@@ -99,6 +99,7 @@ function toJobs(items: PlannedTake[], outDir: string, project: Project): ExportJ
   const target = loudnessTarget(project.export)
   return items.map((p) => {
     const outPath = path.join(outDir, p.name)
+    if (!isInsideDir(outPath, outDir)) throw new Error(`The export name "${p.name}" leaves the export folder`)
     const format = containerOf(p.name)
     if (!format) throw new Error(`Unsupported export container for "${p.name}" (mp3/wav/ogg only)`)
     const plan = compPlanFor(p.cue, p.take, project)

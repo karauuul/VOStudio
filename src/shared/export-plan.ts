@@ -68,18 +68,17 @@ function withExt(name: string, ext: string): string {
 export const DEFAULT_EXPORT_TEMPLATE = '{Name}.{ext}'
 export const PATH_FIELD = 'path'
 
+const pathParts = (value: string): string[] => value.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '').split('/')
+
 export function exportPath(value: string | undefined): string {
-  const parts = (value ?? '')
-    .replace(/\\/g, '/')
-    .replace(/^[A-Za-z]:/, '')
-    .split('/')
+  const parts = pathParts(value ?? '')
     .map((part) => part.replace(/[<>:"|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '').trim())
     .filter(Boolean)
   return parts.length > 0 ? `${parts.join('/')}/` : ''
 }
 
 function nameFrom(template: string, project: Project, cue: Cue, ext: string): string {
-  const named = template
+  const substituted = template
     .replace(/\{Name\}/g, lineLabel(cue))
     .replace(/\{EventName\}/g, cue.fields['EventName'] ?? cue.key)
     .replace(/\{exportName\}/g, cue.fields['exportName'] || cue.key)
@@ -87,6 +86,7 @@ function nameFrom(template: string, project: Project, cue: Cue, ext: string): st
     .replace(/\{Key\}/g, cue.key)
     .replace(/\{Path\}/g, () => exportPath(cue.fields[PATH_FIELD]))
     .replace(/\{ext\}/g, ext)
+  const named = pathParts(substituted).filter((part) => !/^[. ]*$/.test(part)).join('/')
   const target = formatSpec(project.export?.format).ext
   return target ? withExt(named, target) : named
 }
