@@ -753,16 +753,15 @@ export const DUCK_RELEASE = 0.25
 export function duckEnvelope(
   clips: readonly CompClip[],
   duckDb: number,
-  attack = DUCK_ATTACK,
-  release = DUCK_RELEASE
+  tracks: readonly CompTrack[] = []
 ): Array<{ t: number; db: number }> {
   if (!Number.isFinite(duckDb) || duckDb >= 0) return []
-  const a = Math.max(0, attack)
-  const r = Math.max(0, release)
+  const a = DUCK_ATTACK
+  const r = DUCK_RELEASE
   const spans: Array<{ from: number; to: number }> = []
   for (const c of clips) {
     const tl = clipTimelineDuration(c)
-    if (!(tl > 0) || !Number.isFinite(c.start)) continue
+    if (!(tl > 0) || !Number.isFinite(c.start) || !trackAudible(tracks, clipTrackId(c))) continue
     spans.push({ from: Math.max(0, c.start - a), to: c.start + tl + r })
   }
   if (spans.length === 0) return []
